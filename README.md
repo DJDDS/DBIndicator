@@ -1,0 +1,232 @@
+# Scanner — Kite-connected web dashboard
+
+This runs your RSI + MACD + EMA/Bollinger confluence Scanner against live
+Zerodha data for NSE F&O stocks and shows current signals, live charts,
+and an AI-generated summary on a simple web page you can open any time.
+It needs to run continuously on a server (not your own laptop that goes
+to sleep) — see Part 2 for how to get one.
+
+**Reality check before you start:** Zerodha requires a fresh login every
+trading day for security reasons — there's no way to eliminate this step
+entirely without storing your password, which this app deliberately does
+not do. So the daily routine is: open the dashboard, click one login
+button, sign in with your Zerodha password + 2FA (~30 seconds), and it
+runs on its own for the rest of the day.
+
+## What's in this version
+
+- **Timeframes**: 15-min, 30-min, 60-min, **4-hour** (synthesized by
+  resampling 60-min candles — Kite has no native 4H interval), Daily,
+  Weekly.
+- **F&O-only watchlist**: on the Settings page, "Load current F&O list
+  from Kite" pulls the *exact, live* list of NSE stocks currently
+  eligible for futures & options trading straight from Kite's own
+  instrument list — not a hardcoded list that can go stale as NSE
+  periodically revises F&O eligibility.
+- **Everything tunable from the browser**: watchlist, timeframe, MACD
+  preset/custom values, RSI/EMA/Bollinger lengths, 2-of-3 vs 3-of-3, and
+  scan frequency all live-update from the **Settings** page — no editing
+  `.env` or restarting the server.
+- **Real charts**: click any row (or "Chart →") to open a candlestick
+  chart with the 9 EMA and Bollinger mid-band overlaid, plus separate
+  RSI and MACD panes, all synced and zoomable (TradingView's open-source
+  Lightweight Charts library).
+- **AI Insights**: an optional panel that asks Claude to summarize the
+  latest scan in plain English — which stocks just signaled and why,
+  which are close to aligning, whether the session looks unusually quiet
+  or busy. Uses your own Anthropic API key; the panel is simply hidden
+  if you don't set one.
+- **Alerts**: get notified the moment a Bullish/Bearish confluence
+  signal fires, instead of having to watch the table — see the dedicated
+  section below.
+
+---
+
+## Alerts
+
+Two channels, and you can use either or both:
+
+- **In-page (works automatically, no setup)** — while the dashboard tab
+  is open, a toast banner and a short beep fire for every new signal.
+  This is free but only works while you're actually looking at the tab.
+- **Telegram (recommended — works even with the app closed)** — a
+  message lands in Telegram on your phone the moment a signal fires.
+  Setup takes about two minutes:
+  1. On Telegram, message **@BotFather**, send `/newbot`, and follow the
+     prompts (pick any name/username). It replies with a token like
+     `123456789:AAF-abc...` — put that in `.env` as `TELEGRAM_BOT_TOKEN`,
+     then restart the app.
+  2. Send any message (e.g. "hi") to your new bot on Telegram — bots
+     can't message you first, so this step is required.
+  3. On the dashboard's **Settings** page, click **"Find my chat ID"** —
+     it reads Telegram's own API to find the chat you just started and
+     shows you the number. Put that in `.env` as `TELEGRAM_CHAT_ID`, then
+     restart the app once more.
+  4. Use the **"Send test alert"** button on Settings to confirm it
+     works, any time.
+
+Both channels are deduplicated per candle — you get exactly one alert
+per fresh signal on its closing candle, not one every scan interval
+while it stays the most recent signal.
+
+---
+
+## Part 1 — Get Kite Connect API access
+
+1. Go to [developers.kite.trade](https://developers.kite.trade) and sign
+   in with your Zerodha account.
+2. Subscribe to the **Connect** plan — ₹500/month, this covers the market
+   data (historical + live candles) the Scanner needs. Order-placing APIs
+   are free, but this app only reads prices, it doesn't place trades.
+3. Create a new app. You'll be asked for a **Redirect URL** — for now, set
+   it to `http://localhost:5000/kite/callback`. You'll update this once
+   you have a real server address (Part 2).
+4. Copy your **API Key** and **API Secret** — you'll need them next.
+
+## Part 2 — Get a server to run this on
+
+This needs to be online continuously during market hours, so it can't be
+your personal laptop unless you're willing to leave it on and connected
+all day. Two ways to get one:
+
+### Option A — Render (fastest, I can set this up with you)
+
+Render is a cloud host that a Claude session can provision directly
+through its MCP connector, instead of you clicking through a dashboard
+yourself. The Starter plan (**$7/month**, always-on — the free tier
+sleeps after 15 minutes idle, which would break the background scanner)
+is the cheapest tier that works for this app.
+
+To use this path: connect the **Render** integration from your Claude
+settings (Settings → Connectors → add Render, or ask me and I'll surface
+the connect prompt). Once it's connected, tell me to go ahead and I'll:
+create the web service from this project's code, set your environment
+variables (you'll still enter `KITE_API_KEY`/`KITE_API_SECRET`/
+`DASHBOARD_PASSWORD`/etc. yourself so I never see your credentials), and
+give you the live URL to use as your Redirect URL in Part 1, step 3.
+I'll always confirm with you before anything that spends money — this
+plan does have a real $7/month charge on your Render account.
+
+### Option B — A small VPS (DigitalOcean / Hetzner / AWS Lightsail)
+
+1. Sign up with a provider — budget ~$4-6/month for the smallest box.
+2. Create a server with **Ubuntu 22.04** (any recent Ubuntu works).
+3. Note its public IP address — you'll use this to reach your dashboard
+   and as part of your Redirect URL.
+4. Update the Redirect URL in your Kite Connect app settings (Part 1,
+   step 3) to `http://YOUR_SERVER_IP:5000/kite/callback`.
+
+*(If you'd rather I walk you through one specific provider's exact
+click-by-click setup, tell me which one and I'll write that out.)*
+
+## Part 3 — Deploy the app
+
+SSH into your server, then:
+
+```bash
+sudo apt update && sudo apt install -y python3-pip python3-venv
+
+# Upload this project folder to the server (scp, git, or however you prefer),
+# then from inside the project folder:
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+nano .env   # fill in KITE_API_KEY, KITE_API_SECRET, REDIRECT_URL (with your
+            # server's real IP), and DASHBOARD_PASSWORD (make one up - long
+            # and random, this is what keeps your dashboard private).
+            # ANTHROPIC_API_KEY is optional - only needed for AI Insights.
+```
+
+Run it once to make sure it starts cleanly:
+
+```bash
+python run.py
+```
+
+Open `http://YOUR_SERVER_IP:5000` in a browser — you should see a login
+prompt (that's the DASHBOARD_PASSWORD you set, not your Zerodha one), then
+the Scanner page with a "Login to Kite" button. Stop it with Ctrl+C once
+confirmed working.
+
+### Keep it running permanently
+
+Running `python run.py` stops the moment you close your SSH session. Use
+`systemd` so it survives reboots and restarts automatically if it crashes:
+
+```bash
+sudo tee /etc/systemd/system/scanner.service > /dev/null <<EOF
+[Unit]
+Description=Scanner Dashboard
+After=network.target
+
+[Service]
+WorkingDirectory=$(pwd)
+ExecStart=$(pwd)/venv/bin/gunicorn -w 1 -b 0.0.0.0:5000 run:app
+Restart=always
+User=$(whoami)
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now scanner
+```
+
+Check it's running: `sudo systemctl status scanner`. To see logs:
+`journalctl -u scanner -f`.
+
+## Your daily routine
+
+1. Open `http://YOUR_SERVER_IP:5000` (bookmark it).
+2. Enter your dashboard password (once per browser session, not per day).
+3. Click **"Login to Kite"**, sign in with your Zerodha credentials + 2FA.
+4. You're done — the dashboard now scans your watchlist automatically,
+   shows current signals, live charts (click any row), and an AI summary
+   until the token expires overnight, at which point tomorrow's visit
+   starts back at step 3.
+
+First time only: open **Settings**, click **"Load current F&O list from
+Kite"** (after logging in) to populate your watchlist with the live,
+exact F&O-eligible stock list, and set your preferred timeframe/
+parameters. Everything there applies immediately — no restart.
+
+## Configuration
+
+Almost everything now lives in the **Settings** page in the browser, not
+`.env` — watchlist, timeframe (including 4-hour), MACD preset, RSI/EMA/BB
+lengths, minimum indicators required (2-of-3 or 3-of-3), and scan
+frequency. `.env` only holds secrets and one-time setup values:
+`KITE_API_KEY`, `KITE_API_SECRET`, `REDIRECT_URL`, `DASHBOARD_PASSWORD`,
+and the optional `ANTHROPIC_API_KEY` for AI Insights. Settings changes
+are saved to `scanner_settings.json` next to the app, so they survive a
+restart too.
+
+## Known limitations, please read
+
+- **This is not investment advice.** Signals are based on historical
+  price patterns and the backtest we ran earlier showed a fairly low win
+  rate (see the earlier report) — treat this as one input, not a trading
+  system to follow blindly. The AI Insights panel describes the scan
+  data, it does not add new analysis beyond what's in the numbers.
+- **No stop-loss/target/order-placement logic** — this only detects and
+  displays signals, it does not place trades. That's intentional.
+- **Single point of failure**: if your server goes down, or you forget
+  to log in one morning, you get no signals (and no alerts) that day —
+  there's no separate uptime monitor watching the app itself. Telegram
+  alerts (see above) at least mean you don't have to keep the dashboard
+  open, but if the server is down, nothing fires.
+- **Rate limits**: Kite Connect has API rate limits; the default 3-minute
+  scan interval is chosen to stay comfortably under them with a normal
+  F&O-sized watchlist (~180-200 stocks as of writing). If you load the
+  full live F&O list and see rate-limit errors in the dashboard's warning
+  banner, raise `SCAN_INTERVAL_SECONDS` in Settings.
+- **AI Insights costs money per call** (your own Anthropic API usage,
+  typically a fraction of a cent per summary) and is capped at roughly
+  one call per scan interval via caching — but it's still real usage on
+  your key, so keep an eye on it if you set a very short scan interval.
+- **Chart data depth is limited by Kite's historical-data API limits**
+  per interval (shorter timeframes get less lookback) — this is a Kite
+  platform limit, not something this app can work around.
