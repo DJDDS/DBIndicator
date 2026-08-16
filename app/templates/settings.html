@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner Settings</title>
+<style>
+  :root {
+    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
+    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
+  header nav a:hover { background: rgba(255,255,255,0.28); }
+  .wrap { max-width: 760px; margin: 24px auto; padding: 0 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px 26px; margin-bottom: 20px; }
+  .card h2 { margin: 0 0 14px; font-size: 15px; color: var(--navy); }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-family: inherit;
+  }
+  textarea { min-height: 90px; resize: vertical; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
+         padding: 10px 20px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
+  .btn.secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+  .actions { margin-top: 22px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .msg-ok { background: #e6f4ea; border: 1px solid #bfe4cb; color: var(--green); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .msg-err { background: #fbe7e7; border: 1px solid #f0b7b7; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .msg-err ul { margin: 4px 0 0; padding-left: 18px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-top: 6px; }
+  legend { font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scanner Settings</h1>
+  <nav><a href="/">← Dashboard</a></nav>
+</header>
+<div class="wrap">
+
+  {% if saved %}
+  <div class="msg-ok">Settings saved. The next scan (within {{ s.SCAN_INTERVAL_SECONDS }}s) will use them - no restart needed.</div>
+  {% endif %}
+  {% if errors %}
+  <div class="msg-err">Please fix the following:<ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  {% if fno_error %}
+  <div class="msg-err">Log in to Kite on the dashboard first, then come back here to load the live F&amp;O list.</div>
+  {% endif %}
+
+  <form method="post" action="/settings">
+
+    <div class="card">
+      <h2>Watchlist</h2>
+      <label for="watchlist">NSE trading symbols (comma or newline separated)</label>
+      <textarea id="watchlist" name="watchlist">{{ s.WATCHLIST | join(', ') }}</textarea>
+      <div class="hint">{{ s.WATCHLIST | length }} symbols currently.</div>
+      <div class="actions">
+        <button class="btn secondary" type="submit" formaction="/settings/load-fno-list" {% if not logged_in %}disabled title="Log in to Kite first"{% endif %}>
+          Load current F&amp;O list from Kite
+        </button>
+        <span class="hint">Replaces the list above with the exact, live set of NSE stocks currently eligible for F&amp;O trading, pulled straight from Kite's own instrument list (not a hardcoded list that can go stale).</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Timeframe &amp; signal rule</h2>
+      <div class="row3">
+        <div>
+          <label for="timeframe">Timeframe</label>
+          <select id="timeframe" name="timeframe">
+            {% for tf in valid_timeframes %}
+            <option value="{{ tf }}" {% if tf == s.TIMEFRAME %}selected{% endif %}>{{ tf }}</option>
+            {% endfor %}
+          </select>
+          <div class="hint">4hour is resampled from 60-minute Kite candles.</div>
+        </div>
+        <div>
+          <label for="min_required">Signal rule</label>
+          <select id="min_required" name="min_required">
+            <option value="2" {% if s.MIN_REQUIRED == 2 %}selected{% endif %}>2-of-3 indicators</option>
+            <option value="3" {% if s.MIN_REQUIRED == 3 %}selected{% endif %}>3-of-3 (strict)</option>
+          </select>
+        </div>
+        <div>
+          <label for="scan_interval">Scan interval (seconds)</label>
+          <input type="number" id="scan_interval" name="scan_interval" min="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>MACD</h2>
+      <label for="macd_preset">Preset</label>
+      <select id="macd_preset" name="macd_preset">
+        {% for p in valid_presets %}
+        <option value="{{ p }}" {% if p == s.MACD_PRESET %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+      <div class="hint">"auto" uses 3,8,9 on 15-min and 8,16,9 on 30-min charts (matching the original Pine/GoCharting scripts), and the custom values below for every other timeframe.</div>
+      <fieldset>
+        <legend>Custom fast / slow / signal (used when preset = custom, or as the fallback for auto)</legend>
+        <div class="row2">
+          <div><label for="macd_fast">Fast</label><input type="number" id="macd_fast" name="macd_fast" min="1" value="{{ s.MACD_CUSTOM_FAST }}"></div>
+          <div><label for="macd_slow">Slow</label><input type="number" id="macd_slow" name="macd_slow" min="1" value="{{ s.MACD_CUSTOM_SLOW }}"></div>
+          <div><label for="macd_signal">Signal</label><input type="number" id="macd_signal" name="macd_signal" min="1" value="{{ s.MACD_CUSTOM_SIGNAL }}"></div>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="card">
+      <h2>RSI, EMA &amp; Bollinger Band</h2>
+      <div class="row2">
+        <div><label for="rsi_length">RSI length</label><input type="number" id="rsi_length" name="rsi_length" min="1" value="{{ s.RSI_LENGTH }}"></div>
+        <div><label for="rsi_smooth">RSI smoothing length</label><input type="number" id="rsi_smooth" name="rsi_smooth" min="1" value="{{ s.RSI_SMOOTH_LENGTH }}"></div>
+        <div><label for="ema_length">EMA length</label><input type="number" id="ema_length" name="ema_length" min="1" value="{{ s.EMA_LENGTH }}"></div>
+        <div><label for="bb_length">Bollinger Band length</label><input type="number" id="bb_length" name="bb_length" min="1" value="{{ s.BB_LENGTH }}"></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" type="submit">Save settings</button>
+      <span class="hint">Applies immediately, no server restart needed.</span>
+    </div>
+  </form>
+
+  <div class="card">
+    <h2>Alerts</h2>
+    {% if telegram_enabled %}
+    <p class="hint" style="color:var(--green); font-weight:600;">Telegram is configured ✓ — you'll get a message the moment a Bullish/Bearish signal fires on any watchlist symbol.</p>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="test-alert-btn">Send test alert</button>
+      <span class="hint" id="test-alert-result"></span>
+    </div>
+    {% else %}
+    <p class="hint">Not set up yet. Alerts still show as an in-page banner + sound whenever the dashboard tab is open, but to get a push notification on your phone even when the app is closed, set up a free Telegram bot:</p>
+    <ol class="hint" style="padding-left:18px; line-height:1.7;">
+      <li>On Telegram, message <strong>@BotFather</strong>, send <code>/newbot</code>, and follow the prompts. You'll get a token like <code>123456:ABC-...</code> — put that in <code>.env</code> as <code>TELEGRAM_BOT_TOKEN</code>, then restart the app.</li>
+      <li>Send any message (e.g. "hi") to your new bot on Telegram.</li>
+      <li>Come back here and click "Find my chat ID" below — copy the number it shows into <code>.env</code> as <code>TELEGRAM_CHAT_ID</code>, then restart the app once more.</li>
+    </ol>
+    <div class="actions">
+      <button class="btn secondary" type="button" id="find-chat-id-btn" {% if not telegram_token_set %}disabled title="Set TELEGRAM_BOT_TOKEN in .env and restart first"{% endif %}>Find my chat ID</button>
+      <span class="hint" id="chat-id-result"></span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+<script>
+  function wireButton(btnId, resultId, url, method) {
+    var btn = document.getElementById(btnId);
+    var out = document.getElementById(resultId);
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      out.textContent = 'Working…';
+      fetch(url, { method: method || 'GET' }).then(function (r) { return r.json(); }).then(function (data) {
+        btn.disabled = false;
+        if (data.ok) { out.textContent = 'Sent — check Telegram.'; return; }
+        if (data.chat_ids) {
+          out.innerHTML = 'Found: ' + data.chat_ids.map(function (c) {
+            return '<code>' + c.chat_id + '</code> (' + c.from + ')';
+          }).join(', ');
+          return;
+        }
+        out.textContent = data.error || 'Something went wrong.';
+      }).catch(function () {
+        btn.disabled = false;
+        out.textContent = 'Could not reach the server.';
+      });
+    });
+  }
+  wireButton('test-alert-btn', 'test-alert-result', '/api/alerts/test', 'POST');
+  wireButton('find-chat-id-btn', 'chat-id-result', '/api/alerts/discover-chat-id', 'GET');
+</script>
+</body>
+</html>

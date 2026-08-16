@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ symbol }} — Scanner Chart</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
+    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 18px 28px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
+  header nav a:hover { background: rgba(255,255,255,0.28); }
+  .wrap { max-width: 1100px; margin: 20px auto; padding: 0 16px 50px; }
+  .toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .toolbar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); font-size: 13px; }
+  .legend { font-size: 12px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 14px; margin-bottom: 14px; }
+  .pane-title { font-size: 12px; font-weight: 700; color: var(--navy); margin: 2px 0 6px; }
+  .status { font-size: 13px; color: var(--muted); padding: 30px; text-align: center; }
+  .status.err { color: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{ symbol }}</h1>
+  <nav><a href="/">← Dashboard</a></nav>
+</header>
+<div class="wrap">
+  <div class="toolbar">
+    <label class="legend" for="tf-select">Timeframe:</label>
+    <select id="tf-select">
+      {% for tf in valid_timeframes %}
+      <option value="{{ tf }}" {% if tf == timeframe %}selected{% endif %}>{{ tf }}</option>
+      {% endfor %}
+    </select>
+    <span class="legend" id="macd-legend"></span>
+  </div>
+
+  <div id="status" class="status">Loading chart…</div>
+
+  <div id="charts" style="display:none;">
+    <div class="card">
+      <div class="pane-title">Price · candlesticks · 9 EMA (orange) · Bollinger mid (purple)</div>
+      <div id="price-chart"></div>
+    </div>
+    <div class="card">
+      <div class="pane-title">RSI(9) (blue) vs smoothing line (orange)</div>
+      <div id="rsi-chart"></div>
+    </div>
+    <div class="card">
+      <div class="pane-title">MACD (blue) vs signal (orange) &middot; histogram</div>
+      <div id="macd-chart"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const symbol = {{ symbol | tojson }};
+let priceChart, rsiChart, macdChart;
+let syncing = false;
+
+function makeChart(container, height) {
+  return LightweightCharts.createChart(container, {
+    height: height,
+    autoSize: true,
+    layout: { background: { color: '#ffffff' }, textColor: '#333' },
+    grid: { vertLines: { color: '#eef0f3' }, horzLines: { color: '#eef0f3' } },
+    rightPriceScale: { borderColor: '#e2e5ea' },
+    timeScale: { borderColor: '#e2e5ea', timeVisible: true, secondsVisible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+}
+
+function syncTimeScales(charts) {
+  charts.forEach((chart) => {
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (syncing || !range) return;
+      syncing = true;
+      charts.forEach((other) => { if (other !== chart) other.timeScale().setVisibleLogicalRange(range); });
+      syncing = false;
+    });
+  });
+}
+
+async function loadChart(timeframe) {
+  const statusEl = document.getElementById('status');
+  const chartsEl = document.getElementById('charts');
+  statusEl.style.display = 'block';
+  statusEl.className = 'status';
+  statusEl.textContent = 'Loading chart…';
+  chartsEl.style.display = 'none';
+
+  let data;
+  try {
+    const resp = await fetch(`/api/chart/${encodeURIComponent(symbol)}?timeframe=${encodeURIComponent(timeframe)}`);
+    data = await resp.json();
+  } catch (e) {
+    statusEl.className = 'status err';
+    statusEl.textContent = 'Could not reach the server.';
+    return;
+  }
+
+  if (data.error && (!data.candles || !data.candles.length)) {
+    statusEl.className = 'status err';
+    statusEl.textContent = data.error;
+    return;
+  }
+
+  statusEl.style.display = 'none';
+  chartsEl.style.display = 'block';
+  document.getElementById('macd-legend').textContent = data.macd_params ? `MACD params: ${data.macd_params}` : '';
+
+  document.getElementById('price-chart').innerHTML = '';
+  document.getElementById('rsi-chart').innerHTML = '';
+  document.getElementById('macd-chart').innerHTML = '';
+
+  priceChart = makeChart(document.getElementById('price-chart'), 340);
+  const candleSeries = priceChart.addCandlestickSeries({
+    upColor: '#1e7b34', downColor: '#c00000', borderVisible: false,
+    wickUpColor: '#1e7b34', wickDownColor: '#c00000',
+  });
+  candleSeries.setData(data.candles);
+
+  const emaSeries = priceChart.addLineSeries({ color: '#e08a1e', lineWidth: 2, priceLineVisible: false });
+  emaSeries.setData(data.ema9 || []);
+  const bbSeries = priceChart.addLineSeries({ color: '#7b2fbe', lineWidth: 2, priceLineVisible: false });
+  bbSeries.setData(data.bb_mid || []);
+
+  rsiChart = makeChart(document.getElementById('rsi-chart'), 180);
+  const rsiSeries = rsiChart.addLineSeries({ color: '#2e74b5', lineWidth: 2, priceLineVisible: false });
+  rsiSeries.setData(data.rsi || []);
+  const rsiSmoothSeries = rsiChart.addLineSeries({ color: '#e08a1e', lineWidth: 2, priceLineVisible: false });
+  rsiSmoothSeries.setData(data.rsi_smooth || []);
+
+  macdChart = makeChart(document.getElementById('macd-chart'), 180);
+  const histSeries = macdChart.addHistogramSeries({ priceLineVisible: false });
+  histSeries.setData((data.macd_hist || []).map(p => ({
+    time: p.time, value: p.value, color: p.value >= 0 ? '#bfe4cb' : '#f0b7b7',
+  })));
+  const macdSeries = macdChart.addLineSeries({ color: '#2e74b5', lineWidth: 2, priceLineVisible: false });
+  macdSeries.setData(data.macd || []);
+  const macdSigSeries = macdChart.addLineSeries({ color: '#e08a1e', lineWidth: 2, priceLineVisible: false });
+  macdSigSeries.setData(data.macd_signal || []);
+
+  syncTimeScales([priceChart, rsiChart, macdChart]);
+  priceChart.timeScale().fitContent();
+}
+
+document.getElementById('tf-select').addEventListener('change', (e) => loadChart(e.target.value));
+loadChart(document.getElementById('tf-select').value);
+</script>
+</body>
+</html>

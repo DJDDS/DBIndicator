@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner Dashboard</title>
+<meta http-equiv="refresh" content="60">
+<style>
+  :root {
+    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
+    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; font-size: 13px; opacity: 0.8; }
+  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
+  header nav a:hover { background: rgba(255,255,255,0.28); }
+  .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; }
+  .login-btn { display: inline-block; background: var(--accent); color: #fff; text-decoration: none; padding: 10px 18px; border-radius: 6px; font-weight: 600; }
+  .meta-row { display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; background: var(--navy); color: #fff; padding: 9px 10px; font-weight: 600; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  tr.data-row { cursor: pointer; }
+  tr.data-row:hover td { background: #eef3fa; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  tr.data-row:nth-child(even):hover td { background: #eef3fa; }
+  .bull { color: var(--green); font-weight: 600; }
+  .bear { color: var(--red); font-weight: 600; }
+  .signal-pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .signal-pill.bull { background: #e6f4ea; }
+  .signal-pill.bear { background: #fbe7e7; }
+  .signal-pill.none { background: #eee; color: var(--muted); font-weight: 500; }
+  .error-cell { color: var(--muted); font-style: italic; }
+  .warn { background: #fff8e1; border: 1px solid #f4d878; border-radius: 8px; padding: 12px 16px; font-size: 13px; }
+  .chart-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  .chart-link:hover { text-decoration: underline; }
+  .insights-card h2 { margin: 0 0 10px; font-size: 15px; color: var(--navy); }
+  .insights-body { font-size: 13.5px; line-height: 1.6; color: var(--text); white-space: pre-line; }
+  .insights-body.muted, .insights-body.loading { color: var(--muted); font-style: italic; }
+  .ai-badge { display: inline-block; background: var(--navy); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+  #toast-wrap { position: fixed; top: 16px; right: 16px; z-index: 999; display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
+  .toast { background: var(--navy); color: #fff; border-radius: 8px; padding: 12px 14px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); animation: toast-in 0.25s ease-out; }
+  .toast.bear { background: var(--red); }
+  .toast.bull { background: var(--green); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div id="toast-wrap"></div>
+<header>
+  <div>
+    <h1>Scanner Dashboard</h1>
+    <p>RSI + MACD + EMA/Bollinger confluence &middot; {{ timeframe }} &middot; {{ min_required }}-of-3 required</p>
+  </div>
+  <nav><a href="/settings">Settings</a></nav>
+</header>
+<div class="wrap">
+
+  {% if not logged_in %}
+  <div class="card">
+    <p>You're not logged in to Kite for today yet. This is the one manual step each morning
+       (Zerodha requires a fresh login every trading day - see the README) - click below,
+       sign in with your Zerodha password + 2FA, and the dashboard will start scanning
+       automatically.</p>
+    <a class="login-btn" href="{{ login_url }}">Login to Kite</a>
+  </div>
+  {% else %}
+  <div class="meta-row">
+    <span>Logged in for today ✓</span>
+    <span>Last scan: {{ last_scan or "waiting for first scan..." }}</span>
+  </div>
+
+  {% if last_error %}
+  <div class="warn">Last scan hit an error: {{ last_error }}</div>
+  {% endif %}
+
+  <div class="card insights-card">
+    <h2>AI Insights <span class="ai-badge">Claude</span></h2>
+    <div id="insights-body" class="insights-body loading">
+      {% if insights_enabled %}Loading...{% else %}Add ANTHROPIC_API_KEY to your .env to turn this on (see Settings / README).{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Close</th><th>RSI</th><th>MACD</th>
+          <th>EMA/BB</th><th>Aligned</th><th>Signal</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr class="data-row" onclick="window.location='/chart/{{ r.symbol }}'">
+          <td>{{ r.symbol }}</td>
+          {% if r.error %}
+          <td class="error-cell" colspan="7">{{ r.error }}</td>
+          {% else %}
+          <td>{{ r.close }}</td>
+          <td class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
+          <td class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
+          <td class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
+          <td>{{ r.aligned }} / 3</td>
+          <td>
+            {% if r.fresh_signal == 'Bullish' %}
+            <span class="signal-pill bull">▲ Bullish</span>
+            {% elif r.fresh_signal == 'Bearish' %}
+            <span class="signal-pill bear">▼ Bearish</span>
+            {% else %}
+            <span class="signal-pill none">—</span>
+            {% endif %}
+          </td>
+          <td><a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a></td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="8">No scan results yet - first scan runs shortly after login.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="card" style="font-size:12px; color:var(--muted);">
+    This page auto-refreshes every 60 seconds. Backtest results and known limitations from
+    our earlier testing still apply - treat signals as directional input, not investment advice.
+  </div>
+</div>
+<script>
+  // Fetch AI insights asynchronously so a slow/absent API call never
+  // blocks the dashboard itself from rendering.
+  (function () {
+    var el = document.getElementById('insights-body');
+    if (!el) return;
+    fetch('/api/insights').then(function (r) { return r.json(); }).then(function (data) {
+      if (data.text) {
+        el.textContent = data.text;
+        el.classList.remove('loading', 'muted');
+      } else {
+        el.textContent = data.error || 'No insights available right now.';
+        el.classList.remove('loading');
+        el.classList.add('muted');
+      }
+    }).catch(function () {
+      el.textContent = 'Could not load insights.';
+      el.classList.remove('loading');
+      el.classList.add('muted');
+    });
+  })();
+
+  // Poll for fresh Bullish/Bearish signals while this tab is open, and
+  // show a toast + short beep for each new one. This works independent
+  // of Telegram - it's the free in-page alert channel. Telegram (if
+  // configured in .env) additionally pushes to your phone even when
+  // this tab isn't open at all.
+  (function () {
+    var wrap = document.getElementById('toast-wrap');
+    if (!wrap) return;
+    var seen = new Set();
+    var firstLoad = true;
+
+    function beep() {
+      try {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.start(); osc.stop(ctx.currentTime + 0.35);
+      } catch (e) { /* audio not available - ignore */ }
+    }
+
+    function showToast(a) {
+      var t = document.createElement('div');
+      t.className = 'toast ' + (a.direction === 'Bullish' ? 'bull' : 'bear');
+      t.textContent = (a.direction === 'Bullish' ? '▲ ' : '▼ ') + a.symbol + ' — ' + a.direction + ' (' + a.timeframe + ', close ' + a.close + ')';
+      wrap.appendChild(t);
+      setTimeout(function () { t.remove(); }, 12000);
+    }
+
+    function poll() {
+      fetch('/api/alerts/recent').then(function (r) { return r.json(); }).then(function (data) {
+        (data.alerts || []).forEach(function (a) {
+          var key = a.symbol + '|' + a.timeframe + '|' + a.candle_timestamp + '|' + a.direction;
+          if (seen.has(key)) return;
+          seen.add(key);
+          if (!firstLoad) { showToast(a); beep(); }
+        });
+        firstLoad = false;
+      }).catch(function () { /* ignore transient errors */ });
+    }
+    poll();
+    setInterval(poll, 20000);
+  })();
+</script>
+</body>
+</html>
