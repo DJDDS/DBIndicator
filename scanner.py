@@ -6,6 +6,7 @@ is fetched once and cached in memory.
 """
 import datetime as dt
 import logging
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -13,6 +14,19 @@ from .config import settings
 from .indicators import compute_signal
 
 log = logging.getLogger(__name__)
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> dt.datetime:
+    """Current wall-clock time in IST, as a naive datetime (this is what
+    Kite's API expects - it always operates in IST regardless of where
+    the request comes from). Cloud hosts typically run their system
+    clock in UTC, so using plain datetime.now() here would silently
+    shift market-hours checks and historical-data windows by 5.5 hours -
+    e.g. the scanner would think the market was still closed at what is
+    actually mid-afternoon IST."""
+    return dt.datetime.now(_IST).replace(tzinfo=None)
 
 _instrument_cache = {}
 
@@ -77,7 +91,7 @@ def _lookback_days(timeframe: str) -> int:
 
 
 def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
-    to_date = dt.datetime.now()
+    to_date = now_ist()
     from_date = to_date - dt.timedelta(days=_lookback_days(timeframe))
     if timeframe == "4hour":
         interval = "60minute"
@@ -130,7 +144,7 @@ def scan_watchlist(kite) -> list:
 
 
 def is_market_open() -> bool:
-    now = dt.datetime.now()
+    now = now_ist()
     if now.weekday() >= 5:  # Sat/Sun
         return False
     open_t = now.replace(hour=9, minute=15, second=0, microsecond=0)
