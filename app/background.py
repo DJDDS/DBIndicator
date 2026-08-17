@@ -3,12 +3,14 @@ A small background thread that re-runs the scan every SCAN_INTERVAL_SECONDS
 during market hours, so the web page always has a recent result to show
 without the visitor having to trigger anything themselves.
 """
+import json
 import logging
+import os
 import threading
 import time
 
 from . import alerts, kite_auth
-from .config import settings
+from .config import settings, SCAN_RESULTS_FILE
 from .scanner import scan_watchlist, is_market_open, now_ist
 
 log = logging.getLogger(__name__)
@@ -19,6 +21,38 @@ _state = {
     "last_scan": None,
     "last_error": None,
 }
+
+
+def _load_persisted_state():
+    """Restores the last scan from disk on startup, so a restart (a
+    redeploy, the host restarting the container, etc.) doesn't wipe the
+    day's data - after-hours, this is the only thing keeping results on
+    screen for you to still analyse."""
+    if not os.path.exists(SCAN_RESULTS_FILE):
+        return
+    try:
+        with open(SCAN_RESULTS_FILE) as f:
+            saved = json.load(f)
+        if isinstance(saved, dict) and "results" in saved:
+            with _state_lock:
+                _state["results"] = saved.get("results", [])
+                _state["last_scan"] = saved.get("last_scan")
+                _state["last_error"] = None
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+def _save_persisted_state():
+    with _state_lock:
+        snapshot = {"results": _state["results"], "last_scan": _state["last_scan"]}
+    try:
+        with open(SCAN_RESULTS_FILE, "w") as f:
+            json.dump(snapshot, f)
+    except OSError:
+        log.exception("Failed to persist scan results")
+
+
+_load_persisted_state()
 
 
 def get_state():
@@ -36,6 +70,7 @@ def _run_loop():
                     _state["results"] = results
                     _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                     _state["last_error"] = None
+                _save_persisted_state()
                 try:
                     alerts.process_scan_results(results, settings.TIMEFRAME)
                 except Exception:  # noqa: BLE001 - alerting must never break scanning
@@ -46,8 +81,11 @@ def _run_loop():
                     _state["last_error"] = str(exc)
             time.sleep(settings.SCAN_INTERVAL_SECONDS)
         else:
-            # Not logged in yet today, or outside market hours - check
-            # back periodically without hammering anything.
+            # Not logged in yet today, or outside market hours - the
+            # last scan's results (loaded from disk on startup, or still
+            # in memory from earlier today) are left untouched so
+            # there's always something on screen to analyse. Check back
+            # periodically without hammering anything.
             time.sleep(30)
 
 

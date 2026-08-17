@@ -38,6 +38,13 @@ TOKEN_CACHE_FILE = os.getenv("TOKEN_CACHE_FILE", "kite_token_cache.json")
 # Where live-editable scanner settings are persisted (also gitignored).
 SETTINGS_FILE = os.getenv("SETTINGS_FILE", "scanner_settings.json")
 
+# Where the most recent scan results are persisted (also gitignored), so
+# the dashboard still shows the last scan for analysis after market
+# hours even if the app restarts (a redeploy, a host restarting the
+# container, etc.) - without this, results only lived in memory and a
+# restart would silently wipe the day's data.
+SCAN_RESULTS_FILE = os.getenv("SCAN_RESULTS_FILE", "last_scan_results.json")
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
