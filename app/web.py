@@ -69,9 +69,41 @@ def dashboard():
         last_error=state["last_error"],
         timeframe=settings.TIMEFRAME,
         min_required=settings.MIN_REQUIRED,
+        macd_preset=settings.MACD_PRESET,
+        rsi_length=settings.RSI_LENGTH,
+        ema_length=settings.EMA_LENGTH,
+        bb_length=settings.BB_LENGTH,
+        valid_timeframes=config.VALID_TIMEFRAMES,
+        valid_presets=config.VALID_MACD_PRESETS,
+        quick_error=request.args.get("quick_error"),
         insights_enabled=insights_enabled(),
         telegram_enabled=alerts.telegram_enabled(),
     )
+
+
+@app.route("/quick-settings", methods=["POST"])
+@require_dashboard_password
+def quick_settings():
+    """A compact settings panel lives on the dashboard itself (timeframe,
+    MACD preset, RSI/EMA/BB lengths, min-required) so the common tweaks
+    don't need a trip to /settings. Only forwards fields that were
+    actually submitted - unlike the /settings page's form, this never
+    touches WATCHLIST/scan interval/MACD custom values, so there's no
+    risk of accidentally wiping those from a partial submission."""
+    form = request.form
+    field_map = {
+        "timeframe": "TIMEFRAME",
+        "macd_preset": "MACD_PRESET",
+        "rsi_length": "RSI_LENGTH",
+        "ema_length": "EMA_LENGTH",
+        "bb_length": "BB_LENGTH",
+        "min_required": "MIN_REQUIRED",
+    }
+    kwargs = {setting_key: form[form_key] for form_key, setting_key in field_map.items() if form_key in form}
+    errors = settings.update(**kwargs)
+    if errors:
+        return redirect("/?quick_error=" + "; ".join(errors))
+    return redirect("/")
 
 
 @app.route("/kite/callback")
