@@ -2,6 +2,12 @@
 A small background thread that re-runs the scan every SCAN_INTERVAL_SECONDS
 during market hours, so the web page always has a recent result to show
 without the visitor having to trigger anything themselves.
+
+It also runs a second, separate confluence scan specifically on the
+4-hour timeframe (regardless of whatever timeframe the dashboard/Quick
+Settings is currently set to) - 4-hour candles only move every 4 hours,
+so this runs on a much slower cadence than the main scan to avoid
+wasting API calls re-fetching data that hasn't changed.
 """
 import json
 import logging
@@ -15,19 +21,28 @@ from .scanner import scan_watchlist, is_market_open, now_ist
 
 log = logging.getLogger(__name__)
 
+# How often (seconds) to re-run the dedicated 4-hour scan. This is
+# intentionally independent of settings.SCAN_INTERVAL_SECONDS (the main
+# scan's cadence) since 4-hour candles don't close often enough to
+# justify checking every 2-3 minutes like the main scan does.
+FOUR_HOUR_SCAN_INTERVAL_SECONDS = 900
+
 _state_lock = threading.Lock()
 _state = {
     "results": [],
     "last_scan": None,
     "last_error": None,
+    "results_4h": [],
+    "last_scan_4h": None,
 }
 
 
 def _load_persisted_state():
-    """Restores the last scan from disk on startup, so a restart (a
-    redeploy, the host restarting the container, etc.) doesn't wipe the
-    day's data - after-hours, this is the only thing keeping results on
-    screen for you to still analyse."""
+    """Restores the last scan (both the main timeframe and the 4-hour
+    pass) from disk on startup, so a restart (a redeploy, the host
+    restarting the container, etc.) doesn't wipe the day's data -
+    after-hours, this is the only thing keeping results on screen for
+    you to still analyse."""
     if not os.path.exists(SCAN_RESULTS_FILE):
         return
     try:
@@ -37,6 +52,8 @@ def _load_persisted_state():
             with _state_lock:
                 _state["results"] = saved.get("results", [])
                 _state["last_scan"] = saved.get("last_scan")
+                _state["results_4h"] = saved.get("results_4h", [])
+                _state["last_scan_4h"] = saved.get("last_scan_4h")
                 _state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -44,7 +61,12 @@ def _load_persisted_state():
 
 def _save_persisted_state():
     with _state_lock:
-        snapshot = {"results": _state["results"], "last_scan": _state["last_scan"]}
+        snapshot = {
+            "results": _state["results"],
+            "last_scan": _state["last_scan"],
+            "results_4h": _state["results_4h"],
+            "last_scan_4h": _state["last_scan_4h"],
+        }
     try:
         with open(SCAN_RESULTS_FILE, "w") as f:
             json.dump(snapshot, f)
@@ -61,6 +83,7 @@ def get_state():
 
 
 def _run_loop():
+    last_4h_run = 0.0
     while True:
         kite = kite_auth.get_kite_client()
         if kite is not None and is_market_open():
@@ -70,7 +93,6 @@ def _run_loop():
                     _state["results"] = results
                     _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                     _state["last_error"] = None
-                _save_persisted_state()
                 try:
                     alerts.process_scan_results(results, settings.TIMEFRAME)
                 except Exception:  # noqa: BLE001 - alerting must never break scanning
@@ -79,6 +101,26 @@ def _run_loop():
                 log.exception("Background scan failed")
                 with _state_lock:
                     _state["last_error"] = str(exc)
+
+            now_monotonic = time.monotonic()
+            if now_monotonic - last_4h_run >= FOUR_HOUR_SCAN_INTERVAL_SECONDS:
+                try:
+                    # OI doesn't vary by timeframe (it's the same
+                    # futures-contract value regardless), so skip
+                    # re-fetching it here - the main scan above already has it.
+                    results_4h = scan_watchlist(kite, timeframe="4hour", with_oi=False)
+                    with _state_lock:
+                        _state["results_4h"] = results_4h
+                        _state["last_scan_4h"] = now_ist().isoformat(timespec="seconds")
+                    try:
+                        alerts.process_scan_results(results_4h, "4hour")
+                    except Exception:  # noqa: BLE001
+                        log.exception("4-hour alert processing failed")
+                except Exception:  # noqa: BLE001 - never let the 4H pass break the main scan
+                    log.exception("4-hour background scan failed")
+                last_4h_run = now_monotonic
+
+            _save_persisted_state()
             time.sleep(settings.SCAN_INTERVAL_SECONDS)
         else:
             # Not logged in yet today, or outside market hours - the

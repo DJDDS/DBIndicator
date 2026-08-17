@@ -163,7 +163,7 @@
       <thead>
         <tr>
           <th>Symbol</th><th>Close</th><th>RSI</th><th>MACD</th>
-          <th>EMA/BB</th><th>Aligned</th><th>Signal</th><th></th>
+          <th>EMA/BB</th><th>OI</th><th>Aligned</th><th>Signal</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -171,12 +171,13 @@
         <tr class="data-row" onclick="window.location='/chart/{{ r.symbol }}'">
           <td>{{ r.symbol }}</td>
           {% if r.error %}
-          <td class="error-cell" colspan="7">{{ r.error }}</td>
+          <td class="error-cell" colspan="8">{{ r.error }}</td>
           {% else %}
           <td>{{ r.close }}</td>
           <td class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
           <td class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
           <td class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
+          <td>{{ '{:,}'.format(r.oi) if r.oi is not none else '—' }}</td>
           <td>{{ r.aligned }} / 3</td>
           <td>
             {% if r.fresh_signal == 'Bullish' %}
@@ -191,10 +192,57 @@
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="8">No scan results yet - first scan runs shortly after login.</td></tr>
+        <tr><td colspan="9">No scan results yet - first scan runs shortly after login.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 4px;font-size:15px;color:var(--navy);">4-Hour Confluence</h2>
+    <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
+      A separate scan on the 4-hour timeframe, refreshed roughly every 15 minutes regardless of
+      your Quick Settings timeframe above - useful as a bigger-picture check alongside your
+      main {{ timeframe }} scan. Last 4-hour scan: {{ last_scan_4h or "waiting for first scan..." }}
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Close</th><th>RSI</th><th>MACD</th>
+          <th>EMA/BB</th><th>Aligned</th><th>Signal</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in results_4h %}
+        {% if not r.error and r.aligned >= min_required %}
+        <tr class="data-row" onclick="window.location='/chart/{{ r.symbol }}?timeframe=4hour'">
+          <td>{{ r.symbol }}</td>
+          <td>{{ r.close }}</td>
+          <td class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
+          <td class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
+          <td class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
+          <td>{{ r.aligned }} / 3</td>
+          <td>
+            {% if r.fresh_signal == 'Bullish' %}
+            <span class="signal-pill bull">▲ Bullish</span>
+            {% elif r.fresh_signal == 'Bearish' %}
+            <span class="signal-pill bear">▼ Bearish</span>
+            {% else %}
+            <span class="signal-pill none">—</span>
+            {% endif %}
+          </td>
+          <td><a class="chart-link" href="/chart/{{ r.symbol }}?timeframe=4hour" onclick="event.stopPropagation()">Chart →</a></td>
+        </tr>
+        {% endif %}
+        {% else %}
+        <tr><td colspan="8">No 4-hour scan results yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p style="margin:10px 0 0;font-size:12px;color:var(--muted);">
+      Only showing stocks currently at {{ min_required }}-of-3 or better alignment on the
+      4-hour timeframe - everything else is filtered out of this view to keep it focused.
+    </p>
   </div>
   {% endif %}
 

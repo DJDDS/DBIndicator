@@ -39,6 +39,7 @@ _NON_STOCK_FNO_NAMES = {
 }
 
 _fno_cache = {"date": None, "symbols": []}
+_fut_map_cache = {"date": None, "map": {}}
 
 
 def _load_instrument_map(kite):
@@ -75,6 +76,71 @@ def get_fno_stock_list(kite) -> list:
         _fno_cache["date"] = today
         _fno_cache["symbols"] = symbols
     return symbols
+
+
+def _load_current_fut_map(kite) -> dict:
+    """Maps each F&O-eligible stock's underlying name (e.g. "RELIANCE")
+    to its nearest-expiry (current month) NFO futures trading symbol
+    (e.g. "RELIANCE26AUGFUT"). Open Interest lives on the futures
+    contract, not the underlying cash-market stock, so this is what
+    fetch_oi_map() uses to know which instrument to actually query.
+    Cached for the day since the near-month contract only rolls over
+    once a month, on expiry."""
+    today = dt.date.today()
+    if _fut_map_cache["date"] == today.isoformat() and _fut_map_cache["map"]:
+        return _fut_map_cache["map"]
+    instruments = kite.instruments("NFO")
+    nearest = {}
+    for row in instruments:
+        if row.get("instrument_type") != "FUT":
+            continue
+        name = (row.get("name") or "").strip()
+        expiry = row.get("expiry")
+        if not name or name.upper() in _NON_STOCK_FNO_NAMES:
+            continue
+        if not expiry or expiry < today:
+            continue
+        current = nearest.get(name)
+        if current is None or expiry < current[0]:
+            nearest[name] = (expiry, row["tradingsymbol"])
+    fut_map = {name: symbol for name, (_, symbol) in nearest.items()}
+    if fut_map:
+        _fut_map_cache["date"] = today.isoformat()
+        _fut_map_cache["map"] = fut_map
+    return fut_map
+
+
+def fetch_oi_map(kite, symbols: list) -> dict:
+    """Batch-fetches current Open Interest for the given underlying
+    stock symbols via their near-month futures contract, one quote()
+    call for the whole list (chunked defensively at 400, under Kite's
+    500-per-request limit). Returns {symbol: {"oi", "oi_day_high",
+    "oi_day_low"}} - symbols with no mapped futures contract, or where
+    the quote call fails, are simply omitted rather than breaking the
+    scan."""
+    fut_map = _load_current_fut_map(kite)
+    wanted = {symbol: fut_map[symbol] for symbol in symbols if symbol in fut_map}
+    if not wanted:
+        return {}
+    oi_map = {}
+    keys = list(wanted.items())
+    for i in range(0, len(keys), 400):
+        chunk = keys[i:i + 400]
+        instrument_keys = [f"NFO:{fut_symbol}" for _, fut_symbol in chunk]
+        try:
+            quotes = kite.quote(instrument_keys)
+        except Exception as exc:  # noqa: BLE001 - OI is a bonus field, never fatal
+            log.warning("OI quote fetch failed: %s", exc)
+            continue
+        for symbol, fut_symbol in chunk:
+            q = quotes.get(f"NFO:{fut_symbol}")
+            if q:
+                oi_map[symbol] = {
+                    "oi": q.get("oi"),
+                    "oi_day_high": q.get("oi_day_high"),
+                    "oi_day_low": q.get("oi_day_low"),
+                }
+    return oi_map
 
 
 def _lookback_days(timeframe: str) -> int:
@@ -118,11 +184,22 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
     return df
 
 
-def scan_watchlist(kite) -> list:
+def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
     """Returns a list of per-stock result dicts, or an error dict per
     stock if that symbol's data couldn't be fetched (e.g. bad symbol,
-    rate limit) - one bad symbol never aborts the whole scan."""
+    rate limit) - one bad symbol never aborts the whole scan.
+
+    timeframe defaults to the configured settings.TIMEFRAME, but can be
+    overridden - e.g. the background scanner also runs a dedicated
+    4-hour pass regardless of what timeframe the dashboard is set to.
+
+    with_oi additionally attaches each stock's current Open Interest
+    (from its near-month futures contract) via one batched quote() call
+    for the whole watchlist, so it costs a single extra request per
+    scan rather than one per stock."""
+    timeframe = timeframe or settings.TIMEFRAME
     instruments = _load_instrument_map(kite)
+    oi_map = fetch_oi_map(kite, settings.WATCHLIST) if with_oi else {}
     results = []
     for symbol in settings.WATCHLIST:
         token = instruments.get(symbol)
@@ -130,12 +207,17 @@ def scan_watchlist(kite) -> list:
             results.append({"symbol": symbol, "error": "symbol not found on NSE"})
             continue
         try:
-            df = fetch_candles(kite, token, settings.TIMEFRAME)
+            df = fetch_candles(kite, token, timeframe)
             if df.empty:
                 results.append({"symbol": symbol, "error": "no candle data returned"})
                 continue
-            signal = compute_signal(df, settings.TIMEFRAME)
+            signal = compute_signal(df, timeframe)
             signal["symbol"] = symbol
+            oi = oi_map.get(symbol)
+            if oi:
+                signal["oi"] = oi["oi"]
+                signal["oi_day_high"] = oi["oi_day_high"]
+                signal["oi_day_low"] = oi["oi_day_low"]
             results.append(signal)
         except Exception as exc:  # noqa: BLE001 - keep scanning the rest of the watchlist
             log.warning("Scan failed for %s: %s", symbol, exc)
