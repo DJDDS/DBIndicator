@@ -123,6 +123,22 @@
         <input id="qs-rsi" type="number" name="rsi_length" value="{{ rsi_length }}" min="1">
       </div>
       <div class="qs-field">
+        <label for="qs-rsi-smooth">RSI smoothing (SMA)</label>
+        <input id="qs-rsi-smooth" type="number" name="rsi_smooth_length" value="{{ rsi_smooth_length }}" min="1">
+      </div>
+      <div class="qs-field">
+        <label for="qs-macd-fast">MACD fast</label>
+        <input id="qs-macd-fast" type="number" name="macd_fast" value="{{ macd_fast }}" min="1">
+      </div>
+      <div class="qs-field">
+        <label for="qs-macd-slow">MACD slow</label>
+        <input id="qs-macd-slow" type="number" name="macd_slow" value="{{ macd_slow }}" min="1">
+      </div>
+      <div class="qs-field">
+        <label for="qs-macd-signal">MACD signal</label>
+        <input id="qs-macd-signal" type="number" name="macd_signal" value="{{ macd_signal }}" min="1">
+      </div>
+      <div class="qs-field">
         <label for="qs-ema">EMA length</label>
         <input id="qs-ema" type="number" name="ema_length" value="{{ ema_length }}" min="1">
       </div>
@@ -132,7 +148,7 @@
       </div>
       <button type="submit" class="qs-apply-btn">Apply</button>
     </form>
-    <p class="qs-note">Changes apply immediately, no restart needed. Watchlist, MACD custom values, and scan interval are on the <a href="/settings">Settings page</a>.</p>
+    <p class="qs-note">Changes apply immediately, no restart needed. MACD custom fast/slow/signal only take effect when MACD preset above is set to "custom". Watchlist and scan interval are on the <a href="/settings">Settings page</a>.</p>
   </div>
 
   <div class="card insights-card">
