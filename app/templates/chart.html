@@ -65,14 +65,40 @@ const symbol = {{ symbol | tojson }};
 let priceChart, rsiChart, macdChart;
 let syncing = false;
 
-function makeChart(container, height) {
+const INTRADAY_TIMEFRAMES = ['15minute', '30minute', '60minute', '4hour'];
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// Lightweight Charts' default tick labels switch to bare calendar dates
+// ("6", "7", "10"...) once you're zoomed out past a day or two, which
+// reads fine for daily/weekly charts but is ambiguous for intraday
+// timeframes - you can't tell which day a lone "09:30" belongs to. For
+// intraday timeframes we always show date+time together on every tick,
+// and always show the full date+time on hover regardless of zoom.
+function makeChart(container, height, intraday) {
   return LightweightCharts.createChart(container, {
     height: height,
     autoSize: true,
     layout: { background: { color: '#ffffff' }, textColor: '#333' },
     grid: { vertLines: { color: '#eef0f3' }, horzLines: { color: '#eef0f3' } },
     rightPriceScale: { borderColor: '#e2e5ea' },
-    timeScale: { borderColor: '#e2e5ea', timeVisible: true, secondsVisible: false },
+    timeScale: {
+      borderColor: '#e2e5ea',
+      timeVisible: true,
+      secondsVisible: false,
+      tickMarkFormatter: (time) => {
+        const d = new Date(time * 1000);
+        const dateStr = `${pad2(d.getDate())} ${d.toLocaleString('en-US', { month: 'short' })}`;
+        return intraday ? `${dateStr} ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : dateStr;
+      },
+    },
+    localization: {
+      timeFormatter: (time) => {
+        const d = new Date(time * 1000);
+        const dateStr = `${pad2(d.getDate())} ${d.toLocaleString('en-US', { month: 'short' })} ${d.getFullYear()}`;
+        return intraday ? `${dateStr}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : dateStr;
+      },
+    },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   });
 }
@@ -120,7 +146,8 @@ async function loadChart(timeframe) {
   document.getElementById('rsi-chart').innerHTML = '';
   document.getElementById('macd-chart').innerHTML = '';
 
-  priceChart = makeChart(document.getElementById('price-chart'), 340);
+  const intraday = INTRADAY_TIMEFRAMES.includes(timeframe);
+  priceChart = makeChart(document.getElementById('price-chart'), 340, intraday);
   const candleSeries = priceChart.addCandlestickSeries({
     upColor: '#1e7b34', downColor: '#c00000', borderVisible: false,
     wickUpColor: '#1e7b34', wickDownColor: '#c00000',
@@ -132,13 +159,13 @@ async function loadChart(timeframe) {
   const bbSeries = priceChart.addLineSeries({ color: '#7b2fbe', lineWidth: 2, priceLineVisible: false });
   bbSeries.setData(data.bb_mid || []);
 
-  rsiChart = makeChart(document.getElementById('rsi-chart'), 180);
+  rsiChart = makeChart(document.getElementById('rsi-chart'), 180, intraday);
   const rsiSeries = rsiChart.addLineSeries({ color: '#2e74b5', lineWidth: 2, priceLineVisible: false });
   rsiSeries.setData(data.rsi || []);
   const rsiSmoothSeries = rsiChart.addLineSeries({ color: '#e08a1e', lineWidth: 2, priceLineVisible: false });
   rsiSmoothSeries.setData(data.rsi_smooth || []);
 
-  macdChart = makeChart(document.getElementById('macd-chart'), 180);
+  macdChart = makeChart(document.getElementById('macd-chart'), 180, intraday);
   const histSeries = macdChart.addHistogramSeries({ priceLineVisible: false });
   histSeries.setData((data.macd_hist || []).map(p => ({
     time: p.time, value: p.value, color: p.value >= 0 ? '#bfe4cb' : '#f0b7b7',
