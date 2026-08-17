@@ -6,11 +6,10 @@ without the visitor having to trigger anything themselves.
 import logging
 import threading
 import time
-from datetime import datetime
 
 from . import alerts, kite_auth
 from .config import settings
-from .scanner import scan_watchlist, is_market_open
+from .scanner import scan_watchlist, is_market_open, now_ist
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ def _run_loop():
                 results = scan_watchlist(kite)
                 with _state_lock:
                     _state["results"] = results
-                    _state["last_scan"] = datetime.now().isoformat(timespec="seconds")
+                    _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                     _state["last_error"] = None
                 try:
                     alerts.process_scan_results(results, settings.TIMEFRAME)
