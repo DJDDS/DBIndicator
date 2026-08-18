@@ -69,18 +69,43 @@
   .oi-down { color: var(--red); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
   .oi-trend-warn { color: #b45309; font-weight: 700; }
   tr.data-row.filtered-out { display: none; }
-  .alert-toggle-btn { background: var(--accent); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
-  .alert-toggle-btn:hover { background: #245d8f; }
-  .alert-toggle-btn.enabled { background: var(--green); cursor: default; }
-  .alert-toggle-btn.blocked { background: var(--red); cursor: default; }
-  .alert-toggle-btn:disabled { opacity: 0.9; }
-  .match-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .match-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; text-decoration: none; font-size: 13px; font-weight: 700; }
+  /* Desktop-alert toggle switch. Once a browser grants Notification
+     permission it can't be revoked again from JS - only through the
+     browser's own site settings - so "off" here means an in-app mute
+     (stored in localStorage, since the page reloads every 60s and an
+     in-memory flag would be forgotten) rather than actually withdrawing
+     the OS permission. */
+  .alert-toggle-wrap { display: flex; align-items: center; gap: 8px; }
+  .alert-toggle-label { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .toggle-switch { position: relative; width: 42px; height: 23px; border-radius: 999px; border: none; background: #c7ccd4; cursor: pointer; padding: 0; flex-shrink: 0; transition: background 0.15s; }
+  .toggle-switch .toggle-knob { position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+  .toggle-switch.on { background: var(--green); }
+  .toggle-switch.on .toggle-knob { left: 21px; }
+  .toggle-switch.blocked { background: var(--red); cursor: not-allowed; opacity: 0.75; }
+  .toggle-switch.unsupported { background: #d8dbe0; cursor: not-allowed; opacity: 0.6; }
+
+  /* Matching Now - split into Bullish/Bearish columns with a scroll cap
+     so a big watchlist doesn't turn into a wall of chips. */
+  .mn-header-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+  .mn-counts { display: flex; gap: 12px; font-size: 12px; font-weight: 700; }
+  .mn-counts .bull { color: var(--green); }
+  .mn-counts .bear { color: var(--red); }
+  .mn-toolbar { margin: 10px 0 14px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .mn-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 640px) { .mn-columns { grid-template-columns: 1fr; } }
+  .mn-col-title { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
+  .mn-col-title.bull { color: var(--green); }
+  .mn-col-title.bear { color: var(--red); }
+  .mn-chip-scroll { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; max-height: 260px; overflow-y: auto; padding-right: 4px; }
+  .match-chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 999px; text-decoration: none; font-size: 12.5px; font-weight: 700; }
   .match-chip.bull { background: #e6f4ea; color: var(--green); }
   .match-chip.bear { background: #fbe7e7; color: var(--red); }
   .match-chip.bull:hover { background: #d7ecdd; }
   .match-chip.bear:hover { background: #f7d9d9; }
-  .match-chip-close { font-weight: 500; opacity: 0.75; }
+  .match-chip.moderate { opacity: 0.62; }
+  .match-chip-close { font-weight: 500; opacity: 0.8; }
+  .match-chip.hidden-by-strict { display: none; }
+  .mn-empty { margin: 0; font-size: 13px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -90,7 +115,10 @@
     <h1>Scanner Dashboard</h1>
     <p>RSI + MACD + EMA/Bollinger confluence &middot; {{ timeframe }} &middot; {{ min_required }}-of-3 required</p>
   </div>
-  <nav><a href="/settings">Settings</a></nav>
+  <nav style="display:flex;gap:8px;">
+    <a href="/oi-screener">OI Screener</a>
+    <a href="/settings">Settings</a>
+  </nav>
 </header>
 <div class="wrap">
 
@@ -106,7 +134,12 @@
   <div class="meta-row">
     <span>Logged in for today ✓</span>
     <span>Last scan: {{ last_scan or "waiting for first scan..." }}</span>
-    <button id="desktop-alert-btn" class="alert-toggle-btn" type="button">🔔 Enable Desktop Alerts</button>
+    <div class="alert-toggle-wrap">
+      <span class="alert-toggle-label" id="desktop-alert-label">Desktop Alerts</span>
+      <button id="desktop-alert-toggle" class="toggle-switch" type="button" role="switch" aria-checked="false" title="Desktop Alerts">
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
   </div>
 
   {% if last_error %}
@@ -177,27 +210,59 @@
   </div>
 
   <div class="card">
-    <h2 style="margin:0 0 4px;font-size:15px;color:var(--navy);">Matching Now &middot; {{ timeframe }}</h2>
-    <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
-      Every stock currently at {{ min_required }}-of-3 or better alignment on your main
-      {{ timeframe }} scan - this is the same list a desktop alert (button above) pops for
-      the moment a stock enters it. The full table further down still lists every watchlist
-      stock, matching or not, for reference.
-    </p>
-    <div class="match-chips">
-      {% set ns = namespace(count=0) %}
-      {% for r in results %}
-        {% if not r.error and r.aligned >= min_required %}
-          {% set ns.count = ns.count + 1 %}
-          <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-            {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}
-            <span class="match-chip-close">{{ r.close }}</span>
-          </a>
-        {% endif %}
-      {% endfor %}
+    {% set ns = namespace(bull=0, bear=0) %}
+    {% for r in results %}
+      {% if not r.error and r.aligned >= min_required %}
+        {% if r.direction == 'Bullish' %}{% set ns.bull = ns.bull + 1 %}{% else %}{% set ns.bear = ns.bear + 1 %}{% endif %}
+      {% endif %}
+    {% endfor %}
+    <div class="mn-header-row">
+      <h2 style="margin:0;font-size:15px;color:var(--navy);">Matching Now &middot; {{ timeframe }}</h2>
+      <div class="mn-counts">
+        <span class="bull">▲ {{ ns.bull }} Bullish</span>
+        <span class="bear">▼ {{ ns.bear }} Bearish</span>
+      </div>
     </div>
-    {% if ns.count == 0 %}
-    <p style="margin:0;font-size:13px;color:var(--muted);">Nothing matching right now.</p>
+    <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">
+      Every stock currently at {{ min_required }}-of-3 or better alignment on your main
+      {{ timeframe }} scan - the same list a desktop alert fires for the moment a stock
+      enters it. Solid chips are 3-of-3 (strongest); faded chips are exactly {{ min_required }}-of-3.
+      The full table further down still lists every watchlist stock, matching or not.
+    </p>
+    <div class="mn-toolbar">
+      <label><input type="checkbox" id="mn-strict-only" onchange="mnApplyStrict()"> Show 3-of-3 only</label>
+    </div>
+    {% if ns.bull == 0 and ns.bear == 0 %}
+    <p class="mn-empty">Nothing matching right now.</p>
+    {% else %}
+    <div class="mn-columns">
+      <div>
+        <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
+        <div class="mn-chip-scroll" id="mn-bull-scroll">
+          {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+            {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
+            <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+              ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+            </a>
+            {% endif %}
+          {% endfor %}
+          {% if ns.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+        </div>
+      </div>
+      <div>
+        <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
+        <div class="mn-chip-scroll" id="mn-bear-scroll">
+          {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+            {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
+            <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+              ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+            </a>
+            {% endif %}
+          {% endfor %}
+          {% if ns.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+        </div>
+      </div>
+    </div>
     {% endif %}
   </div>
 
@@ -396,40 +461,67 @@
 
   // Desktop (OS-level) notification popups - separate from, and in
   // addition to, the in-page toast below. These show up outside the
-  // browser window itself (as a native OS notification), so you'll see
-  // them even if the dashboard tab isn't the one focused - unlike the
-  // toast, which only shows while you're looking at this tab. Browsers
-  // require an explicit click to grant this (it can't be requested
-  // silently on page load), so there's a button for it in the header.
+  // browser window itself, so you'll see them even if the dashboard tab
+  // isn't the one focused - unlike the toast, which only shows while
+  // you're looking at this tab.
+  //
+  // This is a real ON/OFF toggle, but with one browser quirk worth
+  // knowing: once you grant OS notification permission, JS can never
+  // revoke it again - only the browser's own site settings can. So
+  // "off" here mutes in-app (stored in localStorage, since the page
+  // reloads every 60s and a plain JS variable would forget within a
+  // minute) rather than withdrawing the OS permission itself. Clicking
+  // it again un-mutes instantly, no re-prompt needed.
   (function () {
-    var btn = document.getElementById('desktop-alert-btn');
-    if (!btn) return;
+    var toggle = document.getElementById('desktop-alert-toggle');
+    var label = document.getElementById('desktop-alert-label');
+    if (!toggle) return;
+
     if (!('Notification' in window)) {
-      btn.textContent = 'Desktop alerts not supported in this browser';
-      btn.disabled = true;
+      toggle.className = 'toggle-switch unsupported';
+      toggle.title = 'Desktop alerts not supported in this browser';
+      label.textContent = 'Desktop Alerts (unsupported)';
+      window.__showDesktopAlert = function () {};
       return;
     }
-    function refreshBtn() {
-      if (Notification.permission === 'granted') {
-        btn.textContent = '🔔 Desktop Alerts On';
-        btn.className = 'alert-toggle-btn enabled';
-        btn.disabled = true;
-      } else if (Notification.permission === 'denied') {
-        btn.textContent = '🔕 Desktop Alerts Blocked - check your browser\'s site settings';
-        btn.className = 'alert-toggle-btn blocked';
-        btn.disabled = true;
-      } else {
-        btn.textContent = '🔔 Enable Desktop Alerts';
-        btn.className = 'alert-toggle-btn';
-        btn.disabled = false;
-      }
+
+    function isMuted() {
+      return localStorage.getItem('desktopAlertsMuted') === '1';
     }
-    btn.addEventListener('click', function () {
-      Notification.requestPermission().then(refreshBtn);
+
+    function render() {
+      if (Notification.permission === 'denied') {
+        toggle.className = 'toggle-switch blocked';
+        toggle.setAttribute('aria-checked', 'false');
+        toggle.title = "Blocked - check this site's notification permission in your browser settings";
+        label.textContent = 'Desktop Alerts (blocked)';
+        return;
+      }
+      var on = Notification.permission === 'granted' && !isMuted();
+      toggle.classList.toggle('on', on);
+      toggle.classList.remove('blocked', 'unsupported');
+      toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+      toggle.title = on ? 'Desktop alerts on - click to mute' : 'Click to enable desktop alerts';
+      label.textContent = 'Desktop Alerts';
+    }
+
+    toggle.addEventListener('click', function () {
+      if (Notification.permission === 'denied') return; // nothing JS can do - must be unblocked in browser settings
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().then(function (perm) {
+          if (perm === 'granted') localStorage.setItem('desktopAlertsMuted', '0');
+          render();
+        });
+        return;
+      }
+      // Already granted at the OS level - just flip the in-app mute flag.
+      localStorage.setItem('desktopAlertsMuted', isMuted() ? '0' : '1');
+      render();
     });
-    refreshBtn();
+
+    render();
     window.__showDesktopAlert = function (a) {
-      if (Notification.permission !== 'granted') return;
+      if (Notification.permission !== 'granted' || isMuted()) return;
       try {
         var n = new Notification((a.direction === 'Bullish' ? '▲ ' : '▼ ') + a.symbol + ' — ' + a.direction, {
           body: a.timeframe + ' scan · close ' + a.close,
@@ -566,6 +658,16 @@
 
   makeSortable('main-table');
   makeSortable('fourh-table');
+
+  // "Show 3-of-3 only" checkbox above the Matching Now chips - hides
+  // the faded (exactly min_required-of-3) chips without a page reload.
+  function mnApplyStrict() {
+    var box = document.getElementById('mn-strict-only');
+    if (!box) return;
+    document.querySelectorAll('.match-chip.moderate').forEach(function (chip) {
+      chip.classList.toggle('hidden-by-strict', box.checked);
+    });
+  }
 </script>
 </body>
 </html>

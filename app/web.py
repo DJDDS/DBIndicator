@@ -87,6 +87,35 @@ def dashboard():
     )
 
 
+@app.route("/oi-screener")
+@require_dashboard_password
+def oi_screener():
+    state = get_state()
+    return render_template(
+        "oi_screener.html",
+        logged_in=kite_auth.is_logged_in_today(),
+        results=state["results"],
+        last_scan=state["last_scan"],
+        timeframe=settings.TIMEFRAME,
+        min_required=settings.MIN_REQUIRED,
+    )
+
+
+@app.route("/api/oi-screener")
+@require_dashboard_password
+def api_oi_screener():
+    """Backs the OI Screener page's live auto-refresh - polled every
+    ~20s from the browser so the table updates in place without a full
+    page reload (unlike the main dashboard's simple 60s meta-refresh)."""
+    state = get_state()
+    return jsonify({
+        "results": state["results"],
+        "last_scan": state["last_scan"],
+        "min_required": settings.MIN_REQUIRED,
+        "timeframe": settings.TIMEFRAME,
+    })
+
+
 @app.route("/quick-settings", methods=["POST"])
 @require_dashboard_password
 def quick_settings():

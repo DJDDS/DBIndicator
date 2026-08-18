@@ -149,13 +149,14 @@ def classify_oi_trend(history: list) -> dict:
     is moving scan-to-scan:
 
     - change / change_pct: raw move vs. the previous scan
-    - label: Rising/Falling (steady move), Accelerating (bigger move
-      than last scan's, same direction), Turning up/down (direction
-      just flipped), Flat, or New (not enough history yet)
+    - label: "Accelerating" (this move is meaningfully bigger than the
+      last one, same direction), "Stable" (steady move, similar size to
+      the last one), "Weakening" (same direction but noticeably
+      smaller), "Transitional" (direction just flipped), "Flat" (no
+      change), or "New" (not enough history yet to compare)
     - unusual: True if this move is much bigger than this symbol's own
-      recent scan-to-scan moves (>3x the recent average), which can
-      flag a real spike rather than normal drift - independent of
-      whether it's classified Rising/Falling/etc above.
+      recent scan-to-scan moves (>3x the recent average) - a possible
+      spike, tracked independently of the label above.
 
     Callers own building/persisting `history` (background.py keeps one
     per symbol) - this function is a pure calculation over whatever
@@ -173,18 +174,46 @@ def classify_oi_trend(history: list) -> dict:
     unusual = bool(avg_abs) and abs(change) > 3 * avg_abs
 
     prev_change = deltas[-1] if deltas else None
-    if change > 0:
-        label = "Accelerating" if (prev_change is not None and prev_change > 0 and change > prev_change) else (
-            "Rising" if (prev_change is not None and prev_change > 0) else "Turning up"
-        )
-    elif change < 0:
-        label = "Accelerating" if (prev_change is not None and prev_change < 0 and change < prev_change) else (
-            "Falling" if (prev_change is not None and prev_change < 0) else "Turning down"
-        )
-    else:
+    if change == 0:
         label = "Flat"
+    elif prev_change is None or prev_change == 0 or (change > 0) != (prev_change > 0):
+        # No prior move to compare against, or direction just flipped.
+        label = "Stable" if prev_change is None else "Transitional"
+    else:
+        ratio = abs(change) / abs(prev_change)
+        if ratio > 1.3:
+            label = "Accelerating"
+        elif ratio < 0.7:
+            label = "Weakening"
+        else:
+            label = "Stable"
 
     return {"change": change, "change_pct": change_pct, "label": label, "unusual": unusual}
+
+
+def classify_oi_structure(price_chg_pct, oi_chg_pct, threshold: float = 0.05) -> str:
+    """Classic 4-quadrant OI+price read, using today's move in each
+    (since session open, not scan-to-scan): both up is fresh longs
+    being added ("Long Buildup"), both down is existing longs bailing
+    ("Long Unwinding"), price down + OI up is fresh shorts ("Short
+    Buildup"), price up + OI down is shorts covering ("Short
+    Covering"). Moves under `threshold`% in either leg are too small to
+    call confidently, so those come back "Neutral"."""
+    if price_chg_pct is None or oi_chg_pct is None:
+        return None
+    price_up = price_chg_pct > threshold
+    price_down = price_chg_pct < -threshold
+    oi_up = oi_chg_pct > threshold
+    oi_down = oi_chg_pct < -threshold
+    if price_up and oi_up:
+        return "Long Buildup"
+    if price_down and oi_up:
+        return "Short Buildup"
+    if price_up and oi_down:
+        return "Short Covering"
+    if price_down and oi_down:
+        return "Long Unwinding"
+    return "Neutral"
 
 
 def _lookback_days(timeframe: str) -> int:

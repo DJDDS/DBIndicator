@@ -57,6 +57,25 @@ def _cross_down(a, b):
     return (a.shift(1) >= b.shift(1)) & (a < b)
 
 
+_INTRADAY_TIMEFRAMES = ("15minute", "30minute", "60minute", "4hour")
+
+
+def session_vwap(df: pd.DataFrame, timeframe: str):
+    """Volume-weighted average price for just today's candles (resets
+    every session, like a broker terminal's VWAP) - not meaningful on
+    day/week bars, so returns None for those. None also comes back if
+    there's no volume recorded yet for today (e.g. right at open)."""
+    if timeframe not in _INTRADAY_TIMEFRAMES or df.empty:
+        return None
+    last_date = df.index[-1].date()
+    session = df[df.index.map(lambda ts: ts.date()) == last_date]
+    total_vol = session["volume"].sum()
+    if session.empty or not total_vol:
+        return None
+    typical = (session["high"] + session["low"] + session["close"]) / 3
+    return float((typical * session["volume"]).sum() / total_vol)
+
+
 def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     """Computes every indicator series for the full df (used by the
     chart API). Returns a dict of aligned pandas Series/DataFrame plus
@@ -76,6 +95,16 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
 
     ema9 = close.ewm(span=settings.EMA_LENGTH, adjust=False).mean()
     bb_mid = close.rolling(settings.BB_LENGTH).mean()
+    # Same BB_LENGTH you already tune in Quick Settings, extended with a
+    # standard 2-std-dev envelope - used only for the OI Screener's
+    # Breakout/Breakdown column (see compute_signal below), so that
+    # column moves with the same parameter you're already adjusting
+    # rather than a separate hardcoded setting.
+    bb_std = close.rolling(settings.BB_LENGTH).std()
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+
+    vol_avg = df["volume"].rolling(20, min_periods=5).mean()
 
     rsi_up, rsi_dn = _cross_up(rsi_line, rsi_smooth), _cross_down(rsi_line, rsi_smooth)
     macd_up, macd_dn = _cross_up(macd_line, signal_line), _cross_down(macd_line, signal_line)
@@ -90,6 +119,9 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
         "macd_hist": macd_hist,
         "ema9": ema9,
         "bb_mid": bb_mid,
+        "bb_upper": bb_upper,
+        "bb_lower": bb_lower,
+        "vol_avg": vol_avg,
         "rsi_up": rsi_up, "rsi_dn": rsi_dn,
         "macd_up": macd_up, "macd_dn": macd_dn,
         "ema_up": ema_up, "ema_dn": ema_dn,
@@ -128,6 +160,22 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         + int(ema9.iloc[i] > bb_mid.iloc[i])
     )
 
+    vwap = session_vwap(df, timeframe)
+    vs_vwap = None
+    if vwap:
+        vs_vwap = "Above" if close.iloc[i] > vwap else "Below"
+
+    bb_upper, bb_lower = series["bb_upper"], series["bb_lower"]
+    breakout_state = None
+    if pd.notna(bb_upper.iloc[i]) and close.iloc[i] > bb_upper.iloc[i]:
+        breakout_state = "Breakout"
+    elif pd.notna(bb_lower.iloc[i]) and close.iloc[i] < bb_lower.iloc[i]:
+        breakout_state = "Breakdown"
+
+    vol_avg = series["vol_avg"].iloc[i]
+    latest_vol = df["volume"].iloc[i]
+    vol_multiple = round(float(latest_vol / vol_avg), 2) if vol_avg and pd.notna(vol_avg) and vol_avg > 0 else None
+
     return {
         "close": round(float(close.iloc[i]), 2),
         "rsi": round(float(rsi_line.iloc[i]), 1),
@@ -144,4 +192,8 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "direction": "Bullish" if align_count >= 2 else "Bearish",
         "fresh_signal": fresh_signal,
         "timestamp": df.index[i].isoformat(),
+        "vwap": round(vwap, 2) if vwap else None,
+        "vs_vwap": vs_vwap,
+        "breakout_state": breakout_state,
+        "vol_multiple": vol_multiple,
     }

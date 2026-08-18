@@ -17,7 +17,7 @@ import time
 
 from . import alerts, kite_auth
 from .config import settings, SCAN_RESULTS_FILE
-from .scanner import scan_watchlist, is_market_open, now_ist, classify_oi_trend
+from .scanner import scan_watchlist, is_market_open, now_ist, classify_oi_trend, classify_oi_structure
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ _state = {
     "results_4h": [],
     "last_scan_4h": None,
     "oi_history": {},
+    "oi_day_baseline": {},
+    "oi_structure_prev": {},
 }
 
 
@@ -64,6 +66,69 @@ def _apply_oi_trend(results):
         r["oi_unusual"] = trend["unusual"]
 
 
+def _apply_oi_screener_fields(results):
+    """Powers the OI Screener page: for each result, works out today's
+    price/OI move since session open (distinct from _apply_oi_trend's
+    scan-to-scan numbers above), classifies the 4-quadrant OI Structure
+    from that, flags whether that structure just changed this scan
+    ("stage": "New"), and cross-references the existing confluence
+    signal (this symbol's own aligned/direction) plus the separate
+    4-hour scan's direction to mark "positional_qualified" - a stock
+    that isn't just showing an OI structure, but one that agrees with
+    both your short-term confluence signal and the bigger 4-hour trend.
+    Must be called while holding _state_lock, and after _state["results_4h"]
+    is already populated with whatever the most recent 4-hour scan was."""
+    today = now_ist().date().isoformat()
+    baseline = _state["oi_day_baseline"]
+    prev_structure = _state["oi_structure_prev"]
+    four_h_direction = {
+        r4["symbol"]: r4["direction"]
+        for r4 in _state.get("results_4h", [])
+        if not r4.get("error") and r4.get("symbol")
+    }
+
+    for r in results:
+        symbol, oi, close = r.get("symbol"), r.get("oi"), r.get("close")
+        if not symbol or r.get("error"):
+            continue
+
+        base = baseline.get(symbol)
+        if base is None or base.get("date") != today or oi is None or close is None:
+            # First scan of a new trading day (or first time we've ever
+            # seen this symbol, or OI/close briefly unavailable) - reset
+            # today's baseline to whatever we have right now.
+            if oi is not None and close is not None:
+                baseline[symbol] = {"date": today, "oi": oi, "close": close}
+            base = baseline.get(symbol)
+
+        price_chg_pct = oi_chg_pct = None
+        if base and base.get("date") == today and oi is not None and close is not None:
+            if base["close"]:
+                price_chg_pct = (close - base["close"]) / base["close"] * 100
+            if base["oi"]:
+                oi_chg_pct = (oi - base["oi"]) / base["oi"] * 100
+
+        structure = classify_oi_structure(price_chg_pct, oi_chg_pct)
+        r["price_chg_today_pct"] = price_chg_pct
+        r["oi_chg_today_pct"] = oi_chg_pct
+        r["oi_structure"] = structure
+
+        r["stage"] = "New" if structure and prev_structure.get(symbol) not in (None, structure) else None
+        if structure:
+            prev_structure[symbol] = structure
+
+        direction = r.get("direction")
+        aligned = r.get("aligned") or 0
+        structure_agrees = (
+            (direction == "Bullish" and structure == "Long Buildup")
+            or (direction == "Bearish" and structure == "Short Buildup")
+        )
+        four_h_agrees = four_h_direction.get(symbol) == direction
+        r["positional_qualified"] = bool(
+            aligned >= settings.MIN_REQUIRED and structure_agrees and four_h_agrees
+        )
+
+
 def _load_persisted_state():
     """Restores the last scan (both the main timeframe and the 4-hour
     pass) from disk on startup, so a restart (a redeploy, the host
@@ -82,6 +147,8 @@ def _load_persisted_state():
                 _state["results_4h"] = saved.get("results_4h", [])
                 _state["last_scan_4h"] = saved.get("last_scan_4h")
                 _state["oi_history"] = saved.get("oi_history", {})
+                _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
+                _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -95,6 +162,8 @@ def _save_persisted_state():
             "results_4h": _state["results_4h"],
             "last_scan_4h": _state["last_scan_4h"],
             "oi_history": _state["oi_history"],
+            "oi_day_baseline": _state["oi_day_baseline"],
+            "oi_structure_prev": _state["oi_structure_prev"],
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -134,6 +203,7 @@ def _run_loop():
                     results = scan_watchlist(kite)
                     with _state_lock:
                         _apply_oi_trend(results)
+                        _apply_oi_screener_fields(results)
                         _state["results"] = results
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None

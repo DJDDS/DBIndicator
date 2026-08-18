@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OI Screener</title>
+<style>
+  :root {
+    --bg: #0b0e14; --card: #12151f; --border: #232838; --text: #e6e9ef; --muted: #8b93a7;
+    --green: #2ecc71; --red: #ef4444; --accent: #3b82f6; --amber: #f5a524; --navy: #12151f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: #10131c; border-bottom: 1px solid var(--border); padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+  header nav a { color: var(--text); text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.06); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border); }
+  header nav a:hover { background: rgba(255,255,255,0.1); }
+  .wrap { max-width: 1400px; margin: 22px auto; padding: 0 16px 40px; }
+  .tiles { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(4, 1fr); } }
+  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .tile-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+  .tile-value.green { color: var(--green); }
+  .tile-value.red { color: var(--red); }
+  .tile-value.amber { color: var(--amber); }
+  .tile-value.muted { color: var(--muted); }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  .toolbar input, .toolbar select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; }
+  .toolbar input { min-width: 200px; }
+  .toolbar-spacer { flex: 1; }
+  .toolbar-meta { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .live-dot { display: inline-flex; align-items: center; gap: 6px; background: rgba(46,204,113,0.12); color: var(--green); padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .live-dot::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; background: #171b28; color: var(--muted); padding: 10px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; cursor: pointer; user-select: none; }
+  th:hover { color: var(--text); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tr.data-row:hover td { background: rgba(255,255,255,0.03); cursor: pointer; }
+  tr.data-row.filtered-out { display: none; }
+  a.sym-link { color: #6ea8fe; text-decoration: none; font-weight: 700; }
+  a.sym-link:hover { text-decoration: underline; }
+  .green-text { color: var(--green); font-weight: 600; }
+  .red-text { color: var(--red); font-weight: 600; }
+  .muted-text { color: var(--muted); }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: 11.5px; font-weight: 700; }
+  .badge.long-buildup { background: rgba(46,204,113,0.15); color: var(--green); }
+  .badge.short-buildup { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge.short-covering { background: rgba(46,204,113,0.08); color: #7fd8a2; }
+  .badge.long-unwinding { background: rgba(245,165,36,0.12); color: #e0a34e; }
+  .badge.neutral { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .badge.stage-new { background: rgba(59,130,246,0.15); color: #7fb0fb; }
+  .badge.positional { background: rgba(245,165,36,0.15); color: var(--amber); }
+  .accel-accelerating { color: var(--amber); font-weight: 700; }
+  .accel-weakening { color: #d18a4a; }
+  .accel-transitional { color: #6ea8fe; }
+  .accel-stable { color: var(--muted); }
+  .accel-flat, .accel-new { color: var(--muted); font-style: italic; }
+  .unusual-flag { color: var(--amber); font-weight: 700; }
+  .signal-pill { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .signal-pill.bull { background: rgba(46,204,113,0.15); color: var(--green); }
+  .signal-pill.bear { background: rgba(239,68,68,0.15); color: var(--red); }
+  .empty-note { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+  .footnote { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>OI Screener</h1>
+    <p>Open Interest structure &middot; linked to your {{ timeframe }} confluence scan &middot; {{ min_required }}-of-3 required</p>
+  </div>
+  <nav><a href="/">&larr; Dashboard</a></nav>
+</header>
+<div class="wrap">
+
+  {% if not logged_in %}
+  <div class="card" style="padding:20px;">
+    <p style="margin:0;color:var(--muted);">Not logged in to Kite for today yet - log in from the <a href="/" style="color:#6ea8fe;">Dashboard</a> first, then this screener will populate on the next scan.</p>
+  </div>
+  {% else %}
+
+  <div class="tiles" id="tiles">
+    <div class="tile"><div class="tile-label">Total Long Buildup</div><div class="tile-value green" id="tile-long-buildup">—</div></div>
+    <div class="tile"><div class="tile-label">Total Short Buildup</div><div class="tile-value red" id="tile-short-buildup">—</div></div>
+    <div class="tile"><div class="tile-label">Developing Signals</div><div class="tile-value muted" id="tile-developing">—</div></div>
+    <div class="tile"><div class="tile-label">Confirmed Signals</div><div class="tile-value green" id="tile-confirmed">—</div></div>
+    <div class="tile"><div class="tile-label">Positional Qualified</div><div class="tile-value amber" id="tile-positional">—</div></div>
+    <div class="tile"><div class="tile-label">High OI Acceleration</div><div class="tile-value amber" id="tile-accel">—</div></div>
+    <div class="tile"><div class="tile-label">Active Alerts</div><div class="tile-value muted" id="tile-alerts">—</div></div>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="f-symbol" placeholder="🔍 Search symbol...">
+    <select id="f-structure">
+      <option value="">All Structures</option>
+      <option>Long Buildup</option><option>Short Buildup</option>
+      <option>Short Covering</option><option>Long Unwinding</option><option>Neutral</option>
+    </select>
+    <select id="f-accel">
+      <option value="">All Acceleration</option>
+      <option>Accelerating</option><option>Stable</option><option>Weakening</option>
+      <option>Transitional</option><option>Flat</option><option>New</option>
+    </select>
+    <select id="f-vwap">
+      <option value="">vs VWAP: All</option><option>Above</option><option>Below</option>
+    </select>
+    <select id="f-breakout">
+      <option value="">Breakout: All</option><option>Breakout</option><option>Breakdown</option>
+    </select>
+    <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;">
+      <input type="checkbox" id="f-positional-only"> Positional only
+    </label>
+    <div class="toolbar-spacer"></div>
+    <div class="toolbar-meta">
+      <span id="symbol-count">— symbols</span> &middot; <span id="updated-at">not loaded yet</span>
+      <span class="live-dot">Live</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <table id="oi-table">
+      <thead>
+        <tr>
+          <th data-col="0" data-type="text">Symbol</th>
+          <th data-col="1" data-type="num">Price</th>
+          <th data-col="2" data-type="num">Chg %</th>
+          <th data-col="3" data-type="text">OI Structure</th>
+          <th data-col="4" data-type="num" data-default-dir="desc">OI Chg % (Today)</th>
+          <th data-col="5" data-type="text">OI Acceleration</th>
+          <th data-col="6" data-type="num">Vol Multiple</th>
+          <th data-col="7" data-type="text">Stage</th>
+          <th data-col="8" data-type="text">vs VWAP</th>
+          <th data-col="9" data-type="text">Breakout</th>
+          <th data-col="10" data-type="text">Signal</th>
+          <th data-col="11" data-type="text">Positional</th>
+        </tr>
+      </thead>
+      <tbody id="oi-tbody">
+        <tr><td colspan="12" class="empty-note">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="footnote">
+    OI Structure compares today's price move against today's Open Interest move (both since session open): both up
+    is fresh buying (Long Buildup), both down is longs exiting (Long Unwinding), price down with OI up is fresh
+    shorting (Short Buildup), price up with OI down is shorts covering (Short Covering). OI Acceleration compares
+    this scan's OI move to the previous scan's. Breakout/Breakdown uses your Quick Settings BB length (2 std-dev
+    band). Signal and Positional pull directly from your {{ timeframe }} confluence scan and the separate 4-hour
+    scan - Positional only lights up when the OI structure, your {{ timeframe }} signal, and the 4-hour trend all
+    agree. This page refreshes itself roughly every 20 seconds - no need to reload.
+  </p>
+
+  {% endif %}
+</div>
+<script>
+  var minRequired = {{ min_required }};
+  var currentSort = { col: 4, dir: 'desc', type: 'num' };
+  var latestResults = [];
+
+  function fmtPct(v) {
+    if (v === null || v === undefined) return '—';
+    return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+  }
+
+  function structureClass(s) {
+    return { 'Long Buildup': 'long-buildup', 'Short Buildup': 'short-buildup',
+      'Short Covering': 'short-covering', 'Long Unwinding': 'long-unwinding', 'Neutral': 'neutral' }[s] || 'neutral';
+  }
+  function accelClass(s) {
+    return { 'Accelerating': 'accel-accelerating', 'Stable': 'accel-stable', 'Weakening': 'accel-weakening',
+      'Transitional': 'accel-transitional', 'Flat': 'accel-flat', 'New': 'accel-new' }[s] || 'accel-new';
+  }
+
+  function rowHtml(r) {
+    var signalDir = (!r.error && r.aligned >= minRequired) ? r.direction : null;
+    var priceChg = r.price_chg_today_pct, oiChg = r.oi_chg_today_pct;
+    var structure = r.oi_structure || 'Neutral';
+    var accel = r.oi_trend_label || 'New';
+    return '' +
+      '<td data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
+      '<td data-sort="' + (r.close != null ? r.close : '') + '">' + (r.close != null ? r.close.toLocaleString('en-IN') : '—') + '</td>' +
+      '<td data-sort="' + (priceChg != null ? priceChg : '') + '" class="' + (priceChg > 0 ? 'green-text' : priceChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(priceChg) + '</td>' +
+      '<td data-sort="' + structure + '"><span class="badge ' + structureClass(structure) + '">' + structure + '</span></td>' +
+      '<td data-sort="' + (oiChg != null ? oiChg : '') + '" class="' + (oiChg > 0 ? 'green-text' : oiChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(oiChg) + '</td>' +
+      '<td data-sort="' + accel + '" class="' + accelClass(accel) + '">' + (r.oi_unusual ? '⚠ ' : '') + accel + '</td>' +
+      '<td data-sort="' + (r.vol_multiple != null ? r.vol_multiple : '') + '">' + (r.vol_multiple != null ? r.vol_multiple + 'x' : '—') + '</td>' +
+      '<td data-sort="' + (r.stage || '') + '">' + (r.stage ? '<span class="badge stage-new">New</span>' : '<span class="muted-text">—</span>') + '</td>' +
+      '<td data-sort="' + (r.vs_vwap || '') + '" class="' + (r.vs_vwap === 'Above' ? 'green-text' : r.vs_vwap === 'Below' ? 'red-text' : 'muted-text') + '">' + (r.vs_vwap || '—') + '</td>' +
+      '<td data-sort="' + (r.breakout_state || '') + '" class="' + (r.breakout_state === 'Breakout' ? 'green-text' : r.breakout_state === 'Breakdown' ? 'red-text' : 'muted-text') + '">' + (r.breakout_state ? (r.breakout_state === 'Breakout' ? '▲ ' : '▼ ') + r.breakout_state : '—') + '</td>' +
+      '<td data-sort="' + (signalDir || '') + '">' + (signalDir ? '<span class="signal-pill ' + (signalDir === 'Bullish' ? 'bull">▲ Bullish' : 'bear">▼ Bearish') + '</span>' : '<span class="muted-text">—</span>') + '</td>' +
+      '<td data-sort="' + (r.positional_qualified ? '1' : '0') + '">' + (r.positional_qualified ? '<span class="badge positional">⭐ Qualified</span>' : '<span class="muted-text">—</span>') + '</td>';
+  }
+
+  function buildRows(results) {
+    var tbody = document.getElementById('oi-tbody');
+    var rows = results.filter(function (r) { return !r.error; });
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="12" class="empty-note">No scan results yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      return '<tr class="data-row" data-symbol="' + r.symbol + '" data-structure="' + (r.oi_structure || '') +
+        '" data-accel="' + (r.oi_trend_label || '') + '" data-vwap="' + (r.vs_vwap || '') +
+        '" data-breakout="' + (r.breakout_state || '') + '" data-positional="' + (r.positional_qualified ? '1' : '0') +
+        '" onclick="window.location=\'/chart/' + r.symbol + '\'">' + rowHtml(r) + '</tr>';
+    }).join('');
+  }
+
+  function updateTiles(results) {
+    var valid = results.filter(function (r) { return !r.error; });
+    var count = function (fn) { return valid.filter(fn).length; };
+    document.getElementById('tile-long-buildup').textContent = count(function (r) { return r.oi_structure === 'Long Buildup'; });
+    document.getElementById('tile-short-buildup').textContent = count(function (r) { return r.oi_structure === 'Short Buildup'; });
+    document.getElementById('tile-developing').textContent = count(function (r) { return r.aligned >= minRequired && r.aligned < 3; });
+    document.getElementById('tile-confirmed').textContent = count(function (r) { return r.aligned === 3; });
+    document.getElementById('tile-positional').textContent = count(function (r) { return r.positional_qualified; });
+    document.getElementById('tile-accel').textContent = count(function (r) { return r.oi_trend_label === 'Accelerating'; });
+    document.getElementById('symbol-count').textContent = valid.length + ' symbols';
+  }
+
+  function applyFilters() {
+    var symbolQ = (document.getElementById('f-symbol').value || '').trim().toUpperCase();
+    var structureQ = document.getElementById('f-structure').value;
+    var accelQ = document.getElementById('f-accel').value;
+    var vwapQ = document.getElementById('f-vwap').value;
+    var breakoutQ = document.getElementById('f-breakout').value;
+    var positionalOnly = document.getElementById('f-positional-only').checked;
+    document.querySelectorAll('#oi-tbody tr.data-row').forEach(function (row) {
+      var ok = true;
+      if (symbolQ && (row.getAttribute('data-symbol') || '').indexOf(symbolQ) === -1) ok = false;
+      if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
+      if (ok && accelQ && row.getAttribute('data-accel') !== accelQ) ok = false;
+      if (ok && vwapQ && row.getAttribute('data-vwap') !== vwapQ) ok = false;
+      if (ok && breakoutQ && row.getAttribute('data-breakout') !== breakoutQ) ok = false;
+      if (ok && positionalOnly && row.getAttribute('data-positional') !== '1') ok = false;
+      row.classList.toggle('filtered-out', !ok);
+    });
+  }
+
+  function applySort() {
+    var tbody = document.getElementById('oi-tbody');
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
+    if (!rows.length) return;
+    var col = currentSort.col, asc = currentSort.dir === 'asc';
+    rows.sort(function (a, b) {
+      var ac = a.children[col], bc = b.children[col];
+      var av = ac ? (ac.getAttribute('data-sort') || '') : '';
+      var bv = bc ? (bc.getAttribute('data-sort') || '') : '';
+      var an = parseFloat(av), bn = parseFloat(bv);
+      var cmp = (av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
+      return asc ? cmp : -cmp;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  document.querySelectorAll('#oi-table thead th').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var col = parseInt(th.getAttribute('data-col'), 10);
+      if (currentSort.col === col) {
+        currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        currentSort.col = col;
+        currentSort.dir = th.getAttribute('data-default-dir') || 'asc';
+      }
+      applySort();
+    });
+  });
+
+  ['f-symbol'].forEach(function (id) { document.getElementById(id).addEventListener('input', applyFilters); });
+  ['f-structure', 'f-accel', 'f-vwap', 'f-breakout', 'f-positional-only'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+
+  function loadData() {
+    fetch('/api/oi-screener').then(function (r) { return r.json(); }).then(function (data) {
+      latestResults = data.results || [];
+      minRequired = data.min_required;
+      buildRows(latestResults);
+      updateTiles(latestResults);
+      applySort();
+      applyFilters();
+      document.getElementById('updated-at').textContent = 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      fetch('/api/alerts/recent').then(function (r) { return r.json(); }).then(function (d) {
+        document.getElementById('tile-alerts').textContent = (d.alerts || []).length;
+      }).catch(function () {});
+    }).catch(function () {
+      document.getElementById('updated-at').textContent = 'update failed - retrying...';
+    });
+  }
+
+  if (document.getElementById('oi-tbody')) {
+    loadData();
+    setInterval(loadData, 20000);
+  }
+</script>
+</body>
+</html>
