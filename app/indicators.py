@@ -137,5 +137,5 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "ema_bb_state": "Bullish" if ema9.iloc[i] > bb_mid.iloc[i] else "Bearish",
         "aligned": max(align_count, 3 - align_count),
         "fresh_signal": fresh_signal,
-        "timestamp": df.index[i],
+        "timestamp": df.index[i].isoformat(),
     }
