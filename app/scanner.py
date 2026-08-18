@@ -143,6 +143,50 @@ def fetch_oi_map(kite, symbols: list) -> dict:
     return oi_map
 
 
+def classify_oi_trend(history: list) -> dict:
+    """Given a symbol's recent OI samples (oldest first, with the
+    just-fetched current value as the last element), classifies how OI
+    is moving scan-to-scan:
+
+    - change / change_pct: raw move vs. the previous scan
+    - label: Rising/Falling (steady move), Accelerating (bigger move
+      than last scan's, same direction), Turning up/down (direction
+      just flipped), Flat, or New (not enough history yet)
+    - unusual: True if this move is much bigger than this symbol's own
+      recent scan-to-scan moves (>3x the recent average), which can
+      flag a real spike rather than normal drift - independent of
+      whether it's classified Rising/Falling/etc above.
+
+    Callers own building/persisting `history` (background.py keeps one
+    per symbol) - this function is a pure calculation over whatever
+    list it's handed."""
+    if len(history) < 2:
+        return {"change": None, "change_pct": None, "label": "New", "unusual": False}
+
+    current, prev = history[-1], history[-2]
+    change = current - prev
+    change_pct = (change / prev * 100) if prev else None
+
+    deltas = [history[i] - history[i - 1] for i in range(1, len(history) - 1)]
+    recent = deltas[-10:]
+    avg_abs = (sum(abs(d) for d in recent) / len(recent)) if recent else 0
+    unusual = bool(avg_abs) and abs(change) > 3 * avg_abs
+
+    prev_change = deltas[-1] if deltas else None
+    if change > 0:
+        label = "Accelerating" if (prev_change is not None and prev_change > 0 and change > prev_change) else (
+            "Rising" if (prev_change is not None and prev_change > 0) else "Turning up"
+        )
+    elif change < 0:
+        label = "Accelerating" if (prev_change is not None and prev_change < 0 and change < prev_change) else (
+            "Falling" if (prev_change is not None and prev_change < 0) else "Turning down"
+        )
+    else:
+        label = "Flat"
+
+    return {"change": change, "change_pct": change_pct, "label": label, "unusual": unusual}
+
+
 def _lookback_days(timeframe: str) -> int:
     # Enough history for indicator warm-up (BB-20/MACD-slow) plus a
     # reasonable scanning window, without requesting more than Kite
@@ -213,11 +257,16 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
                 continue
             signal = compute_signal(df, timeframe)
             signal["symbol"] = symbol
+            # Always set these keys (None when unavailable) rather than
+            # omitting them - the dashboard template checks "r.oi is not
+            # none", which for a genuinely missing dict key evaluates
+            # true against Jinja's Undefined and crashes the page. This
+            # keeps every result dict shaped the same way regardless of
+            # whether OI was fetchable for that symbol.
             oi = oi_map.get(symbol)
-            if oi:
-                signal["oi"] = oi["oi"]
-                signal["oi_day_high"] = oi["oi_day_high"]
-                signal["oi_day_low"] = oi["oi_day_low"]
+            signal["oi"] = oi["oi"] if oi else None
+            signal["oi_day_high"] = oi["oi_day_high"] if oi else None
+            signal["oi_day_low"] = oi["oi_day_low"] if oi else None
             results.append(signal)
         except Exception as exc:  # noqa: BLE001 - keep scanning the rest of the watchlist
             log.warning("Scan failed for %s: %s", symbol, exc)

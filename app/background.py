@@ -17,7 +17,7 @@ import time
 
 from . import alerts, kite_auth
 from .config import settings, SCAN_RESULTS_FILE
-from .scanner import scan_watchlist, is_market_open, now_ist
+from .scanner import scan_watchlist, is_market_open, now_ist, classify_oi_trend
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +27,11 @@ log = logging.getLogger(__name__)
 # justify checking every 2-3 minutes like the main scan does.
 FOUR_HOUR_SCAN_INTERVAL_SECONDS = 900
 
+# How many recent OI samples to keep per symbol for trend/acceleration
+# classification. Only the main-timeframe scan carries OI, so this
+# grows by one entry per symbol per main scan cycle.
+OI_HISTORY_MAX = 20
+
 _state_lock = threading.Lock()
 _state = {
     "results": [],
@@ -34,7 +39,29 @@ _state = {
     "last_error": None,
     "results_4h": [],
     "last_scan_4h": None,
+    "oi_history": {},
 }
+
+
+def _apply_oi_trend(results):
+    """Mutates each result dict in place, attaching oi_change,
+    oi_change_pct, oi_trend_label and oi_unusual based on this symbol's
+    OI history across scans. Must be called while holding _state_lock -
+    it reads and appends to _state["oi_history"]."""
+    history = _state["oi_history"]
+    for r in results:
+        symbol, oi = r.get("symbol"), r.get("oi")
+        if not symbol or oi is None:
+            continue
+        hist = history.setdefault(symbol, [])
+        hist.append(oi)
+        if len(hist) > OI_HISTORY_MAX:
+            del hist[: len(hist) - OI_HISTORY_MAX]
+        trend = classify_oi_trend(hist)
+        r["oi_change"] = trend["change"]
+        r["oi_change_pct"] = trend["change_pct"]
+        r["oi_trend_label"] = trend["label"]
+        r["oi_unusual"] = trend["unusual"]
 
 
 def _load_persisted_state():
@@ -54,6 +81,7 @@ def _load_persisted_state():
                 _state["last_scan"] = saved.get("last_scan")
                 _state["results_4h"] = saved.get("results_4h", [])
                 _state["last_scan_4h"] = saved.get("last_scan_4h")
+                _state["oi_history"] = saved.get("oi_history", {})
                 _state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -66,6 +94,7 @@ def _save_persisted_state():
             "last_scan": _state["last_scan"],
             "results_4h": _state["results_4h"],
             "last_scan_4h": _state["last_scan_4h"],
+            "oi_history": _state["oi_history"],
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -104,6 +133,7 @@ def _run_loop():
                 try:
                     results = scan_watchlist(kite)
                     with _state_lock:
+                        _apply_oi_trend(results)
                         _state["results"] = results
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None

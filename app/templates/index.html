@@ -57,6 +57,30 @@
   .toast.bear { background: var(--red); }
   .toast.bull { background: var(--green); }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { background: #274a7a; }
+  .sort-arrow { font-size: 10px; opacity: 0.85; }
+  tr.filter-row th { background: #fff; padding: 5px 8px; }
+  tr.filter-row input, tr.filter-row select {
+    width: 100%; padding: 5px 7px; font-size: 12px; border: 1px solid var(--border);
+    border-radius: 5px; background: #fff; color: var(--text);
+  }
+  .oi-up { color: var(--green); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
+  .oi-down { color: var(--red); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
+  .oi-trend-warn { color: #b45309; font-weight: 700; }
+  tr.data-row.filtered-out { display: none; }
+  .alert-toggle-btn { background: var(--accent); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .alert-toggle-btn:hover { background: #245d8f; }
+  .alert-toggle-btn.enabled { background: var(--green); cursor: default; }
+  .alert-toggle-btn.blocked { background: var(--red); cursor: default; }
+  .alert-toggle-btn:disabled { opacity: 0.9; }
+  .match-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .match-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; text-decoration: none; font-size: 13px; font-weight: 700; }
+  .match-chip.bull { background: #e6f4ea; color: var(--green); }
+  .match-chip.bear { background: #fbe7e7; color: var(--red); }
+  .match-chip.bull:hover { background: #d7ecdd; }
+  .match-chip.bear:hover { background: #f7d9d9; }
+  .match-chip-close { font-weight: 500; opacity: 0.75; }
 </style>
 </head>
 <body>
@@ -82,6 +106,7 @@
   <div class="meta-row">
     <span>Logged in for today ✓</span>
     <span>Last scan: {{ last_scan or "waiting for first scan..." }}</span>
+    <button id="desktop-alert-btn" class="alert-toggle-btn" type="button">🔔 Enable Desktop Alerts</button>
   </div>
 
   {% if last_error %}
@@ -151,6 +176,31 @@
     <p class="qs-note">Changes apply immediately, no restart needed. MACD custom fast/slow/signal only take effect when MACD preset above is set to "custom". Watchlist and scan interval are on the <a href="/settings">Settings page</a>.</p>
   </div>
 
+  <div class="card">
+    <h2 style="margin:0 0 4px;font-size:15px;color:var(--navy);">Matching Now &middot; {{ timeframe }}</h2>
+    <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
+      Every stock currently at {{ min_required }}-of-3 or better alignment on your main
+      {{ timeframe }} scan - this is the same list a desktop alert (button above) pops for
+      the moment a stock enters it. The full table further down still lists every watchlist
+      stock, matching or not, for reference.
+    </p>
+    <div class="match-chips">
+      {% set ns = namespace(count=0) %}
+      {% for r in results %}
+        {% if not r.error and r.aligned >= min_required %}
+          {% set ns.count = ns.count + 1 %}
+          <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+            {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}
+            <span class="match-chip-close">{{ r.close }}</span>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% if ns.count == 0 %}
+    <p style="margin:0;font-size:13px;color:var(--muted);">Nothing matching right now.</p>
+    {% endif %}
+  </div>
+
   <div class="card insights-card">
     <h2>AI Insights <span class="ai-badge">Claude</span></h2>
     <div id="insights-body" class="insights-body loading">
@@ -159,31 +209,98 @@
   </div>
 
   <div class="card">
-    <table>
+    <p style="margin:0 0 12px;font-size:12px;color:var(--muted);">
+      Click any column header to sort. Use the filter row below the headers to narrow the
+      list (e.g. Signal = Bullish, or OI Trend = Accelerating). OI Trend compares each
+      stock's Open Interest scan-to-scan: Rising/Falling is a steady move in one direction,
+      Accelerating means this scan's move was bigger than the last one, Turning up/down
+      means OI just reversed direction, and <span class="oi-trend-warn">⚠ unusual</span>
+      flags a move much larger than that stock's own recent OI swings.
+    </p>
+    <table id="main-table">
       <thead>
         <tr>
-          <th>Symbol</th><th>Close</th><th>RSI</th><th>MACD</th>
-          <th>EMA/BB</th><th>OI</th><th>Aligned</th><th>Signal</th><th></th>
+          <th class="sortable" data-col="0">Symbol <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="1">Close <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="2">RSI <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="3">MACD <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="4">EMA/BB <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="5">OI <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="6">OI Trend <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="7">Aligned <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="8">Signal <span class="sort-arrow"></span></th>
+          <th></th>
+        </tr>
+        <tr class="filter-row">
+          <th><input type="text" id="f-symbol" placeholder="Search…" oninput="applyFilters()"></th>
+          <th></th>
+          <th>
+            <select id="f-rsi" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option></select>
+          </th>
+          <th>
+            <select id="f-macd" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option></select>
+          </th>
+          <th>
+            <select id="f-emabb" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option></select>
+          </th>
+          <th></th>
+          <th>
+            <select id="f-oitrend" onchange="applyFilters()">
+              <option value="">All</option>
+              <option>Accelerating</option><option>Rising</option><option>Falling</option>
+              <option>Turning up</option><option>Turning down</option><option>Flat</option><option>New</option>
+              <option value="Unusual">⚠ Unusual only</option>
+            </select>
+          </th>
+          <th>
+            <select id="f-aligned" onchange="applyFilters()"><option value="">All</option><option>3</option><option>2</option><option>1</option><option>0</option></select>
+          </th>
+          <th>
+            <select id="f-signal" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option><option value="None">None</option></select>
+          </th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {% for r in results %}
-        <tr class="data-row" onclick="window.location='/chart/{{ r.symbol }}'">
-          <td>{{ r.symbol }}</td>
+        {% set signal_dir = r.direction if (not r.error and r.aligned >= min_required) else 'None' %}
+        <tr class="data-row"
+            data-symbol="{{ r.symbol }}"
+            data-rsi="{{ r.rsi_state or '' }}"
+            data-macd="{{ r.macd_state or '' }}"
+            data-emabb="{{ r.ema_bb_state or '' }}"
+            data-oitrend="{{ r.oi_trend_label or '' }}"
+            data-unusual="{{ '1' if r.oi_unusual else '0' }}"
+            data-aligned="{{ r.aligned if r.aligned is not none else '' }}"
+            data-signal="{{ signal_dir }}"
+            onclick="window.location='/chart/{{ r.symbol }}'">
+          <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
           {% if r.error %}
-          <td class="error-cell" colspan="8">{{ r.error }}</td>
+          <td class="error-cell" colspan="9">{{ r.error }}</td>
           {% else %}
-          <td>{{ r.close }}</td>
-          <td class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
-          <td class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
-          <td class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
-          <td>{{ '{:,}'.format(r.oi) if r.oi is not none else '—' }}</td>
-          <td>{{ r.aligned }} / 3</td>
-          <td>
-            {% if r.fresh_signal == 'Bullish' %}
-            <span class="signal-pill bull">▲ Bullish</span>
-            {% elif r.fresh_signal == 'Bearish' %}
-            <span class="signal-pill bear">▼ Bearish</span>
+          <td data-sort="{{ r.close }}">{{ r.close }}</td>
+          <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
+          <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
+          <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
+          <td data-sort="{{ r.oi if r.oi is defined and r.oi is not none else '' }}">
+            {% if r.oi is defined and r.oi is not none %}
+            {{ '{:,}'.format(r.oi) }}
+            {% if r.oi_change is not none and r.oi_change != 0 %}
+            <span class="{{ 'oi-up' if r.oi_change > 0 else 'oi-down' }}">{{ '▲' if r.oi_change > 0 else '▼' }} {{ '{:+.1f}'.format(r.oi_change_pct) if r.oi_change_pct is not none else '' }}%</span>
+            {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td data-sort="{{ r.oi_change_pct if r.oi_change_pct is not none else '' }}">
+            {% if r.oi is defined and r.oi is not none %}
+            <span class="{{ 'oi-trend-warn' if r.oi_unusual else '' }}">{% if r.oi_unusual %}⚠ {% endif %}{{ r.oi_trend_label or 'New' }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
+          <td data-sort="{{ signal_dir }}">
+            {% if signal_dir == 'Bullish' %}
+            <span class="signal-pill bull">▲ Bullish{% if r.fresh_signal == 'Bullish' %} · NEW{% endif %}</span>
+            {% elif signal_dir == 'Bearish' %}
+            <span class="signal-pill bear">▼ Bearish{% if r.fresh_signal == 'Bearish' %} · NEW{% endif %}</span>
             {% else %}
             <span class="signal-pill none">—</span>
             {% endif %}
@@ -192,7 +309,7 @@
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="9">No scan results yet - first scan runs shortly after login.</td></tr>
+        <tr><td colspan="10">No scan results yet - first scan runs shortly after login.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -205,30 +322,34 @@
       your Quick Settings timeframe above - useful as a bigger-picture check alongside your
       main {{ timeframe }} scan. Last 4-hour scan: {{ last_scan_4h or "waiting for first scan..." }}
     </p>
-    <table>
+    <table id="fourh-table">
       <thead>
         <tr>
-          <th>Symbol</th><th>Close</th><th>RSI</th><th>MACD</th>
-          <th>EMA/BB</th><th>Aligned</th><th>Signal</th><th></th>
+          <th class="sortable" data-col="0">Symbol <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="1">Close <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="2">RSI <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="3">MACD <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="4">EMA/BB <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="5">Aligned <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="6">Signal <span class="sort-arrow"></span></th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {% for r in results_4h %}
         {% if not r.error and r.aligned >= min_required %}
         <tr class="data-row" onclick="window.location='/chart/{{ r.symbol }}?timeframe=4hour'">
-          <td>{{ r.symbol }}</td>
-          <td>{{ r.close }}</td>
-          <td class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
-          <td class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
-          <td class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
-          <td>{{ r.aligned }} / 3</td>
-          <td>
-            {% if r.fresh_signal == 'Bullish' %}
-            <span class="signal-pill bull">▲ Bullish</span>
-            {% elif r.fresh_signal == 'Bearish' %}
-            <span class="signal-pill bear">▼ Bearish</span>
+          <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
+          <td data-sort="{{ r.close }}">{{ r.close }}</td>
+          <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
+          <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
+          <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
+          <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
+          <td data-sort="{{ r.direction }}">
+            {% if r.direction == 'Bullish' %}
+            <span class="signal-pill bull">▲ Bullish{% if r.fresh_signal == 'Bullish' %} · NEW{% endif %}</span>
             {% else %}
-            <span class="signal-pill none">—</span>
+            <span class="signal-pill bear">▼ Bearish{% if r.fresh_signal == 'Bearish' %} · NEW{% endif %}</span>
             {% endif %}
           </td>
           <td><a class="chart-link" href="/chart/{{ r.symbol }}?timeframe=4hour" onclick="event.stopPropagation()">Chart →</a></td>
@@ -273,11 +394,62 @@
     });
   })();
 
+  // Desktop (OS-level) notification popups - separate from, and in
+  // addition to, the in-page toast below. These show up outside the
+  // browser window itself (as a native OS notification), so you'll see
+  // them even if the dashboard tab isn't the one focused - unlike the
+  // toast, which only shows while you're looking at this tab. Browsers
+  // require an explicit click to grant this (it can't be requested
+  // silently on page load), so there's a button for it in the header.
+  (function () {
+    var btn = document.getElementById('desktop-alert-btn');
+    if (!btn) return;
+    if (!('Notification' in window)) {
+      btn.textContent = 'Desktop alerts not supported in this browser';
+      btn.disabled = true;
+      return;
+    }
+    function refreshBtn() {
+      if (Notification.permission === 'granted') {
+        btn.textContent = '🔔 Desktop Alerts On';
+        btn.className = 'alert-toggle-btn enabled';
+        btn.disabled = true;
+      } else if (Notification.permission === 'denied') {
+        btn.textContent = '🔕 Desktop Alerts Blocked - check your browser\'s site settings';
+        btn.className = 'alert-toggle-btn blocked';
+        btn.disabled = true;
+      } else {
+        btn.textContent = '🔔 Enable Desktop Alerts';
+        btn.className = 'alert-toggle-btn';
+        btn.disabled = false;
+      }
+    }
+    btn.addEventListener('click', function () {
+      Notification.requestPermission().then(refreshBtn);
+    });
+    refreshBtn();
+    window.__showDesktopAlert = function (a) {
+      if (Notification.permission !== 'granted') return;
+      try {
+        var n = new Notification((a.direction === 'Bullish' ? '▲ ' : '▼ ') + a.symbol + ' — ' + a.direction, {
+          body: a.timeframe + ' scan · close ' + a.close,
+          tag: a.symbol + '|' + a.timeframe + '|' + a.candle_timestamp,
+        });
+        n.onclick = function () {
+          window.focus();
+          window.location = '/chart/' + a.symbol + (a.timeframe === '4hour' ? '?timeframe=4hour' : '');
+        };
+      } catch (e) { /* notification creation failed - ignore */ }
+    };
+  })();
+
   // Poll for fresh Bullish/Bearish signals while this tab is open, and
-  // show a toast + short beep for each new one. This works independent
-  // of Telegram - it's the free in-page alert channel. Telegram (if
-  // configured in .env) additionally pushes to your phone even when
-  // this tab isn't open at all.
+  // show a toast + short beep + desktop notification for each new one.
+  // This works independent of Telegram - it's the free in-browser alert
+  // channel. Telegram (if configured in .env) additionally pushes to
+  // your phone even when this tab/browser isn't open at all; desktop
+  // notifications above need the browser open but not necessarily this
+  // tab focused.
   (function () {
     var wrap = document.getElementById('toast-wrap');
     if (!wrap) return;
@@ -311,7 +483,11 @@
           var key = a.symbol + '|' + a.timeframe + '|' + a.candle_timestamp + '|' + a.direction;
           if (seen.has(key)) return;
           seen.add(key);
-          if (!firstLoad) { showToast(a); beep(); }
+          if (!firstLoad) {
+            showToast(a);
+            beep();
+            if (window.__showDesktopAlert) window.__showDesktopAlert(a);
+          }
         });
         firstLoad = false;
       }).catch(function () { /* ignore transient errors */ });
@@ -319,6 +495,77 @@
     poll();
     setInterval(poll, 20000);
   })();
+
+  // Click-to-sort headers, shared by both tables.
+  function makeSortable(tableId) {
+    var table = document.getElementById(tableId);
+    if (!table) return;
+    var ths = table.querySelectorAll('thead th.sortable');
+    ths.forEach(function (th) {
+      th.addEventListener('click', function () {
+        var colIndex = parseInt(th.getAttribute('data-col'), 10);
+        var asc = th.getAttribute('data-dir') !== 'asc';
+        ths.forEach(function (o) {
+          o.removeAttribute('data-dir');
+          var a = o.querySelector('.sort-arrow');
+          if (a) a.textContent = '';
+        });
+        th.setAttribute('data-dir', asc ? 'asc' : 'desc');
+        var arrow = th.querySelector('.sort-arrow');
+        if (arrow) arrow.textContent = asc ? '▲' : '▼';
+        var tbody = table.tBodies[0];
+        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
+        rows.sort(function (a, b) {
+          var ac = a.children[colIndex], bc = b.children[colIndex];
+          var av = ac ? (ac.getAttribute('data-sort') || '') : '';
+          var bv = bc ? (bc.getAttribute('data-sort') || '') : '';
+          var an = parseFloat(av), bn = parseFloat(bv);
+          var cmp = (av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn))
+            ? an - bn
+            : av.localeCompare(bv);
+          return asc ? cmp : -cmp;
+        });
+        rows.forEach(function (r) { tbody.appendChild(r); });
+      });
+    });
+  }
+
+  // Per-column filters on the main table's filter row (symbol search box
+  // plus dropdowns for RSI/MACD/EMA-BB/OI Trend/Aligned/Signal). Rows are
+  // hidden/shown via a CSS class rather than removed, so sorting still
+  // works on whatever's currently visible.
+  function applyFilters() {
+    var table = document.getElementById('main-table');
+    if (!table) return;
+    var symbolQ = (document.getElementById('f-symbol').value || '').trim().toUpperCase();
+    var rsiQ = document.getElementById('f-rsi').value;
+    var macdQ = document.getElementById('f-macd').value;
+    var emabbQ = document.getElementById('f-emabb').value;
+    var oitrendQ = document.getElementById('f-oitrend').value;
+    var alignedQ = document.getElementById('f-aligned').value;
+    var signalQ = document.getElementById('f-signal').value;
+
+    table.tBodies[0].querySelectorAll('tr.data-row').forEach(function (row) {
+      var ok = true;
+      if (symbolQ && (row.getAttribute('data-symbol') || '').toUpperCase().indexOf(symbolQ) === -1) ok = false;
+      if (ok && rsiQ && row.getAttribute('data-rsi') !== rsiQ) ok = false;
+      if (ok && macdQ && row.getAttribute('data-macd') !== macdQ) ok = false;
+      if (ok && emabbQ && row.getAttribute('data-emabb') !== emabbQ) ok = false;
+      if (ok && oitrendQ) {
+        if (oitrendQ === 'Unusual') {
+          if (row.getAttribute('data-unusual') !== '1') ok = false;
+        } else if (row.getAttribute('data-oitrend') !== oitrendQ) {
+          ok = false;
+        }
+      }
+      if (ok && alignedQ && row.getAttribute('data-aligned') !== alignedQ) ok = false;
+      if (ok && signalQ && row.getAttribute('data-signal') !== signalQ) ok = false;
+      row.classList.toggle('filtered-out', !ok);
+    });
+  }
+
+  makeSortable('main-table');
+  makeSortable('fourh-table');
 </script>
 </body>
 </html>

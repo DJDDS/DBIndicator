@@ -136,6 +136,12 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "macd_state": "Bullish" if macd_line.iloc[i] > signal_line.iloc[i] else "Bearish",
         "ema_bb_state": "Bullish" if ema9.iloc[i] > bb_mid.iloc[i] else "Bearish",
         "aligned": max(align_count, 3 - align_count),
+        # Which way the *majority* of the 3 indicators currently point,
+        # regardless of whether today's candle is the exact one where
+        # that alignment first formed (fresh_signal below is that
+        # narrower, crossover-only flag). With 3 indicators there's
+        # never a tie, so align_count >= 2 always means bullish majority.
+        "direction": "Bullish" if align_count >= 2 else "Bearish",
         "fresh_signal": fresh_signal,
         "timestamp": df.index[i].isoformat(),
     }
