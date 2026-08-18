@@ -69,6 +69,17 @@
   .oi-down { color: var(--red); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
   .oi-trend-warn { color: #b45309; font-weight: 700; }
   tr.data-row.filtered-out { display: none; }
+  .oi-cell-num { white-space: nowrap; }
+  .oi-structure-badge { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 5px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .oi-structure-badge.long-buildup { background: #e6f4ea; color: var(--green); }
+  .oi-structure-badge.short-buildup { background: #fbe7e7; color: var(--red); }
+  .oi-structure-badge.short-covering { background: #eaf6ee; color: #2f7d52; }
+  .oi-structure-badge.long-unwinding { background: #fff3e0; color: #b45309; }
+  .oi-structure-badge.neutral { background: #eee; color: var(--muted); font-weight: 500; }
+  .oi-break-badge { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 5px; font-size: 11px; font-weight: 800; white-space: nowrap; border: 1px solid; }
+  .oi-break-badge.up { background: #e6f4ea; color: var(--green); border-color: #bfe3cb; }
+  .oi-break-badge.down { background: #fbe7e7; color: var(--red); border-color: #f3c3c3; }
+  .vol-hot { color: var(--accent); font-weight: 700; }
   /* Desktop-alert toggle switch. Once a browser grants Notification
      permission it can't be revoked again from JS - only through the
      browser's own site settings - so "off" here means an in-app mute
@@ -115,10 +126,7 @@
     <h1>Scanner Dashboard</h1>
     <p>RSI + MACD + EMA/Bollinger confluence &middot; {{ timeframe }} &middot; {{ min_required }}-of-3 required</p>
   </div>
-  <nav style="display:flex;gap:8px;">
-    <a href="/oi-screener">OI Screener</a>
-    <a href="/settings">Settings</a>
-  </nav>
+  <nav><a href="/backtest">Backtest</a> <a href="/settings">Settings</a></nav>
 </header>
 <div class="wrap">
 
@@ -149,6 +157,37 @@
   {% if quick_error %}
   <div class="warn">Couldn't apply: {{ quick_error }}</div>
   {% endif %}
+
+  <div class="card" style="border:2px solid var(--accent);">
+    <h2 style="margin:0 0 6px;font-size:15px;color:var(--navy);">🎯 High-Conviction Setups</h2>
+    <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
+      Only stocks where <strong>every</strong> signal this app tracks agrees at once: strict
+      3-of-3 confluence (not just your Required setting), the separate 4-hour trend, OI
+      structure, an actively accelerating OI break signal, volume at 1.5&times; average or
+      higher, and price on the right side of VWAP. Deliberately narrow by design - most scans
+      will show few or none, and that's expected, not a bug.
+    </p>
+    <div class="match-chips">
+      {% set ns2 = namespace(count=0) %}
+      {% for r in results %}
+        {% if not r.error and r.high_conviction %}
+          {% set ns2.count = ns2.count + 1 %}
+          <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+            {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% if ns2.count == 0 %}
+    <p class="mn-empty">Nothing meets every condition right now.</p>
+    {% endif %}
+    <p style="margin:12px 0 0;font-size:11.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;">
+      This stacks your existing filters together - it is <strong>not</strong> a validated or
+      backtested win-rate signal, and no combination of indicators can honestly promise a
+      fixed win rate without being tested against real historical outcomes first. Treat this
+      list as "everything currently agrees," not as guaranteed odds.
+    </p>
+  </div>
 
   <div class="card quick-settings-card">
     <h2>Quick Settings</h2>
@@ -276,11 +315,17 @@
   <div class="card">
     <p style="margin:0 0 12px;font-size:12px;color:var(--muted);">
       Click any column header to sort. Use the filter row below the headers to narrow the
-      list (e.g. Signal = Bullish, or OI Trend = Accelerating). OI Trend compares each
-      stock's Open Interest scan-to-scan: Rising/Falling is a steady move in one direction,
-      Accelerating means this scan's move was bigger than the last one, Turning up/down
-      means OI just reversed direction, and <span class="oi-trend-warn">⚠ unusual</span>
-      flags a move much larger than that stock's own recent OI swings.
+      list. <strong>OI</strong> shows today's Open Interest with its Structure badge
+      underneath (Long/Short Buildup = fresh positions being added, Short Covering/Long
+      Unwinding = positions being closed, based on today's price move vs today's OI move
+      since session open) plus today's OI % change. <strong>OI Accel</strong> compares this
+      scan's OI move to the previous scan's - Accelerating/Stable/Weakening/Transitional/Flat
+      - with <span class="oi-trend-warn">⚠ unusual</span> flagging a move much larger than
+      that stock's own recent swings. When OI is building in a direction <em>and</em>
+      accelerating, that row also gets a bold <span class="oi-break-badge up">▲ Break Up</span>
+      / <span class="oi-break-badge down">▼ Break Down</span> badge - a stronger, more decisive
+      read than either signal alone. <strong>Vol</strong> is the latest candle's volume as a
+      multiple of its recent average (highlighted above 1.5x).
     </p>
     <table id="main-table">
       <thead>
@@ -291,9 +336,10 @@
           <th class="sortable" data-col="3">MACD <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="4">EMA/BB <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="5">OI <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="6">OI Trend <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="7">Aligned <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="8">Signal <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="6">OI Accel <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="7">Vol <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="8">Aligned <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="9">Signal <span class="sort-arrow"></span></th>
           <th></th>
         </tr>
         <tr class="filter-row">
@@ -308,15 +354,24 @@
           <th>
             <select id="f-emabb" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option></select>
           </th>
-          <th></th>
+          <th>
+            <select id="f-structure" onchange="applyFilters()">
+              <option value="">All Structures</option>
+              <option>Long Buildup</option><option>Short Buildup</option>
+              <option>Short Covering</option><option>Long Unwinding</option><option>Neutral</option>
+            </select>
+          </th>
           <th>
             <select id="f-oitrend" onchange="applyFilters()">
               <option value="">All</option>
-              <option>Accelerating</option><option>Rising</option><option>Falling</option>
-              <option>Turning up</option><option>Turning down</option><option>Flat</option><option>New</option>
+              <option>Accelerating</option><option>Stable</option><option>Weakening</option>
+              <option>Transitional</option><option>Flat</option><option>New</option>
               <option value="Unusual">⚠ Unusual only</option>
+              <option value="BreakUp">▲ Break Up only</option>
+              <option value="BreakDown">▼ Break Down only</option>
             </select>
           </th>
+          <th></th>
           <th>
             <select id="f-aligned" onchange="applyFilters()"><option value="">All</option><option>3</option><option>2</option><option>1</option><option>0</option></select>
           </th>
@@ -334,30 +389,44 @@
             data-rsi="{{ r.rsi_state or '' }}"
             data-macd="{{ r.macd_state or '' }}"
             data-emabb="{{ r.ema_bb_state or '' }}"
+            data-structure="{{ r.oi_structure or '' }}"
             data-oitrend="{{ r.oi_trend_label or '' }}"
             data-unusual="{{ '1' if r.oi_unusual else '0' }}"
+            data-break="{{ 'BreakUp' if r.oi_break_signal == 'Break Up' else ('BreakDown' if r.oi_break_signal == 'Break Down' else '') }}"
             data-aligned="{{ r.aligned if r.aligned is not none else '' }}"
             data-signal="{{ signal_dir }}"
             onclick="window.location='/chart/{{ r.symbol }}'">
           <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
           {% if r.error %}
-          <td class="error-cell" colspan="9">{{ r.error }}</td>
+          <td class="error-cell" colspan="10">{{ r.error }}</td>
           {% else %}
           <td data-sort="{{ r.close }}">{{ r.close }}</td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
           <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
           <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
-          <td data-sort="{{ r.oi if r.oi is defined and r.oi is not none else '' }}">
+          <td data-sort="{{ r.oi if r.oi is defined and r.oi is not none else '' }}" class="oi-cell-num">
             {% if r.oi is defined and r.oi is not none %}
-            {{ '{:,}'.format(r.oi) }}
-            {% if r.oi_change is not none and r.oi_change != 0 %}
-            <span class="{{ 'oi-up' if r.oi_change > 0 else 'oi-down' }}">{{ '▲' if r.oi_change > 0 else '▼' }} {{ '{:+.1f}'.format(r.oi_change_pct) if r.oi_change_pct is not none else '' }}%</span>
+            <div>{{ '{:,}'.format(r.oi) }}</div>
+            {% if r.oi_structure is defined and r.oi_structure and r.oi_structure != 'Neutral' %}
+            <div><span class="oi-structure-badge {{ r.oi_structure|lower|replace(' ', '-') }}">{{ r.oi_structure }}{% if r.oi_chg_today_pct is defined and r.oi_chg_today_pct is not none %} {{ '{:+.1f}'.format(r.oi_chg_today_pct) }}%{% endif %}</span></div>
+            {% elif r.oi_chg_today_pct is defined and r.oi_chg_today_pct is not none %}
+            <div><span class="oi-structure-badge neutral">{{ '{:+.1f}'.format(r.oi_chg_today_pct) }}% today</span></div>
+            {% endif %}
+            {% if r.oi_break_signal == 'Break Up' %}
+            <div><span class="oi-break-badge up">▲ Break Up</span></div>
+            {% elif r.oi_break_signal == 'Break Down' %}
+            <div><span class="oi-break-badge down">▼ Break Down</span></div>
             {% endif %}
             {% else %}—{% endif %}
           </td>
           <td data-sort="{{ r.oi_change_pct if r.oi_change_pct is not none else '' }}">
             {% if r.oi is defined and r.oi is not none %}
             <span class="{{ 'oi-trend-warn' if r.oi_unusual else '' }}">{% if r.oi_unusual %}⚠ {% endif %}{{ r.oi_trend_label or 'New' }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td data-sort="{{ r.vol_multiple if r.vol_multiple is not none else '' }}">
+            {% if r.vol_multiple is defined and r.vol_multiple is not none %}
+            <span class="{{ 'vol-hot' if r.vol_multiple >= 1.5 else '' }}">{{ r.vol_multiple }}x</span>
             {% else %}—{% endif %}
           </td>
           <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
@@ -374,7 +443,7 @@
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="10">No scan results yet - first scan runs shortly after login.</td></tr>
+        <tr><td colspan="11">No scan results yet - first scan runs shortly after login.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -633,6 +702,7 @@
     var rsiQ = document.getElementById('f-rsi').value;
     var macdQ = document.getElementById('f-macd').value;
     var emabbQ = document.getElementById('f-emabb').value;
+    var structureQ = document.getElementById('f-structure').value;
     var oitrendQ = document.getElementById('f-oitrend').value;
     var alignedQ = document.getElementById('f-aligned').value;
     var signalQ = document.getElementById('f-signal').value;
@@ -643,9 +713,12 @@
       if (ok && rsiQ && row.getAttribute('data-rsi') !== rsiQ) ok = false;
       if (ok && macdQ && row.getAttribute('data-macd') !== macdQ) ok = false;
       if (ok && emabbQ && row.getAttribute('data-emabb') !== emabbQ) ok = false;
+      if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
       if (ok && oitrendQ) {
         if (oitrendQ === 'Unusual') {
           if (row.getAttribute('data-unusual') !== '1') ok = false;
+        } else if (oitrendQ === 'BreakUp' || oitrendQ === 'BreakDown') {
+          if (row.getAttribute('data-break') !== oitrendQ) ok = false;
         } else if (row.getAttribute('data-oitrend') !== oitrendQ) {
           ok = false;
         }

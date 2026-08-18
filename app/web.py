@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, config, indicators, kite_auth, scanner
+from . import alerts, backtest, config, indicators, kite_auth, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -85,35 +85,6 @@ def dashboard():
         insights_enabled=insights_enabled(),
         telegram_enabled=alerts.telegram_enabled(),
     )
-
-
-@app.route("/oi-screener")
-@require_dashboard_password
-def oi_screener():
-    state = get_state()
-    return render_template(
-        "oi_screener.html",
-        logged_in=kite_auth.is_logged_in_today(),
-        results=state["results"],
-        last_scan=state["last_scan"],
-        timeframe=settings.TIMEFRAME,
-        min_required=settings.MIN_REQUIRED,
-    )
-
-
-@app.route("/api/oi-screener")
-@require_dashboard_password
-def api_oi_screener():
-    """Backs the OI Screener page's live auto-refresh - polled every
-    ~20s from the browser so the table updates in place without a full
-    page reload (unlike the main dashboard's simple 60s meta-refresh)."""
-    state = get_state()
-    return jsonify({
-        "results": state["results"],
-        "last_scan": state["last_scan"],
-        "min_required": settings.MIN_REQUIRED,
-        "timeframe": settings.TIMEFRAME,
-    })
 
 
 @app.route("/quick-settings", methods=["POST"])
@@ -310,6 +281,53 @@ def api_alerts_test():
 @require_dashboard_password
 def api_alerts_discover_chat_id():
     return jsonify(alerts.discover_chat_id())
+
+
+@app.route("/backtest")
+@require_dashboard_password
+def backtest_page():
+    return render_template(
+        "backtest.html",
+        logged_in=kite_auth.is_logged_in_today(),
+        valid_timeframes=config.VALID_TIMEFRAMES,
+        default_timeframe=settings.TIMEFRAME,
+        state=backtest.get_backtest_state(),
+    )
+
+
+@app.route("/api/backtest/start", methods=["POST"])
+@require_dashboard_password
+def api_backtest_start():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+
+    form = request.form
+    timeframe = form.get("timeframe", settings.TIMEFRAME)
+    if timeframe not in config.VALID_TIMEFRAMES:
+        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
+    try:
+        days = int(form.get("days", 30))
+    except ValueError:
+        return jsonify({"started": False, "reason": "days must be a number"}), 400
+    horizons_raw = form.get("horizons", "5,10,20")
+    try:
+        horizons = tuple(int(h.strip()) for h in horizons_raw.split(",") if h.strip())
+    except ValueError:
+        return jsonify({"started": False, "reason": "horizons must be comma-separated numbers"}), 400
+    if not horizons:
+        return jsonify({"started": False, "reason": "at least one horizon is required"}), 400
+
+    result = backtest.start_backtest(
+        kite, symbols=settings.WATCHLIST, timeframe=timeframe, days=days, horizons=horizons
+    )
+    return jsonify(result)
+
+
+@app.route("/api/backtest/status")
+@require_dashboard_password
+def api_backtest_status():
+    return jsonify(backtest.get_backtest_state())
 
 
 def create_app():

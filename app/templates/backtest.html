@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest - High-Conviction Setups</title>
+<style>
+  :root {
+    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
+    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
+  header nav a:hover { background: rgba(255,255,255,0.28); }
+  .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px 26px; margin-bottom: 20px; }
+  .card h2 { margin: 0 0 10px; font-size: 15px; color: var(--navy); }
+  .card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  input[type=number], select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-family: inherit; }
+  .row { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 14px; align-items: end; }
+  .horizons label.chk { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; margin: 0 14px 0 0; font-size: 13px; }
+  .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
+         padding: 10px 20px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
+  .btn:disabled { background: #a9b8c9; cursor: not-allowed; }
+  .msg-err { background: #fbe7e7; border: 1px solid #f0b7b7; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .msg-warn { background: #fff6e0; border: 1px solid #f0dca0; color: #7a5b00; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .progress-wrap { margin-top: 16px; }
+  .progress-bar { height: 10px; background: #eef1f5; border-radius: 6px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
+  .progress-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .win-good { color: var(--green); font-weight: 700; }
+  .win-bad { color: var(--red); font-weight: 700; }
+  .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .tile .tv { font-size: 20px; font-weight: 700; color: var(--navy); }
+  .tile .tl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .skip-list { font-size: 12px; color: var(--muted); max-height: 140px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .trades-scroll { max-height: 320px; overflow-y: auto; }
+  #bt-results { display: none; }
+  .bull { color: var(--green); }
+  .bear { color: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Backtest - High-Conviction Setups</h1>
+  <nav><a href="/">&larr; Dashboard</a></nav>
+</header>
+<div class="wrap">
+
+  {% if not logged_in %}
+  <div class="msg-err">Log in to Kite on the dashboard first - the backtest needs a live Kite session to pull historical data.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>What this does</h2>
+    <p>
+      Replays the exact "High-Conviction Setups" rule from the dashboard - strict 3-of-3
+      confluence, OI structure agreeing with direction, an actively accelerating OI break
+      signal, volume at 1.5&times; average or higher, price on the right side of VWAP, and the
+      separate 4-hour trend agreeing - bar by bar over real historical price and Open Interest
+      data from your Kite connection. It reports what would actually have happened: real win
+      rate, average return, and worst drawdown per trade, at each horizon below.
+    </p>
+    <p>
+      <strong>Read before trusting the numbers:</strong> Kite's instrument list only contains
+      the CURRENTLY ACTIVE futures contract, so historical Open Interest realistically only
+      goes back 30-45 days regardless of how many days you ask for - this caps how many trades
+      the backtest can find. A small trade count (single digits, or zero) is a real, honest
+      result for a filter this narrow - it is not a bug, and it also means the win rate isn't
+      statistically reliable yet. Past performance never guarantees future results, and this is
+      not investment advice - use it to sanity-check the rule, not as a promise of returns.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Run a backtest</h2>
+    <form id="bt-form">
+      <div class="row">
+        <div>
+          <label for="bt-timeframe">Timeframe</label>
+          <select id="bt-timeframe" name="timeframe">
+            {% for tf in valid_timeframes %}
+            <option value="{{ tf }}" {{ 'selected' if tf == default_timeframe else '' }}>{{ tf }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="bt-days">Days back</label>
+          <input type="number" id="bt-days" name="days" value="30" min="5" max="90">
+        </div>
+        <div>
+          <label>Return horizons (bars held)</label>
+          <div class="horizons">
+            <label class="chk"><input type="checkbox" name="horizon" value="5" checked> 5</label>
+            <label class="chk"><input type="checkbox" name="horizon" value="10" checked> 10</label>
+            <label class="chk"><input type="checkbox" name="horizon" value="20" checked> 20</label>
+            <label class="chk"><input type="checkbox" name="horizon" value="40"> 40</label>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:18px;">
+        <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Backtest</button>
+        <span class="hint" id="bt-form-hint" style="margin-left:10px;"></span>
+      </div>
+    </form>
+
+    <div class="progress-wrap" id="bt-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="bt-progress-fill"></div></div>
+      <div class="progress-label" id="bt-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="bt-error" style="display:none; margin-top:16px;"></div>
+  </div>
+
+  <div class="card" id="bt-results">
+    <h2>Results</h2>
+    <div class="stat-tiles" id="bt-tiles"></div>
+    <div id="bt-horizon-table-wrap">
+      <table>
+        <thead>
+          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Best</th><th>Worst</th></tr>
+        </thead>
+        <tbody id="bt-horizon-body"></tbody>
+      </table>
+    </div>
+
+    <div id="bt-skipped-wrap" style="margin-top:18px; display:none;">
+      <h2 style="font-size:13px;">Symbols skipped</h2>
+      <div class="skip-list" id="bt-skipped"></div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <h2 style="font-size:13px;">Individual trades</h2>
+      <div class="trades-scroll">
+        <table>
+          <thead>
+            <tr><th>Symbol</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th id="bt-trade-return-headers"></th><th>Worst drawdown</th></tr>
+          </thead>
+          <tbody id="bt-trades-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const initialState = {{ state | tojson }};
+
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+
+function renderResult(result) {
+  const wrap = document.getElementById('bt-results');
+  wrap.style.display = 'block';
+
+  const tiles = document.getElementById('bt-tiles');
+  const ov = result.summary.overall || {};
+  tiles.innerHTML = `
+    <div class="tile"><div class="tv">${ov.total_trades ?? 0}</div><div class="tl">Total trades</div></div>
+    <div class="tile"><div class="tv">${ov.bullish_trades ?? 0}</div><div class="tl">Bullish</div></div>
+    <div class="tile"><div class="tv">${ov.bearish_trades ?? 0}</div><div class="tl">Bearish</div></div>
+    <div class="tile"><div class="tv">${result.symbols_with_trades ?? 0}/${result.symbols_scanned ?? 0}</div><div class="tl">Symbols w/ trades</div></div>
+    <div class="tile"><div class="tv">${fmtPct(ov.worst_drawdown_pct)}</div><div class="tl">Worst drawdown</div></div>
+  `;
+
+  const horizonBody = document.getElementById('bt-horizon-body');
+  horizonBody.innerHTML = '';
+  (result.horizons || []).forEach(h => {
+    const row = result.summary[String(h)] || {};
+    const tr = document.createElement('tr');
+    const wr = row.win_rate_pct;
+    const wrClass = wr === undefined ? '' : (wr >= 50 ? 'win-good' : 'win-bad');
+    tr.innerHTML = `
+      <td>${h}</td>
+      <td>${row.trade_count ?? 0}</td>
+      <td class="${wrClass}">${row.trade_count ? row.win_rate_pct.toFixed(1) + '%' : '—'}</td>
+      <td>${row.trade_count ? fmtPct(row.avg_return_pct) : '—'}</td>
+      <td>${row.trade_count ? fmtPct(row.best_return_pct) : '—'}</td>
+      <td>${row.trade_count ? fmtPct(row.worst_return_pct) : '—'}</td>
+    `;
+    horizonBody.appendChild(tr);
+  });
+
+  const skippedWrap = document.getElementById('bt-skipped-wrap');
+  const skipped = result.symbols_skipped || {};
+  const skipKeys = Object.keys(skipped);
+  if (skipKeys.length) {
+    skippedWrap.style.display = 'block';
+    document.getElementById('bt-skipped').textContent =
+      skipKeys.map(s => `${s}: ${skipped[s]}`).join('  •  ');
+  } else {
+    skippedWrap.style.display = 'none';
+  }
+
+  const horizons = result.horizons || [];
+  document.getElementById('bt-trade-return-headers').textContent =
+    horizons.map(h => h + 'b return').join(' / ');
+  const tradesBody = document.getElementById('bt-trades-body');
+  tradesBody.innerHTML = '';
+  const trades = (result.trades || []).slice(-200).reverse();
+  trades.forEach(t => {
+    const tr = document.createElement('tr');
+    const dirClass = t.direction === 'Bullish' ? 'bull' : 'bear';
+    const returnsText = horizons.map(h => fmtPct(t.returns_pct[h] ?? t.returns_pct[String(h)])).join(' / ');
+    tr.innerHTML = `
+      <td>${t.symbol}</td>
+      <td class="${dirClass}">${t.direction === 'Bullish' ? '▲' : '▼'}</td>
+      <td>${t.entry_time.replace('T', ' ')}</td>
+      <td>${t.entry_price}</td>
+      <td>${returnsText}</td>
+      <td>${fmtPct(t.mae_pct)}</td>
+    `;
+    tradesBody.appendChild(tr);
+  });
+  if (result.trades && result.trades.length > 200) {
+    const note = document.createElement('tr');
+    note.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);">
+      showing the most recent 200 of ${result.trades.length} trades</td>`;
+    tradesBody.appendChild(note);
+  }
+}
+
+function poll() {
+  fetch('/api/backtest/status').then(r => r.json()).then(state => {
+    updateUI(state);
+    if (state.status === 'running') {
+      setTimeout(poll, 2000);
+    }
+  }).catch(() => setTimeout(poll, 4000));
+}
+
+function updateUI(state) {
+  const progress = document.getElementById('bt-progress');
+  const errorBox = document.getElementById('bt-error');
+  const runBtn = document.getElementById('bt-run-btn');
+
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const p = state.progress || {};
+    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+    document.getElementById('bt-progress-fill').style.width = pct + '%';
+    document.getElementById('bt-progress-label').textContent =
+      p.symbol ? `Scanning ${p.symbol} (${p.done}/${p.total})…` : `${p.done}/${p.total} symbols done…`;
+  } else {
+    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+    progress.style.display = 'none';
+  }
+
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Backtest failed: ' + (state.error || 'unknown error');
+  }
+
+  if (state.status === 'done' && state.result) {
+    renderResult(state.result);
+  }
+}
+
+document.getElementById('bt-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  const form = new FormData(this);
+  const horizons = Array.from(document.querySelectorAll('input[name=horizon]:checked')).map(el => el.value);
+  if (!horizons.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one horizon.';
+    return;
+  }
+  const body = new URLSearchParams();
+  body.set('timeframe', form.get('timeframe'));
+  body.set('days', form.get('days'));
+  body.set('horizons', horizons.join(','));
+  document.getElementById('bt-form-hint').textContent = '';
+  fetch('/api/backtest/start', { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.started) {
+        document.getElementById('bt-form-hint').textContent = res.reason || 'Could not start.';
+      } else {
+        poll();
+      }
+    });
+});
+
+updateUI(initialState);
+if (initialState.status === 'running') {
+  poll();
+} else if (initialState.status === 'done' && initialState.result) {
+  renderResult(initialState.result);
+}
+</script>
+</body>
+</html>

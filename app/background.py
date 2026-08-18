@@ -67,17 +67,20 @@ def _apply_oi_trend(results):
 
 
 def _apply_oi_screener_fields(results):
-    """Powers the OI Screener page: for each result, works out today's
-    price/OI move since session open (distinct from _apply_oi_trend's
-    scan-to-scan numbers above), classifies the 4-quadrant OI Structure
-    from that, flags whether that structure just changed this scan
-    ("stage": "New"), and cross-references the existing confluence
-    signal (this symbol's own aligned/direction) plus the separate
-    4-hour scan's direction to mark "positional_qualified" - a stock
-    that isn't just showing an OI structure, but one that agrees with
-    both your short-term confluence signal and the bigger 4-hour trend.
-    Must be called while holding _state_lock, and after _state["results_4h"]
-    is already populated with whatever the most recent 4-hour scan was."""
+    """Attaches the dashboard's OI-driven fields to each result: works
+    out today's price/OI move since session open (distinct from
+    _apply_oi_trend's scan-to-scan numbers above), classifies the
+    4-quadrant OI Structure from that, flags whether that structure just
+    changed this scan ("stage": "New"), derives a decisive "oi_break_signal"
+    (Break Up / Break Down) when OI is building in a direction AND
+    accelerating faster than its own recent pace, and cross-references
+    the existing confluence signal (this symbol's own aligned/direction)
+    plus the separate 4-hour scan's direction to mark "positional_qualified" -
+    a stock that isn't just showing an OI structure, but one that agrees
+    with both your short-term confluence signal and the bigger 4-hour
+    trend. Must be called after _apply_oi_trend (needs oi_trend_label/
+    oi_unusual already set) and while holding _state_lock, after
+    _state["results_4h"] already holds the most recent 4-hour scan."""
     today = now_ist().date().isoformat()
     baseline = _state["oi_day_baseline"]
     prev_structure = _state["oi_structure_prev"]
@@ -117,6 +120,22 @@ def _apply_oi_screener_fields(results):
         if structure:
             prev_structure[symbol] = structure
 
+        # A decisive OI signal: not just "OI is building", but "OI is
+        # building AND doing so faster than its own recent pace" (or an
+        # outright spike) - that combination is what actually suggests
+        # fresh conviction rather than routine drift. Long Buildup +
+        # strong acceleration reads as a bullish break-up; Short
+        # Buildup + strong acceleration reads as a bearish break-down.
+        # Relies on oi_trend_label/oi_unusual already being set by
+        # _apply_oi_trend, which always runs first in the scan loop.
+        accel_strong = r.get("oi_trend_label") == "Accelerating" or bool(r.get("oi_unusual"))
+        oi_break_signal = None
+        if structure == "Long Buildup" and accel_strong:
+            oi_break_signal = "Break Up"
+        elif structure == "Short Buildup" and accel_strong:
+            oi_break_signal = "Break Down"
+        r["oi_break_signal"] = oi_break_signal
+
         direction = r.get("direction")
         aligned = r.get("aligned") or 0
         structure_agrees = (
@@ -126,6 +145,35 @@ def _apply_oi_screener_fields(results):
         four_h_agrees = four_h_direction.get(symbol) == direction
         r["positional_qualified"] = bool(
             aligned >= settings.MIN_REQUIRED and structure_agrees and four_h_agrees
+        )
+
+        # High Conviction: a deliberately narrow filter meant to surface
+        # only a handful of stocks, by stacking EVERY signal this app
+        # tracks and requiring all of them to point the same way at
+        # once - strict 3-of-3 confluence (not just your Required
+        # setting), the 4-hour trend, OI structure, an actively
+        # accelerating OI break signal, volume confirming the move
+        # (>=1.5x average), and price on the right side of VWAP. This
+        # is a stricter superset of "Positional Qualified" above, not a
+        # separate independent check.
+        #
+        # IMPORTANT - read before trading off this: stacking filters
+        # like this narrows the list, but it does NOT by itself imply
+        # any particular win rate. Nobody has backtested this exact
+        # rule combination against real historical outcomes yet - so
+        # treat "High Conviction" as "everything currently agrees",
+        # not as a validated or guaranteed-odds signal.
+        vs_vwap_agrees = (
+            (direction == "Bullish" and r.get("vs_vwap") == "Above")
+            or (direction == "Bearish" and r.get("vs_vwap") == "Below")
+        )
+        break_agrees = (
+            (direction == "Bullish" and oi_break_signal == "Break Up")
+            or (direction == "Bearish" and oi_break_signal == "Break Down")
+        )
+        vol_confirmed = (r.get("vol_multiple") or 0) >= 1.5
+        r["high_conviction"] = bool(
+            r["positional_qualified"] and aligned == 3 and break_agrees and vol_confirmed and vs_vwap_agrees
         )
 
 
