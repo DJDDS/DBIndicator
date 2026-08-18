@@ -288,6 +288,7 @@ def backtest_page():
         logged_in=kite_auth.is_logged_in_today(),
         valid_timeframes=config.VALID_TIMEFRAMES,
         default_timeframe=settings.TIMEFRAME,
+        min_required=settings.MIN_REQUIRED,
         state=backtest.get_backtest_state(),
     )
 

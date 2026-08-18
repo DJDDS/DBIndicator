@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backtest - High-Conviction Setups</title>
+<title>Backtest - Confluence Signal</title>
 <style>
   :root {
     --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
@@ -48,11 +48,15 @@
   #bt-results { display: none; }
   .bull { color: var(--green); }
   .bear { color: var(--red); }
+  .bt-group { margin-bottom: 22px; }
+  .bt-group-title { margin: 0 0 8px; font-size: 13.5px; color: var(--navy); }
+  .bt-group-count { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .bt-group-drawdown { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
 <header>
-  <h1>Backtest - High-Conviction Setups</h1>
+  <h1>Backtest - Confluence Signal</h1>
   <nav><a href="/">&larr; Dashboard</a></nav>
 </header>
 <div class="wrap">
@@ -64,21 +68,23 @@
   <div class="card">
     <h2>What this does</h2>
     <p>
-      Replays the exact "High-Conviction Setups" rule from the dashboard - strict 3-of-3
-      confluence, OI structure agreeing with direction, an actively accelerating OI break
-      signal, volume at 1.5&times; average or higher, price on the right side of VWAP, and the
-      separate 4-hour trend agreeing - bar by bar over real historical price and Open Interest
-      data from your Kite connection. It reports what would actually have happened: real win
-      rate, average return, and worst drawdown per trade, at each horizon below.
+      Replays the core 3-indicator confluence signal - RSI vs its smoothing line, MACD vs its
+      signal line, and EMA vs the Bollinger middle band - bar by bar over real historical price
+      data from your Kite connection. An entry fires the moment alignment first reaches your
+      Quick Settings "Required" threshold (currently <strong>{{ min_required }}-of-3</strong>),
+      exactly matching how the live dashboard decides a stock "has a signal." Deliberately does
+      <strong>not</strong> factor in Open Interest, volume, or VWAP - this tests the pure
+      3-parameter strategy on its own, separate from the broader "High-Conviction" filter on the
+      dashboard. Results are broken out for Bullish and Bearish setups separately, since a
+      strategy's edge often differs by direction.
     </p>
     <p>
-      <strong>Read before trusting the numbers:</strong> Kite's instrument list only contains
-      the CURRENTLY ACTIVE futures contract, so historical Open Interest realistically only
-      goes back 30-45 days regardless of how many days you ask for - this caps how many trades
-      the backtest can find. A small trade count (single digits, or zero) is a real, honest
-      result for a filter this narrow - it is not a bug, and it also means the win rate isn't
-      statistically reliable yet. Past performance never guarantees future results, and this is
-      not investment advice - use it to sanity-check the rule, not as a promise of returns.
+      <strong>Read before trusting the numbers:</strong> a low Required setting (2-of-3) fires
+      often and can produce hundreds of trades even over a short window - a high trade count
+      makes the win rate more statistically meaningful, but still isn't a guarantee of future
+      performance. A strict 3-of-3 setting fires far less often, so don't be surprised by a
+      small trade count there. This is not investment advice - use it to sanity-check the rule,
+      not as a promise of returns.
     </p>
   </div>
 
@@ -124,14 +130,7 @@
   <div class="card" id="bt-results">
     <h2>Results</h2>
     <div class="stat-tiles" id="bt-tiles"></div>
-    <div id="bt-horizon-table-wrap">
-      <table>
-        <thead>
-          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Best</th><th>Worst</th></tr>
-        </thead>
-        <tbody id="bt-horizon-body"></tbody>
-      </table>
-    </div>
+    <div id="bt-groups"></div>
 
     <div id="bt-skipped-wrap" style="margin-top:18px; display:none;">
       <h2 style="font-size:13px;">Symbols skipped</h2>
@@ -161,37 +160,59 @@ function fmtPct(v) {
   return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 }
 
+function renderGroup(label, groupSummary, horizons) {
+  groupSummary = groupSummary || {};
+  const ov = groupSummary.overall || {};
+  let rows = '';
+  horizons.forEach(h => {
+    const row = groupSummary[String(h)] || {};
+    const wr = row.win_rate_pct;
+    const wrClass = wr === undefined ? '' : (wr >= 50 ? 'win-good' : 'win-bad');
+    rows += `
+      <tr>
+        <td>${h}</td>
+        <td>${row.trade_count ?? 0}</td>
+        <td class="${wrClass}">${row.trade_count ? row.win_rate_pct.toFixed(1) + '%' : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.avg_return_pct) : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.best_return_pct) : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.worst_return_pct) : '—'}</td>
+      </tr>`;
+  });
+  return `
+    <div class="bt-group">
+      <h3 class="bt-group-title">${label} <span class="bt-group-count">(${ov.total_trades ?? 0} trades)</span></h3>
+      <table>
+        <thead>
+          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Best</th><th>Worst</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="bt-group-drawdown">Avg drawdown: ${fmtPct(ov.avg_drawdown_pct)} &middot; Worst drawdown: ${fmtPct(ov.worst_drawdown_pct)}</p>
+    </div>`;
+}
+
 function renderResult(result) {
   const wrap = document.getElementById('bt-results');
   wrap.style.display = 'block';
 
+  const summary = result.summary || {};
+  const allOv = (summary.all || {}).overall || {};
+  const bullOv = (summary.bullish || {}).overall || {};
+  const bearOv = (summary.bearish || {}).overall || {};
+
   const tiles = document.getElementById('bt-tiles');
-  const ov = result.summary.overall || {};
   tiles.innerHTML = `
-    <div class="tile"><div class="tv">${ov.total_trades ?? 0}</div><div class="tl">Total trades</div></div>
-    <div class="tile"><div class="tv">${ov.bullish_trades ?? 0}</div><div class="tl">Bullish</div></div>
-    <div class="tile"><div class="tv">${ov.bearish_trades ?? 0}</div><div class="tl">Bearish</div></div>
+    <div class="tile"><div class="tv">${allOv.total_trades ?? 0}</div><div class="tl">Total trades</div></div>
+    <div class="tile"><div class="tv">${bullOv.total_trades ?? 0}</div><div class="tl">Bullish</div></div>
+    <div class="tile"><div class="tv">${bearOv.total_trades ?? 0}</div><div class="tl">Bearish</div></div>
     <div class="tile"><div class="tv">${result.symbols_with_trades ?? 0}/${result.symbols_scanned ?? 0}</div><div class="tl">Symbols w/ trades</div></div>
-    <div class="tile"><div class="tv">${fmtPct(ov.worst_drawdown_pct)}</div><div class="tl">Worst drawdown</div></div>
   `;
 
-  const horizonBody = document.getElementById('bt-horizon-body');
-  horizonBody.innerHTML = '';
-  (result.horizons || []).forEach(h => {
-    const row = result.summary[String(h)] || {};
-    const tr = document.createElement('tr');
-    const wr = row.win_rate_pct;
-    const wrClass = wr === undefined ? '' : (wr >= 50 ? 'win-good' : 'win-bad');
-    tr.innerHTML = `
-      <td>${h}</td>
-      <td>${row.trade_count ?? 0}</td>
-      <td class="${wrClass}">${row.trade_count ? row.win_rate_pct.toFixed(1) + '%' : '—'}</td>
-      <td>${row.trade_count ? fmtPct(row.avg_return_pct) : '—'}</td>
-      <td>${row.trade_count ? fmtPct(row.best_return_pct) : '—'}</td>
-      <td>${row.trade_count ? fmtPct(row.worst_return_pct) : '—'}</td>
-    `;
-    horizonBody.appendChild(tr);
-  });
+  const horizons = result.horizons || [];
+  document.getElementById('bt-groups').innerHTML =
+    renderGroup('All Trades', summary.all, horizons) +
+    renderGroup('▲ Bullish Only', summary.bullish, horizons) +
+    renderGroup('▼ Bearish Only', summary.bearish, horizons);
 
   const skippedWrap = document.getElementById('bt-skipped-wrap');
   const skipped = result.symbols_skipped || {};
@@ -204,7 +225,6 @@ function renderResult(result) {
     skippedWrap.style.display = 'none';
   }
 
-  const horizons = result.horizons || [];
   document.getElementById('bt-trade-return-headers').textContent =
     horizons.map(h => h + 'b return').join(' / ');
   const tradesBody = document.getElementById('bt-trades-body');
@@ -224,10 +244,11 @@ function renderResult(result) {
     `;
     tradesBody.appendChild(tr);
   });
-  if (result.trades && result.trades.length > 200) {
+  const totalCount = result.total_trade_count ?? (result.trades || []).length;
+  if (totalCount > 200) {
     const note = document.createElement('tr');
     note.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);">
-      showing the most recent 200 of ${result.trades.length} trades</td>`;
+      showing the most recent 200 of ${totalCount} trades - win rate/return stats above use all of them</td>`;
     tradesBody.appendChild(note);
   }
 }
