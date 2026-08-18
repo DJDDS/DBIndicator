@@ -1,14 +1,15 @@
 """
 Historical backtest for the core RSI + MACD + EMA/Bollinger confluence
-signal - the same 3-indicator rule the live dashboard uses to decide
-when a stock "has a signal" (Quick Settings' Required dropdown: 2-of-3
-or 3-of-3 strict). Instead of guessing a win rate, this replays that
-exact rule bar by bar over real historical price data pulled from your
-own Kite connection, and reports what actually would have happened -
-win rate, average return, and worst drawdown per trade, at whichever
-holding-period horizons you pick, with Bullish and Bearish setups
-broken out separately since a strategy's edge (or lack of one) often
-differs by direction.
+signal - the same 3-indicator rule that fires a fresh alert on the live
+dashboard (Quick Settings' Required dropdown: 2-of-3 or 3-of-3 strict;
+see alerts.py, which triggers on this exact fresh_signal crossover
+event, not just a lingering "still aligned" state). Instead of guessing
+a win rate, this replays that exact rule bar by bar over real historical
+price data pulled from your own Kite connection, and reports what
+actually would have happened - win rate, average return, and worst
+drawdown per trade, at whichever holding-period horizons you pick, with
+Bullish and Bearish setups broken out separately since a strategy's
+edge (or lack of one) often differs by direction.
 
 Deliberately does NOT layer on Open Interest structure, OI
 acceleration, volume, or VWAP - this tests the pure 3-parameter
@@ -151,18 +152,30 @@ def _fetch_history(token, timeframe, days, kite):
 # full history
 # --------------------------------------------------------------------------
 
-def _direction_series(series: dict):
-    rsi_line, rsi_smooth = series["rsi_line"], series["rsi_smooth"]
-    macd_line, signal_line = series["macd_line"], series["signal_line"]
-    ema9, bb_mid = series["ema9"], series["bb_mid"]
-    align_count = (
-        (rsi_line > rsi_smooth).astype(int)
-        + (macd_line > signal_line).astype(int)
-        + (ema9 > bb_mid).astype(int)
-    )
-    aligned = pd.concat([align_count, 3 - align_count], axis=1).max(axis=1)
-    direction = pd.Series(np.where(align_count >= 2, "Bullish", "Bearish"), index=align_count.index)
-    return aligned, direction
+def _fresh_signal_series(series: dict):
+    """Mirrors compute_signal()'s fresh_signal field bar-by-bar - the same
+    event that fires a Telegram alert (alerts.py keys off r["fresh_signal"],
+    not a lingering "still aligned" state). A signal fires on the specific
+    bar where RSI/MACD/EMA-BB CROSSOVERS (rsi_up/rsi_dn, macd_up/macd_dn,
+    ema_up/ema_dn - each true only on the exact bar the cross happens)
+    reach settings.MIN_REQUIRED in the same direction.
+
+    Deliberately NOT based on the continuous "aligned >= min_required"
+    majority state used elsewhere for display (index.html's Matching Now
+    list, background.py's positional_qualified): with 3 indicators the
+    majority side is always >= 2 by construction (you can't split 3 ways
+    into anything narrower than 2-1), so that state is true on almost
+    every bar once MIN_REQUIRED=2 - a rising-edge entry off of it would
+    only ever fire once, at the very first bar of data, which is exactly
+    the bug this replaces. Crossovers are momentary events, so they stay
+    meaningful as backtest entry triggers."""
+    bull_count = series["rsi_up"].astype(int) + series["macd_up"].astype(int) + series["ema_up"].astype(int)
+    bear_count = series["rsi_dn"].astype(int) + series["macd_dn"].astype(int) + series["ema_dn"].astype(int)
+    is_bull = bull_count >= settings.MIN_REQUIRED
+    is_bear = bear_count >= settings.MIN_REQUIRED
+    has_signal = is_bull | is_bear
+    direction = pd.Series(np.where(is_bull, "Bullish", "Bearish"), index=bull_count.index)
+    return has_signal, direction
 
 
 def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str, horizons):
@@ -216,17 +229,16 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 
 
 def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons):
-    """Entry = the bar where alignment first reaches settings.MIN_REQUIRED
-    (a rising edge - so a setup that persists for many bars only counts
-    as one trade, not one per bar), exactly matching the live dashboard's
-    own definition of "a stock has a signal" (Quick Settings' Required
-    dropdown). No OI, volume or VWAP involved - purely the 3 indicators."""
+    """Entry = the bar where a fresh RSI/MACD/EMA-BB crossover signal
+    fires (see _fresh_signal_series) - the same event that would have
+    sent you a Telegram alert. Still de-duped via a rising edge so a
+    signal that stays true for a couple of consecutive bars only counts
+    once. No OI, volume or VWAP involved - purely the 3 indicators."""
     series = compute_series(df, timeframe)
     if "error" in series:
         return []
 
-    aligned, direction = _direction_series(series)
-    has_signal = aligned >= settings.MIN_REQUIRED
+    has_signal, direction = _fresh_signal_series(series)
     entries = has_signal & ~has_signal.shift(1).fillna(False)
 
     trades = []
