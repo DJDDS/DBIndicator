@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scanner Dashboard</title>
-<meta http-equiv="refresh" content="60">
 <style>
   :root {
     --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
@@ -68,6 +67,20 @@
   .oi-up { color: var(--green); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
   .oi-down { color: var(--red); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
   .oi-trend-warn { color: #b45309; font-weight: 700; }
+  /* OI Accel badges - colored pills instead of bare text, so
+     acceleration state is readable at a glance without hunting for a
+     faint color difference against the row background. */
+  .oi-accel-badge { display: inline-block; padding: 2px 9px; border-radius: 5px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .oi-accel-badge.accelerating { background: #e6f4ea; color: var(--green); }
+  .oi-accel-badge.weakening { background: #fbe7e7; color: var(--red); }
+  .oi-accel-badge.transitional { background: #e6eefb; color: var(--accent); }
+  .oi-accel-badge.stable, .oi-accel-badge.flat, .oi-accel-badge.new { background: #eee; color: var(--muted); font-weight: 600; }
+  .oi-accel-badge.unusual { background: #fff3e0; color: #b45309; border: 1px solid #f0c987; }
+  /* Vol column - always bold so it doesn't blend into the row; warm/hot
+     tiers add color on top for volume that's meaningfully above average. */
+  .vol-cell span { font-weight: 700; }
+  .vol-warm { color: #b45309; }
+  .vol-hot { color: var(--red); }
   tr.data-row.filtered-out { display: none; }
   .oi-cell-num { white-space: nowrap; }
   .oi-structure-badge { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 5px; font-size: 11px; font-weight: 700; white-space: nowrap; }
@@ -79,7 +92,6 @@
   .oi-break-badge { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 5px; font-size: 11px; font-weight: 800; white-space: nowrap; border: 1px solid; }
   .oi-break-badge.up { background: #e6f4ea; color: var(--green); border-color: #bfe3cb; }
   .oi-break-badge.down { background: #fbe7e7; color: var(--red); border-color: #f3c3c3; }
-  .vol-hot { color: var(--accent); font-weight: 700; }
   /* Desktop-alert toggle switch. Once a browser grants Notification
      permission it can't be revoked again from JS - only through the
      browser's own site settings - so "off" here means an in-app mute
@@ -141,7 +153,7 @@
   {% else %}
   <div class="meta-row">
     <span>Logged in for today ✓</span>
-    <span>Last scan: {{ last_scan or "waiting for first scan..." }}</span>
+    <span id="last-scan-text">Last scan: {{ last_scan or "waiting for first scan..." }}</span>
     <div class="alert-toggle-wrap">
       <span class="alert-toggle-label" id="desktop-alert-label">Desktop Alerts</span>
       <button id="desktop-alert-toggle" class="toggle-switch" type="button" role="switch" aria-checked="false" title="Desktop Alerts">
@@ -150,9 +162,11 @@
     </div>
   </div>
 
-  {% if last_error %}
-  <div class="warn">Last scan hit an error: {{ last_error }}</div>
-  {% endif %}
+  <div id="last-error-wrap">
+    {% if last_error %}
+    <div class="warn">Last scan hit an error: {{ last_error }}</div>
+    {% endif %}
+  </div>
 
   {% if quick_error %}
   <div class="warn">Couldn't apply: {{ quick_error }}</div>
@@ -162,25 +176,27 @@
     <h2 style="margin:0 0 6px;font-size:15px;color:var(--navy);">🎯 High-Conviction Setups</h2>
     <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
       Only stocks where <strong>every</strong> signal this app tracks agrees at once: strict
-      3-of-3 confluence (not just your Required setting), the separate 4-hour trend, OI
-      structure, an actively accelerating OI break signal, volume at 1.5&times; average or
-      higher, and price on the right side of VWAP. Deliberately narrow by design - most scans
-      will show few or none, and that's expected, not a bug.
+      3-of-3 confluence (not just your Required setting), OI structure, an actively
+      accelerating OI break signal, volume at 1.5&times; average or higher, and price on the
+      right side of VWAP. Deliberately narrow by design - most scans will show few or none,
+      and that's expected, not a bug.
     </p>
-    <div class="match-chips">
-      {% set ns2 = namespace(count=0) %}
-      {% for r in results %}
-        {% if not r.error and r.high_conviction %}
-          {% set ns2.count = ns2.count + 1 %}
-          <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-            {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
-          </a>
-        {% endif %}
-      {% endfor %}
+    <div id="hc-body">
+      <div class="match-chips">
+        {% set ns2 = namespace(count=0) %}
+        {% for r in results %}
+          {% if not r.error and r.high_conviction %}
+            {% set ns2.count = ns2.count + 1 %}
+            <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+              {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+            </a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% if ns2.count == 0 %}
+      <p class="mn-empty">Nothing meets every condition right now.</p>
+      {% endif %}
     </div>
-    {% if ns2.count == 0 %}
-    <p class="mn-empty">Nothing meets every condition right now.</p>
-    {% endif %}
     <p style="margin:12px 0 0;font-size:11.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;">
       This stacks your existing filters together - it is <strong>not</strong> a validated or
       backtested win-rate signal, and no combination of indicators can honestly promise a
@@ -251,13 +267,13 @@
   <div class="card">
     {% set ns = namespace(bull=0, bear=0) %}
     {% for r in results %}
-      {% if not r.error and r.aligned >= min_required %}
+      {% if not r.error and r.aligned is defined and r.aligned >= min_required %}
         {% if r.direction == 'Bullish' %}{% set ns.bull = ns.bull + 1 %}{% else %}{% set ns.bear = ns.bear + 1 %}{% endif %}
       {% endif %}
     {% endfor %}
     <div class="mn-header-row">
       <h2 style="margin:0;font-size:15px;color:var(--navy);">Matching Now &middot; {{ timeframe }}</h2>
-      <div class="mn-counts">
+      <div class="mn-counts" id="mn-counts">
         <span class="bull">▲ {{ ns.bull }} Bullish</span>
         <span class="bear">▼ {{ ns.bear }} Bearish</span>
       </div>
@@ -271,38 +287,40 @@
     <div class="mn-toolbar">
       <label><input type="checkbox" id="mn-strict-only" onchange="mnApplyStrict()"> Show 3-of-3 only</label>
     </div>
-    {% if ns.bull == 0 and ns.bear == 0 %}
-    <p class="mn-empty">Nothing matching right now.</p>
-    {% else %}
-    <div class="mn-columns">
-      <div>
-        <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
-        <div class="mn-chip-scroll" id="mn-bull-scroll">
-          {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-            {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
-            <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-              ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
-            </a>
-            {% endif %}
-          {% endfor %}
-          {% if ns.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+    <div id="mn-lists">
+      {% if ns.bull == 0 and ns.bear == 0 %}
+      <p class="mn-empty">Nothing matching right now.</p>
+      {% else %}
+      <div class="mn-columns">
+        <div>
+          <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
+          <div class="mn-chip-scroll" id="mn-bull-scroll">
+            {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+              {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
+              <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+              </a>
+              {% endif %}
+            {% endfor %}
+            {% if ns.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+          </div>
+        </div>
+        <div>
+          <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
+          <div class="mn-chip-scroll" id="mn-bear-scroll">
+            {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+              {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
+              <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+              </a>
+              {% endif %}
+            {% endfor %}
+            {% if ns.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+          </div>
         </div>
       </div>
-      <div>
-        <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
-        <div class="mn-chip-scroll" id="mn-bear-scroll">
-          {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-            {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
-            <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-              ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
-            </a>
-            {% endif %}
-          {% endfor %}
-          {% if ns.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-        </div>
-      </div>
+      {% endif %}
     </div>
-    {% endif %}
   </div>
 
   <div class="card insights-card">
@@ -324,8 +342,9 @@
       that stock's own recent swings. When OI is building in a direction <em>and</em>
       accelerating, that row also gets a bold <span class="oi-break-badge up">▲ Break Up</span>
       / <span class="oi-break-badge down">▼ Break Down</span> badge - a stronger, more decisive
-      read than either signal alone. <strong>Vol</strong> is the latest candle's volume as a
-      multiple of its recent average (highlighted above 1.5x).
+      read than either signal alone. <strong>Vol</strong> shows the latest candle's actual
+      traded volume plus that as a multiple of its recent average, highlighted orange at
+      1.5&times;-3&times; and red above 3&times;.
     </p>
     <table id="main-table">
       <thead>
@@ -381,9 +400,9 @@
           <th></th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="main-tbody">
         {% for r in results %}
-        {% set signal_dir = r.direction if (not r.error and r.aligned >= min_required) else 'None' %}
+        {% set signal_dir = r.direction if (not r.error and r.aligned is defined and r.aligned >= min_required) else 'None' %}
         <tr class="data-row"
             data-symbol="{{ r.symbol }}"
             data-rsi="{{ r.rsi_state or '' }}"
@@ -421,12 +440,14 @@
           </td>
           <td data-sort="{{ r.oi_change_pct if r.oi_change_pct is not none else '' }}">
             {% if r.oi is defined and r.oi is not none %}
-            <span class="{{ 'oi-trend-warn' if r.oi_unusual else '' }}">{% if r.oi_unusual %}⚠ {% endif %}{{ r.oi_trend_label or 'New' }}</span>
+            <span class="oi-accel-badge {{ (r.oi_trend_label or 'New')|lower }} {{ 'unusual' if r.oi_unusual else '' }}">{% if r.oi_unusual %}⚠ {% endif %}{{ r.oi_trend_label or 'New' }}</span>
             {% else %}—{% endif %}
           </td>
-          <td data-sort="{{ r.vol_multiple if r.vol_multiple is not none else '' }}">
+          <td data-sort="{{ r.vol_multiple if r.vol_multiple is not none else '' }}" class="vol-cell">
             {% if r.vol_multiple is defined and r.vol_multiple is not none %}
-            <span class="{{ 'vol-hot' if r.vol_multiple >= 1.5 else '' }}">{{ r.vol_multiple }}x</span>
+            <span class="{{ 'vol-hot' if r.vol_multiple >= 3 else ('vol-warm' if r.vol_multiple >= 1.5 else '') }}">
+              {% if r.volume is defined and r.volume is not none %}{{ '{:,}'.format(r.volume) }} &middot; {% endif %}{{ r.vol_multiple }}x
+            </span>
             {% else %}—{% endif %}
           </td>
           <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
@@ -449,67 +470,22 @@
     </table>
   </div>
 
-  <div class="card">
-    <h2 style="margin:0 0 4px;font-size:15px;color:var(--navy);">4-Hour Confluence</h2>
-    <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
-      A separate scan on the 4-hour timeframe, refreshed roughly every 15 minutes regardless of
-      your Quick Settings timeframe above - useful as a bigger-picture check alongside your
-      main {{ timeframe }} scan. Last 4-hour scan: {{ last_scan_4h or "waiting for first scan..." }}
-    </p>
-    <table id="fourh-table">
-      <thead>
-        <tr>
-          <th class="sortable" data-col="0">Symbol <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="1">Close <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="2">RSI <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="3">MACD <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="4">EMA/BB <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="5">Aligned <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="6">Signal <span class="sort-arrow"></span></th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in results_4h %}
-        {% if not r.error and r.aligned >= min_required %}
-        <tr class="data-row" onclick="window.location='/chart/{{ r.symbol }}?timeframe=4hour'">
-          <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
-          <td data-sort="{{ r.close }}">{{ r.close }}</td>
-          <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
-          <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
-          <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
-          <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
-          <td data-sort="{{ r.direction }}">
-            {% if r.direction == 'Bullish' %}
-            <span class="signal-pill bull">▲ Bullish{% if r.fresh_signal == 'Bullish' %} · NEW{% endif %}</span>
-            {% else %}
-            <span class="signal-pill bear">▼ Bearish{% if r.fresh_signal == 'Bearish' %} · NEW{% endif %}</span>
-            {% endif %}
-          </td>
-          <td><a class="chart-link" href="/chart/{{ r.symbol }}?timeframe=4hour" onclick="event.stopPropagation()">Chart →</a></td>
-        </tr>
-        {% endif %}
-        {% else %}
-        <tr><td colspan="8">No 4-hour scan results yet.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <p style="margin:10px 0 0;font-size:12px;color:var(--muted);">
-      Only showing stocks currently at {{ min_required }}-of-3 or better alignment on the
-      4-hour timeframe - everything else is filtered out of this view to keep it focused.
-    </p>
-  </div>
   {% endif %}
 
   <div class="card" style="font-size:12px; color:var(--muted);">
-    This page auto-refreshes every 60 seconds. Backtest results and known limitations from
-    our earlier testing still apply - treat signals as directional input, not investment advice.
+    This page updates itself live in the background every 20 seconds (no full reload, so your
+    filters, sort order, and scroll position stay put) - want a bigger-picture read alongside
+    your main {{ timeframe }} scan? Set Quick Settings' Timeframe above to 4hour, or use the
+    <a href="/backtest">Backtest</a> page. Treat signals as directional input, not investment
+    advice.
   </div>
 </div>
 <script>
   // Fetch AI insights asynchronously so a slow/absent API call never
-  // blocks the dashboard itself from rendering.
-  (function () {
+  // blocks the dashboard itself from rendering. Re-called on every
+  // dashboard refresh cycle below - cheap since the server caches by
+  // last_scan and only actually calls Claude when there's new data.
+  function loadInsights() {
     var el = document.getElementById('insights-body');
     if (!el) return;
     fetch('/api/insights').then(function (r) { return r.json(); }).then(function (data) {
@@ -526,7 +502,8 @@
       el.classList.remove('loading');
       el.classList.add('muted');
     });
-  })();
+  }
+  loadInsights();
 
   // Desktop (OS-level) notification popups - separate from, and in
   // addition to, the in-page toast below. These show up outside the
@@ -598,7 +575,7 @@
         });
         n.onclick = function () {
           window.focus();
-          window.location = '/chart/' + a.symbol + (a.timeframe === '4hour' ? '?timeframe=4hour' : '');
+          window.location = '/chart/' + a.symbol;
         };
       } catch (e) { /* notification creation failed - ignore */ }
     };
@@ -657,15 +634,43 @@
     setInterval(poll, 20000);
   })();
 
-  // Click-to-sort headers, shared by both tables.
-  function makeSortable(tableId) {
-    var table = document.getElementById(tableId);
+  // Click-to-sort headers on the main table. currentSort is tracked at
+  // module scope (not just as data-dir attributes on the headers) so
+  // the periodic dashboard refresh below can reapply the same sort to
+  // freshly-swapped-in rows, instead of the table silently reverting
+  // to watchlist order every 20 seconds.
+  var currentSort = null; // {colIndex, asc}
+
+  function sortRows(colIndex, asc) {
+    var table = document.getElementById('main-table');
+    if (!table) return;
+    var tbody = table.tBodies[0];
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
+    rows.sort(function (a, b) {
+      var ac = a.children[colIndex], bc = b.children[colIndex];
+      var av = ac ? (ac.getAttribute('data-sort') || '') : '';
+      var bv = bc ? (bc.getAttribute('data-sort') || '') : '';
+      var an = parseFloat(av), bn = parseFloat(bv);
+      var cmp = (av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn))
+        ? an - bn
+        : av.localeCompare(bv);
+      return asc ? cmp : -cmp;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  function reapplySort() {
+    if (currentSort) sortRows(currentSort.colIndex, currentSort.asc);
+  }
+
+  function makeSortable() {
+    var table = document.getElementById('main-table');
     if (!table) return;
     var ths = table.querySelectorAll('thead th.sortable');
     ths.forEach(function (th) {
       th.addEventListener('click', function () {
         var colIndex = parseInt(th.getAttribute('data-col'), 10);
-        var asc = th.getAttribute('data-dir') !== 'asc';
+        var asc = !(currentSort && currentSort.colIndex === colIndex && currentSort.asc);
         ths.forEach(function (o) {
           o.removeAttribute('data-dir');
           var a = o.querySelector('.sort-arrow');
@@ -674,19 +679,8 @@
         th.setAttribute('data-dir', asc ? 'asc' : 'desc');
         var arrow = th.querySelector('.sort-arrow');
         if (arrow) arrow.textContent = asc ? '▲' : '▼';
-        var tbody = table.tBodies[0];
-        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
-        rows.sort(function (a, b) {
-          var ac = a.children[colIndex], bc = b.children[colIndex];
-          var av = ac ? (ac.getAttribute('data-sort') || '') : '';
-          var bv = bc ? (bc.getAttribute('data-sort') || '') : '';
-          var an = parseFloat(av), bn = parseFloat(bv);
-          var cmp = (av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn))
-            ? an - bn
-            : av.localeCompare(bv);
-          return asc ? cmp : -cmp;
-        });
-        rows.forEach(function (r) { tbody.appendChild(r); });
+        currentSort = { colIndex: colIndex, asc: asc };
+        sortRows(colIndex, asc);
       });
     });
   }
@@ -729,8 +723,7 @@
     });
   }
 
-  makeSortable('main-table');
-  makeSortable('fourh-table');
+  makeSortable();
 
   // "Show 3-of-3 only" checkbox above the Matching Now chips - hides
   // the faded (exactly min_required-of-3) chips without a page reload.
@@ -741,6 +734,40 @@
       chip.classList.toggle('hidden-by-strict', box.checked);
     });
   }
+
+  // Dynamic dashboard: instead of a hard `<meta refresh>` full-page
+  // reload every 60s (which reset your filters, sort order and scroll
+  // position every time, and made the OI/Vol numbers hard to track as
+  // the whole page flashed and rebuilt), this re-fetches the same page
+  // in the background and swaps in just the pieces that actually
+  // change - last-scan time, any scan error, the High-Conviction chips,
+  // the Matching Now counts/lists, and the main table body - leaving
+  // everything else (your filter dropdowns, sort column, the Show
+  // 3-of-3 checkbox, scroll position) untouched. It reuses the exact
+  // same server-rendered HTML the initial page load uses, so there's
+  // no separate client-side rendering logic that could drift out of
+  // sync with what the table actually shows.
+  var DASHBOARD_REFRESH_MS = 20000;
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody'];
+
+  function refreshDashboard() {
+    fetch(window.location.pathname + window.location.search).then(function (r) {
+      if (!r.ok) throw new Error('refresh failed: ' + r.status);
+      return r.text();
+    }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      SYNCED_IDS.forEach(function (id) {
+        var freshEl = doc.getElementById(id);
+        var liveEl = document.getElementById(id);
+        if (freshEl && liveEl) liveEl.innerHTML = freshEl.innerHTML;
+      });
+      applyFilters();
+      reapplySort();
+      mnApplyStrict();
+      loadInsights();
+    }).catch(function () { /* transient network hiccup - next cycle will retry */ });
+  }
+  setInterval(refreshDashboard, DASHBOARD_REFRESH_MS);
 </script>
 </body>
 </html>

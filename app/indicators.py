@@ -57,7 +57,7 @@ def _cross_down(a, b):
     return (a.shift(1) >= b.shift(1)) & (a < b)
 
 
-_INTRADAY_TIMEFRAMES = ("15minute", "30minute", "60minute", "4hour")
+_INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 
 
 def session_vwap(df: pd.DataFrame, timeframe: str):
@@ -175,6 +175,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     vol_avg = series["vol_avg"].iloc[i]
     latest_vol = df["volume"].iloc[i]
     vol_multiple = round(float(latest_vol / vol_avg), 2) if vol_avg and pd.notna(vol_avg) and vol_avg > 0 else None
+    volume = int(latest_vol) if pd.notna(latest_vol) else None
 
     return {
         "close": round(float(close.iloc[i]), 2),
@@ -196,4 +197,5 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "vs_vwap": vs_vwap,
         "breakout_state": breakout_state,
         "vol_multiple": vol_multiple,
+        "volume": volume,
     }

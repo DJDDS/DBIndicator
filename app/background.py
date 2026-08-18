@@ -2,12 +2,6 @@
 A small background thread that re-runs the scan every SCAN_INTERVAL_SECONDS
 during market hours, so the web page always has a recent result to show
 without the visitor having to trigger anything themselves.
-
-It also runs a second, separate confluence scan specifically on the
-4-hour timeframe (regardless of whatever timeframe the dashboard/Quick
-Settings is currently set to) - 4-hour candles only move every 4 hours,
-so this runs on a much slower cadence than the main scan to avoid
-wasting API calls re-fetching data that hasn't changed.
 """
 import json
 import logging
@@ -21,12 +15,6 @@ from .scanner import scan_watchlist, is_market_open, now_ist, classify_oi_trend,
 
 log = logging.getLogger(__name__)
 
-# How often (seconds) to re-run the dedicated 4-hour scan. This is
-# intentionally independent of settings.SCAN_INTERVAL_SECONDS (the main
-# scan's cadence) since 4-hour candles don't close often enough to
-# justify checking every 2-3 minutes like the main scan does.
-FOUR_HOUR_SCAN_INTERVAL_SECONDS = 900
-
 # How many recent OI samples to keep per symbol for trend/acceleration
 # classification. Only the main-timeframe scan carries OI, so this
 # grows by one entry per symbol per main scan cycle.
@@ -37,8 +25,6 @@ _state = {
     "results": [],
     "last_scan": None,
     "last_error": None,
-    "results_4h": [],
-    "last_scan_4h": None,
     "oi_history": {},
     "oi_day_baseline": {},
     "oi_structure_prev": {},
@@ -75,20 +61,13 @@ def _apply_oi_screener_fields(results):
     (Break Up / Break Down) when OI is building in a direction AND
     accelerating faster than its own recent pace, and cross-references
     the existing confluence signal (this symbol's own aligned/direction)
-    plus the separate 4-hour scan's direction to mark "positional_qualified" -
-    a stock that isn't just showing an OI structure, but one that agrees
-    with both your short-term confluence signal and the bigger 4-hour
-    trend. Must be called after _apply_oi_trend (needs oi_trend_label/
-    oi_unusual already set) and while holding _state_lock, after
-    _state["results_4h"] already holds the most recent 4-hour scan."""
+    to mark "positional_qualified" - a stock that isn't just showing an
+    OI structure, but one that agrees with your confluence signal too.
+    Must be called after _apply_oi_trend (needs oi_trend_label/
+    oi_unusual already set) and while holding _state_lock."""
     today = now_ist().date().isoformat()
     baseline = _state["oi_day_baseline"]
     prev_structure = _state["oi_structure_prev"]
-    four_h_direction = {
-        r4["symbol"]: r4["direction"]
-        for r4 in _state.get("results_4h", [])
-        if not r4.get("error") and r4.get("symbol")
-    }
 
     for r in results:
         symbol, oi, close = r.get("symbol"), r.get("oi"), r.get("close")
@@ -142,20 +121,19 @@ def _apply_oi_screener_fields(results):
             (direction == "Bullish" and structure == "Long Buildup")
             or (direction == "Bearish" and structure == "Short Buildup")
         )
-        four_h_agrees = four_h_direction.get(symbol) == direction
         r["positional_qualified"] = bool(
-            aligned >= settings.MIN_REQUIRED and structure_agrees and four_h_agrees
+            aligned >= settings.MIN_REQUIRED and structure_agrees
         )
 
         # High Conviction: a deliberately narrow filter meant to surface
         # only a handful of stocks, by stacking EVERY signal this app
         # tracks and requiring all of them to point the same way at
         # once - strict 3-of-3 confluence (not just your Required
-        # setting), the 4-hour trend, OI structure, an actively
-        # accelerating OI break signal, volume confirming the move
-        # (>=1.5x average), and price on the right side of VWAP. This
-        # is a stricter superset of "Positional Qualified" above, not a
-        # separate independent check.
+        # setting), OI structure, an actively accelerating OI break
+        # signal, volume confirming the move (>=1.5x average), and
+        # price on the right side of VWAP. This is a stricter superset
+        # of "Positional Qualified" above, not a separate independent
+        # check.
         #
         # IMPORTANT - read before trading off this: stacking filters
         # like this narrows the list, but it does NOT by itself imply
@@ -178,11 +156,10 @@ def _apply_oi_screener_fields(results):
 
 
 def _load_persisted_state():
-    """Restores the last scan (both the main timeframe and the 4-hour
-    pass) from disk on startup, so a restart (a redeploy, the host
-    restarting the container, etc.) doesn't wipe the day's data -
-    after-hours, this is the only thing keeping results on screen for
-    you to still analyse."""
+    """Restores the last scan from disk on startup, so a restart (a
+    redeploy, the host restarting the container, etc.) doesn't wipe the
+    day's data - after-hours, this is the only thing keeping results on
+    screen for you to still analyse."""
     if not os.path.exists(SCAN_RESULTS_FILE):
         return
     try:
@@ -192,8 +169,6 @@ def _load_persisted_state():
             with _state_lock:
                 _state["results"] = saved.get("results", [])
                 _state["last_scan"] = saved.get("last_scan")
-                _state["results_4h"] = saved.get("results_4h", [])
-                _state["last_scan_4h"] = saved.get("last_scan_4h")
                 _state["oi_history"] = saved.get("oi_history", {})
                 _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
@@ -207,8 +182,6 @@ def _save_persisted_state():
         snapshot = {
             "results": _state["results"],
             "last_scan": _state["last_scan"],
-            "results_4h": _state["results_4h"],
-            "last_scan_4h": _state["last_scan_4h"],
             "oi_history": _state["oi_history"],
             "oi_day_baseline": _state["oi_day_baseline"],
             "oi_structure_prev": _state["oi_structure_prev"],
@@ -234,7 +207,6 @@ def get_state():
 
 
 def _run_loop():
-    last_4h_run = 0.0
     while True:
         # The entire iteration body is wrapped in this try/except as a
         # last-resort safety net. Previously, a single uncaught exception
@@ -263,24 +235,6 @@ def _run_loop():
                     log.exception("Background scan failed")
                     with _state_lock:
                         _state["last_error"] = str(exc)
-
-                now_monotonic = time.monotonic()
-                if now_monotonic - last_4h_run >= FOUR_HOUR_SCAN_INTERVAL_SECONDS:
-                    try:
-                        # OI doesn't vary by timeframe (it's the same
-                        # futures-contract value regardless), so skip
-                        # re-fetching it here - the main scan above already has it.
-                        results_4h = scan_watchlist(kite, timeframe="4hour", with_oi=False)
-                        with _state_lock:
-                            _state["results_4h"] = results_4h
-                            _state["last_scan_4h"] = now_ist().isoformat(timespec="seconds")
-                        try:
-                            alerts.process_scan_results(results_4h, "4hour")
-                        except Exception:  # noqa: BLE001
-                            log.exception("4-hour alert processing failed")
-                    except Exception:  # noqa: BLE001 - never let the 4H pass break the main scan
-                        log.exception("4-hour background scan failed")
-                    last_4h_run = now_monotonic
 
                 _save_persisted_state()
                 time.sleep(settings.SCAN_INTERVAL_SECONDS)

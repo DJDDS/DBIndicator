@@ -67,8 +67,6 @@ def dashboard():
         results=state["results"],
         last_scan=state["last_scan"],
         last_error=state["last_error"],
-        results_4h=state["results_4h"],
-        last_scan_4h=state["last_scan_4h"],
         timeframe=settings.TIMEFRAME,
         min_required=settings.MIN_REQUIRED,
         macd_preset=settings.MACD_PRESET,
@@ -260,7 +258,6 @@ def api_insights():
     state = get_state()
     result = generate_insights(
         state["results"], settings.TIMEFRAME, settings.MIN_REQUIRED, state["last_scan"],
-        results_4h=state["results_4h"], last_scan_4h=state["last_scan_4h"],
     )
     return jsonify(result)
 

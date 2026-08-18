@@ -3,9 +3,9 @@ Historical backtest for the "High-Conviction Setups" composite rule
 (see background.py's _apply_oi_screener_fields). Instead of guessing a
 win rate, this replays the exact same rule - strict 3-of-3 confluence,
 OI structure, an accelerating OI break signal, volume >=1.5x average,
-price vs VWAP, and the separate 4-hour trend - bar by bar over real
-historical candle + Open Interest data pulled from your own Kite
-connection, and reports what actually would have happened.
+and price vs VWAP - bar by bar over real historical candle + Open
+Interest data pulled from your own Kite connection, and reports what
+actually would have happened.
 
 Reuses indicators.compute_series() and scanner.classify_oi_trend() /
 classify_oi_structure() directly rather than reimplementing the logic
@@ -44,7 +44,7 @@ from .scanner import (
 
 log = logging.getLogger(__name__)
 
-_INTRADAY_TIMEFRAMES = ("15minute", "30minute", "60minute", "4hour")
+_INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 DEFAULT_HORIZONS = (5, 10, 20)
 WARMUP_DAYS = 20          # extra calendar days fetched before the requested
                            # window purely so indicators are warmed up -
@@ -263,31 +263,6 @@ def _oi_trend_series(oi: pd.Series):
     )
 
 
-def _four_hour_direction_series(df: pd.DataFrame) -> pd.Series:
-    """For each bar in df, the DIRECTION of the most recently fully
-    CLOSED 4-hour bar as of that time - the walk-forward equivalent of
-    background.py cross-checking the main scan against the separately
-    maintained 4-hour scan. Shifted by one 4h bar so a bar's direction
-    is only used starting the NEXT 4h bar (its own close isn't final
-    until the bar ends)."""
-    df4 = df[["open", "high", "low", "close", "volume"]].resample(
-        "4h", origin="start_day", offset="9h15min"
-    ).agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna()
-    if df4.empty:
-        return pd.Series(None, index=df.index, dtype=object)
-    series4 = compute_series(df4, "4hour")
-    if "error" in series4:
-        return pd.Series(None, index=df.index, dtype=object)
-    _, direction4 = _direction_series(series4)
-    direction4_known = direction4.shift(1).dropna()
-    if direction4_known.empty:
-        return pd.Series(None, index=df.index, dtype=object)
-    left = pd.DataFrame({"ts": df.index})
-    right = pd.DataFrame({"ts": direction4_known.index, "direction_4h": direction4_known.values}).sort_values("ts")
-    merged = pd.merge_asof(left.sort_values("ts"), right, on="ts", direction="backward")
-    return merged.set_index("ts").reindex(df.index)["direction_4h"]
-
-
 def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str, horizons):
     """Entry is executed at the NEXT bar's open after the signal bar
     (never the signal bar's own close, to avoid lookahead bias).
@@ -379,20 +354,14 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         vs_vwap = pd.Series(
             np.where(close > vwap, "Above", np.where(close < vwap, "Below", None)), index=df.index, dtype=object
         )
-        direction_4h = _four_hour_direction_series(df)
-        four_h_agrees = (direction_4h == direction).fillna(False)
     else:
-        # Day/week backtests have no finer intraday timeframe to
-        # cross-check against, so this gate is simply skipped for them
-        # (documented in the report, not silently ignored).
         vs_vwap = pd.Series(None, index=df.index, dtype=object)
-        four_h_agrees = pd.Series(True, index=df.index)
 
     structure_agrees = (
         ((direction == "Bullish") & (structure == "Long Buildup"))
         | ((direction == "Bearish") & (structure == "Short Buildup"))
     )
-    positional_qualified = (aligned >= settings.MIN_REQUIRED) & structure_agrees & four_h_agrees
+    positional_qualified = (aligned >= settings.MIN_REQUIRED) & structure_agrees
     vs_vwap_agrees = (
         ((direction == "Bullish") & (vs_vwap == "Above"))
         | ((direction == "Bearish") & (vs_vwap == "Below"))

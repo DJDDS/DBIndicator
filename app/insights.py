@@ -6,9 +6,8 @@ what's happening. Uses YOUR OWN Anthropic API key (ANTHROPIC_API_KEY in
 panel is simply hidden/disabled if you don't set one.
 
 Results are cached per scan (keyed on the background scanner's
-last_scan/last_scan_4h timestamps) so a page auto-refresh every 60s
-doesn't fire a fresh API call every time - only when there's actually
-new data from either the main-timeframe scan or the 4-hour scan.
+last_scan timestamp) so a dashboard refresh doesn't fire a fresh API
+call every time - only when there's actually new scan data.
 """
 import logging
 import threading
@@ -49,9 +48,8 @@ def _format_rows(results):
     return "\n".join(lines) if lines else "(no usable data in this scan yet)"
 
 
-def _build_prompt(results, timeframe, min_required, results_4h):
+def _build_prompt(results, timeframe, min_required):
     data_block = _format_rows(results)
-    fourh_block = _format_rows(results_4h) if results_4h else None
 
     sections = [
         "You are assisting a retail trader reviewing a technical scanner's latest "
@@ -61,8 +59,6 @@ def _build_prompt(results, timeframe, min_required, results_4h):
         "the stock's current Open Interest from its near-month futures contract.",
         f"Latest scan snapshot ({timeframe} timeframe):\n{data_block}",
     ]
-    if fourh_block:
-        sections.append(f"Separate 4-hour timeframe scan (same watchlist):\n{fourh_block}")
 
     instructions = (
         "In under 220 words, plain prose (no headers, no bullet list): call out any "
@@ -73,15 +69,6 @@ def _build_prompt(results, timeframe, min_required, results_4h):
         "since that combination (price signal + heavy OI) is often more significant "
         "than either alone."
     )
-    if fourh_block:
-        instructions += (
-            " Then, specifically call out which stocks are currently 3-of-3 (or "
-            f"{min_required}-of-3) aligned Bullish or Bearish on the separate 4-hour "
-            "scan above - the 4-hour reads matter more for the bigger-picture trend "
-            "than the faster timeframe, so flag any disagreement between the two "
-            "(e.g. a stock bullish intraday but bearish on 4-hour, or vice versa) as "
-            "worth extra caution."
-        )
     instructions += (
         " Mention whether this scan looks unusually quiet or unusually active. Be "
         "strictly factual and specific to the numbers given above - do not invent "
@@ -92,17 +79,16 @@ def _build_prompt(results, timeframe, min_required, results_4h):
     return "\n\n".join(sections)
 
 
-def generate_insights(results, timeframe, min_required, last_scan, results_4h=None, last_scan_4h=None):
-    """Returns {"text": ...} or {"error": ...}. Cached per (last_scan,
-    last_scan_4h) pair, so a fresh call fires whenever either the main
-    or the 4-hour scan produces new data."""
+def generate_insights(results, timeframe, min_required, last_scan):
+    """Returns {"text": ...} or {"error": ...}. Cached per last_scan, so
+    a fresh call only fires when there's actually new scan data."""
     if not insights_enabled():
         return {"error": "AI Insights is off - add ANTHROPIC_API_KEY to your .env to enable it."}
 
     if not results:
         return {"error": "No scan results yet - insights will appear after the first scan."}
 
-    cache_key = (last_scan, last_scan_4h)
+    cache_key = last_scan
     with _lock:
         if _cache["key"] == cache_key and _cache["text"] is not None:
             return {"text": _cache["text"], "cached": True}
@@ -117,7 +103,7 @@ def generate_insights(results, timeframe, min_required, last_scan, results_4h=No
         resp = client.messages.create(
             model=config.ANTHROPIC_MODEL,
             max_tokens=450,
-            messages=[{"role": "user", "content": _build_prompt(results, timeframe, min_required, results_4h)}],
+            messages=[{"role": "user", "content": _build_prompt(results, timeframe, min_required)}],
         )
         text = "".join(
             block.text for block in resp.content if getattr(block, "type", "") == "text"

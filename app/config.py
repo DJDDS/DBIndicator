@@ -64,10 +64,14 @@ DEFAULT_WATCHLIST = [
     "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "WIPRO", "ONGC", "TATAMOTORS",
 ]
 
-# Valid values for TIMEFRAME. "4hour" is synthesized by resampling Kite's
-# native 60minute candles (Kite has no native 4H interval) - see
-# scanner.py. "week" is synthesized by resampling daily candles.
-VALID_TIMEFRAMES = ["15minute", "30minute", "60minute", "4hour", "day", "week"]
+# Valid values for TIMEFRAME. 30-minute and 60-minute were dropped as
+# unnecessary in-between options. "4hour" is synthesized by resampling
+# Kite's native 60-minute candles (Kite has no native 4H interval) -
+# see scanner.py - and stays selectable here as a normal scan timeframe;
+# it's the separate always-on 4-hour CROSS-CHECK scan (background.py's
+# old parallel pass feeding "positional_qualified") that was removed,
+# not 4-hour itself. "week" is synthesized by resampling daily candles.
+VALID_TIMEFRAMES = ["15minute", "4hour", "day", "week"]
 VALID_MACD_PRESETS = ["auto", "15min", "30min", "custom"]
 
 _TUNABLE_FIELDS = [
@@ -118,6 +122,14 @@ class Settings:
                         data[k] = v
             except (json.JSONDecodeError, OSError):
                 pass
+        # A persisted TIMEFRAME from before VALID_TIMEFRAMES was trimmed
+        # (e.g. "30minute", "60minute", "4hour") would otherwise silently
+        # keep scanning on a now-unselectable value forever - fall back
+        # to the default instead so removing an option can't strand a
+        # running deployment on it.
+        if data.get("TIMEFRAME") not in VALID_TIMEFRAMES:
+            data["TIMEFRAME"] = "15minute"
+
         for k, v in data.items():
             setattr(self, k, v)
 
