@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, indicators, kite_auth, scanner
+from . import alerts, backtest, background, config, indicators, kite_auth, scalper, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -51,6 +51,7 @@ def _ensure_scanner_running():
     global _scanner_started
     if not _scanner_started:
         start_background_scanner()
+        scalper.start_scalp_scanner()
         _scanner_started = True
 
 
@@ -326,6 +327,33 @@ def api_oi_screener():
     state = get_state()
     results = [r for r in state["results"] if not r.get("error") and r.get("param_tier")]
     return jsonify({"results": results, "min_required": settings.MIN_REQUIRED})
+
+
+@app.route("/scalp")
+@require_dashboard_password
+def scalp_page():
+    return render_template(
+        "scalp.html",
+        logged_in=kite_auth.is_logged_in_today(),
+        timeframe=scalper.SCALP_TIMEFRAME,
+        min_required=scalper.MIN_REQUIRED_SCALP,
+        stock_count=len(scalper.NIFTY50_STOCKS),
+    )
+
+
+@app.route("/api/scalp/results")
+@require_dashboard_password
+def api_scalp_results():
+    state = scalper.get_scalp_state()
+    return jsonify({
+        "results": state["results"],
+        "last_scan": state["last_scan"],
+        "last_error": state["last_error"],
+        "index_direction": state["index_direction"],
+        "index_close": state["index_close"],
+        "index_chg_pct": state["index_chg_pct"],
+        "min_required": scalper.MIN_REQUIRED_SCALP,
+    })
 
 
 @app.route("/api/alerts/test", methods=["POST"])

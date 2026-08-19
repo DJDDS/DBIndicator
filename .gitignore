@@ -2,6 +2,8 @@
 kite_token_cache.json
 scanner_settings.json
 last_scan_results.json
+param_weights.json
+scalp_results.json
 __pycache__/
 *.pyc
 .venv/

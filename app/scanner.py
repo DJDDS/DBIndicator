@@ -286,6 +286,9 @@ def _lookback_days(timeframe: str) -> int:
     # per-call date-range limit itself - _fetch_historical_chunked below
     # always splits into safe chunks regardless of how big this is.
     return {
+        "3minute": 6,   # ~125 bars/session on 3-min candles - 6 days is
+                         # already 700+ bars, plenty for BB-20/MACD warm-up
+                         # without pulling more than scalper.py needs
         "15minute": 15,
         "30minute": 30,
         "60minute": 90,

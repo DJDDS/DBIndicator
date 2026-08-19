@@ -59,7 +59,7 @@ def _cross_down(a, b):
     return (a.shift(1) >= b.shift(1)) & (a < b)
 
 
-_INTRADAY_TIMEFRAMES = ("15minute", "4hour")
+_INTRADAY_TIMEFRAMES = ("3minute", "15minute", "4hour")
 
 # Timeframes whose OWN candle size is smaller than OPENING_WINDOW_MINUTES,
 # i.e. a candle labeled 9:15 genuinely IS (part of) the noisy opening
@@ -68,7 +68,9 @@ _INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 # the first 15 minutes, so applying this check to it would wrongly
 # exclude every stock's current 4-hour bar for the first four hours of
 # every trading day - that was a real bug, not a hypothetical one.
-_OPENING_WINDOW_TIMEFRAMES = ("15minute",)
+# "3minute" was added alongside scalper.py, which runs its own signal
+# engine on this timeframe - it's smaller than the opening window too.
+_OPENING_WINDOW_TIMEFRAMES = ("3minute", "15minute")
 
 RSI_OVERBOUGHT = 65   # backtest.py's separate rsi_threshold param - Bullish side
 RSI_OVERSOLD = 35     # (Bearish side). Not part of the 4-parameter screener below.
@@ -160,6 +162,26 @@ def _compute_adx(df: pd.DataFrame, length: int) -> pd.Series:
     return dx.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
 
 
+def compute_atr(df: pd.DataFrame, length: int) -> pd.Series:
+    """Wilder's Average True Range - a volatility read used by scalper.py
+    to size its suggested (informational-only) stop-loss/target off each
+    stock's own recent bar-to-bar range rather than a flat percentage.
+    Deliberately a standalone function with its own small True-Range
+    calc, NOT a refactor of the (already deployed, already tested)
+    True-Range logic inside _compute_adx above - the few duplicated
+    lines are worth it to keep this isolated from regime detection, so
+    a change here can never risk regressing the regime/volume-threshold
+    feature."""
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
+
+
 def _classify_regime(adx_value):
     """None means "not enough history yet to judge" - treated the same
     as a Transitional regime by callers (i.e. no volume-threshold
@@ -187,6 +209,25 @@ def session_vwap(df: pd.DataFrame, timeframe: str):
         return None
     typical = (session["high"] + session["low"] + session["close"]) / 3
     return float((typical * session["volume"]).sum() / total_vol)
+
+
+def session_vwap_series(df: pd.DataFrame, timeframe: str) -> pd.Series:
+    """Same session-anchored VWAP as session_vwap above, but as a full
+    running series aligned to df's whole index (cumulative within each
+    calendar day, resetting at the next session's first bar) rather than
+    just the latest bar's value - needed so scalper.py can detect the
+    actual BAR a stock's price crosses its own running VWAP, not just
+    whether it's currently above/below it. Returns an all-NaN series for
+    non-intraday timeframes or an empty df, same convention as
+    session_vwap's None."""
+    if timeframe not in _INTRADAY_TIMEFRAMES or df.empty:
+        return pd.Series(np.nan, index=df.index)
+    typical = (df["high"] + df["low"] + df["close"]) / 3
+    tp_vol = typical * df["volume"]
+    day = df.index.map(lambda ts: ts.date())
+    cum_tp_vol = tp_vol.groupby(day).cumsum()
+    cum_vol = df["volume"].groupby(day).cumsum()
+    return cum_tp_vol / cum_vol.replace(0, np.nan)
 
 
 def compute_series(df: pd.DataFrame, timeframe: str) -> dict:

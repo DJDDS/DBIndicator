@@ -52,6 +52,12 @@ SCAN_RESULTS_FILE = os.getenv("SCAN_RESULTS_FILE", "last_scan_results.json")
 # no restart needed.
 PARAM_WEIGHTS_FILE = os.getenv("PARAM_WEIGHTS_FILE", "param_weights.json")
 
+# Where the NIFTY 50 scalping screener's last scan is persisted (also
+# gitignored) - same restart-resilience reasoning as SCAN_RESULTS_FILE
+# above, kept in its own file since scalper.py runs its own independent
+# background loop on its own faster cadence.
+SCALP_RESULTS_FILE = os.getenv("SCALP_RESULTS_FILE", "scalp_results.json")
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
