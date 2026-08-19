@@ -6,153 +6,199 @@
 <title>Scanner Dashboard</title>
 <style>
   :root {
-    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
-    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+    --bg: #0a0d12; --panel: #11151d; --panel2: #151b26; --border: #242b38;
+    --text: #dfe4ee; --muted: #7c8698; --dim: #576076;
+    --green: #16c784; --green-bg: rgba(22,199,132,0.12);
+    --red: #ea3943; --red-bg: rgba(234,57,67,0.12);
+    --accent: #3b82f6; --accent-bg: rgba(59,130,246,0.14);
+    --amber: #f0b90b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
-  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
-  header h1 { margin: 0; font-size: 20px; }
-  header p { margin: 4px 0 0; font-size: 13px; opacity: 0.8; }
-  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
-  header nav a:hover { background: rgba(255,255,255,0.28); }
-  .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; }
+  body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13px; }
+  a { color: var(--accent); }
+  header { background: #060810; border-bottom: 1px solid var(--border); color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; position: sticky; top: 0; z-index: 20; }
+  header .brand { display: flex; align-items: baseline; gap: 10px; }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: 0.02em; }
+  header .tagline { font-size: 11px; color: var(--muted); }
+  header .hdr-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  .status-dot.on { background: var(--green); box-shadow: 0 0 5px var(--green); }
+  .status-dot.off { background: var(--dim); }
+  .hdr-pill { font-size: 11px; color: var(--muted); display: flex; align-items: center; white-space: nowrap; }
+  header nav a { color: var(--muted); text-decoration: none; font-size: 12px; border: 1px solid var(--border); padding: 5px 10px; border-radius: 5px; }
+  header nav a:hover { color: #fff; border-color: var(--accent); }
+  header nav { display: flex; gap: 8px; }
+
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 14px 18px 30px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 12.5px; color: var(--text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .card h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 8px; }
   .login-btn { display: inline-block; background: var(--accent); color: #fff; text-decoration: none; padding: 10px 18px; border-radius: 6px; font-weight: 600; }
-  .meta-row { display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 14px; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { text-align: left; background: var(--navy); color: #fff; padding: 9px 10px; font-weight: 600; }
-  td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .warn { background: #2a1f0d; border: 1px solid #6b4f11; color: #f0c987; border-radius: 6px; padding: 9px 14px; font-size: 12.5px; margin-bottom: 14px; }
+
+  /* Toolbar: My Filters as a slim, sticky, pill-button strip */
+  .toolbar { position: sticky; top: 52px; z-index: 15; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+  .toolbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .toolbar-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 700; margin-right: 2px; white-space: nowrap; }
+  .pill-chk { position: relative; cursor: pointer; }
+  .pill-chk input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .pill-chk span { display: inline-block; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: #0d1119; color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; transition: all 0.12s; }
+  .pill-chk input:checked + span { background: var(--accent-bg); border-color: var(--accent); color: #cfe0ff; }
+  .pill-chk:hover span { border-color: var(--accent); }
+  .tb-required { display: flex; align-items: center; gap: 6px; }
+  .tb-required label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .tb-required input { width: 46px; padding: 5px 6px; background: #0d1119; border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 12px; }
+  .tb-btn { background: var(--accent); color: #fff; border: none; padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  .tb-btn:hover { background: #2a6fdb; }
+  .tb-clear { font-size: 11.5px; color: var(--muted); text-decoration: none; }
+  .tb-clear:hover { color: var(--text); }
+  .tb-status { font-size: 11.5px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+  .tb-note { font-size: 11px; color: var(--dim); margin-top: 8px; }
+  .mf-empty-inline { font-size: 12px; color: var(--amber); margin-top: 8px; }
+
+  /* Settings gear popover */
+  .qs-popover { position: relative; margin-left: auto; }
+  .qs-popover summary { list-style: none; cursor: pointer; font-size: 12px; color: var(--muted); border: 1px solid var(--border); padding: 6px 10px; border-radius: 5px; user-select: none; }
+  .qs-popover summary::-webkit-details-marker { display: none; }
+  .qs-popover summary:hover { color: var(--text); border-color: var(--accent); }
+  .qs-popover[open] summary { color: var(--text); border-color: var(--accent); }
+  .qs-popover-body { position: absolute; right: 0; top: calc(100% + 6px); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; width: 480px; max-width: 90vw; z-index: 30; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+  .quick-settings-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .qs-field { display: flex; flex-direction: column; gap: 4px; }
+  .qs-field label { font-size: 11px; color: var(--muted); }
+  .qs-field select, .qs-field input[type="number"] { padding: 6px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 12.5px; background: #0d1119; color: var(--text); }
+  .qs-field input[type="number"] { width: 62px; }
+  .qs-apply-btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 5px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .qs-note { margin: 10px 0 0; font-size: 11px; color: var(--dim); }
+
+  /* Signals row: High Conviction + Matching Now, side by side, compact */
+  .signals-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 14px; margin-bottom: 14px; align-items: start; }
+  @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
+  .hc-card { border-color: #3a2f0f; }
+  .hc-card h2 { color: var(--amber); }
+  .match-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 210px; overflow-y: auto; }
+  .match-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 700; font-family: var(--mono); }
+  .match-chip.bull { background: var(--green-bg); color: var(--green); }
+  .match-chip.bear { background: var(--red-bg); color: var(--red); }
+  .match-chip.bull:hover { filter: brightness(1.25); }
+  .match-chip.bear:hover { filter: brightness(1.25); }
+  .match-chip.moderate { opacity: 0.55; }
+  .match-chip-close { font-weight: 500; opacity: 0.8; }
+  .match-chip.hidden-by-strict, .match-chip.hidden-by-confirm { display: none; }
+  .confirm-badge { display: inline-block; font-size: 10px; font-weight: 800; color: var(--amber); }
+  .mn-empty, .hc-empty { margin: 0; font-size: 12px; color: var(--dim); }
+
+  .mn-header-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+  .mn-counts { display: flex; gap: 12px; font-size: 12px; font-weight: 700; font-family: var(--mono); }
+  .mn-counts .bull { color: var(--green); }
+  .mn-counts .bear { color: var(--red); }
+  .mn-toolbar { margin: 0 0 8px; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 14px; }
+  .mn-toolbar label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .mn-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .mn-columns { grid-template-columns: 1fr; } }
+  .mn-col-title { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .mn-col-title.bull { color: var(--green); }
+  .mn-col-title.bear { color: var(--red); }
+  .mn-chip-scroll { display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; max-height: 190px; overflow-y: auto; padding-right: 4px; }
+
+  /* Master table */
+  .table-card { padding: 0; overflow: hidden; }
+  .table-card-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .table-card-head h2 { margin: 0; }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-family: var(--mono); }
+  th { text-align: left; background: #0d1119; color: var(--muted); padding: 8px 10px; font-weight: 700; font-family: var(--sans); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
   tr.data-row { cursor: pointer; }
-  tr.data-row:hover td { background: #eef3fa; }
-  tr:nth-child(even) td { background: #fafbfc; }
-  tr.data-row:nth-child(even):hover td { background: #eef3fa; }
+  tr.data-row:hover td { background: #171d29; }
+  tr:nth-child(even) td { background: #0d121a; }
+  tr.data-row:nth-child(even):hover td { background: #171d29; }
   .bull { color: var(--green); font-weight: 600; }
   .bear { color: var(--red); font-weight: 600; }
-  .signal-pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-  .signal-pill.bull { background: #e6f4ea; }
-  .signal-pill.bear { background: #fbe7e7; }
-  .signal-pill.none { background: #eee; color: var(--muted); font-weight: 500; }
-  .error-cell { color: var(--muted); font-style: italic; }
-  .warn { background: #fff8e1; border: 1px solid #f4d878; border-radius: 8px; padding: 12px 16px; font-size: 13px; }
-  .quick-settings-card h2 { margin: 0 0 12px; font-size: 15px; color: var(--navy); }
-  .quick-settings-form { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
-  .qs-field { display: flex; flex-direction: column; gap: 4px; }
-  .qs-field label { font-size: 12px; color: var(--muted); }
-  .qs-field select, .qs-field input[type="number"] { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; color: var(--text); }
-  .qs-field input[type="number"] { width: 70px; }
-  .qs-apply-btn { background: var(--accent); color: #fff; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .qs-apply-btn:hover { background: #245d8f; }
-  .qs-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
-  .qs-note a { color: var(--accent); }
-  .my-filters-card h2 { margin: 0 0 6px; font-size: 15px; color: var(--navy); }
-  .mf-params { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
-  .mf-chk { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; }
-  .mf-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
-  .mf-clear { font-size: 12px; color: var(--accent); text-decoration: none; }
-  .mf-clear:hover { text-decoration: underline; }
-  .mf-status { font-size: 12px; color: var(--muted); font-weight: 600; }
-  .mf-empty { margin: 0; font-size: 13px; color: var(--muted); }
-  .chart-link { font-size: 12px; color: var(--accent); text-decoration: none; }
-  .chart-link:hover { text-decoration: underline; }
-  .insights-card h2 { margin: 0 0 10px; font-size: 15px; color: var(--navy); }
-  .insights-body { font-size: 13.5px; line-height: 1.6; color: var(--text); white-space: pre-line; }
-  .insights-body.muted, .insights-body.loading { color: var(--muted); font-style: italic; }
-  .ai-badge { display: inline-block; background: var(--navy); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
-  #toast-wrap { position: fixed; top: 16px; right: 16px; z-index: 999; display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
-  .toast { background: var(--navy); color: #fff; border-radius: 8px; padding: 12px 14px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); animation: toast-in 0.25s ease-out; }
-  .toast.bear { background: var(--red); }
-  .toast.bull { background: var(--green); }
-  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-  th.sortable:hover { background: #274a7a; }
-  .sort-arrow { font-size: 10px; opacity: 0.85; }
-  tr.filter-row th { background: #fff; padding: 5px 8px; }
+  .signal-pill { padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .signal-pill.bull { background: var(--green-bg); color: var(--green); }
+  .signal-pill.bear { background: var(--red-bg); color: var(--red); }
+  .signal-pill.none { background: #1a2029; color: var(--dim); font-weight: 500; }
+  .error-cell { color: var(--dim); font-style: italic; font-family: var(--sans); }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--text); }
+  .sort-arrow { font-size: 9px; opacity: 0.85; }
+  tr.filter-row th { background: #0a0d13; padding: 5px 8px; }
   tr.filter-row input, tr.filter-row select {
-    width: 100%; padding: 5px 7px; font-size: 12px; border: 1px solid var(--border);
-    border-radius: 5px; background: #fff; color: var(--text);
+    width: 100%; padding: 4px 6px; font-size: 11px; border: 1px solid var(--border); font-family: var(--sans);
+    border-radius: 4px; background: #0d1119; color: var(--text);
   }
-  .oi-up { color: var(--green); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
-  .oi-down { color: var(--red); font-size: 12px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
-  .oi-trend-warn { color: #b45309; font-weight: 700; }
-  /* OI Accel badges - colored pills instead of bare text, so
-     acceleration state is readable at a glance without hunting for a
-     faint color difference against the row background. */
-  .oi-accel-badge { display: inline-block; padding: 2px 9px; border-radius: 5px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-  .oi-accel-badge.accelerating { background: #e6f4ea; color: var(--green); }
-  .oi-accel-badge.weakening { background: #fbe7e7; color: var(--red); }
-  .oi-accel-badge.transitional { background: #e6eefb; color: var(--accent); }
-  .oi-accel-badge.stable, .oi-accel-badge.flat, .oi-accel-badge.new { background: #eee; color: var(--muted); font-weight: 600; }
-  .oi-accel-badge.unusual { background: #fff3e0; color: #b45309; border: 1px solid #f0c987; }
-  /* Vol column - always bold so it doesn't blend into the row; warm/hot
-     tiers add color on top for volume that's meaningfully above average. */
+  .oi-up { color: var(--green); font-size: 11px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
+  .oi-down { color: var(--red); font-size: 11px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
+  .oi-trend-warn { color: var(--amber); font-weight: 700; }
+  .oi-accel-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 700; white-space: nowrap; font-family: var(--sans); }
+  .oi-accel-badge.accelerating { background: var(--green-bg); color: var(--green); }
+  .oi-accel-badge.weakening { background: var(--red-bg); color: var(--red); }
+  .oi-accel-badge.transitional { background: var(--accent-bg); color: var(--accent); }
+  .oi-accel-badge.stable, .oi-accel-badge.flat, .oi-accel-badge.new { background: #1a2029; color: var(--dim); font-weight: 600; }
+  .oi-accel-badge.unusual { background: rgba(240,185,11,0.14); color: var(--amber); border: 1px solid rgba(240,185,11,0.35); }
   .vol-cell span { font-weight: 700; }
-  .vol-warm { color: #b45309; }
+  .vol-warm { color: var(--amber); }
   .vol-hot { color: var(--red); }
   tr.data-row.filtered-out { display: none; }
   .oi-cell-num { white-space: nowrap; }
-  .oi-structure-badge { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 5px; font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .oi-structure-badge.long-buildup { background: #e6f4ea; color: var(--green); }
-  .oi-structure-badge.short-buildup { background: #fbe7e7; color: var(--red); }
-  .oi-structure-badge.short-covering { background: #eaf6ee; color: #2f7d52; }
-  .oi-structure-badge.long-unwinding { background: #fff3e0; color: #b45309; }
-  .oi-structure-badge.neutral { background: #eee; color: var(--muted); font-weight: 500; }
-  .oi-break-badge { display: inline-block; margin-top: 3px; padding: 1px 8px; border-radius: 5px; font-size: 11px; font-weight: 800; white-space: nowrap; border: 1px solid; }
-  .oi-break-badge.up { background: #e6f4ea; color: var(--green); border-color: #bfe3cb; }
-  .oi-break-badge.down { background: #fbe7e7; color: var(--red); border-color: #f3c3c3; }
-  /* Desktop-alert toggle switch. Once a browser grants Notification
-     permission it can't be revoked again from JS - only through the
-     browser's own site settings - so "off" here means an in-app mute
-     (stored in localStorage, since the page reloads every 60s and an
-     in-memory flag would be forgotten) rather than actually withdrawing
-     the OS permission. */
-  .alert-toggle-wrap { display: flex; align-items: center; gap: 8px; }
-  .alert-toggle-label { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
-  .toggle-switch { position: relative; width: 42px; height: 23px; border-radius: 999px; border: none; background: #c7ccd4; cursor: pointer; padding: 0; flex-shrink: 0; transition: background 0.15s; }
-  .toggle-switch .toggle-knob { position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
-  .toggle-switch.on { background: var(--green); }
-  .toggle-switch.on .toggle-knob { left: 21px; }
-  .toggle-switch.blocked { background: var(--red); cursor: not-allowed; opacity: 0.75; }
-  .toggle-switch.unsupported { background: #d8dbe0; cursor: not-allowed; opacity: 0.6; }
+  .oi-structure-badge { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; font-family: var(--sans); }
+  .oi-structure-badge.long-buildup { background: var(--green-bg); color: var(--green); }
+  .oi-structure-badge.short-buildup { background: var(--red-bg); color: var(--red); }
+  .oi-structure-badge.short-covering { background: rgba(22,199,132,0.08); color: #4fd39a; }
+  .oi-structure-badge.long-unwinding { background: rgba(240,185,11,0.1); color: var(--amber); }
+  .oi-structure-badge.neutral { background: #1a2029; color: var(--dim); font-weight: 500; }
+  .oi-break-badge { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 800; white-space: nowrap; border: 1px solid; font-family: var(--sans); }
+  .oi-break-badge.up { background: var(--green-bg); color: var(--green); border-color: rgba(22,199,132,0.4); }
+  .oi-break-badge.down { background: var(--red-bg); color: var(--red); border-color: rgba(234,57,67,0.4); }
+  .chart-link { font-size: 11px; color: var(--accent); text-decoration: none; font-family: var(--sans); }
+  .chart-link:hover { text-decoration: underline; }
 
-  /* Matching Now - split into Bullish/Bearish columns with a scroll cap
-     so a big watchlist doesn't turn into a wall of chips. */
-  .mn-header-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
-  .mn-counts { display: flex; gap: 12px; font-size: 12px; font-weight: 700; }
-  .mn-counts .bull { color: var(--green); }
-  .mn-counts .bear { color: var(--red); }
-  .mn-toolbar { margin: 10px 0 14px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-  .mn-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  @media (max-width: 640px) { .mn-columns { grid-template-columns: 1fr; } }
-  .mn-col-title { margin: 0 0 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
-  .mn-col-title.bull { color: var(--green); }
-  .mn-col-title.bear { color: var(--red); }
-  .mn-chip-scroll { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; max-height: 260px; overflow-y: auto; padding-right: 4px; }
-  .match-chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 999px; text-decoration: none; font-size: 12.5px; font-weight: 700; }
-  .match-chip.bull { background: #e6f4ea; color: var(--green); }
-  .match-chip.bear { background: #fbe7e7; color: var(--red); }
-  .match-chip.bull:hover { background: #d7ecdd; }
-  .match-chip.bear:hover { background: #f7d9d9; }
-  .match-chip.moderate { opacity: 0.62; }
-  .match-chip-close { font-weight: 500; opacity: 0.8; }
-  .match-chip.hidden-by-strict { display: none; }
-  .match-chip.hidden-by-confirm { display: none; }
-  /* Confirmed = volume above its own 20-bar average, plus (on 15-min)
-     the 4-hour trend agreeing too - see indicators.compute_signal's
-     signal_confirmed. The same bar Telegram alerts are now held to. */
-  .confirm-badge { display: inline-block; font-size: 10px; font-weight: 800; color: var(--accent); }
-  .signal-pill .confirm-badge { margin-left: 4px; }
-  .mn-empty { margin: 0; font-size: 13px; color: var(--muted); }
+  .alert-toggle-wrap { display: flex; align-items: center; gap: 8px; }
+  .alert-toggle-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .toggle-switch { position: relative; width: 36px; height: 20px; border-radius: 999px; border: none; background: #2a3140; cursor: pointer; padding: 0; flex-shrink: 0; transition: background 0.15s; }
+  .toggle-switch .toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left 0.15s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+  .toggle-switch.on { background: var(--green); }
+  .toggle-switch.on .toggle-knob { left: 18px; }
+  .toggle-switch.blocked { background: var(--red); cursor: not-allowed; opacity: 0.75; }
+  .toggle-switch.unsupported { background: #2a3140; cursor: not-allowed; opacity: 0.5; }
+
+  #toast-wrap { position: fixed; top: 16px; right: 16px; z-index: 999; display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
+  .toast { background: var(--panel2); border: 1px solid var(--border); color: #fff; border-radius: 8px; padding: 12px 14px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.4); animation: toast-in 0.25s ease-out; }
+  .toast.bear { border-left: 3px solid var(--red); }
+  .toast.bull { border-left: 3px solid var(--green); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .insights-card h2 { color: var(--text); }
+  .insights-body { font-size: 12.5px; line-height: 1.6; color: var(--text); white-space: pre-line; font-family: var(--sans); }
+  .insights-body.muted, .insights-body.loading { color: var(--muted); font-style: italic; }
+  .ai-badge { display: inline-block; background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+  .footer-note { font-size: 11px; color: var(--dim); }
 </style>
 </head>
 <body>
 <div id="toast-wrap"></div>
 <header>
-  <div>
+  <div class="brand">
     <h1>Scanner Dashboard</h1>
-    <p>RSI + MACD + EMA/Bollinger confluence &middot; {{ timeframe }} &middot; {{ min_required }}-of-3 required</p>
+    <span class="tagline">RSI + MACD + EMA/BB &middot; {{ timeframe }} &middot; {{ min_required }}-of-3</span>
   </div>
-  <nav><a href="/backtest">Backtest</a> <a href="/settings">Settings</a></nav>
+  <div class="hdr-right">
+    {% if logged_in %}
+    <span class="hdr-pill"><span class="status-dot on"></span>Kite connected</span>
+    <span class="hdr-pill" id="last-scan-text">{{ last_scan or "waiting for first scan..." }}</span>
+    <span class="hdr-pill"><span class="status-dot {{ 'on' if telegram_enabled else 'off' }}"></span>Telegram {{ 'on' if telegram_enabled else 'off' }}</span>
+    <div class="alert-toggle-wrap">
+      <span class="alert-toggle-label" id="desktop-alert-label">Desktop</span>
+      <button id="desktop-alert-toggle" class="toggle-switch" type="button" role="switch" aria-checked="false" title="Desktop Alerts">
+        <span class="toggle-knob"></span>
+      </button>
+    </div>
+    {% endif %}
+    <nav><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+  </div>
 </header>
 <div class="wrap">
 
@@ -165,16 +211,6 @@
     <a class="login-btn" href="{{ login_url }}">Login to Kite</a>
   </div>
   {% else %}
-  <div class="meta-row">
-    <span>Logged in for today ✓</span>
-    <span id="last-scan-text">Last scan: {{ last_scan or "waiting for first scan..." }}</span>
-    <div class="alert-toggle-wrap">
-      <span class="alert-toggle-label" id="desktop-alert-label">Desktop Alerts</span>
-      <button id="desktop-alert-toggle" class="toggle-switch" type="button" role="switch" aria-checked="false" title="Desktop Alerts">
-        <span class="toggle-knob"></span>
-      </button>
-    </div>
-  </div>
 
   <div id="last-error-wrap">
     {% if last_error %}
@@ -186,221 +222,183 @@
   <div class="warn">Couldn't apply: {{ quick_error }}</div>
   {% endif %}
 
-  <div class="card" style="border:2px solid var(--accent);">
-    <h2 style="margin:0 0 6px;font-size:15px;color:var(--navy);">🎯 High-Conviction Setups</h2>
-    <p style="margin:0 0 14px;font-size:12px;color:var(--muted);">
-      Only stocks where <strong>every</strong> signal this app tracks agrees at once: strict
-      3-of-3 confluence (not just your Required setting), OI structure, an actively
-      accelerating OI break signal, volume at 1.5&times; average or higher, and price on the
-      right side of VWAP. Deliberately narrow by design - most scans will show few or none,
-      and that's expected, not a bug.
-    </p>
-    <div id="hc-body">
-      <div class="match-chips">
-        {% set ns2 = namespace(count=0) %}
-        {% for r in results %}
-          {% if not r.error and r.high_conviction %}
-            {% set ns2.count = ns2.count + 1 %}
-            <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-              {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
-            </a>
-          {% endif %}
-        {% endfor %}
-      </div>
-      {% if ns2.count == 0 %}
-      <p class="mn-empty">Nothing meets every condition right now.</p>
-      {% endif %}
-    </div>
-    <p style="margin:12px 0 0;font-size:11.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;">
-      This stacks your existing filters together - it is <strong>not</strong> a validated or
-      backtested win-rate signal, and no combination of indicators can honestly promise a
-      fixed win rate without being tested against real historical outcomes first. Treat this
-      list as "everything currently agrees," not as guaranteed odds.
-    </p>
-  </div>
-
-  <div class="card quick-settings-card">
-    <h2>Quick Settings</h2>
-    <form method="POST" action="/quick-settings" class="quick-settings-form">
-      <div class="qs-field">
-        <label for="qs-timeframe">Timeframe</label>
-        <select id="qs-timeframe" name="timeframe">
-          {% for tf in valid_timeframes %}
-          <option value="{{ tf }}" {% if tf == timeframe %}selected{% endif %}>{{ tf }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="qs-field">
-        <label for="qs-min-required">Required</label>
-        <select id="qs-min-required" name="min_required">
-          <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-3</option>
-          <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-3 (strict)</option>
-        </select>
-      </div>
-      <div class="qs-field">
-        <label for="qs-macd-preset">MACD preset</label>
-        <select id="qs-macd-preset" name="macd_preset">
-          {% for mp in valid_presets %}
-          <option value="{{ mp }}" {% if mp == macd_preset %}selected{% endif %}>{{ mp }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="qs-field">
-        <label for="qs-rsi">RSI length</label>
-        <input id="qs-rsi" type="number" name="rsi_length" value="{{ rsi_length }}" min="1">
-      </div>
-      <div class="qs-field">
-        <label for="qs-rsi-smooth">RSI smoothing (SMA)</label>
-        <input id="qs-rsi-smooth" type="number" name="rsi_smooth_length" value="{{ rsi_smooth_length }}" min="1">
-      </div>
-      <div class="qs-field">
-        <label for="qs-macd-fast">MACD fast</label>
-        <input id="qs-macd-fast" type="number" name="macd_fast" value="{{ macd_fast }}" min="1">
-      </div>
-      <div class="qs-field">
-        <label for="qs-macd-slow">MACD slow</label>
-        <input id="qs-macd-slow" type="number" name="macd_slow" value="{{ macd_slow }}" min="1">
-      </div>
-      <div class="qs-field">
-        <label for="qs-macd-signal">MACD signal</label>
-        <input id="qs-macd-signal" type="number" name="macd_signal" value="{{ macd_signal }}" min="1">
-      </div>
-      <div class="qs-field">
-        <label for="qs-ema">EMA length</label>
-        <input id="qs-ema" type="number" name="ema_length" value="{{ ema_length }}" min="1">
-      </div>
-      <div class="qs-field">
-        <label for="qs-bb">BB length</label>
-        <input id="qs-bb" type="number" name="bb_length" value="{{ bb_length }}" min="1">
-      </div>
-      <button type="submit" class="qs-apply-btn">Apply</button>
-    </form>
-    <p class="qs-note">Changes apply immediately, no restart needed. MACD custom fast/slow/signal only take effect when MACD preset above is set to "custom". Watchlist and scan interval are on the <a href="/settings">Settings page</a>.</p>
-  </div>
-
-  <div class="card my-filters-card">
-    <h2>My Filters</h2>
-    <p class="qs-note" style="margin:0 0 12px;">
-      Tick whichever of these matter to you and everything on this page - Matching Now, High
-      Conviction, the main table below - narrows down to only stocks currently meeting at
-      least your Required count of them. Leave everything unticked to see the full watchlist
-      as before. The opening {{ opening_window_minutes }} minutes after market open
-      (9:15&ndash;{{ opening_window_end }}) are always excluded - the most gap-driven,
-      noisiest candles of the day.
-    </p>
+  <div class="toolbar">
     <form method="GET" action="/" id="my-filters-form">
-      <div class="mf-params">
+      <div class="toolbar-row">
+        <span class="toolbar-label">My Filters</span>
         {% for p in screen_param_defs %}
-        <label class="mf-chk"><input type="checkbox" name="fparams" value="{{ p.id }}" {{ 'checked' if p.id in fparams else '' }}> {{ p.label }}</label>
+        <label class="pill-chk" title="{{ p.label }}">
+          <input type="checkbox" name="fparams" value="{{ p.id }}" {{ 'checked' if p.id in fparams else '' }}>
+          <span>{{ p.label }}</span>
+        </label>
         {% endfor %}
-      </div>
-      <div class="mf-row">
-        <div class="qs-field">
-          <label for="mf-required">Required (of ticked)</label>
+        <div class="tb-required">
+          <label for="mf-required">Require</label>
           <input type="number" id="mf-required" name="frequired" value="{{ frequired if frequired else 1 }}" min="1" max="{{ screen_param_defs|length }}">
+          <label for="mf-required">of ticked</label>
         </div>
-        <button type="submit" class="qs-apply-btn">Apply Filters</button>
+        <button type="submit" class="tb-btn">Apply</button>
         {% if filters_active %}
-        <a href="/" class="mf-clear">Clear filters</a>
-        <span class="mf-status">Showing {{ results|length }} of {{ total_scanned }} scanned stocks</span>
+        <a href="/" class="tb-clear">Clear</a>
+        {% endif %}
+        <span class="tb-status">{% if filters_active %}Showing {{ results|length }} / {{ total_scanned }}{% else %}{{ total_scanned }} scanned &middot; no filters active{% endif %}</span>
+        <details class="qs-popover">
+          <summary>⚙ Settings</summary>
+          <div class="qs-popover-body">
+            <form method="POST" action="/quick-settings" class="quick-settings-form">
+              <div class="qs-field">
+                <label for="qs-timeframe">Timeframe</label>
+                <select id="qs-timeframe" name="timeframe">
+                  {% for tf in valid_timeframes %}
+                  <option value="{{ tf }}" {% if tf == timeframe %}selected{% endif %}>{{ tf }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="qs-field">
+                <label for="qs-min-required">Core required</label>
+                <select id="qs-min-required" name="min_required">
+                  <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-3</option>
+                  <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-3 (strict)</option>
+                </select>
+              </div>
+              <div class="qs-field">
+                <label for="qs-macd-preset">MACD preset</label>
+                <select id="qs-macd-preset" name="macd_preset">
+                  {% for mp in valid_presets %}
+                  <option value="{{ mp }}" {% if mp == macd_preset %}selected{% endif %}>{{ mp }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="qs-field">
+                <label for="qs-rsi">RSI len</label>
+                <input id="qs-rsi" type="number" name="rsi_length" value="{{ rsi_length }}" min="1">
+              </div>
+              <div class="qs-field">
+                <label for="qs-rsi-smooth">RSI smooth</label>
+                <input id="qs-rsi-smooth" type="number" name="rsi_smooth_length" value="{{ rsi_smooth_length }}" min="1">
+              </div>
+              <div class="qs-field">
+                <label for="qs-macd-fast">MACD fast</label>
+                <input id="qs-macd-fast" type="number" name="macd_fast" value="{{ macd_fast }}" min="1">
+              </div>
+              <div class="qs-field">
+                <label for="qs-macd-slow">MACD slow</label>
+                <input id="qs-macd-slow" type="number" name="macd_slow" value="{{ macd_slow }}" min="1">
+              </div>
+              <div class="qs-field">
+                <label for="qs-macd-signal">MACD signal</label>
+                <input id="qs-macd-signal" type="number" name="macd_signal" value="{{ macd_signal }}" min="1">
+              </div>
+              <div class="qs-field">
+                <label for="qs-ema">EMA len</label>
+                <input id="qs-ema" type="number" name="ema_length" value="{{ ema_length }}" min="1">
+              </div>
+              <div class="qs-field">
+                <label for="qs-bb">BB len</label>
+                <input id="qs-bb" type="number" name="bb_length" value="{{ bb_length }}" min="1">
+              </div>
+              <button type="submit" class="qs-apply-btn">Apply</button>
+              <p class="qs-note" style="flex-basis:100%;">Changes apply immediately. Watchlist &amp; scan interval are on the <a href="/settings">Settings page</a>.</p>
+            </form>
+          </div>
+        </details>
+      </div>
+      {% if filters_active and results|length == 0 %}
+      <p class="mf-empty-inline">Nothing meets your ticked filters right now - try unticking one, lowering Require, or Clear.</p>
+      {% endif %}
+      <p class="tb-note">Tick what matters to you - the whole page (panels + table below) narrows to stocks meeting at least "Require" of them. First {{ opening_window_minutes }} min after open (9:15&ndash;{{ opening_window_end }}) always excluded.</p>
+    </form>
+  </div>
+
+  <div class="signals-grid">
+    <div class="card hc-card">
+      <h2>🎯 High Conviction <span class="sub">every signal agrees</span></h2>
+      <div id="hc-body">
+        <div class="match-chips">
+          {% set ns2 = namespace(count=0) %}
+          {% for r in results %}
+            {% if not r.error and r.high_conviction %}
+              {% set ns2.count = ns2.count + 1 %}
+              <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+                {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+              </a>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% if ns2.count == 0 %}
+        <p class="hc-empty">Nothing meets every condition right now - that's expected, not a bug.</p>
         {% endif %}
       </div>
-    </form>
-  </div>
+    </div>
 
-  <div class="card">
-    {% set ns = namespace(bull=0, bear=0) %}
-    {% for r in results %}
-      {% if not r.error and r.aligned is defined and r.aligned >= min_required %}
-        {% if r.direction == 'Bullish' %}{% set ns.bull = ns.bull + 1 %}{% else %}{% set ns.bear = ns.bear + 1 %}{% endif %}
-      {% endif %}
-    {% endfor %}
-    <div class="mn-header-row">
-      <h2 style="margin:0;font-size:15px;color:var(--navy);">Matching Now &middot; {{ timeframe }}</h2>
-      <div class="mn-counts" id="mn-counts">
-        <span class="bull">▲ {{ ns.bull }} Bullish</span>
-        <span class="bear">▼ {{ ns.bear }} Bearish</span>
-      </div>
-    </div>
-    <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">
-      Every stock currently at {{ min_required }}-of-3 or better alignment on your main
-      {{ timeframe }} scan - the same list a desktop alert fires for the moment a stock
-      enters it. Solid chips are 3-of-3 (strongest); faded chips are exactly {{ min_required }}-of-3.
-      A <span class="confirm-badge">✓</span> marks chips that are also "Confirmed" - volume
-      above its own 20-bar average, plus (on 15-min) the 4-hour trend agreeing too - the same
-      bar Telegram alerts are now held to. The full table further down still lists every
-      watchlist stock, matching or not.
-    </p>
-    <div class="mn-toolbar">
-      <label><input type="checkbox" id="mn-strict-only" onchange="mnApplyStrict()"> Show 3-of-3 only</label>
-      <label style="margin-left:14px;"><input type="checkbox" id="mn-confirm-only" onchange="mnApplyConfirm()"> Show confirmed only</label>
-    </div>
-    <div id="mn-lists">
-      {% if ns.bull == 0 and ns.bear == 0 %}
-      <p class="mn-empty">Nothing matching right now.</p>
-      {% else %}
-      <div class="mn-columns">
-        <div>
-          <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
-          <div class="mn-chip-scroll" id="mn-bull-scroll">
-            {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-              {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
-              <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
-              </a>
-              {% endif %}
-            {% endfor %}
-            {% if ns.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-          </div>
-        </div>
-        <div>
-          <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
-          <div class="mn-chip-scroll" id="mn-bear-scroll">
-            {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-              {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
-              <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
-              </a>
-              {% endif %}
-            {% endfor %}
-            {% if ns.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-          </div>
+    <div class="card">
+      {% set ns = namespace(bull=0, bear=0) %}
+      {% for r in results %}
+        {% if not r.error and r.aligned is defined and r.aligned >= min_required %}
+          {% if r.direction == 'Bullish' %}{% set ns.bull = ns.bull + 1 %}{% else %}{% set ns.bear = ns.bear + 1 %}{% endif %}
+        {% endif %}
+      {% endfor %}
+      <div class="mn-header-row">
+        <h2>Matching Now <span class="sub">{{ timeframe }}</span></h2>
+        <div class="mn-counts" id="mn-counts">
+          <span class="bull">▲ {{ ns.bull }}</span>
+          <span class="bear">▼ {{ ns.bear }}</span>
         </div>
       </div>
-      {% endif %}
+      <div class="mn-toolbar">
+        <label><input type="checkbox" id="mn-strict-only" onchange="mnApplyStrict()"> 3-of-3 only</label>
+        <label><input type="checkbox" id="mn-confirm-only" onchange="mnApplyConfirm()"> Confirmed <span class="confirm-badge">✓</span> only</label>
+      </div>
+      <div id="mn-lists">
+        {% if ns.bull == 0 and ns.bear == 0 %}
+        <p class="mn-empty">Nothing matching right now.</p>
+        {% else %}
+        <div class="mn-columns">
+          <div>
+            <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
+            <div class="mn-chip-scroll" id="mn-bull-scroll">
+              {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+                {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
+                <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                  ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
+                </a>
+                {% endif %}
+              {% endfor %}
+              {% if ns.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+            </div>
+          </div>
+          <div>
+            <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
+            <div class="mn-chip-scroll" id="mn-bear-scroll">
+              {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+                {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
+                <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                  ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
+                </a>
+                {% endif %}
+              {% endfor %}
+              {% if ns.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
     </div>
   </div>
 
+  {% if insights_enabled %}
   <div class="card insights-card">
     <h2>AI Insights <span class="ai-badge">Claude</span></h2>
-    <div id="insights-body" class="insights-body loading">
-      {% if insights_enabled %}Loading...{% else %}Add ANTHROPIC_API_KEY to your .env to turn this on (see Settings / README).{% endif %}
-    </div>
+    <div id="insights-body" class="insights-body loading">Loading...</div>
   </div>
+  {% endif %}
 
-  <div class="card">
-    {% if filters_active and results|length == 0 %}
-    <p class="mf-empty" style="margin-bottom:12px;">No stocks currently meet your ticked filters (out of {{ total_scanned }} scanned) - try unticking one, lowering Required, or <a href="/">clear filters</a> to see everything.</p>
-    {% endif %}
-    <p style="margin:0 0 12px;font-size:12px;color:var(--muted);">
-      Click any column header to sort. Use the filter row below the headers to narrow the
-      list. <strong>OI</strong> shows today's Open Interest with its Structure badge
-      underneath (Long/Short Buildup = fresh positions being added, Short Covering/Long
-      Unwinding = positions being closed, based on today's price move vs today's OI move
-      since session open) plus today's OI % change. <strong>OI Accel</strong> compares this
-      scan's OI move to the previous scan's - Accelerating/Stable/Weakening/Transitional/Flat
-      - with <span class="oi-trend-warn">⚠ unusual</span> flagging a move much larger than
-      that stock's own recent swings. When OI is building in a direction <em>and</em>
-      accelerating, that row also gets a bold <span class="oi-break-badge up">▲ Break Up</span>
-      / <span class="oi-break-badge down">▼ Break Down</span> badge - a stronger, more decisive
-      read than either signal alone. <strong>Vol</strong> shows the latest candle's actual
-      traded volume plus that as a multiple of its recent average, highlighted orange at
-      1.5&times;-3&times; and red above 3&times;. A <span class="confirm-badge">✓</span> next
-      to a Bullish/Bearish <strong>Signal</strong> pill means it's "Confirmed" - volume is
-      above 1.2&times; its own 20-bar average, and (on 15-min scans) the 4-hour trend agrees
-      too - added to cut down on false signals from noisy 15-min candles. Telegram alerts now
-      only fire for confirmed signals.
-    </p>
+  <div class="card table-card">
+    <div class="table-card-head">
+      <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Watchlist</h2>
+      <span class="footer-note">Click a header to sort &middot; use the filter row to narrow &middot; click a row to open its chart</span>
+    </div>
+    <div class="table-scroll">
     <table id="main-table">
       <thead>
         <tr>
@@ -523,23 +521,26 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
 
   {% endif %}
 
-  <div class="card" style="font-size:12px; color:var(--muted);">
+  <div class="card footer-note">
     This page updates itself live in the background every 20 seconds (no full reload, so your
-    filters, sort order, and scroll position stay put) - want a bigger-picture read alongside
-    your main {{ timeframe }} scan? Set Quick Settings' Timeframe above to 4hour, or use the
-    <a href="/backtest">Backtest</a> page. Treat signals as directional input, not investment
+    filters, sort order, and scroll position stay put). <strong>OI</strong> = today's Open
+    Interest with Structure badge (buildup/unwind vs today's open) and % change.
+    <strong>OI Accel</strong> compares this scan's OI move to the previous one - a bold Break
+    Up/Down badge means it's building <em>and</em> accelerating. <strong>Vol</strong> = latest
+    candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red above
+    3&times;). A <span class="confirm-badge">✓</span> = "Confirmed": volume above 1.2&times;
+    average and (15-min scans) the 4-hour trend agreeing - Telegram alerts only fire for
+    confirmed signals. Want a bigger-picture read? Set Timeframe (⚙ Settings) to 4hour, or use
+    the <a href="/backtest">Backtest</a> page. Signals are directional input, not investment
     advice.
   </div>
 </div>
 <script>
-  // Fetch AI insights asynchronously so a slow/absent API call never
-  // blocks the dashboard itself from rendering. Re-called on every
-  // dashboard refresh cycle below - cheap since the server caches by
-  // last_scan and only actually calls Claude when there's new data.
   function loadInsights() {
     var el = document.getElementById('insights-body');
     if (!el) return;
@@ -560,19 +561,6 @@
   }
   loadInsights();
 
-  // Desktop (OS-level) notification popups - separate from, and in
-  // addition to, the in-page toast below. These show up outside the
-  // browser window itself, so you'll see them even if the dashboard tab
-  // isn't the one focused - unlike the toast, which only shows while
-  // you're looking at this tab.
-  //
-  // This is a real ON/OFF toggle, but with one browser quirk worth
-  // knowing: once you grant OS notification permission, JS can never
-  // revoke it again - only the browser's own site settings can. So
-  // "off" here mutes in-app (stored in localStorage, since the page
-  // reloads every 60s and a plain JS variable would forget within a
-  // minute) rather than withdrawing the OS permission itself. Clicking
-  // it again un-mutes instantly, no re-prompt needed.
   (function () {
     var toggle = document.getElementById('desktop-alert-toggle');
     var label = document.getElementById('desktop-alert-label');
@@ -581,7 +569,7 @@
     if (!('Notification' in window)) {
       toggle.className = 'toggle-switch unsupported';
       toggle.title = 'Desktop alerts not supported in this browser';
-      label.textContent = 'Desktop Alerts (unsupported)';
+      label.textContent = 'Desktop (unsupported)';
       window.__showDesktopAlert = function () {};
       return;
     }
@@ -595,7 +583,7 @@
         toggle.className = 'toggle-switch blocked';
         toggle.setAttribute('aria-checked', 'false');
         toggle.title = "Blocked - check this site's notification permission in your browser settings";
-        label.textContent = 'Desktop Alerts (blocked)';
+        label.textContent = 'Desktop (blocked)';
         return;
       }
       var on = Notification.permission === 'granted' && !isMuted();
@@ -603,11 +591,11 @@
       toggle.classList.remove('blocked', 'unsupported');
       toggle.setAttribute('aria-checked', on ? 'true' : 'false');
       toggle.title = on ? 'Desktop alerts on - click to mute' : 'Click to enable desktop alerts';
-      label.textContent = 'Desktop Alerts';
+      label.textContent = 'Desktop';
     }
 
     toggle.addEventListener('click', function () {
-      if (Notification.permission === 'denied') return; // nothing JS can do - must be unblocked in browser settings
+      if (Notification.permission === 'denied') return;
       if (Notification.permission === 'default') {
         Notification.requestPermission().then(function (perm) {
           if (perm === 'granted') localStorage.setItem('desktopAlertsMuted', '0');
@@ -615,7 +603,6 @@
         });
         return;
       }
-      // Already granted at the OS level - just flip the in-app mute flag.
       localStorage.setItem('desktopAlertsMuted', isMuted() ? '0' : '1');
       render();
     });
@@ -636,13 +623,6 @@
     };
   })();
 
-  // Poll for fresh Bullish/Bearish signals while this tab is open, and
-  // show a toast + short beep + desktop notification for each new one.
-  // This works independent of Telegram - it's the free in-browser alert
-  // channel. Telegram (if configured in .env) additionally pushes to
-  // your phone even when this tab/browser isn't open at all; desktop
-  // notifications above need the browser open but not necessarily this
-  // tab focused.
   (function () {
     var wrap = document.getElementById('toast-wrap');
     if (!wrap) return;
@@ -689,11 +669,6 @@
     setInterval(poll, 20000);
   })();
 
-  // Click-to-sort headers on the main table. currentSort is tracked at
-  // module scope (not just as data-dir attributes on the headers) so
-  // the periodic dashboard refresh below can reapply the same sort to
-  // freshly-swapped-in rows, instead of the table silently reverting
-  // to watchlist order every 20 seconds.
   var currentSort = null; // {colIndex, asc}
 
   function sortRows(colIndex, asc) {
@@ -740,10 +715,6 @@
     });
   }
 
-  // Per-column filters on the main table's filter row (symbol search box
-  // plus dropdowns for RSI/MACD/EMA-BB/OI Trend/Aligned/Signal). Rows are
-  // hidden/shown via a CSS class rather than removed, so sorting still
-  // works on whatever's currently visible.
   function applyFilters() {
     var table = document.getElementById('main-table');
     if (!table) return;
@@ -780,19 +751,26 @@
 
   makeSortable();
 
-  // My Filters - keeps the Required number's max in sync with however
-  // many boxes are currently ticked, so you can't submit an impossible
-  // "require 5 of 2 ticked" combination (the server also clamps this,
-  // this is just so the input doesn't let you type it in the first place).
+  // My Filters "Require" defaults to matching ALL ticked boxes (AND
+  // logic) - this is what most people expect from "show only stocks
+  // meeting MY requirements". It stays in sync with the ticked count as
+  // you tick/untick, unless you've manually typed your own number into
+  // the field, in which case your choice is left alone (just clamped to
+  // never exceed the ticked count).
   (function () {
     var form = document.getElementById('my-filters-form');
     if (!form) return;
     var boxes = Array.from(form.querySelectorAll('input[name=fparams]'));
     var requiredInput = document.getElementById('mf-required');
+    var manualOverride = false;
+    requiredInput.addEventListener('input', function () { manualOverride = true; });
     function sync() {
       var checked = boxes.filter(function (b) { return b.checked; });
       requiredInput.max = Math.max(checked.length, 1);
-      if (checked.length && Number(requiredInput.value) > checked.length) {
+      if (!checked.length) { manualOverride = false; return; }
+      if (!manualOverride) {
+        requiredInput.value = checked.length;
+      } else if (Number(requiredInput.value) > checked.length) {
         requiredInput.value = checked.length;
       }
     }
@@ -800,8 +778,6 @@
     sync();
   })();
 
-  // "Show 3-of-3 only" checkbox above the Matching Now chips - hides
-  // the faded (exactly min_required-of-3) chips without a page reload.
   function mnApplyStrict() {
     var box = document.getElementById('mn-strict-only');
     if (!box) return;
@@ -810,9 +786,6 @@
     });
   }
 
-  // "Show confirmed only" checkbox - hides chips that aren't also
-  // signal_confirmed (volume + higher-timeframe agreement), same idea
-  // as mnApplyStrict above but keyed off the .not-confirmed class.
   function mnApplyConfirm() {
     var box = document.getElementById('mn-confirm-only');
     if (!box) return;
@@ -821,18 +794,6 @@
     });
   }
 
-  // Dynamic dashboard: instead of a hard `<meta refresh>` full-page
-  // reload every 60s (which reset your filters, sort order and scroll
-  // position every time, and made the OI/Vol numbers hard to track as
-  // the whole page flashed and rebuilt), this re-fetches the same page
-  // in the background and swaps in just the pieces that actually
-  // change - last-scan time, any scan error, the High-Conviction chips,
-  // the Matching Now counts/lists, and the main table body - leaving
-  // everything else (your filter dropdowns, sort column, the Show
-  // 3-of-3 checkbox, scroll position) untouched. It reuses the exact
-  // same server-rendered HTML the initial page load uses, so there's
-  // no separate client-side rendering logic that could drift out of
-  // sync with what the table actually shows.
   var DASHBOARD_REFRESH_MS = 20000;
   var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody'];
 
