@@ -315,11 +315,14 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         return []
 
     has_signal, direction = _signal_series(series, params, required)
-    # .astype(bool) after fillna: shift(1) turns the leading NaN into an
-    # object-dtype series in newer pandas, and fillna(False) alone now
-    # raises a FutureWarning about silent downcasting instead of just
-    # doing it - the explicit cast says what we mean either way.
-    entries = has_signal & ~has_signal.shift(1).fillna(False).astype(bool)
+    # shift(..., fill_value=False) instead of shift(1).fillna(False): a
+    # plain shift(1) on a bool Series introduces a leading NaN, which
+    # upcasts the whole series to object dtype - then fillna(False) has to
+    # downcast it back to bool, which newer pandas now warns about
+    # (FutureWarning: Downcasting object dtype arrays on .fillna...).
+    # Passing fill_value explicitly keeps the Series bool-dtype the entire
+    # time, so there's nothing to downcast and no warning is ever raised.
+    entries = has_signal & ~has_signal.shift(1, fill_value=False)
 
     # Always recorded on every trade (regardless of whether "rel_volume"
     # is one of your chosen params for THIS run) so compute_param_weights
