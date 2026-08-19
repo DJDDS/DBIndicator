@@ -78,7 +78,7 @@ _TUNABLE_FIELDS = [
     "WATCHLIST", "TIMEFRAME", "MACD_PRESET", "MACD_CUSTOM_FAST",
     "MACD_CUSTOM_SLOW", "MACD_CUSTOM_SIGNAL", "RSI_LENGTH",
     "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
-    "SCAN_INTERVAL_SECONDS",
+    "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
 ]
 
 
@@ -100,7 +100,14 @@ def _env_defaults():
         "RSI_SMOOTH_LENGTH": int(os.getenv("RSI_SMOOTH_LENGTH", 9)),
         "EMA_LENGTH": int(os.getenv("EMA_LENGTH", 9)),
         "BB_LENGTH": int(os.getenv("BB_LENGTH", 20)),
+        # 4-parameter confluence: RSI (vs its smoothing line), MACD (vs
+        # signal line), EMA9 (vs Bollinger mid), and Relative Volume (vs
+        # its own 20-bar average) - MIN_REQUIRED is how many of those 4
+        # must currently agree for a "confirmed" signal (was 2/3-of-3
+        # before Relative Volume joined the count as a real, equally-
+        # weighted 4th parameter instead of an always-mandatory add-on).
         "MIN_REQUIRED": int(os.getenv("MIN_REQUIRED", 2)),
+        "REL_VOLUME_THRESHOLD": float(os.getenv("REL_VOLUME_THRESHOLD", 1.2)),
         "SCAN_INTERVAL_SECONDS": int(os.getenv("SCAN_INTERVAL_SECONDS", 180)),
     }
 
@@ -180,11 +187,20 @@ class Settings:
         if "MIN_REQUIRED" in kwargs:
             try:
                 mr = int(kwargs["MIN_REQUIRED"])
-                if mr not in (2, 3):
+                if mr not in (2, 3, 4):
                     raise ValueError
                 clean["MIN_REQUIRED"] = mr
             except (TypeError, ValueError):
-                errors.append("Minimum required indicators must be 2 or 3.")
+                errors.append("Minimum required parameters must be 2, 3, or 4.")
+
+        if "REL_VOLUME_THRESHOLD" in kwargs:
+            try:
+                rv = float(kwargs["REL_VOLUME_THRESHOLD"])
+                if rv <= 0:
+                    raise ValueError
+                clean["REL_VOLUME_THRESHOLD"] = rv
+            except (TypeError, ValueError):
+                errors.append("Relative Volume threshold must be a positive number.")
 
         if errors:
             return errors

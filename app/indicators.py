@@ -70,9 +70,8 @@ _INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 # every trading day - that was a real bug, not a hypothetical one.
 _OPENING_WINDOW_TIMEFRAMES = ("15minute",)
 
-REL_VOLUME_THRESHOLD = 1.2  # vol_confirmed: latest candle's volume vs its own 20-bar average
-RSI_OVERBOUGHT = 65   # rsi_threshold param's Bullish side (backtest.py and the dashboard's
-RSI_OVERSOLD = 35     # custom filter both import these two, so they stay in sync) - Bearish side
+RSI_OVERBOUGHT = 65   # backtest.py's separate rsi_threshold param - Bullish side
+RSI_OVERSOLD = 35     # (Bearish side). Not part of the 4-parameter screener below.
 
 OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9:15 IST open
                               # are excluded from signal_confirmed/in_opening_window below -
@@ -216,10 +215,20 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     bull_count = int(series["rsi_up"].iloc[i]) + int(series["macd_up"].iloc[i]) + int(series["ema_up"].iloc[i])
     bear_count = int(series["rsi_dn"].iloc[i]) + int(series["macd_dn"].iloc[i]) + int(series["ema_dn"].iloc[i])
 
+    # fresh_signal only tracks the 3 CROSSOVER-capable indicators (RSI,
+    # MACD, EMA/BB) - Relative Volume is a continuous magnitude state,
+    # not something that "crosses" a line, so it can't itself form a
+    # fresh signal the way these 3 can. bull_count/bear_count therefore
+    # max out at 3 even though settings.MIN_REQUIRED can now go up to
+    # 4-of-4 - min() below means "4-of-4" reads as "all 3 crossover
+    # indicators fire at once" for this specific check (the strictest
+    # the crossover count can ever be), while `aligned`/signal_confirmed
+    # further down still separately require volume too.
+    fresh_required = min(settings.MIN_REQUIRED, 3)
     fresh_signal = None
-    if bull_count >= settings.MIN_REQUIRED:
+    if bull_count >= fresh_required:
         fresh_signal = "Bullish"
-    elif bear_count >= settings.MIN_REQUIRED:
+    elif bear_count >= fresh_required:
         fresh_signal = "Bearish"
 
     align_count = (
@@ -245,13 +254,29 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     vol_multiple = round(float(latest_vol / vol_avg), 2) if vol_avg and pd.notna(vol_avg) and vol_avg > 0 else None
     volume = int(latest_vol) if pd.notna(latest_vol) else None
 
-    aligned = max(align_count, 3 - align_count)
+    # Direction is decided by the 3 DIRECTIONAL indicators only (RSI,
+    # MACD, EMA/BB vs Bollinger mid) - Relative Volume has no "up" or
+    # "down" of its own, only a magnitude read, so it can't cast a
+    # directional vote. It still counts as a full 4th parameter in
+    # `aligned` below though - see vol_confirmed.
+    dir_match_count = max(align_count, 3 - align_count)  # how many of the 3 agree with the majority
     direction = "Bullish" if align_count >= 2 else "Bearish"
 
     # vol_confirmed: today's actual participation, not just the price
     # pattern - a real move is usually backed by above-average volume,
-    # so a signal on quiet volume is more likely to be noise.
-    vol_confirmed = bool(vol_multiple is not None and vol_multiple >= REL_VOLUME_THRESHOLD)
+    # so a signal on quiet volume is more likely to be noise. This is
+    # the 4th of the 4 screener parameters (RSI/MACD/EMA-BB direction +
+    # Relative Volume magnitude), each weighted equally in `aligned`
+    # below - not a separate mandatory gate layered on top of them like
+    # it used to be.
+    vol_confirmed = bool(vol_multiple is not None and vol_multiple >= settings.REL_VOLUME_THRESHOLD)
+
+    # aligned: 0-4, how many of the 4 parameters currently agree with
+    # this row's direction (the 3 directional ones, always 2 or 3 of
+    # them by construction, plus Relative Volume as an independent 4th).
+    # settings.MIN_REQUIRED (2/3/4-of-4) is the bar for "confirmed"
+    # below and for what counts as a fresh signal.
+    aligned = dir_match_count + int(vol_confirmed)
 
     # htf_direction/htf_agrees: does the higher timeframe's own trend
     # agree with this candle's direction? None means "not applicable for
@@ -288,14 +313,16 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "htf_agrees": htf_agrees,
         "in_opening_window": in_opening_window,
         # A stricter, opt-in read of "this row currently has a signal":
-        # the base aligned/min_required state PLUS volume confirmation
-        # PLUS higher-timeframe agreement (where applicable) PLUS NOT in
-        # the noisy opening window - meant to cut down on the false
-        # signals a bare 2-of-3 alignment produces on noisy 15-min
-        # candles. Doesn't replace aligned/direction above (still shown
+        # the aligned/MIN_REQUIRED state (now out of 4 parameters,
+        # Relative Volume included as an equal 4th rather than an
+        # always-mandatory add-on - see aligned above) PLUS
+        # higher-timeframe agreement (where applicable) PLUS NOT in the
+        # noisy opening window - meant to cut down on the false signals
+        # a bare majority alignment produces on noisy 15-min candles.
+        # Doesn't replace aligned/direction above (still shown
         # everywhere for transparency) - it's an additional, opt-in
         # filter surfaced in the UI and used to gate Telegram alerts.
         "signal_confirmed": bool(
-            aligned >= settings.MIN_REQUIRED and vol_confirmed and htf_agrees and not in_opening_window
+            aligned >= settings.MIN_REQUIRED and htf_agrees and not in_opening_window
         ),
     }

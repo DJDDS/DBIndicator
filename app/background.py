@@ -25,60 +25,40 @@ log = logging.getLogger(__name__)
 OI_HISTORY_MAX_MINUTES = 150
 
 # --------------------------------------------------------------------------
-# The screener's fixed 4-parameter confluence check - not user-editable
-# (a bigger "My Filters" panel with 8 configurable checks used to live
-# here; it's been replaced by 3 always-on tiers - see _apply_param_tier
-# below - which are simpler to read at a glance and don't require
-# manually ticking boxes every session). Unlike the backtest's
-# PARAM_DEFS (crossover EVENTS replayed bar-by-bar over history), these
-# are CURRENT STATE checks evaluated fresh on every scan - appropriate
-# for "what does the live screener show me right now".
+# The screener's fixed 4-parameter confluence check: RSI (vs its
+# smoothing line), MACD (vs signal line), EMA9 (vs Bollinger mid), and
+# Relative Volume (vs its own 20-bar average, threshold configurable on
+# the Settings page). indicators.compute_signal already does the real
+# work of counting how many of these 4 agree with a row's direction -
+# that count comes back as `aligned` (0-4). SCREEN_PARAM_DEFS below is
+# kept purely as display labels (footnotes, tooltips) - it's not used
+# for any matching logic anymore, so there's a single source of truth
+# for "how many parameters agree" instead of two systems that could
+# quietly disagree with each other.
 # --------------------------------------------------------------------------
 
 SCREEN_PARAM_DEFS = [
     {"id": "rsi_state", "label": "RSI (vs its smoothing line)"},
     {"id": "macd_state", "label": "MACD (vs signal line)"},
     {"id": "ema_bb_state", "label": "EMA9 vs Bollinger Mid"},
-    {"id": "rel_volume", "label": "Relative Volume > 1.2x (20-bar avg)"},
+    {"id": "rel_volume", "label": "Relative Volume (vs 20-bar avg, threshold on Settings page)"},
 ]
-SCREEN_PARAM_IDS = [p["id"] for p in SCREEN_PARAM_DEFS]
-
-
-def _screen_param_match(r, param_id) -> bool:
-    """Does this row's CURRENT direction hold up under one of the 4
-    fixed screener parameters? Missing/unavailable data counts as NOT
-    matching rather than silently passing."""
-    direction = r.get("direction")
-    if not direction:
-        return False
-    if param_id == "rsi_state":
-        return r.get("rsi_state") == direction
-    if param_id == "macd_state":
-        return r.get("macd_state") == direction
-    if param_id == "ema_bb_state":
-        return r.get("ema_bb_state") == direction
-    if param_id == "rel_volume":
-        return bool(r.get("vol_confirmed"))
-    return False
 
 
 def _apply_param_tier(results):
-    """Mutates each result dict in place, attaching param_match_count
-    (0-4: how many of the 4 fixed SCREEN_PARAM_DEFS agree with this
-    row's current direction) and param_tier (2, 3, or 4 - the bucket
-    this row belongs to; None if it matched fewer than 2, or has no
-    signal at all / is still inside the opening window). Each row lands
-    in exactly ONE tier (its exact match count), not every tier it
-    clears, so the dashboard's three tier sections never show the same
-    stock twice."""
+    """Mutates each result dict in place, attaching param_tier (2, 3,
+    or 4 - the bucket this row belongs to, straight from
+    indicators.compute_signal's `aligned`; None if it matched fewer
+    than 2, has no signal at all, or is still inside the opening
+    window). Each row lands in exactly ONE tier (its exact match
+    count), not every tier it clears, so the dashboard's three tier
+    sections never show the same stock twice."""
     for r in results:
-        if r.get("error") or not r.get("direction") or r.get("in_opening_window"):
-            r["param_match_count"] = None
+        aligned = r.get("aligned")
+        if r.get("error") or not r.get("direction") or r.get("in_opening_window") or aligned is None:
             r["param_tier"] = None
             continue
-        count = sum(1 for p in SCREEN_PARAM_IDS if _screen_param_match(r, p))
-        r["param_match_count"] = count
-        r["param_tier"] = count if count >= 2 else None
+        r["param_tier"] = aligned if aligned >= 2 else None
 
 _state_lock = threading.Lock()
 _state = {
@@ -236,11 +216,13 @@ def _apply_oi_screener_fields(results):
         # High Conviction: a deliberately narrow filter meant to surface
         # only a handful of stocks, by stacking EVERY signal this app
         # tracks and requiring all of them to point the same way at
-        # once - strict 3-of-3 confluence (not just your Required
+        # once - strict 4-of-4 confluence (RSI, MACD, EMA/BB, and
+        # Relative Volume all agreeing - not just your Required
         # setting), OI structure, an actively accelerating OI break
-        # signal, volume confirming the move (>=1.5x average), and
-        # price on the right side of VWAP. This is a stricter superset
-        # of "Positional Qualified" above, not a separate independent
+        # signal, an even higher volume bar (>=1.5x average, stricter
+        # than the 4-of-4's own Relative Volume threshold), and price on
+        # the right side of VWAP. This is a stricter superset of
+        # "Positional Qualified" above, not a separate independent
         # check.
         #
         # IMPORTANT - read before trading off this: stacking filters
@@ -259,7 +241,7 @@ def _apply_oi_screener_fields(results):
         )
         vol_confirmed = (r.get("vol_multiple") or 0) >= 1.5
         r["high_conviction"] = bool(
-            r["positional_qualified"] and aligned == 3 and break_agrees and vol_confirmed and vs_vwap_agrees
+            r["positional_qualified"] and aligned == 4 and break_agrees and vol_confirmed and vs_vwap_agrees
         )
 
 

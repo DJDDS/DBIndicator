@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from .config import settings
-from .indicators import compute_series, REL_VOLUME_THRESHOLD, RSI_OVERBOUGHT, RSI_OVERSOLD
+from .indicators import compute_series, RSI_OVERBOUGHT, RSI_OVERSOLD
 from .scanner import _load_instrument_map, now_ist
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ PARAM_DEFS = [
     {"id": "macd_cross", "label": "MACD Cross (vs signal line)"},
     {"id": "ema_bb_cross", "label": "EMA9 vs Bollinger Mid Cross"},
     {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
-    {"id": "rel_volume", "label": f"Relative Volume > {REL_VOLUME_THRESHOLD}x (20-bar avg) - confirmation only, combine with a directional parameter"},
+    {"id": "rel_volume", "label": "Relative Volume above your configured threshold (20-bar avg, Settings page) - confirmation only, combine with a directional parameter"},
 ]
 PARAM_IDS = [p["id"] for p in PARAM_DEFS]
 DEFAULT_PARAMS = ("rsi_cross", "macd_cross", "ema_bb_cross")  # the original 3-indicator rule
@@ -202,7 +202,7 @@ def _param_bull_bear(series: dict, param_id: str):
         volume = series["df"]["volume"]
         vol_avg = series["vol_avg"]
         rel_vol = volume / vol_avg.replace(0, np.nan)
-        is_hot = rel_vol.notna() & (rel_vol > REL_VOLUME_THRESHOLD)
+        is_hot = rel_vol.notna() & (rel_vol > settings.REL_VOLUME_THRESHOLD)
         return is_hot, is_hot.copy()  # same condition confirms either direction
     raise ValueError(f"unknown backtest parameter: {param_id}")
 

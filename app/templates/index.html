@@ -195,7 +195,7 @@
 <header>
   <div class="brand">
     <h1>Scanner Dashboard</h1>
-    <span class="tagline">RSI + MACD + EMA/BB &middot; {{ timeframe }} &middot; {{ min_required }}-of-3</span>
+    <span class="tagline">RSI + MACD + EMA/BB + Rel Volume &middot; {{ timeframe }} &middot; {{ min_required }}-of-4</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -285,6 +285,7 @@
         <input type="hidden" name="macd_signal" value="{{ macd_signal }}">
         <input type="hidden" name="ema_length" value="{{ ema_length }}">
         <input type="hidden" name="bb_length" value="{{ bb_length }}">
+        <input type="hidden" name="rel_volume_threshold" value="{{ rel_volume_threshold }}">
       </form>
       <span class="tb-status">{{ total_scanned }} scanned</span>
       <details class="qs-popover">
@@ -293,11 +294,16 @@
           <form method="POST" action="/quick-settings" class="quick-settings-form">
             <input type="hidden" name="timeframe" value="{{ timeframe }}">
             <div class="qs-field">
-              <label for="qs-min-required">Core required</label>
+              <label for="qs-min-required">Match required</label>
               <select id="qs-min-required" name="min_required">
-                <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-3</option>
-                <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-3 (strict)</option>
+                <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-4</option>
+                <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-4</option>
+                <option value="4" {% if min_required == 4 %}selected{% endif %}>4-of-4 (strict)</option>
               </select>
+            </div>
+            <div class="qs-field">
+              <label for="qs-rel-volume">Rel Volume &times;</label>
+              <input id="qs-rel-volume" type="number" name="rel_volume_threshold" value="{{ rel_volume_threshold }}" min="0.1" step="0.1">
             </div>
             <div class="qs-field">
               <label for="qs-macd-preset">MACD preset</label>
@@ -389,7 +395,7 @@
             <div class="mn-chip-scroll" id="mn-bull-scroll">
               {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
                 {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
-                <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                <a class="match-chip bull {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
                   <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
                   {{ chip_stats(r) }}
                 </a>
@@ -403,7 +409,7 @@
             <div class="mn-chip-scroll" id="mn-bear-scroll">
               {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
                 {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
-                <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                <a class="match-chip bear {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
                   <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
                   {{ chip_stats(r) }}
                 </a>
@@ -509,7 +515,7 @@
           </th>
           <th></th>
           <th>
-            <select id="f-aligned" onchange="applyFilters()"><option value="">All</option><option>3</option><option>2</option><option>1</option><option>0</option></select>
+            <select id="f-aligned" onchange="applyFilters()"><option value="">All</option><option>4</option><option>3</option><option>2</option><option>1</option><option>0</option></select>
           </th>
           <th>
             <select id="f-signal" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option><option value="None">None</option></select>
@@ -566,7 +572,7 @@
             </span>
             {% else %}—{% endif %}
           </td>
-          <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
+          <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 4</td>
           <td data-sort="{{ signal_dir }}">
             {% if signal_dir == 'Bullish' %}
             <span class="signal-pill bull">▲ Bullish{% if r.fresh_signal == 'Bullish' %} · NEW{% endif %}{% if r.signal_confirmed is defined and r.signal_confirmed %}<span class="confirm-badge">✓</span>{% endif %}</span>
@@ -599,9 +605,12 @@
     with that acceleration too. See the <a href="/oi-screener">OI Screener</a> for the full
     breakdown (15/30/60-min windows, Day OI Change vs yesterday's close). <strong>Vol</strong> =
     latest candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red
-    above 3&times;). A <span class="confirm-badge">✓</span> = "Confirmed": volume above
-    1.2&times; average and (15-min scans) the 4-hour trend agreeing - Telegram alerts only fire
-    for confirmed signals. Want a bigger-picture read? Switch Timeframe (top-left of the filter
+    above 3&times;). <strong>Aligned</strong> is out of 4 parameters - RSI, MACD, EMA/BB, and
+    Relative Volume (threshold set on the Settings page, default 1.2&times;) - each counted
+    equally; "Match required" in the Settings popover sets how many of the 4 must agree for a
+    row to count as Bullish/Bearish. A <span class="confirm-badge">✓</span> = "Confirmed": Aligned
+    meets your Match required setting and (15-min scans) the 4-hour trend agrees too - Telegram
+    alerts only fire for confirmed signals. Want a bigger-picture read? Switch Timeframe (top-left of the filter
     bar) to 4hour, or use the <a href="/backtest">Backtest</a> page. Signals are directional
     input, not investment advice.
   </div>

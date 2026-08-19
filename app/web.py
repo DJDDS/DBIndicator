@@ -80,6 +80,7 @@ def dashboard():
         macd_signal=settings.MACD_CUSTOM_SIGNAL,
         ema_length=settings.EMA_LENGTH,
         bb_length=settings.BB_LENGTH,
+        rel_volume_threshold=settings.REL_VOLUME_THRESHOLD,
         valid_timeframes=config.VALID_TIMEFRAMES,
         valid_presets=config.VALID_MACD_PRESETS,
         quick_error=request.args.get("quick_error"),
@@ -112,6 +113,7 @@ def quick_settings():
         "ema_length": "EMA_LENGTH",
         "bb_length": "BB_LENGTH",
         "min_required": "MIN_REQUIRED",
+        "rel_volume_threshold": "REL_VOLUME_THRESHOLD",
     }
     kwargs = {setting_key: form[form_key] for form_key, setting_key in field_map.items() if form_key in form}
     errors = settings.update(**kwargs)
@@ -154,6 +156,7 @@ def settings_page():
             "EMA_LENGTH": form.get("ema_length", settings.EMA_LENGTH),
             "BB_LENGTH": form.get("bb_length", settings.BB_LENGTH),
             "MIN_REQUIRED": form.get("min_required", settings.MIN_REQUIRED),
+            "REL_VOLUME_THRESHOLD": form.get("rel_volume_threshold", settings.REL_VOLUME_THRESHOLD),
             "SCAN_INTERVAL_SECONDS": form.get("scan_interval", settings.SCAN_INTERVAL_SECONDS),
         }
         errors = settings.update(**payload)
