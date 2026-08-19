@@ -57,6 +57,9 @@
   .tb-status { font-size: 11.5px; color: var(--muted); margin-left: auto; white-space: nowrap; }
   .tb-note { font-size: 11px; color: var(--dim); margin-top: 8px; }
   .mf-empty-inline { font-size: 12px; color: var(--amber); margin-top: 8px; }
+  .tb-timeframe-form { display: flex; align-items: center; gap: 6px; padding-right: 10px; margin-right: 4px; border-right: 1px solid var(--border); }
+  .tb-timeframe-form label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 700; white-space: nowrap; }
+  .tb-timeframe-form select { padding: 5px 8px; background: #0d1119; border: 1px solid var(--accent); border-radius: 5px; color: var(--text); font-size: 12.5px; font-weight: 700; }
 
   /* Settings gear popover */
   .qs-popover { position: relative; margin-left: auto; }
@@ -78,30 +81,31 @@
   @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
   .hc-card { border-color: #3a2f0f; }
   .hc-card h2 { color: var(--amber); }
-  .match-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 210px; overflow-y: auto; }
-  .match-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 5px; text-decoration: none; font-size: 12px; font-weight: 700; font-family: var(--mono); }
-  .match-chip.bull { background: var(--green-bg); color: var(--green); }
-  .match-chip.bear { background: var(--red-bg); color: var(--red); }
+  .match-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 6px; max-height: 260px; overflow-y: auto; }
+  .match-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 5px 9px; border-radius: 6px; text-decoration: none; }
+  .match-chip.bull { background: var(--green-bg); }
+  .match-chip.bear { background: var(--red-bg); }
   .match-chip.bull:hover { filter: brightness(1.25); }
   .match-chip.bear:hover { filter: brightness(1.25); }
   .match-chip.moderate { opacity: 0.55; }
+  .mc-top { font-size: 12px; font-weight: 700; font-family: var(--mono); white-space: nowrap; }
+  .match-chip.bull .mc-top { color: var(--green); }
+  .match-chip.bear .mc-top { color: var(--red); }
   .match-chip-close { font-weight: 500; opacity: 0.8; }
-  .match-chip.hidden-by-strict, .match-chip.hidden-by-confirm { display: none; }
+  .mc-sub { font-size: 10.5px; font-weight: 600; font-family: var(--sans); color: var(--muted); white-space: normal; line-height: 1.4; }
   .confirm-badge { display: inline-block; font-size: 10px; font-weight: 800; color: var(--amber); }
   .mn-empty, .hc-empty { margin: 0; font-size: 12px; color: var(--dim); }
 
-  .mn-header-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+  .mn-header-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
   .mn-counts { display: flex; gap: 12px; font-size: 12px; font-weight: 700; font-family: var(--mono); }
   .mn-counts .bull { color: var(--green); }
   .mn-counts .bear { color: var(--red); }
-  .mn-toolbar { margin: 0 0 8px; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 14px; }
-  .mn-toolbar label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
   .mn-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 640px) { .mn-columns { grid-template-columns: 1fr; } }
   .mn-col-title { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
   .mn-col-title.bull { color: var(--green); }
   .mn-col-title.bear { color: var(--red); }
-  .mn-chip-scroll { display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; max-height: 190px; overflow-y: auto; padding-right: 4px; }
+  .mn-chip-scroll { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 5px; align-content: flex-start; max-height: 240px; overflow-y: auto; padding-right: 4px; }
 
   /* Master table */
   .table-card { padding: 0; overflow: hidden; }
@@ -202,6 +206,37 @@
 </header>
 <div class="wrap">
 
+  {% macro chip_stats(r) %}
+    {%- set parts = [] -%}
+    {%- if r.price_chg_today_pct is defined and r.price_chg_today_pct is not none -%}
+      {%- set _ = parts.append('{:+.1f}%'.format(r.price_chg_today_pct)) -%}
+    {%- endif -%}
+    {%- if r.volume is defined and r.volume is not none -%}
+      {%- set volpart = 'Vol ' + '{:,}'.format(r.volume) -%}
+      {%- if r.vol_multiple is defined and r.vol_multiple is not none -%}
+        {%- set volpart = volpart + ' (' + r.vol_multiple|string + 'x)' -%}
+      {%- endif -%}
+      {%- set _ = parts.append(volpart) -%}
+    {%- elif r.vol_multiple is defined and r.vol_multiple is not none -%}
+      {%- set _ = parts.append('Vol ' + r.vol_multiple|string + 'x') -%}
+    {%- endif -%}
+    {%- if r.oi is defined and r.oi is not none -%}
+      {%- set oipart = 'OI ' + '{:,}'.format(r.oi) -%}
+      {%- if r.oi_chg_today_pct is defined and r.oi_chg_today_pct is not none -%}
+        {%- set oipart = oipart + ' ({:+.1f}%)'.format(r.oi_chg_today_pct) -%}
+      {%- endif -%}
+      {%- set _ = parts.append(oipart) -%}
+    {%- endif -%}
+    {%- if r.oi_trend_label is defined and r.oi_trend_label and r.oi_trend_label not in ('New',) -%}
+      {%- set _ = parts.append(r.oi_trend_label) -%}
+    {%- endif -%}
+    {%- if parts -%}
+    <span class="mc-sub">{{ parts|join(' &middot; ')|safe }}</span>
+    {%- else -%}
+    <span class="mc-sub">no vol/OI data</span>
+    {%- endif -%}
+  {% endmacro %}
+
   {% if not logged_in %}
   <div class="card">
     <p>You're not logged in to Kite for today yet. This is the one manual step each morning
@@ -223,6 +258,27 @@
   {% endif %}
 
   <div class="toolbar">
+    <div class="toolbar-row">
+      <form method="POST" action="/quick-settings" class="tb-timeframe-form" id="tf-form">
+        <label for="tb-timeframe">Timeframe</label>
+        <select id="tb-timeframe" name="timeframe" onchange="document.getElementById('tf-form').submit()">
+          {% for tf in valid_timeframes %}
+          <option value="{{ tf }}" {% if tf == timeframe %}selected{% endif %}>{{ tf }}</option>
+          {% endfor %}
+        </select>
+        <!-- carry the rest of Quick Settings' current values along so switching
+             timeframe here doesn't reset them to server defaults -->
+        <input type="hidden" name="min_required" value="{{ min_required }}">
+        <input type="hidden" name="macd_preset" value="{{ macd_preset }}">
+        <input type="hidden" name="rsi_length" value="{{ rsi_length }}">
+        <input type="hidden" name="rsi_smooth_length" value="{{ rsi_smooth_length }}">
+        <input type="hidden" name="macd_fast" value="{{ macd_fast }}">
+        <input type="hidden" name="macd_slow" value="{{ macd_slow }}">
+        <input type="hidden" name="macd_signal" value="{{ macd_signal }}">
+        <input type="hidden" name="ema_length" value="{{ ema_length }}">
+        <input type="hidden" name="bb_length" value="{{ bb_length }}">
+      </form>
+    </div>
     <form method="GET" action="/" id="my-filters-form">
       <div class="toolbar-row">
         <span class="toolbar-label">My Filters</span>
@@ -246,14 +302,7 @@
           <summary>⚙ Settings</summary>
           <div class="qs-popover-body">
             <form method="POST" action="/quick-settings" class="quick-settings-form">
-              <div class="qs-field">
-                <label for="qs-timeframe">Timeframe</label>
-                <select id="qs-timeframe" name="timeframe">
-                  {% for tf in valid_timeframes %}
-                  <option value="{{ tf }}" {% if tf == timeframe %}selected{% endif %}>{{ tf }}</option>
-                  {% endfor %}
-                </select>
-              </div>
+              <input type="hidden" name="timeframe" value="{{ timeframe }}">
               <div class="qs-field">
                 <label for="qs-min-required">Core required</label>
                 <select id="qs-min-required" name="min_required">
@@ -320,7 +369,8 @@
             {% if not r.error and r.high_conviction %}
               {% set ns2.count = ns2.count + 1 %}
               <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-                {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+                <span class="mc-top">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span></span>
+                {{ chip_stats(r) }}
               </a>
             {% endif %}
           {% endfor %}
@@ -345,10 +395,6 @@
           <span class="bear">▼ {{ ns.bear }}</span>
         </div>
       </div>
-      <div class="mn-toolbar">
-        <label><input type="checkbox" id="mn-strict-only" onchange="mnApplyStrict()"> 3-of-3 only</label>
-        <label><input type="checkbox" id="mn-confirm-only" onchange="mnApplyConfirm()"> Confirmed <span class="confirm-badge">✓</span> only</label>
-      </div>
       <div id="mn-lists">
         {% if ns.bull == 0 and ns.bear == 0 %}
         <p class="mn-empty">Nothing matching right now.</p>
@@ -360,7 +406,8 @@
               {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
                 {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
                 <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                  ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
+                  <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
+                  {{ chip_stats(r) }}
                 </a>
                 {% endif %}
               {% endfor %}
@@ -373,7 +420,8 @@
               {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
                 {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
                 <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                  ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
+                  <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
+                  {{ chip_stats(r) }}
                 </a>
                 {% endif %}
               {% endfor %}
@@ -535,9 +583,9 @@
     candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red above
     3&times;). A <span class="confirm-badge">✓</span> = "Confirmed": volume above 1.2&times;
     average and (15-min scans) the 4-hour trend agreeing - Telegram alerts only fire for
-    confirmed signals. Want a bigger-picture read? Set Timeframe (⚙ Settings) to 4hour, or use
-    the <a href="/backtest">Backtest</a> page. Signals are directional input, not investment
-    advice.
+    confirmed signals. Want a bigger-picture read? Switch Timeframe (top-left of the filter bar)
+    to 4hour, or use the <a href="/backtest">Backtest</a> page. Signals are directional input,
+    not investment advice.
   </div>
 </div>
 <script>
@@ -778,22 +826,6 @@
     sync();
   })();
 
-  function mnApplyStrict() {
-    var box = document.getElementById('mn-strict-only');
-    if (!box) return;
-    document.querySelectorAll('.match-chip.moderate').forEach(function (chip) {
-      chip.classList.toggle('hidden-by-strict', box.checked);
-    });
-  }
-
-  function mnApplyConfirm() {
-    var box = document.getElementById('mn-confirm-only');
-    if (!box) return;
-    document.querySelectorAll('.match-chip.not-confirmed').forEach(function (chip) {
-      chip.classList.toggle('hidden-by-confirm', box.checked);
-    });
-  }
-
   var DASHBOARD_REFRESH_MS = 20000;
   var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody'];
 
@@ -810,8 +842,6 @@
       });
       applyFilters();
       reapplySort();
-      mnApplyStrict();
-      mnApplyConfirm();
       loadInsights();
     }).catch(function () { /* transient network hiccup - next cycle will retry */ });
   }
