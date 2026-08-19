@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from .config import settings
-from .indicators import compute_series
+from .indicators import compute_series, REL_VOLUME_THRESHOLD
 from .scanner import _load_instrument_map, now_ist
 
 log = logging.getLogger(__name__)
@@ -63,7 +63,6 @@ MAX_TRADES_RETURNED = 500  # cap on the trade-by-trade list sent to the browser
 
 RSI_OVERBOUGHT = 65    # rsi_threshold param's Bullish side
 RSI_OVERSOLD = 35      # rsi_threshold param's mirrored Bearish side
-REL_VOLUME_THRESHOLD = 1.2   # rel_volume param: today's bar vs its 20-bar avg volume
 
 # The full menu of selectable backtest parameters - shown as checkboxes on
 # the backtest page (web.py passes PARAM_DEFS straight to the template so

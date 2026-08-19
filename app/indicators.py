@@ -59,6 +59,44 @@ def _cross_down(a, b):
 
 _INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 
+REL_VOLUME_THRESHOLD = 1.2  # vol_confirmed: latest candle's volume vs its own 20-bar average
+
+# Resample spec for each timeframe's "higher timeframe" trend read, used by
+# _higher_timeframe_direction below - reuses whatever candles were already
+# fetched for the main scan (no extra Kite API call, so no added rate-limit
+# risk) resampled into a coarser bucket. Only 15minute has an entry right
+# now, since that's the timeframe false signals were reported on; other
+# timeframes simply have no higher-timeframe opinion (see htf_agrees below).
+_HTF_RESAMPLE = {
+    "15minute": {"rule": "4h", "kwargs": {"origin": "start_day", "offset": "9h15min"}},
+}
+
+
+def _higher_timeframe_direction(df: pd.DataFrame, timeframe: str):
+    """A lightweight higher-timeframe trend read: resamples the SAME
+    candles already fetched for `timeframe` into a coarser bucket (4-hour
+    for a 15-min scan) and reports which way that bucket's own 3-indicator
+    majority currently leans - "Bullish", "Bearish", or None if this
+    timeframe has no higher-timeframe entry above (not applicable - the
+    caller should treat that as "no opinion, don't filter on this") or
+    there isn't enough resampled history yet to compute the indicators."""
+    spec = _HTF_RESAMPLE.get(timeframe)
+    if spec is None or df.empty:
+        return None
+    htf_df = df.resample(spec["rule"], **spec["kwargs"]).agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    ).dropna()
+    htf_series = compute_series(htf_df, "4hour")
+    if "error" in htf_series:
+        return None
+    i = len(htf_df) - 1
+    align_count = (
+        int(htf_series["rsi_line"].iloc[i] > htf_series["rsi_smooth"].iloc[i])
+        + int(htf_series["macd_line"].iloc[i] > htf_series["signal_line"].iloc[i])
+        + int(htf_series["ema9"].iloc[i] > htf_series["bb_mid"].iloc[i])
+    )
+    return "Bullish" if align_count >= 2 else "Bearish"
+
 
 def session_vwap(df: pd.DataFrame, timeframe: str):
     """Volume-weighted average price for just today's candles (resets
@@ -177,6 +215,21 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     vol_multiple = round(float(latest_vol / vol_avg), 2) if vol_avg and pd.notna(vol_avg) and vol_avg > 0 else None
     volume = int(latest_vol) if pd.notna(latest_vol) else None
 
+    aligned = max(align_count, 3 - align_count)
+    direction = "Bullish" if align_count >= 2 else "Bearish"
+
+    # vol_confirmed: today's actual participation, not just the price
+    # pattern - a real move is usually backed by above-average volume,
+    # so a signal on quiet volume is more likely to be noise.
+    vol_confirmed = bool(vol_multiple is not None and vol_multiple >= REL_VOLUME_THRESHOLD)
+
+    # htf_direction/htf_agrees: does the higher timeframe's own trend
+    # agree with this candle's direction? None means "not applicable for
+    # this timeframe" (see _HTF_RESAMPLE) - treated as agreeing so it
+    # never silently filters out timeframes it has no opinion on.
+    htf_direction = _higher_timeframe_direction(df, timeframe)
+    htf_agrees = True if htf_direction is None else (htf_direction == direction)
+
     return {
         "close": round(float(close.iloc[i]), 2),
         "rsi": round(float(rsi_line.iloc[i]), 1),
@@ -184,13 +237,13 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "macd_params": f"{fast},{slow},{sig}",
         "macd_state": "Bullish" if macd_line.iloc[i] > signal_line.iloc[i] else "Bearish",
         "ema_bb_state": "Bullish" if ema9.iloc[i] > bb_mid.iloc[i] else "Bearish",
-        "aligned": max(align_count, 3 - align_count),
+        "aligned": aligned,
         # Which way the *majority* of the 3 indicators currently point,
         # regardless of whether today's candle is the exact one where
         # that alignment first formed (fresh_signal below is that
         # narrower, crossover-only flag). With 3 indicators there's
         # never a tie, so align_count >= 2 always means bullish majority.
-        "direction": "Bullish" if align_count >= 2 else "Bearish",
+        "direction": direction,
         "fresh_signal": fresh_signal,
         "timestamp": df.index[i].isoformat(),
         "vwap": round(vwap, 2) if vwap else None,
@@ -198,4 +251,16 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "breakout_state": breakout_state,
         "vol_multiple": vol_multiple,
         "volume": volume,
+        "vol_confirmed": vol_confirmed,
+        "htf_direction": htf_direction,
+        "htf_agrees": htf_agrees,
+        # A stricter, opt-in read of "this row currently has a signal":
+        # the base aligned/min_required state PLUS volume confirmation
+        # PLUS higher-timeframe agreement (where applicable) - meant to
+        # cut down on the false signals a bare 2-of-3 alignment produces
+        # on noisy 15-min candles. Doesn't replace aligned/direction
+        # above (still shown everywhere for transparency) - it's an
+        # additional, opt-in filter surfaced in the UI and used to gate
+        # Telegram alerts.
+        "signal_confirmed": bool(aligned >= settings.MIN_REQUIRED and vol_confirmed and htf_agrees),
     }

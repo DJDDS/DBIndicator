@@ -128,6 +128,12 @@
   .match-chip.moderate { opacity: 0.62; }
   .match-chip-close { font-weight: 500; opacity: 0.8; }
   .match-chip.hidden-by-strict { display: none; }
+  .match-chip.hidden-by-confirm { display: none; }
+  /* Confirmed = volume above its own 20-bar average, plus (on 15-min)
+     the 4-hour trend agreeing too - see indicators.compute_signal's
+     signal_confirmed. The same bar Telegram alerts are now held to. */
+  .confirm-badge { display: inline-block; font-size: 10px; font-weight: 800; color: var(--accent); }
+  .signal-pill .confirm-badge { margin-left: 4px; }
   .mn-empty { margin: 0; font-size: 13px; color: var(--muted); }
 </style>
 </head>
@@ -282,10 +288,14 @@
       Every stock currently at {{ min_required }}-of-3 or better alignment on your main
       {{ timeframe }} scan - the same list a desktop alert fires for the moment a stock
       enters it. Solid chips are 3-of-3 (strongest); faded chips are exactly {{ min_required }}-of-3.
-      The full table further down still lists every watchlist stock, matching or not.
+      A <span class="confirm-badge">✓</span> marks chips that are also "Confirmed" - volume
+      above its own 20-bar average, plus (on 15-min) the 4-hour trend agreeing too - the same
+      bar Telegram alerts are now held to. The full table further down still lists every
+      watchlist stock, matching or not.
     </p>
     <div class="mn-toolbar">
       <label><input type="checkbox" id="mn-strict-only" onchange="mnApplyStrict()"> Show 3-of-3 only</label>
+      <label style="margin-left:14px;"><input type="checkbox" id="mn-confirm-only" onchange="mnApplyConfirm()"> Show confirmed only</label>
     </div>
     <div id="mn-lists">
       {% if ns.bull == 0 and ns.bear == 0 %}
@@ -297,8 +307,8 @@
           <div class="mn-chip-scroll" id="mn-bull-scroll">
             {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
               {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
-              <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+              <a class="match-chip bull {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                ▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
               </a>
               {% endif %}
             {% endfor %}
@@ -310,8 +320,8 @@
           <div class="mn-chip-scroll" id="mn-bear-scroll">
             {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
               {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
-              <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>
+              <a class="match-chip bear {{ 'moderate' if r.aligned < 3 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
+                ▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}
               </a>
               {% endif %}
             {% endfor %}
@@ -344,7 +354,11 @@
       / <span class="oi-break-badge down">▼ Break Down</span> badge - a stronger, more decisive
       read than either signal alone. <strong>Vol</strong> shows the latest candle's actual
       traded volume plus that as a multiple of its recent average, highlighted orange at
-      1.5&times;-3&times; and red above 3&times;.
+      1.5&times;-3&times; and red above 3&times;. A <span class="confirm-badge">✓</span> next
+      to a Bullish/Bearish <strong>Signal</strong> pill means it's "Confirmed" - volume is
+      above 1.2&times; its own 20-bar average, and (on 15-min scans) the 4-hour trend agrees
+      too - added to cut down on false signals from noisy 15-min candles. Telegram alerts now
+      only fire for confirmed signals.
     </p>
     <table id="main-table">
       <thead>
@@ -453,9 +467,9 @@
           <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 3</td>
           <td data-sort="{{ signal_dir }}">
             {% if signal_dir == 'Bullish' %}
-            <span class="signal-pill bull">▲ Bullish{% if r.fresh_signal == 'Bullish' %} · NEW{% endif %}</span>
+            <span class="signal-pill bull">▲ Bullish{% if r.fresh_signal == 'Bullish' %} · NEW{% endif %}{% if r.signal_confirmed is defined and r.signal_confirmed %}<span class="confirm-badge">✓</span>{% endif %}</span>
             {% elif signal_dir == 'Bearish' %}
-            <span class="signal-pill bear">▼ Bearish{% if r.fresh_signal == 'Bearish' %} · NEW{% endif %}</span>
+            <span class="signal-pill bear">▼ Bearish{% if r.fresh_signal == 'Bearish' %} · NEW{% endif %}{% if r.signal_confirmed is defined and r.signal_confirmed %}<span class="confirm-badge">✓</span>{% endif %}</span>
             {% else %}
             <span class="signal-pill none">—</span>
             {% endif %}
@@ -735,6 +749,17 @@
     });
   }
 
+  // "Show confirmed only" checkbox - hides chips that aren't also
+  // signal_confirmed (volume + higher-timeframe agreement), same idea
+  // as mnApplyStrict above but keyed off the .not-confirmed class.
+  function mnApplyConfirm() {
+    var box = document.getElementById('mn-confirm-only');
+    if (!box) return;
+    document.querySelectorAll('.match-chip.not-confirmed').forEach(function (chip) {
+      chip.classList.toggle('hidden-by-confirm', box.checked);
+    });
+  }
+
   // Dynamic dashboard: instead of a hard `<meta refresh>` full-page
   // reload every 60s (which reset your filters, sort order and scroll
   // position every time, and made the OI/Vol numbers hard to track as
@@ -764,6 +789,7 @@
       applyFilters();
       reapplySort();
       mnApplyStrict();
+      mnApplyConfirm();
       loadInsights();
     }).catch(function () { /* transient network hiccup - next cycle will retry */ });
   }
