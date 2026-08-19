@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, config, indicators, kite_auth, scanner
+from . import alerts, backtest, background, config, indicators, kite_auth, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -60,11 +60,32 @@ def dashboard():
     logged_in = kite_auth.is_logged_in_today()
     login_url = kite_auth.get_login_url() if not logged_in else None
     state = get_state()
+    all_results = state["results"]
+
+    # "My Filters" - a real GET form (checkboxes named fparams, so the
+    # browser submits repeated ?fparams=x&fparams=y query params Flask
+    # reads with getlist) rather than JS-built state, so it's shareable/
+    # bookmarkable and the dashboard's own 20s auto-refresh - which
+    # re-fetches window.location.pathname + window.location.search -
+    # keeps respecting it automatically without any extra wiring.
+    fparams = tuple(p for p in request.args.getlist("fparams") if p in background.SCREEN_PARAM_IDS)
+    try:
+        frequired = int(request.args.get("frequired", len(fparams)))
+    except ValueError:
+        frequired = len(fparams)
+    frequired = max(1, min(frequired, len(fparams))) if fparams else 0
+    filters_active = bool(fparams)
+    results = (
+        [r for r in all_results if background.custom_filter_match(r, fparams, frequired)]
+        if filters_active else all_results
+    )
+
     return render_template(
         "index.html",
         logged_in=logged_in,
         login_url=login_url,
-        results=state["results"],
+        results=results,
+        total_scanned=len(all_results),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
         timeframe=settings.TIMEFRAME,
@@ -82,6 +103,12 @@ def dashboard():
         quick_error=request.args.get("quick_error"),
         insights_enabled=insights_enabled(),
         telegram_enabled=alerts.telegram_enabled(),
+        screen_param_defs=background.SCREEN_PARAM_DEFS,
+        fparams=list(fparams),
+        frequired=frequired,
+        filters_active=filters_active,
+        opening_window_minutes=indicators.OPENING_WINDOW_MINUTES,
+        opening_window_end="9:%02d" % (15 + indicators.OPENING_WINDOW_MINUTES),
     )
 
 

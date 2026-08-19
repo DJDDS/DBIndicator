@@ -11,6 +11,7 @@ import time
 
 from . import alerts, kite_auth
 from .config import settings, SCAN_RESULTS_FILE
+from .indicators import RSI_OVERBOUGHT, RSI_OVERSOLD
 from .scanner import scan_watchlist, is_market_open, now_ist, classify_oi_trend, classify_oi_structure
 
 log = logging.getLogger(__name__)
@@ -19,6 +20,97 @@ log = logging.getLogger(__name__)
 # classification. Only the main-timeframe scan carries OI, so this
 # grows by one entry per symbol per main scan cycle.
 OI_HISTORY_MAX = 20
+
+# --------------------------------------------------------------------------
+# The dashboard's own "My Filters" panel - tick any of these and only
+# stocks meeting your chosen count of them show up anywhere on the page
+# (Matching Now, High Conviction, the main table). Unlike the backtest's
+# PARAM_DEFS (crossover EVENTS replayed bar-by-bar over history), these
+# are CURRENT STATE checks evaluated fresh on every scan - appropriate
+# for "what does the live screener show me right now", not a historical
+# entry trigger. web.py reads the ?fparams=...&frequired=N query string
+# (a real GET form, so it's shareable/bookmarkable and the dashboard's
+# existing 20s auto-refresh - which re-fetches the same URL including
+# its query string - keeps respecting it automatically).
+# --------------------------------------------------------------------------
+
+SCREEN_PARAM_DEFS = [
+    {"id": "rsi_state", "label": "RSI (vs its smoothing line)"},
+    {"id": "macd_state", "label": "MACD (vs signal line)"},
+    {"id": "ema_bb_state", "label": "EMA9 vs Bollinger Mid"},
+    {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
+    {"id": "rel_volume", "label": "Relative Volume > 1.2x (20-bar avg)"},
+    {"id": "oi_structure", "label": "OI % Structure agrees (today's price+OI Buildup matching direction)"},
+    {"id": "oi_break_signal", "label": "OI Break Signal (building AND accelerating, matching direction)"},
+    {"id": "htf_trend", "label": "Higher-timeframe (4h) trend agrees (15-min scans only)"},
+]
+SCREEN_PARAM_IDS = [p["id"] for p in SCREEN_PARAM_DEFS]
+
+
+def _screen_param_match(r, param_id) -> bool:
+    """Does this row's CURRENT direction hold up under one selected
+    filter parameter? Missing/unavailable data (e.g. OI not fetchable
+    for this symbol) counts as NOT matching rather than silently
+    passing - you ticked the box because you want that condition
+    actually confirmed, not assumed."""
+    direction = r.get("direction")
+    if not direction:
+        return False
+    if param_id == "rsi_state":
+        return r.get("rsi_state") == direction
+    if param_id == "macd_state":
+        return r.get("macd_state") == direction
+    if param_id == "ema_bb_state":
+        return r.get("ema_bb_state") == direction
+    if param_id == "rsi_threshold":
+        rsi = r.get("rsi")
+        if rsi is None:
+            return False
+        return rsi > RSI_OVERBOUGHT if direction == "Bullish" else rsi < RSI_OVERSOLD
+    if param_id == "rel_volume":
+        return bool(r.get("vol_confirmed"))
+    if param_id == "oi_structure":
+        # Today's cumulative price+OI% move since session open (see
+        # scanner.classify_oi_structure) - the softer OI check: OI is
+        # building in your direction, no requirement on how fast.
+        structure = r.get("oi_structure")
+        if not structure:
+            return False
+        return (
+            (direction == "Bullish" and structure == "Long Buildup")
+            or (direction == "Bearish" and structure == "Short Buildup")
+        )
+    if param_id == "oi_break_signal":
+        # The stricter, scan-to-scan-aware OI check: not just building,
+        # but building FASTER than its own recent pace right now (or an
+        # outright spike) - see _apply_oi_screener_fields' accel_strong.
+        # This is "percentage AND acceleration" combined into one flag.
+        break_signal = r.get("oi_break_signal")
+        if not break_signal:
+            return False
+        return (
+            (direction == "Bullish" and break_signal == "Break Up")
+            or (direction == "Bearish" and break_signal == "Break Down")
+        )
+    if param_id == "htf_trend":
+        return bool(r.get("htf_agrees", True))
+    return False
+
+
+def custom_filter_match(r, params, required: int) -> bool:
+    """True if this row currently satisfies at least `required` of your
+    ticked `params`. Always excludes rows still inside the noisy
+    opening-window (see indicators.OPENING_WINDOW_MINUTES) and rows
+    with no computed signal at all (errors, or aligned/direction
+    missing) - a custom filter should never surface those."""
+    if r.get("error") or not r.get("direction") or r.get("aligned") is None:
+        return False
+    if r.get("in_opening_window"):
+        return False
+    if not params:
+        return True
+    count = sum(1 for p in params if _screen_param_match(r, p))
+    return count >= required
 
 _state_lock = threading.Lock()
 _state = {
@@ -122,7 +214,7 @@ def _apply_oi_screener_fields(results):
             or (direction == "Bearish" and structure == "Short Buildup")
         )
         r["positional_qualified"] = bool(
-            aligned >= settings.MIN_REQUIRED and structure_agrees
+            aligned >= settings.MIN_REQUIRED and structure_agrees and not r.get("in_opening_window")
         )
 
         # High Conviction: a deliberately narrow filter meant to surface

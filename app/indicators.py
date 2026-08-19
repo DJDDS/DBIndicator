@@ -5,6 +5,8 @@ confluence rule - same definitions used in the Pine Script / LipiScript
 versions and the earlier backtest, so results here should line up with
 what you've already seen on your charts.
 """
+import datetime as dt
+
 import numpy as np
 import pandas as pd
 
@@ -60,6 +62,23 @@ def _cross_down(a, b):
 _INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 
 REL_VOLUME_THRESHOLD = 1.2  # vol_confirmed: latest candle's volume vs its own 20-bar average
+RSI_OVERBOUGHT = 65   # rsi_threshold param's Bullish side (backtest.py and the dashboard's
+RSI_OVERSOLD = 35     # custom filter both import these two, so they stay in sync) - Bearish side
+
+OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9:15 IST open
+                              # are excluded from signal_confirmed/in_opening_window below -
+                              # these candles are usually the most gap-driven and noisy of the day
+
+
+def _in_opening_window(ts, timeframe: str) -> bool:
+    """True if this candle's timestamp falls within the first
+    OPENING_WINDOW_MINUTES minutes after the 9:15 IST market open. Only
+    meaningful for intraday timeframes - a daily/weekly candle spans a
+    whole session (or more), so this never applies to those."""
+    if timeframe not in _INTRADAY_TIMEFRAMES:
+        return False
+    market_open = ts.replace(hour=9, minute=15, second=0, microsecond=0)
+    return market_open <= ts < market_open + dt.timedelta(minutes=OPENING_WINDOW_MINUTES)
 
 # Resample spec for each timeframe's "higher timeframe" trend read, used by
 # _higher_timeframe_direction below - reuses whatever candles were already
@@ -230,6 +249,8 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     htf_direction = _higher_timeframe_direction(df, timeframe)
     htf_agrees = True if htf_direction is None else (htf_direction == direction)
 
+    in_opening_window = _in_opening_window(df.index[i], timeframe)
+
     return {
         "close": round(float(close.iloc[i]), 2),
         "rsi": round(float(rsi_line.iloc[i]), 1),
@@ -254,13 +275,16 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "vol_confirmed": vol_confirmed,
         "htf_direction": htf_direction,
         "htf_agrees": htf_agrees,
+        "in_opening_window": in_opening_window,
         # A stricter, opt-in read of "this row currently has a signal":
         # the base aligned/min_required state PLUS volume confirmation
-        # PLUS higher-timeframe agreement (where applicable) - meant to
-        # cut down on the false signals a bare 2-of-3 alignment produces
-        # on noisy 15-min candles. Doesn't replace aligned/direction
-        # above (still shown everywhere for transparency) - it's an
-        # additional, opt-in filter surfaced in the UI and used to gate
-        # Telegram alerts.
-        "signal_confirmed": bool(aligned >= settings.MIN_REQUIRED and vol_confirmed and htf_agrees),
+        # PLUS higher-timeframe agreement (where applicable) PLUS NOT in
+        # the noisy opening window - meant to cut down on the false
+        # signals a bare 2-of-3 alignment produces on noisy 15-min
+        # candles. Doesn't replace aligned/direction above (still shown
+        # everywhere for transparency) - it's an additional, opt-in
+        # filter surfaced in the UI and used to gate Telegram alerts.
+        "signal_confirmed": bool(
+            aligned >= settings.MIN_REQUIRED and vol_confirmed and htf_agrees and not in_opening_window
+        ),
     }

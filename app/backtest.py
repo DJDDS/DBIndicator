@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from .config import settings
-from .indicators import compute_series, REL_VOLUME_THRESHOLD
+from .indicators import compute_series, REL_VOLUME_THRESHOLD, RSI_OVERBOUGHT, RSI_OVERSOLD
 from .scanner import _load_instrument_map, now_ist
 
 log = logging.getLogger(__name__)
@@ -61,8 +61,6 @@ _RATE_LIMIT_PAUSE = 0.35  # ~3 req/sec, matching Kite's historical-data rate lim
 MAX_TRADES_RETURNED = 500  # cap on the trade-by-trade list sent to the browser
                             # (see run_backtest) - summary stats always use every trade
 
-RSI_OVERBOUGHT = 65    # rsi_threshold param's Bullish side
-RSI_OVERSOLD = 35      # rsi_threshold param's mirrored Bearish side
 
 # The full menu of selectable backtest parameters - shown as checkboxes on
 # the backtest page (web.py passes PARAM_DEFS straight to the template so

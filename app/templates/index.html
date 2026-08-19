@@ -45,6 +45,14 @@
   .qs-apply-btn:hover { background: #245d8f; }
   .qs-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
   .qs-note a { color: var(--accent); }
+  .my-filters-card h2 { margin: 0 0 6px; font-size: 15px; color: var(--navy); }
+  .mf-params { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .mf-chk { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; }
+  .mf-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+  .mf-clear { font-size: 12px; color: var(--accent); text-decoration: none; }
+  .mf-clear:hover { text-decoration: underline; }
+  .mf-status { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .mf-empty { margin: 0; font-size: 13px; color: var(--muted); }
   .chart-link { font-size: 12px; color: var(--accent); text-decoration: none; }
   .chart-link:hover { text-decoration: underline; }
   .insights-card h2 { margin: 0 0 10px; font-size: 15px; color: var(--navy); }
@@ -270,6 +278,36 @@
     <p class="qs-note">Changes apply immediately, no restart needed. MACD custom fast/slow/signal only take effect when MACD preset above is set to "custom". Watchlist and scan interval are on the <a href="/settings">Settings page</a>.</p>
   </div>
 
+  <div class="card my-filters-card">
+    <h2>My Filters</h2>
+    <p class="qs-note" style="margin:0 0 12px;">
+      Tick whichever of these matter to you and everything on this page - Matching Now, High
+      Conviction, the main table below - narrows down to only stocks currently meeting at
+      least your Required count of them. Leave everything unticked to see the full watchlist
+      as before. The opening {{ opening_window_minutes }} minutes after market open
+      (9:15&ndash;{{ opening_window_end }}) are always excluded - the most gap-driven,
+      noisiest candles of the day.
+    </p>
+    <form method="GET" action="/" id="my-filters-form">
+      <div class="mf-params">
+        {% for p in screen_param_defs %}
+        <label class="mf-chk"><input type="checkbox" name="fparams" value="{{ p.id }}" {{ 'checked' if p.id in fparams else '' }}> {{ p.label }}</label>
+        {% endfor %}
+      </div>
+      <div class="mf-row">
+        <div class="qs-field">
+          <label for="mf-required">Required (of ticked)</label>
+          <input type="number" id="mf-required" name="frequired" value="{{ frequired if frequired else 1 }}" min="1" max="{{ screen_param_defs|length }}">
+        </div>
+        <button type="submit" class="qs-apply-btn">Apply Filters</button>
+        {% if filters_active %}
+        <a href="/" class="mf-clear">Clear filters</a>
+        <span class="mf-status">Showing {{ results|length }} of {{ total_scanned }} scanned stocks</span>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
   <div class="card">
     {% set ns = namespace(bull=0, bear=0) %}
     {% for r in results %}
@@ -341,6 +379,9 @@
   </div>
 
   <div class="card">
+    {% if filters_active and results|length == 0 %}
+    <p class="mf-empty" style="margin-bottom:12px;">No stocks currently meet your ticked filters (out of {{ total_scanned }} scanned) - try unticking one, lowering Required, or <a href="/">clear filters</a> to see everything.</p>
+    {% endif %}
     <p style="margin:0 0 12px;font-size:12px;color:var(--muted);">
       Click any column header to sort. Use the filter row below the headers to narrow the
       list. <strong>OI</strong> shows today's Open Interest with its Structure badge
@@ -738,6 +779,26 @@
   }
 
   makeSortable();
+
+  // My Filters - keeps the Required number's max in sync with however
+  // many boxes are currently ticked, so you can't submit an impossible
+  // "require 5 of 2 ticked" combination (the server also clamps this,
+  // this is just so the input doesn't let you type it in the first place).
+  (function () {
+    var form = document.getElementById('my-filters-form');
+    if (!form) return;
+    var boxes = Array.from(form.querySelectorAll('input[name=fparams]'));
+    var requiredInput = document.getElementById('mf-required');
+    function sync() {
+      var checked = boxes.filter(function (b) { return b.checked; });
+      requiredInput.max = Math.max(checked.length, 1);
+      if (checked.length && Number(requiredInput.value) > checked.length) {
+        requiredInput.value = checked.length;
+      }
+    }
+    boxes.forEach(function (b) { b.addEventListener('change', sync); });
+    sync();
+  })();
 
   // "Show 3-of-3 only" checkbox above the Matching Now chips - hides
   // the faded (exactly min_required-of-3) chips without a page reload.
