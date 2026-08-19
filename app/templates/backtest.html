@@ -89,6 +89,13 @@
   <div class="card">
     <h2>Run a backtest</h2>
     <form id="bt-form">
+      <label>Backtest universe</label>
+      <div class="horizons" id="bt-universe">
+        <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
+        <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
+        <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
+      </div>
+      <div class="hint" style="margin-bottom:14px;">Pick exactly one - your F&amp;O watchlist, or a single index on its own (kept separate rather than mixed in, so an index's own result isn't diluted into a 100+-stock trade list). Indices have no real traded volume (Kite reports 0), so the Relative Volume parameter never fires for a NIFTY 50/SENSEX run - that's expected.</div>
       <div class="row">
         <div>
           <label for="bt-timeframe">Timeframe</label>
@@ -121,15 +128,6 @@
           </label>
           {% endfor %}
         </div>
-      </div>
-      <div style="margin-top:16px;">
-        <label>Also backtest</label>
-        <div class="horizons">
-          {% for sym in index_symbols %}
-          <label class="chk"><input type="checkbox" name="index_symbol" value="{{ sym }}"> {{ sym }}</label>
-          {% endfor %}
-        </div>
-        <div class="hint">Adds the index itself to the symbols backtested, alongside your F&amp;O watchlist. Indices have no real traded volume (Kite reports 0), so the Relative Volume parameter never fires for these rows - that's expected.</div>
       </div>
       <div class="row" style="grid-template-columns: 1fr 3fr; margin-top:6px;">
         <div>
@@ -165,6 +163,13 @@
       indicator - re-run periodically rather than treating a single result as final.
     </p>
     <form id="wt-form">
+      <label>Backtest universe</label>
+      <div class="horizons" id="wt-universe">
+        <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
+        <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
+        <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
+      </div>
+      <div class="hint" style="margin-bottom:14px;">Pick exactly one. A NIFTY 50/SENSEX run measures how RSI/MACD/EMA-BB have predicted moves on the index itself - Relative Volume's weight will read low/neutral for these since indices report 0 volume on Kite.</div>
       <div class="row" style="grid-template-columns: 1fr 1fr 1fr;">
         <div>
           <label for="wt-timeframe">Timeframe</label>
@@ -182,15 +187,6 @@
           <label for="wt-horizon">Reference horizon (bars held)</label>
           <input type="number" id="wt-horizon" name="ref_horizon" value="10" min="1" max="60">
         </div>
-      </div>
-      <div style="margin-top:16px;">
-        <label>Also include</label>
-        <div class="horizons">
-          {% for sym in index_symbols %}
-          <label class="chk"><input type="checkbox" name="index_symbol" value="{{ sym }}" class="wt-index-chk"> {{ sym }}</label>
-          {% endfor %}
-        </div>
-        <div class="hint">Folds the index's own trades into the weight calculation alongside your F&amp;O watchlist.</div>
       </div>
       <div style="margin-top:18px;">
         <button type="submit" class="btn" id="wt-run-btn" {{ 'disabled' if not logged_in else '' }}>Compute Weights</button>
@@ -423,12 +419,12 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
     return;
   }
   const body = new URLSearchParams();
+  body.set('universe', form.get('universe') || 'watchlist');
   body.set('timeframe', form.get('timeframe'));
   body.set('days', form.get('days'));
   body.set('horizons', horizons.join(','));
   body.set('params', params.join(','));
   body.set('required', String(required));
-  document.querySelectorAll('#bt-form input[name=index_symbol]:checked').forEach(el => body.append('index_symbol', el.value));
   document.getElementById('bt-form-hint').textContent = '';
   fetch('/api/backtest/start', { method: 'POST', body: body })
     .then(r => r.json())
@@ -528,10 +524,10 @@ document.getElementById('wt-form').addEventListener('submit', function (e) {
   e.preventDefault();
   const form = new FormData(this);
   const body = new URLSearchParams();
+  body.set('universe', form.get('universe') || 'watchlist');
   body.set('timeframe', form.get('timeframe'));
   body.set('days', form.get('days'));
   body.set('ref_horizon', form.get('ref_horizon'));
-  document.querySelectorAll('#wt-form input[name=index_symbol]:checked').forEach(el => body.append('index_symbol', el.value));
   document.getElementById('wt-form-hint').textContent = '';
   fetch('/api/weights/start', { method: 'POST', body: body })
     .then(r => r.json())

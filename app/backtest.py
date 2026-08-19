@@ -315,7 +315,11 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         return []
 
     has_signal, direction = _signal_series(series, params, required)
-    entries = has_signal & ~has_signal.shift(1).fillna(False)
+    # .astype(bool) after fillna: shift(1) turns the leading NaN into an
+    # object-dtype series in newer pandas, and fillna(False) alone now
+    # raises a FutureWarning about silent downcasting instead of just
+    # doing it - the explicit cast says what we mean either way.
+    entries = has_signal & ~has_signal.shift(1).fillna(False).astype(bool)
 
     # Always recorded on every trade (regardless of whether "rel_volume"
     # is one of your chosen params for THIS run) so compute_param_weights
@@ -570,14 +574,26 @@ def compute_param_weights(kite, symbols=None, timeframe=None, days=30, ref_horiz
 
     # Convert win rates into normalized weights - a parameter with too
     # few trades to judge (None) is treated as neutral (25%-equivalent
-    # raw score) rather than silently dropped to zero; every parameter
-    # gets at least a 5%-of-total floor even at/below a 50% coin-flip
-    # reading, so one soft patch can't zero it out of the live score.
+    # raw score) rather than silently dropped to zero. Weights are then
+    # blended with a uniform floor so no parameter can be normalized away
+    # to near-zero: 20% of the weight budget is split equally across all
+    # N parameters (a guaranteed 5% each with the current 4 parameters),
+    # and the remaining 80% is distributed by relative win rate. This
+    # guarantees the FINAL weight for every parameter (not just its raw,
+    # pre-normalization score) is at least FLOOR_FRACTION/n, and the
+    # weights still sum to exactly 1.0.
     raw = {}
     for pid, wr in win_rates.items():
-        raw[pid] = 0.25 if wr is None else max(0.05, wr / 100.0)
+        raw[pid] = 0.25 if wr is None else max(0.0, wr / 100.0)
     total = sum(raw.values()) or 1.0
-    weights = {pid: round(v / total, 4) for pid, v in raw.items()}
+    norm = {pid: v / total for pid, v in raw.items()}
+
+    FLOOR_FRACTION = 0.20
+    n = len(raw) or 1
+    weights = {
+        pid: round(FLOOR_FRACTION / n + (1 - FLOOR_FRACTION) * norm[pid], 4)
+        for pid in raw
+    }
 
     return {
         "weights": weights,

@@ -354,20 +354,31 @@ def backtest_page():
         state=backtest.get_backtest_state(),
         weights_state=backtest.get_weights_state(),
         index_symbols=backtest.INDEX_SYMBOLS,
+        watchlist_count=len(settings.WATCHLIST),
     )
 
 
+_BACKTEST_UNIVERSES = {
+    "watchlist": None,       # resolved to settings.WATCHLIST below (evaluated live, not at import time)
+    "nifty50": ["NIFTY 50"],
+    "sensex": ["SENSEX"],
+}
+
+
 def _resolve_backtest_symbols(form):
-    """Your normal F&O WATCHLIST, plus whichever of NIFTY 50 / SENSEX
-    the "also backtest" checkboxes on the Backtest page had checked
-    (backtest.INDEX_SYMBOLS) - shared by both /api/backtest/start and
-    /api/weights/start. request.form.getlist reads every submitted
-    index_symbol value (there can be 0, 1, or 2); unrecognized values
-    are ignored rather than erroring, and an index already somehow in
-    WATCHLIST isn't duplicated."""
-    extra = [s for s in form.getlist("index_symbol") if s in backtest.INDEX_SYMBOLS]
-    watchlist = list(settings.WATCHLIST)
-    return watchlist + [s for s in extra if s not in watchlist]
+    """Which symbols to backtest, per the "Backtest universe" radio on
+    the Backtest page - shared by both /api/backtest/start and
+    /api/weights/start. Exactly one of three options, not a mix:
+    "watchlist" (your normal F&O WATCHLIST, the default), "nifty50"
+    (NIFTY 50 alone), or "sensex" (SENSEX alone) - kept as separate,
+    single-symbol runs rather than lumping an index in with 100+ F&O
+    stocks, since mixing them together would dilute the index's own
+    result into a huge stock-only trade list and make it hard to read
+    on its own. An unrecognized/missing value falls back to the
+    watchlist."""
+    universe = form.get("universe", "watchlist")
+    symbols = _BACKTEST_UNIVERSES.get(universe, _BACKTEST_UNIVERSES["watchlist"])
+    return list(symbols) if symbols is not None else list(settings.WATCHLIST)
 
 
 @app.route("/api/backtest/start", methods=["POST"])
