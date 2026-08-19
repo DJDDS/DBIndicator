@@ -331,11 +331,20 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
             # today's bucket and hasn't actually reached its own close
             # time yet (accounting for the final bucket of the day being
             # a short 13:15-15:30 bar, not a full 4 hours).
+            # Kite's own timestamps come back timezone-AWARE (fixed IST
+            # offset), while now_ist() is deliberately naive (see its
+            # docstring - that's what the historical_data() request
+            # params need) - comparing the two directly raises "can't
+            # compare offset-naive and offset-aware datetimes". Strip
+            # tzinfo from the candle timestamp before comparing; both
+            # sides already represent the same IST wall-clock time, so
+            # this is safe and isn't an actual timezone conversion.
             last_ts = df.index[-1]
+            last_ts_cmp = last_ts.tz_localize(None) if last_ts.tzinfo is not None else last_ts
             now = now_ist()
-            if last_ts.date() == now.date():
-                session_close = last_ts.replace(hour=15, minute=30, second=0, microsecond=0)
-                expected_close = min(last_ts + dt.timedelta(hours=4), session_close)
+            if last_ts_cmp.date() == now.date():
+                session_close = last_ts_cmp.replace(hour=15, minute=30, second=0, microsecond=0)
+                expected_close = min(last_ts_cmp + dt.timedelta(hours=4), session_close)
                 if now < expected_close and len(df) > 1:
                     df = df.iloc[:-1]
             if len(df) < 30:
