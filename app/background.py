@@ -120,7 +120,21 @@ _state = {
     "oi_history": {},
     "oi_day_baseline": {},
     "oi_structure_prev": {},
+    "oi_label_prev": {},
 }
+
+# Set by web.py whenever a Quick Settings / Settings change is applied
+# (timeframe, indicator lengths, watchlist, etc.) so the very next scan
+# picks up the new settings within a second or two, instead of the
+# dashboard silently showing stale results for up to
+# SCAN_INTERVAL_SECONDS (default 3 minutes) - which read as "the
+# timeframe switch isn't working" even though it was actually just
+# waiting for the next scheduled cycle.
+_rescan_event = threading.Event()
+
+
+def trigger_rescan():
+    _rescan_event.set()
 
 
 def _apply_oi_trend(results):
@@ -247,6 +261,28 @@ def _apply_oi_screener_fields(results):
         )
 
 
+def _detect_oi_accel_events(results):
+    """Returns the rows whose oi_trend_label (see classify_oi_trend)
+    just transitioned INTO "Accelerating" on this scan, compared to
+    what it was last scan - i.e. the moment OI starts accelerating for
+    that symbol, not every scan while it stays accelerating. Must be
+    called after _apply_oi_trend (needs this scan's oi_trend_label
+    already set) and while holding _state_lock, same as the OI
+    functions above - it reads and updates _state["oi_label_prev"]."""
+    prev = _state["oi_label_prev"]
+    events = []
+    for r in results:
+        symbol = r.get("symbol")
+        if not symbol or r.get("error"):
+            continue
+        label = r.get("oi_trend_label")
+        if label == "Accelerating" and prev.get(symbol) != "Accelerating":
+            events.append(r)
+        if label:
+            prev[symbol] = label
+    return events
+
+
 def _load_persisted_state():
     """Restores the last scan from disk on startup, so a restart (a
     redeploy, the host restarting the container, etc.) doesn't wipe the
@@ -264,6 +300,7 @@ def _load_persisted_state():
                 _state["oi_history"] = saved.get("oi_history", {})
                 _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
+                _state["oi_label_prev"] = saved.get("oi_label_prev", {})
                 _state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -277,6 +314,7 @@ def _save_persisted_state():
             "oi_history": _state["oi_history"],
             "oi_day_baseline": _state["oi_day_baseline"],
             "oi_structure_prev": _state["oi_structure_prev"],
+            "oi_label_prev": _state["oi_label_prev"],
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -316,6 +354,7 @@ def _run_loop():
                     with _state_lock:
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
+                        oi_events = _detect_oi_accel_events(results)
                         _state["results"] = results
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None
@@ -323,20 +362,33 @@ def _run_loop():
                         alerts.process_scan_results(results, settings.TIMEFRAME)
                     except Exception:  # noqa: BLE001 - alerting must never break scanning
                         log.exception("Alert processing failed")
+                    if oi_events:
+                        try:
+                            alerts.process_oi_events(oi_events, settings.TIMEFRAME)
+                        except Exception:  # noqa: BLE001 - alerting must never break scanning
+                            log.exception("OI acceleration alert processing failed")
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Background scan failed")
                     with _state_lock:
                         _state["last_error"] = str(exc)
 
                 _save_persisted_state()
-                time.sleep(settings.SCAN_INTERVAL_SECONDS)
+                # wait() instead of a plain sleep() so a Quick Settings /
+                # Settings change (web.py calls trigger_rescan()) wakes
+                # this loop immediately instead of leaving the dashboard
+                # showing results from the OLD settings for up to
+                # SCAN_INTERVAL_SECONDS - that delay is what made a
+                # timeframe switch look like it "wasn't working".
+                _rescan_event.wait(timeout=settings.SCAN_INTERVAL_SECONDS)
+                _rescan_event.clear()
             else:
                 # Not logged in yet today, or outside market hours - the
                 # last scan's results (loaded from disk on startup, or still
                 # in memory from earlier today) are left untouched so
                 # there's always something on screen to analyse. Check back
                 # periodically without hammering anything.
-                time.sleep(30)
+                _rescan_event.wait(timeout=30)
+                _rescan_event.clear()
         except Exception:  # noqa: BLE001 - never let this thread die
             log.exception("Background scan loop hit an unexpected error - retrying")
             with _state_lock:

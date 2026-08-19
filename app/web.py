@@ -138,6 +138,11 @@ def quick_settings():
     errors = settings.update(**kwargs)
     if errors:
         return redirect("/?quick_error=" + "; ".join(errors))
+    # Wake the background scanner immediately instead of leaving it to
+    # finish out its current SCAN_INTERVAL_SECONDS sleep - otherwise a
+    # timeframe/indicator change can take up to 3 minutes to show up,
+    # which looks like the change didn't take effect at all.
+    background.trigger_rescan()
     return redirect("/")
 
 
@@ -174,6 +179,8 @@ def settings_page():
         }
         errors = settings.update(**payload)
         saved = not errors
+        if saved:
+            background.trigger_rescan()
     return render_template(
         "settings.html",
         s=settings.as_dict(),
@@ -198,6 +205,7 @@ def load_fno_list():
         symbols = scanner.get_fno_stock_list(kite)
         if symbols:
             settings.update(WATCHLIST=symbols)
+            background.trigger_rescan()
     except Exception as exc:  # noqa: BLE001
         log.warning("Failed to load F&O list from Kite: %s", exc)
     return redirect("/settings")
@@ -293,6 +301,12 @@ def api_insights():
 @require_dashboard_password
 def api_alerts_recent():
     return jsonify({"alerts": alerts.get_recent(limit=20)})
+
+
+@app.route("/api/alerts/oi_recent")
+@require_dashboard_password
+def api_alerts_oi_recent():
+    return jsonify({"alerts": alerts.get_recent_oi(limit=20)})
 
 
 @app.route("/api/alerts/test", methods=["POST"])

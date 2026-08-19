@@ -173,6 +173,7 @@
   .toast { background: var(--panel2); border: 1px solid var(--border); color: #fff; border-radius: 8px; padding: 12px 14px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.4); animation: toast-in 0.25s ease-out; }
   .toast.bear { border-left: 3px solid var(--red); }
   .toast.bull { border-left: 3px solid var(--green); }
+  .toast.oi { border-left: 3px solid var(--amber); }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
   .insights-card h2 { color: var(--text); }
@@ -544,10 +545,10 @@
             <span class="oi-accel-badge {{ (r.oi_trend_label or 'New')|lower }} {{ 'unusual' if r.oi_unusual else '' }}">{% if r.oi_unusual %}⚠ {% endif %}{{ r.oi_trend_label or 'New' }}</span>
             {% else %}—{% endif %}
           </td>
-          <td data-sort="{{ r.vol_multiple if r.vol_multiple is not none else '' }}" class="vol-cell">
-            {% if r.vol_multiple is defined and r.vol_multiple is not none %}
-            <span class="{{ 'vol-hot' if r.vol_multiple >= 3 else ('vol-warm' if r.vol_multiple >= 1.5 else '') }}">
-              {% if r.volume is defined and r.volume is not none %}{{ '{:,}'.format(r.volume) }} &middot; {% endif %}{{ r.vol_multiple }}x
+          <td data-sort="{{ r.vol_multiple if r.vol_multiple is not none else (r.volume if r.volume is not none else '') }}" class="vol-cell">
+            {% if r.volume is defined and r.volume is not none %}
+            <span class="{{ 'vol-hot' if r.vol_multiple is not none and r.vol_multiple >= 3 else ('vol-warm' if r.vol_multiple is not none and r.vol_multiple >= 1.5 else '') }}">
+              {{ '{:,}'.format(r.volume) }}{% if r.vol_multiple is defined and r.vol_multiple is not none %} &middot; {{ r.vol_multiple }}x{% endif %}
             </span>
             {% else %}—{% endif %}
           </td>
@@ -715,6 +716,38 @@
     }
     poll();
     setInterval(poll, 20000);
+
+    // Separate pop for OI-acceleration events (background.py fires one
+    // the moment a symbol's OI trend transitions INTO "Accelerating",
+    // not every scan while it stays that way) - own seen-set/toast style
+    // (amber) since this isn't a Bullish/Bearish confluence signal.
+    var seenOi = new Set();
+    var firstOiLoad = true;
+
+    function showOiToast(a) {
+      var t = document.createElement('div');
+      t.className = 'toast oi';
+      t.textContent = a.text || ('\u{1F4C8} ' + a.symbol + ' OI accelerating (' + a.timeframe + ')');
+      wrap.appendChild(t);
+      setTimeout(function () { t.remove(); }, 12000);
+    }
+
+    function pollOi() {
+      fetch('/api/alerts/oi_recent').then(function (r) { return r.json(); }).then(function (data) {
+        (data.alerts || []).forEach(function (a) {
+          var key = a.symbol + '|' + a.timeframe + '|' + a.detected_at;
+          if (seenOi.has(key)) return;
+          seenOi.add(key);
+          if (!firstOiLoad) {
+            showOiToast(a);
+            beep();
+          }
+        });
+        firstOiLoad = false;
+      }).catch(function () { /* ignore transient errors */ });
+    }
+    pollOi();
+    setInterval(pollOi, 20000);
   })();
 
   var currentSort = null; // {colIndex, asc}
