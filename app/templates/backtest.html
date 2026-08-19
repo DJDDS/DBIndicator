@@ -122,6 +122,15 @@
           {% endfor %}
         </div>
       </div>
+      <div style="margin-top:16px;">
+        <label>Also backtest</label>
+        <div class="horizons">
+          {% for sym in index_symbols %}
+          <label class="chk"><input type="checkbox" name="index_symbol" value="{{ sym }}"> {{ sym }}</label>
+          {% endfor %}
+        </div>
+        <div class="hint">Adds the index itself to the symbols backtested, alongside your F&amp;O watchlist. Indices have no real traded volume (Kite reports 0), so the Relative Volume parameter never fires for these rows - that's expected.</div>
+      </div>
       <div class="row" style="grid-template-columns: 1fr 3fr; margin-top:6px;">
         <div>
           <label for="bt-required">Required (of selected)</label>
@@ -140,6 +149,68 @@
       <div class="progress-label" id="bt-progress-label">Starting…</div>
     </div>
     <div class="msg-err" id="bt-error" style="display:none; margin-top:16px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>Auto-Weight Parameters</h2>
+    <p>
+      Backtests each of the live screener's 4 parameters over your watchlist to measure which
+      have actually been predictive lately - RSI Cross, MACD Cross, and EMA/BB Cross each solo
+      (required=1), and Relative Volume as a confirmation LIFT (win rate of the 2-of-3 baseline's
+      trades where volume was also hot at entry, vs where it wasn't) since volume has no direction
+      of its own to test solo. Converts the result into weights for the dashboard's
+      <strong>Score</strong> column - a backtest-informed alternative to the plain Aligned/4
+      equal-weight count. Takes a few minutes (4 full backtest passes over your watchlist).
+      This measures one recent window on your specific watchlist, not a permanent verdict on an
+      indicator - re-run periodically rather than treating a single result as final.
+    </p>
+    <form id="wt-form">
+      <div class="row" style="grid-template-columns: 1fr 1fr 1fr;">
+        <div>
+          <label for="wt-timeframe">Timeframe</label>
+          <select id="wt-timeframe" name="timeframe">
+            {% for tf in valid_timeframes %}
+            <option value="{{ tf }}" {{ 'selected' if tf == default_timeframe else '' }}>{{ tf }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="wt-days">Days back</label>
+          <input type="number" id="wt-days" name="days" value="30" min="5" max="90">
+        </div>
+        <div>
+          <label for="wt-horizon">Reference horizon (bars held)</label>
+          <input type="number" id="wt-horizon" name="ref_horizon" value="10" min="1" max="60">
+        </div>
+      </div>
+      <div style="margin-top:16px;">
+        <label>Also include</label>
+        <div class="horizons">
+          {% for sym in index_symbols %}
+          <label class="chk"><input type="checkbox" name="index_symbol" value="{{ sym }}" class="wt-index-chk"> {{ sym }}</label>
+          {% endfor %}
+        </div>
+        <div class="hint">Folds the index's own trades into the weight calculation alongside your F&amp;O watchlist.</div>
+      </div>
+      <div style="margin-top:18px;">
+        <button type="submit" class="btn" id="wt-run-btn" {{ 'disabled' if not logged_in else '' }}>Compute Weights</button>
+        <span class="hint" id="wt-form-hint" style="margin-left:10px;"></span>
+      </div>
+    </form>
+
+    <div class="progress-wrap" id="wt-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="wt-progress-fill"></div></div>
+      <div class="progress-label" id="wt-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="wt-error" style="display:none; margin-top:16px;"></div>
+
+    <div id="wt-results" style="display:none; margin-top:18px;">
+      <p class="hint" id="wt-meta"></p>
+      <table>
+        <thead><tr><th>Parameter</th><th>Weight</th><th>Win rate</th><th>Trades</th><th>Notes</th></tr></thead>
+        <tbody id="wt-table-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card" id="bt-results">
@@ -357,6 +428,7 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
   body.set('horizons', horizons.join(','));
   body.set('params', params.join(','));
   body.set('required', String(required));
+  document.querySelectorAll('#bt-form input[name=index_symbol]:checked').forEach(el => body.append('index_symbol', el.value));
   document.getElementById('bt-form-hint').textContent = '';
   fetch('/api/backtest/start', { method: 'POST', body: body })
     .then(r => r.json())
@@ -374,6 +446,110 @@ if (initialState.status === 'running') {
   poll();
 } else if (initialState.status === 'done' && initialState.result) {
   renderResult(initialState.result);
+}
+
+// --- Auto-Weight Parameters -------------------------------------------
+const PARAM_LABELS_WT = {
+  rsi_cross: 'RSI Cross', macd_cross: 'MACD Cross', ema_bb_cross: 'EMA/BB Cross', rel_volume: 'Relative Volume',
+};
+
+function renderWeights(result) {
+  const wrap = document.getElementById('wt-results');
+  wrap.style.display = 'block';
+  document.getElementById('wt-meta').textContent =
+    `Computed ${result.computed_at || '?'} · ${result.timeframe} · ${result.days} days · ${result.symbols_count} symbols · ${result.ref_horizon}-bar horizon`;
+  const weights = result.weights || {};
+  const winRates = result.win_rates || {};
+  const notes = result.notes || {};
+  const body = document.getElementById('wt-table-body');
+  body.innerHTML = '';
+  Object.keys(weights).forEach(pid => {
+    const tr = document.createElement('tr');
+    const wr = winRates[pid];
+    const n = notes[pid] || {};
+    let noteText = `${n.trade_count ?? 0} trades`;
+    if (pid === 'rel_volume' && n.lift_pct !== undefined && n.lift_pct !== null) {
+      noteText += ` · lift ${n.lift_pct > 0 ? '+' : ''}${n.lift_pct}pp vs unconfirmed (${n.win_rate_without_volume ?? '—'}%)`;
+    }
+    tr.innerHTML = `
+      <td>${PARAM_LABELS_WT[pid] || pid}</td>
+      <td>${(weights[pid] * 100).toFixed(1)}%</td>
+      <td>${(wr === null || wr === undefined) ? '—' : wr.toFixed(1) + '%'}</td>
+      <td>${n.trade_count ?? 0}</td>
+      <td class="hint" style="text-align:left;">${noteText}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function pollWeights() {
+  fetch('/api/weights/status').then(r => r.json()).then(state => {
+    updateWeightsUI(state);
+    if (state.status === 'running') {
+      setTimeout(pollWeights, 2000);
+    }
+  }).catch(() => setTimeout(pollWeights, 4000));
+}
+
+function updateWeightsUI(state) {
+  const progress = document.getElementById('wt-progress');
+  const errorBox = document.getElementById('wt-error');
+  const runBtn = document.getElementById('wt-run-btn');
+
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const p = state.progress || {};
+    const phaseTotal = p.phase_total || 4;
+    const phaseIndex = p.phase_index || 0;
+    const withinPct = p.total ? (p.done / p.total) * (100 / phaseTotal) : 0;
+    const pct = Math.min(100, Math.round((phaseIndex / phaseTotal) * 100 + withinPct));
+    document.getElementById('wt-progress-fill').style.width = pct + '%';
+    const phaseLabel = p.phase_label || 'Starting';
+    document.getElementById('wt-progress-label').textContent =
+      `${phaseLabel} (${phaseIndex + 1}/${phaseTotal}) - ${p.symbol ? p.symbol + ' ' : ''}${p.done ?? 0}/${p.total ?? 0}…`;
+  } else {
+    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+    progress.style.display = 'none';
+  }
+
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Weight computation failed: ' + (state.error || 'unknown error');
+  }
+
+  if (state.status === 'done' && state.result) {
+    renderWeights(state.result);
+  }
+}
+
+document.getElementById('wt-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  const form = new FormData(this);
+  const body = new URLSearchParams();
+  body.set('timeframe', form.get('timeframe'));
+  body.set('days', form.get('days'));
+  body.set('ref_horizon', form.get('ref_horizon'));
+  document.querySelectorAll('#wt-form input[name=index_symbol]:checked').forEach(el => body.append('index_symbol', el.value));
+  document.getElementById('wt-form-hint').textContent = '';
+  fetch('/api/weights/start', { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.started) {
+        document.getElementById('wt-form-hint').textContent = res.reason || 'Could not start.';
+      } else {
+        pollWeights();
+      }
+    });
+});
+
+const initialWeightsState = {{ weights_state | tojson }};
+updateWeightsUI(initialWeightsState);
+if (initialWeightsState.status === 'running') {
+  pollWeights();
+} else if (initialWeightsState.status === 'done' && initialWeightsState.result) {
+  renderWeights(initialWeightsState.result);
 }
 </script>
 </body>

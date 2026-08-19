@@ -89,6 +89,10 @@ def dashboard():
         screen_param_defs=background.SCREEN_PARAM_DEFS,
         opening_window_minutes=indicators.OPENING_WINDOW_MINUTES,
         opening_window_end="9:%02d" % (15 + indicators.OPENING_WINDOW_MINUTES),
+        index_direction=state.get("index_direction"),
+        index_close=state.get("index_close"),
+        index_chg_pct=state.get("index_chg_pct"),
+        require_index_agreement=settings.REQUIRE_INDEX_AGREEMENT,
     )
 
 
@@ -158,6 +162,14 @@ def settings_page():
             "MIN_REQUIRED": form.get("min_required", settings.MIN_REQUIRED),
             "REL_VOLUME_THRESHOLD": form.get("rel_volume_threshold", settings.REL_VOLUME_THRESHOLD),
             "SCAN_INTERVAL_SECONDS": form.get("scan_interval", settings.SCAN_INTERVAL_SECONDS),
+            "ADX_LENGTH": form.get("adx_length", settings.ADX_LENGTH),
+            "RANGING_VOL_MULTIPLIER": form.get("ranging_vol_multiplier", settings.RANGING_VOL_MULTIPLIER),
+            # A checkbox that isn't checked simply isn't submitted at all,
+            # so this can't use form.get(key, current-value) like every
+            # other field above (that fallback would silently keep the
+            # OLD value forever, making it impossible to ever uncheck) -
+            # "on" only when Flask actually received the field.
+            "REQUIRE_INDEX_AGREEMENT": form.get("require_index_agreement") == "on",
         }
         errors = settings.update(**payload)
         saved = not errors
@@ -340,7 +352,22 @@ def backtest_page():
         default_params=list(backtest.DEFAULT_PARAMS),
         default_required=backtest.DEFAULT_REQUIRED,
         state=backtest.get_backtest_state(),
+        weights_state=backtest.get_weights_state(),
+        index_symbols=backtest.INDEX_SYMBOLS,
     )
+
+
+def _resolve_backtest_symbols(form):
+    """Your normal F&O WATCHLIST, plus whichever of NIFTY 50 / SENSEX
+    the "also backtest" checkboxes on the Backtest page had checked
+    (backtest.INDEX_SYMBOLS) - shared by both /api/backtest/start and
+    /api/weights/start. request.form.getlist reads every submitted
+    index_symbol value (there can be 0, 1, or 2); unrecognized values
+    are ignored rather than erroring, and an index already somehow in
+    WATCHLIST isn't duplicated."""
+    extra = [s for s in form.getlist("index_symbol") if s in backtest.INDEX_SYMBOLS]
+    watchlist = list(settings.WATCHLIST)
+    return watchlist + [s for s in extra if s not in watchlist]
 
 
 @app.route("/api/backtest/start", methods=["POST"])
@@ -382,7 +409,7 @@ def api_backtest_start():
         }), 400
 
     result = backtest.start_backtest(
-        kite, symbols=settings.WATCHLIST, timeframe=timeframe, days=days, horizons=horizons,
+        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, horizons=horizons,
         params=params, required=required,
     )
     return jsonify(result)
@@ -392,6 +419,40 @@ def api_backtest_start():
 @require_dashboard_password
 def api_backtest_status():
     return jsonify(backtest.get_backtest_state())
+
+
+@app.route("/api/weights/start", methods=["POST"])
+@require_dashboard_password
+def api_weights_start():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+
+    form = request.form
+    timeframe = form.get("timeframe", settings.TIMEFRAME)
+    if timeframe not in config.VALID_TIMEFRAMES:
+        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
+    try:
+        days = int(form.get("days", 30))
+    except ValueError:
+        return jsonify({"started": False, "reason": "days must be a number"}), 400
+    try:
+        ref_horizon = int(form.get("ref_horizon", 10))
+    except ValueError:
+        return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
+    if ref_horizon <= 0:
+        return jsonify({"started": False, "reason": "ref_horizon must be positive"}), 400
+
+    result = backtest.start_weight_computation(
+        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, ref_horizon=ref_horizon,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/weights/status")
+@require_dashboard_password
+def api_weights_status():
+    return jsonify(backtest.get_weights_state())
 
 
 def create_app():

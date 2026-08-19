@@ -443,6 +443,88 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
     return results
 
 
+_INDEX_SYMBOL = "NIFTY 50"
+
+# Which exchange each supported index's own instrument dump lives under -
+# NIFTY 50 is an NSE index; SENSEX is a BSE index, so it's never in the
+# NSE dump at all regardless of segment. Used by both the live Index/
+# Market-trend filter (NIFTY 50 only) and the Backtest page's optional
+# "also backtest NIFTY 50 / SENSEX" checkboxes (backtest.INDEX_SYMBOLS).
+INDEX_EXCHANGES = {
+    "NIFTY 50": "NSE",
+    "SENSEX": "BSE",
+}
+_index_token_cache = {}
+
+
+def _load_index_token(kite, tradingsymbol: str = _INDEX_SYMBOL):
+    """Resolves an index's instrument token (e.g. "NIFTY 50", "SENSEX")
+    for the Index/Market-trend filter (background._apply_index_filter)
+    and the Backtest page's optional index symbols. Indices show up
+    under segment "INDICES" on their own exchange (see INDEX_EXCHANGES
+    above) rather than under a tradeable-equity segment like "NSE" -
+    _load_instrument_map above deliberately excludes those (it's built
+    for tradeable equities), so this does its own separate, permissive
+    lookup by tradingsymbol across the whole relevant exchange dump
+    regardless of segment. Cached in memory for the life of the
+    process, same as _instrument_cache - an index's token never
+    changes."""
+    if tradingsymbol in _index_token_cache:
+        return _index_token_cache[tradingsymbol]
+    exchange = INDEX_EXCHANGES.get(tradingsymbol, "NSE")
+    try:
+        instruments = kite.instruments(exchange)
+    except Exception as exc:  # noqa: BLE001 - the index filter is a bonus feature, never fatal
+        log.warning("Could not fetch %s instrument list for index lookup: %s", exchange, exc)
+        return None
+    token = None
+    for row in instruments:
+        if row.get("tradingsymbol") == tradingsymbol:
+            token = row.get("instrument_token")
+            break
+    if token:
+        _index_token_cache[tradingsymbol] = token
+    else:
+        log.warning("Index instrument %r not found in %s instrument dump", tradingsymbol, exchange)
+    return token
+
+
+def fetch_index_direction(kite, timeframe: str):
+    """Reads NIFTY 50's own confluence direction on the given timeframe,
+    for the Index/Market-trend filter. Returns (direction, close,
+    chg_pct) - any/all of which can be None (index token unresolved,
+    no candle data yet, or not enough history for the indicators to
+    warm up) - callers should treat None as "no opinion available this
+    scan", not an error. Reuses the exact same fetch_candles/
+    compute_signal path used for every watchlist stock, so this costs
+    exactly one extra Kite API call per scan cycle (two the first time,
+    while the index token is still being resolved) rather than a
+    parallel/duplicate code path. Deliberately swallows every exception
+    itself (rather than letting the caller's try/except handle it) so a
+    transient index-fetch hiccup can never cost the rest of that scan
+    cycle's stock results."""
+    try:
+        token = _load_index_token(kite)
+        if not token:
+            return None, None, None
+        df = fetch_candles(kite, token, timeframe)
+        if df.empty:
+            return None, None, None
+        signal = compute_signal(df, timeframe)
+        if "error" in signal:
+            return None, None, None
+        close = signal.get("close")
+        chg_pct = None
+        if len(df) >= 2 and close is not None:
+            prev_close = float(df["close"].iloc[-2])
+            if prev_close:
+                chg_pct = round((close - prev_close) / prev_close * 100, 2)
+        return signal.get("direction"), close, chg_pct
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log.warning("Index direction fetch failed: %s", exc)
+        return None, None, None
+
+
 def is_market_open() -> bool:
     now = now_ist()
     if now.weekday() >= 5:  # Sat/Sun

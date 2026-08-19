@@ -288,6 +288,13 @@
         <input type="hidden" name="rel_volume_threshold" value="{{ rel_volume_threshold }}">
       </form>
       <span class="tb-status">{{ total_scanned }} scanned</span>
+      <span class="tb-status" title="NIFTY 50's own confluence direction on this timeframe - the Index/Market-trend filter (Settings page) can require your signals to agree with this before counting as Confirmed.">
+        {% if index_direction %}
+        Market: <span class="{{ 'bull' if index_direction == 'Bullish' else 'bear' }}">{{ '▲' if index_direction == 'Bullish' else '▼' }} {{ index_direction }}{% if index_chg_pct is not none %} ({{ '{:+.2f}'.format(index_chg_pct) }}%){% endif %}</span>{% if require_index_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
+        {% else %}
+        Market: —
+        {% endif %}
+      </span>
       <details class="qs-popover">
         <summary>⚙ Settings</summary>
         <div class="qs-popover-body">
@@ -482,6 +489,8 @@
           <th class="sortable" data-col="7">Vol <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="8">Aligned <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="9">Signal <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="10">Regime <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="11">Score <span class="sort-arrow"></span></th>
           <th></th>
         </tr>
         <tr class="filter-row">
@@ -520,6 +529,10 @@
           <th>
             <select id="f-signal" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option><option value="None">None</option></select>
           </th>
+          <th>
+            <select id="f-regime" onchange="applyFilters()"><option value="">All</option><option>Trending</option><option>Ranging</option><option>Transitional</option></select>
+          </th>
+          <th></th>
           <th></th>
         </tr>
       </thead>
@@ -536,10 +549,11 @@
             data-break="{{ 'BreakUp' if r.oi_break_signal == 'Break Up' else ('BreakDown' if r.oi_break_signal == 'Break Down' else '') }}"
             data-aligned="{{ r.aligned if r.aligned is not none else '' }}"
             data-signal="{{ signal_dir }}"
+            data-regime="{{ r.regime or '' }}"
             onclick="window.location='/chart/{{ r.symbol }}'">
           <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
           {% if r.error %}
-          <td class="error-cell" colspan="10">{{ r.error }}</td>
+          <td class="error-cell" colspan="12">{{ r.error }}</td>
           {% else %}
           <td data-sort="{{ r.close }}">{{ r.close }}</td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
@@ -581,12 +595,23 @@
             {% else %}
             <span class="signal-pill none">—</span>
             {% endif %}
+            {% if r.index_agrees is defined and r.index_agrees == false %}
+            <span title="Counter-trend vs NIFTY 50's current direction" style="color:var(--amber);">⚠</span>
+            {% endif %}
+          </td>
+          <td data-sort="{{ r.regime or '' }}">
+            {% if r.regime %}
+            <span class="{{ 'bull' if r.regime == 'Trending' else '' }}" style="{{ 'color:var(--amber);' if r.regime == 'Ranging' else '' }}">{{ r.regime }}</span>{% if r.adx is not none %} <span style="color:var(--dim);">({{ r.adx }})</span>{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td data-sort="{{ r.weighted_score if r.weighted_score is not none else '' }}">
+            {{ r.weighted_score if r.weighted_score is not none else '—' }}{% if r.weighted_score is not none %}%{% endif %}
           </td>
           <td><a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a></td>
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="11">No scan results yet - first scan runs shortly after login.</td></tr>
+        <tr><td colspan="13">No scan results yet - first scan runs shortly after login.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -610,9 +635,20 @@
     equally; "Match required" in the Settings popover sets how many of the 4 must agree for a
     row to count as Bullish/Bearish. A <span class="confirm-badge">✓</span> = "Confirmed": Aligned
     meets your Match required setting and (15-min scans) the 4-hour trend agrees too - Telegram
-    alerts only fire for confirmed signals. Want a bigger-picture read? Switch Timeframe (top-left of the filter
-    bar) to 4hour, or use the <a href="/backtest">Backtest</a> page. Signals are directional
-    input, not investment advice.
+    alerts only fire for confirmed signals. <strong>Regime</strong> is an ADX-based read of
+    whether this stock is currently Trending or Ranging/choppy (number in parens is the raw ADX
+    value) - in a Ranging regime the Relative Volume bar automatically gets stricter (multiplier
+    set on the Settings page) since breakouts there are more prone to false starts. A
+    <span style="color:var(--amber);">⚠</span> next to Signal means this row's direction disagrees
+    with the <strong>Market</strong> banner above (NIFTY 50's own current direction) - turn on
+    "Require index/market agreement" on the Settings page to have disagreeing rows lose their
+    Confirmed status automatically. <strong>Score</strong> is a backtest-informed alternative to
+    the plain Aligned count - each of the 4 parameters is weighted by its own recent historical
+    win rate instead of counted equally; run "Auto-Weight Parameters" on the
+    <a href="/backtest">Backtest</a> page to compute real weights from your watchlist (defaults to
+    equal 25%-each weighting, same as Aligned/4, until you do). Want a bigger-picture read? Switch
+    Timeframe (top-left of the filter bar) to 4hour, or use the Backtest page. Signals are
+    directional input, not investment advice.
   </div>
 </div>
 <script>
@@ -833,6 +869,7 @@
     var oitrendQ = document.getElementById('f-oitrend').value;
     var alignedQ = document.getElementById('f-aligned').value;
     var signalQ = document.getElementById('f-signal').value;
+    var regimeQ = document.getElementById('f-regime').value;
 
     table.tBodies[0].querySelectorAll('tr.data-row').forEach(function (row) {
       var ok = true;
@@ -850,6 +887,7 @@
       }
       if (ok && alignedQ && row.getAttribute('data-aligned') !== alignedQ) ok = false;
       if (ok && signalQ && row.getAttribute('data-signal') !== signalQ) ok = false;
+      if (ok && regimeQ && row.getAttribute('data-regime') !== regimeQ) ok = false;
       row.classList.toggle('filtered-out', !ok);
     });
   }

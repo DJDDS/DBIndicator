@@ -35,6 +35,7 @@ take a while, well past what a web request should block on. Poll
 get_backtest_state() from the dashboard to show progress.
 """
 import datetime as dt
+import json
 import logging
 import threading
 import time
@@ -42,9 +43,20 @@ import time
 import numpy as np
 import pandas as pd
 
-from .config import settings
+from .config import settings, PARAM_WEIGHTS_FILE
 from .indicators import compute_series, RSI_OVERBOUGHT, RSI_OVERSOLD
-from .scanner import _load_instrument_map, now_ist
+from .scanner import _load_instrument_map, _load_index_token, now_ist
+
+# Index symbols selectable as "also backtest" checkboxes on the Backtest
+# page (web.py's /api/backtest/start and /api/weights/start both accept
+# these via the index_symbol form field, in addition to your normal
+# WATCHLIST) - resolved via scanner._load_index_token rather than the
+# equity instrument map, since neither trades as a normal NSE equity
+# (NIFTY 50 is an NSE index, SENSEX a BSE index - see
+# scanner.INDEX_EXCHANGES). Note neither has a real traded "volume" the
+# way a stock does (Kite returns 0), so the "rel_volume" backtest
+# parameter never fires for these - that's expected, not a bug.
+INDEX_SYMBOLS = ["NIFTY 50", "SENSEX"]
 
 log = logging.getLogger(__name__)
 
@@ -305,6 +317,14 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
     has_signal, direction = _signal_series(series, params, required)
     entries = has_signal & ~has_signal.shift(1).fillna(False)
 
+    # Always recorded on every trade (regardless of whether "rel_volume"
+    # is one of your chosen params for THIS run) so compute_param_weights
+    # below can measure volume's own historical contribution - was the
+    # signal bar's volume already hot at the moment of entry, or not -
+    # without needing a separate dedicated backtest run just for that.
+    rel_vol = series["df"]["volume"] / series["vol_avg"].replace(0, np.nan)
+    vol_hot = rel_vol.notna() & (rel_vol > settings.REL_VOLUME_THRESHOLD)
+
     trades = []
     for pos in np.flatnonzero(entries.to_numpy()):
         ts = df.index[pos]
@@ -312,6 +332,7 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
             continue  # inside the warm-up buffer, not the requested window
         trade = _compute_trade(df, pos, direction.iloc[pos], symbol, horizons)
         if trade:
+            trade["vol_confirmed_at_entry"] = bool(vol_hot.iloc[pos])
             trades.append(trade)
     return trades
 
@@ -351,13 +372,22 @@ def _summarize(trades, horizons):
     """Splits results into All / Bullish-only / Bearish-only - a
     strategy's real edge (or lack of one) often differs by direction,
     and pooling them together can hide that a rule works well one way
-    and poorly the other."""
+    and poorly the other. Also splits by whether Relative Volume was
+    already hot (see _replay_symbol's vol_confirmed_at_entry) at the
+    exact moment of entry, regardless of whether "rel_volume" was one
+    of the parameters you actually selected for this run - this is
+    what compute_param_weights below reads to measure volume's own
+    historical contribution (see its "lift" note)."""
     bullish = [t for t in trades if t["direction"] == "Bullish"]
     bearish = [t for t in trades if t["direction"] == "Bearish"]
+    vol_confirmed = [t for t in trades if t.get("vol_confirmed_at_entry")]
+    vol_not_confirmed = [t for t in trades if not t.get("vol_confirmed_at_entry")]
     return {
         "all": _summarize_group(trades, horizons),
         "bullish": _summarize_group(bullish, horizons),
         "bearish": _summarize_group(bearish, horizons),
+        "vol_confirmed": _summarize_group(vol_confirmed, horizons),
+        "vol_not_confirmed": _summarize_group(vol_not_confirmed, horizons),
     }
 
 
@@ -385,6 +415,8 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         if progress_cb:
             progress_cb(idx, len(symbols), symbol)
         token = instruments.get(symbol)
+        if not token and symbol in INDEX_SYMBOLS:
+            token = _load_index_token(kite, symbol)
         if not token:
             symbol_notes[symbol] = "symbol not found on NSE"
             continue
@@ -441,3 +473,223 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "summary": summary,
         "generated_at": to_date.isoformat(timespec="seconds"),
     }
+
+
+# --------------------------------------------------------------------------
+# "Auto-Weight Parameters" - backtests each of the live screener's 4
+# parameters over your watchlist to derive real, backtest-informed
+# weights for background.py's weighted_score (see the Backtest page's
+# "Auto-Weight Parameters" panel). A separate feature from the
+# free-form backtest above it on the same page - this always tests the
+# fixed 4-parameter screener combination, not whatever you've picked in
+# the checkboxes.
+# --------------------------------------------------------------------------
+
+_WEIGHT_PHASES = [
+    ("rsi_cross", "RSI Cross (solo)"),
+    ("macd_cross", "MACD Cross (solo)"),
+    ("ema_bb_cross", "EMA9 vs Bollinger Mid Cross (solo)"),
+    ("rel_volume", "Relative Volume confirmation lift (2-of-3 baseline)"),
+]
+
+
+def compute_param_weights(kite, symbols=None, timeframe=None, days=30, ref_horizon=10, progress_cb=None):
+    """Runs a handful of backtests over your watchlist to measure each of
+    the 4 screener parameters' own recent historical predictive power,
+    then converts that into normalized weights for background.py's
+    weighted_score (a backtest-informed alternative to the plain
+    aligned/4 equal-weight count):
+
+      - RSI/MACD/EMA-BB: each backtested SOLO (required=1, that one
+        parameter only) - literally "how often has THIS crossover alone
+        been followed by a winning move lately".
+      - Relative Volume: measured as a confirmation LIFT rather than a
+        solo win rate, because on its own it has no direction to test
+        (see this module's docstring / _signal_series' tie-break guard -
+        a lone rel_volume selection always produces zero trades).
+        Instead this runs the 2-of-3 directional baseline (RSI/MACD/
+        EMA-BB, required=2) once, then compares the win rate of just the
+        trades where volume also happened to be hot at entry
+        (_summarize's vol_confirmed split) against the trades where it
+        wasn't - the DIFFERENCE is volume's own contribution.
+
+    Win rates are read at `ref_horizon` bars held. Returns weights
+    normalized to sum to 1.0, with a floor so a single weak reading
+    can't zero a parameter out of the live score entirely. Costs 4 full
+    backtest passes over `symbols` (a few minutes for a typical
+    watchlist) - this is a manual, on-demand action from the Backtest
+    page, never run automatically on every scan cycle.
+
+    IMPORTANT: this measures ONE recent window on YOUR specific
+    watchlist, not a permanent verdict on an indicator - re-run it
+    periodically rather than treating a single result as final."""
+    symbols = list(symbols or settings.WATCHLIST)
+    timeframe = timeframe or settings.TIMEFRAME
+    ref_horizon = int(ref_horizon)
+    horizons = tuple(sorted({5, 10, 20, ref_horizon}))
+
+    def _sub_progress(phase_index, phase_label):
+        def _cb(done, total, symbol):
+            if progress_cb:
+                progress_cb(phase_index, len(_WEIGHT_PHASES), phase_label, done, total, symbol)
+        return _cb
+
+    win_rates = {}
+    notes = {}
+
+    for phase_index, (param_id, phase_label) in enumerate(_WEIGHT_PHASES[:3]):
+        result = run_backtest(
+            kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
+            params=(param_id,), required=1, progress_cb=_sub_progress(phase_index, phase_label),
+        )
+        stats = result["summary"]["all"].get(str(ref_horizon), {})
+        win_rates[param_id] = stats.get("win_rate_pct")
+        notes[param_id] = {"trade_count": stats.get("trade_count", 0), "kind": "solo win rate"}
+
+    vol_phase_index, vol_phase_label = 3, _WEIGHT_PHASES[3][1]
+    baseline = run_backtest(
+        kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
+        params=("rsi_cross", "macd_cross", "ema_bb_cross"), required=2,
+        progress_cb=_sub_progress(vol_phase_index, vol_phase_label),
+    )
+    vol_stats = baseline["summary"].get("vol_confirmed", {}).get(str(ref_horizon), {})
+    novol_stats = baseline["summary"].get("vol_not_confirmed", {}).get(str(ref_horizon), {})
+    vol_win_rate = vol_stats.get("win_rate_pct")
+    novol_win_rate = novol_stats.get("win_rate_pct")
+    win_rates["rel_volume"] = vol_win_rate
+    notes["rel_volume"] = {
+        "trade_count": vol_stats.get("trade_count", 0),
+        "kind": "confirmation lift vs unconfirmed",
+        "win_rate_without_volume": novol_win_rate,
+        "lift_pct": (
+            round(vol_win_rate - novol_win_rate, 1)
+            if vol_win_rate is not None and novol_win_rate is not None
+            else None
+        ),
+    }
+
+    # Convert win rates into normalized weights - a parameter with too
+    # few trades to judge (None) is treated as neutral (25%-equivalent
+    # raw score) rather than silently dropped to zero; every parameter
+    # gets at least a 5%-of-total floor even at/below a 50% coin-flip
+    # reading, so one soft patch can't zero it out of the live score.
+    raw = {}
+    for pid, wr in win_rates.items():
+        raw[pid] = 0.25 if wr is None else max(0.05, wr / 100.0)
+    total = sum(raw.values()) or 1.0
+    weights = {pid: round(v / total, 4) for pid, v in raw.items()}
+
+    return {
+        "weights": weights,
+        "win_rates": win_rates,
+        "notes": notes,
+        "timeframe": timeframe,
+        "days": days,
+        "ref_horizon": ref_horizon,
+        "symbols_count": len(symbols),
+        "computed_at": now_ist().isoformat(timespec="seconds"),
+    }
+
+
+_wt_lock = threading.Lock()
+_wt_state = {
+    "status": "idle",  # idle | running | done | error
+    "progress": {"phase_index": 0, "phase_total": len(_WEIGHT_PHASES), "phase_label": None, "done": 0, "total": 0, "symbol": None},
+    "params": None,
+    "result": None,
+    "error": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
+
+def get_weights_state() -> dict:
+    with _wt_lock:
+        return dict(_wt_state, progress=dict(_wt_state["progress"]))
+
+
+def _weights_progress_cb(phase_index, phase_total, phase_label, done, total, symbol):
+    with _wt_lock:
+        _wt_state["progress"] = {
+            "phase_index": phase_index, "phase_total": phase_total, "phase_label": phase_label,
+            "done": done, "total": total, "symbol": symbol,
+        }
+
+
+def start_weight_computation(kite, symbols=None, timeframe=None, days=30, ref_horizon=10) -> dict:
+    """Kicks off an "Auto-Weight Parameters" run in a background thread,
+    same pattern as start_backtest above. Only one weight computation
+    runs at a time, and not alongside a regular backtest run either -
+    both hammer the same Kite historical-data rate limit, so running
+    them concurrently would just make each other slower and skew
+    progress reporting for no benefit."""
+    with _wt_lock, _bt_lock:
+        if _wt_state["status"] == "running":
+            return {"started": False, "reason": "A weight computation is already running."}
+        if _bt_state["status"] == "running":
+            return {
+                "started": False,
+                "reason": "A backtest is already running - wait for it to finish first (both share Kite's rate limit).",
+            }
+        symbols = list(symbols or settings.WATCHLIST)
+        timeframe = timeframe or settings.TIMEFRAME
+        _wt_state["status"] = "running"
+        _wt_state["progress"] = {
+            "phase_index": 0, "phase_total": len(_WEIGHT_PHASES), "phase_label": None,
+            "done": 0, "total": len(symbols), "symbol": None,
+        }
+        _wt_state["params"] = {"timeframe": timeframe, "days": days, "ref_horizon": ref_horizon}
+        _wt_state["result"] = None
+        _wt_state["error"] = None
+        _wt_state["started_at"] = now_ist().isoformat(timespec="seconds")
+        _wt_state["finished_at"] = None
+
+    thread = threading.Thread(
+        target=_run_weights_job, args=(kite, symbols, timeframe, days, ref_horizon), daemon=True
+    )
+    thread.start()
+    return {"started": True}
+
+
+def _run_weights_job(kite, symbols, timeframe, days, ref_horizon):
+    try:
+        result = compute_param_weights(
+            kite, symbols, timeframe=timeframe, days=days, ref_horizon=ref_horizon,
+            progress_cb=_weights_progress_cb,
+        )
+        try:
+            with open(PARAM_WEIGHTS_FILE, "w") as f:
+                json.dump(result, f, indent=2)
+        except OSError:
+            log.exception("Failed to persist param weights to %s", PARAM_WEIGHTS_FILE)
+        with _wt_lock:
+            _wt_state["status"] = "done"
+            _wt_state["result"] = result
+    except Exception as exc:  # noqa: BLE001 - a failed weight run must never crash the app
+        log.exception("Weight computation failed")
+        with _wt_lock:
+            _wt_state["status"] = "error"
+            _wt_state["error"] = str(exc)
+    finally:
+        with _wt_lock:
+            _wt_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+
+
+def _load_persisted_weights_state():
+    """So a restart doesn't lose the last computed weights from the
+    Backtest page's own point of view (background.py separately re-reads
+    PARAM_WEIGHTS_FILE directly for live scoring - this is just so the
+    UI still shows the last result instead of a blank "idle" state)."""
+    try:
+        with open(PARAM_WEIGHTS_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "weights" in data:
+            with _wt_lock:
+                _wt_state["status"] = "done"
+                _wt_state["result"] = data
+                _wt_state["finished_at"] = data.get("computed_at")
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+_load_persisted_weights_state()

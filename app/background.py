@@ -11,8 +11,11 @@ import threading
 import time
 
 from . import alerts, kite_auth
-from .config import settings, SCAN_RESULTS_FILE
-from .scanner import scan_watchlist, is_market_open, now_ist, compute_oi_acceleration, classify_oi_structure
+from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE
+from .scanner import (
+    scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
+    classify_oi_structure, fetch_index_direction,
+)
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +63,95 @@ def _apply_param_tier(results):
             continue
         r["param_tier"] = aligned if aligned >= 2 else None
 
+
+def _apply_index_filter(results, index_direction):
+    """Mutates each result dict in place, attaching index_agrees - does
+    this row's own direction match NIFTY 50's current confluence
+    direction on the same timeframe (see scanner.fetch_index_direction)?
+    None means "no index reading available this scan" (a fetch hiccup,
+    or the token hasn't resolved yet) - treated as agreeing, same
+    convention as indicators.py's htf_agrees, so a transient index
+    fetch failure can never silently filter out every row.
+
+    When settings.REQUIRE_INDEX_AGREEMENT is on, a row that disagrees
+    with the index also loses its signal_confirmed status - counter-
+    trend trades have historically had a lower win rate, so this is an
+    optional stricter gate layered on top, not a replacement for
+    anything else. Off by default; index_agrees is always attached
+    either way purely for display."""
+    require = settings.REQUIRE_INDEX_AGREEMENT
+    for r in results:
+        if r.get("error") or not r.get("direction"):
+            r["index_agrees"] = None
+            continue
+        r["index_agrees"] = True if index_direction is None else (r["direction"] == index_direction)
+        if require and r.get("signal_confirmed") and not r["index_agrees"]:
+            r["signal_confirmed"] = False
+
+
+# Equal-weight fallback for weighted_score below, until you've run
+# "Auto-Weight Parameters" on the Backtest page at least once - matches
+# the plain aligned/4 count in spirit (every parameter counts the same).
+_DEFAULT_PARAM_WEIGHTS = {
+    "rsi_cross": 0.25, "macd_cross": 0.25, "ema_bb_cross": 0.25, "rel_volume": 0.25,
+}
+_param_weights_cache = {"mtime": None, "weights": None}
+
+
+def _load_param_weights():
+    """Re-reads PARAM_WEIGHTS_FILE only when its mtime has changed since
+    the last call (cheap: one stat() per scan cycle in the common case
+    of nothing new). Falls back to equal weighting if the file doesn't
+    exist yet (no "Auto-Weight Parameters" run so far) or is corrupt."""
+    try:
+        mtime = os.path.getmtime(PARAM_WEIGHTS_FILE)
+    except OSError:
+        return _DEFAULT_PARAM_WEIGHTS
+    if _param_weights_cache["mtime"] != mtime:
+        try:
+            with open(PARAM_WEIGHTS_FILE) as f:
+                data = json.load(f)
+            weights = data.get("weights") or {}
+            if weights:
+                _param_weights_cache["weights"] = weights
+                _param_weights_cache["mtime"] = mtime
+        except (json.JSONDecodeError, OSError):
+            pass
+    return _param_weights_cache["weights"] or _DEFAULT_PARAM_WEIGHTS
+
+
+def _apply_weighted_score(results):
+    """Mutates each result dict in place, attaching weighted_score (0-100) -
+    a backtest-informed alternative to the plain aligned/4 count. Rather
+    than treating RSI/MACD/EMA-BB/Relative Volume as equally weighted,
+    this multiplies each one's current agreement with the row's
+    direction by that parameter's own recent historical win rate (see
+    backtest.compute_param_weights, run manually from the Backtest
+    page's "Auto-Weight Parameters" panel and persisted to
+    PARAM_WEIGHTS_FILE) - a parameter that's actually been predictive
+    lately counts for more than one that hasn't. Purely an additional,
+    informational sort/display field - doesn't replace aligned/
+    param_tier/signal_confirmed anywhere, and falls back to equal
+    25%-each weighting (identical in spirit to aligned/4) until you've
+    run a weight computation at least once."""
+    weights = _load_param_weights()
+    for r in results:
+        if r.get("error") or not r.get("direction"):
+            r["weighted_score"] = None
+            continue
+        direction = r["direction"]
+        score = 0.0
+        if r.get("rsi_state") == direction:
+            score += weights.get("rsi_cross", 0)
+        if r.get("macd_state") == direction:
+            score += weights.get("macd_cross", 0)
+        if r.get("ema_bb_state") == direction:
+            score += weights.get("ema_bb_cross", 0)
+        if r.get("vol_confirmed"):
+            score += weights.get("rel_volume", 0)
+        r["weighted_score"] = round(score * 100, 1)
+
+
 _state_lock = threading.Lock()
 _state = {
     "results": [],
@@ -69,6 +161,9 @@ _state = {
     "oi_day_baseline": {},
     "oi_structure_prev": {},
     "oi_label_prev": {},
+    "index_direction": None,
+    "index_close": None,
+    "index_chg_pct": None,
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -209,8 +304,15 @@ def _apply_oi_screener_fields(results):
             (direction == "Bullish" and structure == "Long Buildup")
             or (direction == "Bearish" and structure == "Short Buildup")
         )
+        # index_ok: the Index/Market-trend filter (see _apply_index_filter,
+        # which must run before this function so r["index_agrees"] is
+        # already set) - only actually gates anything when
+        # REQUIRE_INDEX_AGREEMENT is on; otherwise every row passes this
+        # check regardless of what index_agrees says, same as before that
+        # setting existed.
+        index_ok = (not settings.REQUIRE_INDEX_AGREEMENT) or bool(r.get("index_agrees"))
         r["positional_qualified"] = bool(
-            aligned >= settings.MIN_REQUIRED and structure_agrees and not r.get("in_opening_window")
+            aligned >= settings.MIN_REQUIRED and structure_agrees and not r.get("in_opening_window") and index_ok
         )
 
         # High Conviction: a deliberately narrow filter meant to surface
@@ -339,12 +441,23 @@ def _run_loop():
             if kite is not None and is_market_open():
                 try:
                     results = scan_watchlist(kite)
+                    # One extra Kite call per cycle for the Index/Market-
+                    # trend filter - fetch_index_direction swallows its
+                    # own exceptions and returns (None, None, None) on
+                    # any failure, so a bad index fetch can never cost
+                    # this cycle's actual stock results.
+                    index_direction, index_close, index_chg_pct = fetch_index_direction(kite, settings.TIMEFRAME)
                     with _state_lock:
                         _apply_param_tier(results)
+                        _apply_index_filter(results, index_direction)
+                        _apply_weighted_score(results)
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
                         oi_events = _detect_oi_accel_events(results)
                         _state["results"] = results
+                        _state["index_direction"] = index_direction
+                        _state["index_close"] = index_close
+                        _state["index_chg_pct"] = index_chg_pct
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None
                     try:

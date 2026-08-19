@@ -73,6 +73,15 @@ _OPENING_WINDOW_TIMEFRAMES = ("15minute",)
 RSI_OVERBOUGHT = 65   # backtest.py's separate rsi_threshold param - Bullish side
 RSI_OVERSOLD = 35     # (Bearish side). Not part of the 4-parameter screener below.
 
+# Regime classification (Trending/Ranging/Transitional) via ADX - see
+# _compute_adx/_classify_regime below. These threshold levels are the
+# standard, widely-used Wilder ADX bands, so they're kept as fixed
+# constants rather than yet more tunable settings; the one knob you
+# actually want to turn (how much stricter volume confirmation should
+# be in a Ranging regime) is settings.RANGING_VOL_MULTIPLIER instead.
+ADX_TRENDING_THRESHOLD = 25
+ADX_RANGING_THRESHOLD = 18
+
 OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9:15 IST open
                               # are excluded from signal_confirmed/in_opening_window below -
                               # these candles are usually the most gap-driven and noisy of the day
@@ -125,6 +134,43 @@ def _higher_timeframe_direction(df: pd.DataFrame, timeframe: str):
         + int(htf_series["ema9"].iloc[i] > htf_series["bb_mid"].iloc[i])
     )
     return "Bullish" if align_count >= 2 else "Bearish"
+
+
+def _compute_adx(df: pd.DataFrame, length: int) -> pd.Series:
+    """Wilder's Average Directional Index - a 0-100 read of how strongly
+    a market is TRENDING, independent of direction (a strong downtrend
+    scores just as high as a strong uptrend). Used only for regime
+    classification below (Trending/Ranging/Transitional), not as a
+    screener parameter in its own right."""
+    high, low, close = df["high"], df["low"], df["close"]
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
+    plus_di = 100 * plus_dm.ewm(alpha=1 / length, min_periods=length, adjust=False).mean() / atr.replace(0, np.nan)
+    minus_di = 100 * minus_dm.ewm(alpha=1 / length, min_periods=length, adjust=False).mean() / atr.replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return dx.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
+
+
+def _classify_regime(adx_value):
+    """None means "not enough history yet to judge" - treated the same
+    as a Transitional regime by callers (i.e. no volume-threshold
+    adjustment), never as an error."""
+    if adx_value is None or pd.isna(adx_value):
+        return None
+    if adx_value >= ADX_TRENDING_THRESHOLD:
+        return "Trending"
+    if adx_value <= ADX_RANGING_THRESHOLD:
+        return "Ranging"
+    return "Transitional"
 
 
 def session_vwap(df: pd.DataFrame, timeframe: str):
@@ -254,6 +300,20 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     vol_multiple = round(float(latest_vol / vol_avg), 2) if vol_avg and pd.notna(vol_avg) and vol_avg > 0 else None
     volume = int(latest_vol) if pd.notna(latest_vol) else None
 
+    # Regime-adaptive volume bar: a choppy/Ranging market throws off a
+    # lot more low-conviction volume spikes than a Trending one, so a
+    # breakout there needs a STRICTER Relative Volume reading to be
+    # trusted at the same rate a Trending-regime one would be -
+    # settings.RANGING_VOL_MULTIPLIER (>=1.0, default 1.3) scales the
+    # bar up only in that regime; Trending/Transitional/unknown all use
+    # your configured REL_VOLUME_THRESHOLD unchanged.
+    adx_series = _compute_adx(df, settings.ADX_LENGTH)
+    adx_raw = adx_series.iloc[i]
+    adx_value = round(float(adx_raw), 1) if pd.notna(adx_raw) else None
+    regime = _classify_regime(adx_value)
+    vol_threshold_multiplier = settings.RANGING_VOL_MULTIPLIER if regime == "Ranging" else 1.0
+    effective_vol_threshold = round(settings.REL_VOLUME_THRESHOLD * vol_threshold_multiplier, 3)
+
     # Direction is decided by the 3 DIRECTIONAL indicators only (RSI,
     # MACD, EMA/BB vs Bollinger mid) - Relative Volume has no "up" or
     # "down" of its own, only a magnitude read, so it can't cast a
@@ -269,7 +329,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     # Relative Volume magnitude), each weighted equally in `aligned`
     # below - not a separate mandatory gate layered on top of them like
     # it used to be.
-    vol_confirmed = bool(vol_multiple is not None and vol_multiple >= settings.REL_VOLUME_THRESHOLD)
+    vol_confirmed = bool(vol_multiple is not None and vol_multiple >= effective_vol_threshold)
 
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of
@@ -309,6 +369,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
         "vol_multiple": vol_multiple,
         "volume": volume,
         "vol_confirmed": vol_confirmed,
+        "adx": adx_value,
+        "regime": regime,
+        "vol_threshold_effective": effective_vol_threshold,
         "htf_direction": htf_direction,
         "htf_agrees": htf_agrees,
         "in_opening_window": in_opening_window,

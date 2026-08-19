@@ -103,6 +103,30 @@
     </div>
 
     <div class="card">
+      <h2>Regime &amp; market filter</h2>
+      <p style="margin-top:-4px;">Two ways to adapt the screener to current conditions instead of using one fixed rule all the time - both are additive, nothing here changes what "Aligned" itself counts.</p>
+      <div class="row2">
+        <div>
+          <label for="adx_length">ADX length</label>
+          <input type="number" id="adx_length" name="adx_length" min="2" value="{{ s.ADX_LENGTH }}">
+          <div class="hint">Used to classify each stock as Trending/Ranging/Transitional (shown in the Regime column).</div>
+        </div>
+        <div>
+          <label for="ranging_vol_multiplier">Ranging-regime volume multiplier</label>
+          <input type="number" id="ranging_vol_multiplier" name="ranging_vol_multiplier" min="1" step="0.1" value="{{ s.RANGING_VOL_MULTIPLIER }}">
+          <div class="hint">In a Ranging regime, Relative Volume must clear threshold &times; this multiplier instead of the plain threshold - stricter confirmation for choppier conditions.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_index_agreement" name="require_index_agreement" {% if s.REQUIRE_INDEX_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require index/market agreement
+          </label>
+          <div class="hint">When on, a row whose direction disagrees with NIFTY 50's own current direction loses its "Confirmed" status (and Positional Qualified / High Conviction) - counter-trend trades have historically had a lower win rate. Off by default.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>MACD</h2>
       <label for="macd_preset">Preset</label>
       <select id="macd_preset" name="macd_preset">

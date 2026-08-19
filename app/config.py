@@ -45,6 +45,13 @@ SETTINGS_FILE = os.getenv("SETTINGS_FILE", "scanner_settings.json")
 # restart would silently wipe the day's data.
 SCAN_RESULTS_FILE = os.getenv("SCAN_RESULTS_FILE", "last_scan_results.json")
 
+# Where the last "Auto-Weight Parameters" run's backtest-derived weights
+# are persisted (also gitignored) - background.py re-reads this file
+# each scan cycle (see background._load_param_weights) so a weight
+# recompute from the Backtest page takes effect on the very next scan,
+# no restart needed.
+PARAM_WEIGHTS_FILE = os.getenv("PARAM_WEIGHTS_FILE", "param_weights.json")
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -79,6 +86,7 @@ _TUNABLE_FIELDS = [
     "MACD_CUSTOM_SLOW", "MACD_CUSTOM_SIGNAL", "RSI_LENGTH",
     "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
     "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
+    "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
 ]
 
 
@@ -109,6 +117,22 @@ def _env_defaults():
         "MIN_REQUIRED": int(os.getenv("MIN_REQUIRED", 2)),
         "REL_VOLUME_THRESHOLD": float(os.getenv("REL_VOLUME_THRESHOLD", 1.2)),
         "SCAN_INTERVAL_SECONDS": int(os.getenv("SCAN_INTERVAL_SECONDS", 180)),
+        # Regime-adaptive volume bar (see indicators.compute_signal): ADX
+        # length used to classify each stock's current Trending/Ranging/
+        # Transitional regime, and how much stricter (multiplier on
+        # REL_VOLUME_THRESHOLD) the Relative Volume bar gets specifically
+        # in a Ranging regime, where breakouts are more prone to false
+        # starts.
+        "ADX_LENGTH": int(os.getenv("ADX_LENGTH", 14)),
+        "RANGING_VOL_MULTIPLIER": float(os.getenv("RANGING_VOL_MULTIPLIER", 1.3)),
+        # Index/market-trend filter (see background._apply_index_filter):
+        # when on, a row whose direction disagrees with NIFTY 50's own
+        # current confluence direction loses its "Confirmed" status
+        # (and, downstream, Positional Qualified / High Conviction) -
+        # counter-trend trades have historically had a lower win rate.
+        # Off by default so existing behaviour doesn't change until you
+        # opt in.
+        "REQUIRE_INDEX_AGREEMENT": os.getenv("REQUIRE_INDEX_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
     }
 
 
@@ -201,6 +225,31 @@ class Settings:
                 clean["REL_VOLUME_THRESHOLD"] = rv
             except (TypeError, ValueError):
                 errors.append("Relative Volume threshold must be a positive number.")
+
+        if "ADX_LENGTH" in kwargs:
+            try:
+                al = int(kwargs["ADX_LENGTH"])
+                if al < 2:
+                    raise ValueError
+                clean["ADX_LENGTH"] = al
+            except (TypeError, ValueError):
+                errors.append("ADX length must be a whole number of at least 2.")
+
+        if "RANGING_VOL_MULTIPLIER" in kwargs:
+            try:
+                rvm = float(kwargs["RANGING_VOL_MULTIPLIER"])
+                if rvm < 1.0:
+                    raise ValueError
+                clean["RANGING_VOL_MULTIPLIER"] = rvm
+            except (TypeError, ValueError):
+                errors.append("Ranging-regime volume multiplier must be a number of at least 1.0.")
+
+        if "REQUIRE_INDEX_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_INDEX_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_INDEX_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_INDEX_AGREEMENT"] = bool(val)
 
         if errors:
             return errors
