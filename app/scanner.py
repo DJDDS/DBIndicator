@@ -6,6 +6,7 @@ is fetched once and cached in memory.
 """
 import datetime as dt
 import logging
+import time
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -218,15 +219,63 @@ def classify_oi_structure(price_chg_pct, oi_chg_pct, threshold: float = 0.05) ->
 
 def _lookback_days(timeframe: str) -> int:
     # Enough history for indicator warm-up (BB-20/MACD-slow) plus a
-    # reasonable scanning window, without requesting more than Kite
-    # allows in one call for a given interval.
+    # reasonable scanning window. Doesn't need to respect Kite's
+    # per-call date-range limit itself - _fetch_historical_chunked below
+    # always splits into safe chunks regardless of how big this is.
     return {
         "15minute": 15,
         "30minute": 30,
         "60minute": 90,
         "4hour": 120,
         "day": 400,
+        "week": 730,
     }.get(timeframe, 30)
+
+
+# Kite enforces a maximum date-range per historical_data() call that
+# varies by interval (roughly 30/90/180/365/2000 days for
+# minute/3-10minute/15-30minute/60minute/day, per their docs - but
+# rather than trust one hardcoded number to always be exactly right,
+# every fetch below is always chunked to a conservative size and
+# concatenated, so a wide lookback (4-hour's 120-day window, day's
+# 400-day window) can never silently fail or get truncated because of
+# a per-call range limit we didn't know about.
+_HISTORICAL_CHUNK_DAYS = {
+    "minute": 25, "3minute": 80, "5minute": 80, "10minute": 80,
+    "15minute": 150, "30minute": 150, "60minute": 300, "day": 1800,
+}
+
+
+def _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interval):
+    """Fetches historical_data() in safe chunks (see _HISTORICAL_CHUNK_DAYS)
+    and concatenates the results. Each chunk gets one retry (short
+    backoff) on a transient failure - a brief network blip or rate-limit
+    hiccup on one chunk no longer fails that symbol's whole scan, it
+    just costs one extra request. A chunk that still fails after the
+    retry is logged and skipped rather than aborting the rest of the
+    symbol's history."""
+    chunk_days = _HISTORICAL_CHUNK_DAYS.get(interval, 80)
+    rows = []
+    chunk_start = from_date
+    while chunk_start < to_date:
+        chunk_end = min(chunk_start + dt.timedelta(days=chunk_days), to_date)
+        chunk_rows = None
+        for attempt in range(2):
+            try:
+                chunk_rows = kite.historical_data(instrument_token, chunk_start, chunk_end, interval)
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                log.warning(
+                    "historical_data chunk failed (token=%s interval=%s %s -> %s): %s",
+                    instrument_token, interval, chunk_start, chunk_end, exc,
+                )
+        if chunk_rows:
+            rows.extend(chunk_rows)
+        chunk_start = chunk_end
+    return rows
 
 
 def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
@@ -238,11 +287,19 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
         interval = "day"
     else:
         interval = timeframe
-    data = kite.historical_data(instrument_token, from_date, to_date, interval)
+    data = _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interval)
     df = pd.DataFrame(data)
     if df.empty:
+        log.warning(
+            "No candles returned for token=%s timeframe=%s interval=%s (%s -> %s)",
+            instrument_token, timeframe, interval, from_date, to_date,
+        )
         return df
     df = df.rename(columns={"date": "timestamp"}).set_index("timestamp")
+    # Defensive against duplicate/out-of-order rows across chunk
+    # boundaries (chunk edges are inclusive on both ends, so the
+    # boundary candle can come back in two consecutive chunks).
+    df = df[~df.index.duplicated(keep="last")].sort_index()
     if timeframe == "week":
         df = df.resample("W").agg(
             {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
@@ -251,9 +308,21 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
         # Kite has no native 4-hour interval, so it's synthesized here by
         # resampling 60-minute candles into 4-hour blocks anchored to the
         # NSE session open (9:15 IST): 9:15-13:15, 13:15-15:30 (short bar).
+        raw_count = len(df)
         df = df.resample("4h", origin="start_day", offset="9h15min").agg(
             {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
         ).dropna()
+        if df.empty:
+            log.warning(
+                "4-hour resample produced 0 bars from %d raw 60-minute candles for token=%s",
+                raw_count, instrument_token,
+            )
+        elif len(df) < 30:
+            log.info(
+                "4-hour resample only produced %d bars (from %d raw candles) for token=%s - "
+                "indicators may still be warming up",
+                len(df), raw_count, instrument_token,
+            )
     return df
 
 
