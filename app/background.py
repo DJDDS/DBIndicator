@@ -3,6 +3,7 @@ A small background thread that re-runs the scan every SCAN_INTERVAL_SECONDS
 during market hours, so the web page always has a recent result to show
 without the visitor having to trigger anything themselves.
 """
+import datetime as dt
 import json
 import logging
 import os
@@ -11,48 +12,42 @@ import time
 
 from . import alerts, kite_auth
 from .config import settings, SCAN_RESULTS_FILE
-from .indicators import RSI_OVERBOUGHT, RSI_OVERSOLD
-from .scanner import scan_watchlist, is_market_open, now_ist, classify_oi_trend, classify_oi_structure
+from .scanner import scan_watchlist, is_market_open, now_ist, compute_oi_acceleration, classify_oi_structure
 
 log = logging.getLogger(__name__)
 
-# How many recent OI samples to keep per symbol for trend/acceleration
-# classification. Only the main-timeframe scan carries OI, so this
-# grows by one entry per symbol per main scan cycle.
-OI_HISTORY_MAX = 20
+# How far back (in minutes) to keep OI samples per symbol.
+# compute_oi_acceleration needs up to 120 minutes of history (its
+# "prior 60-minute" window looks 60-120 minutes back), so this keeps a
+# safety margin beyond that regardless of the configured scan interval
+# - unlike a fixed sample-count cap, this stays correct whether scans
+# run every 60s or every 5 minutes.
+OI_HISTORY_MAX_MINUTES = 150
 
 # --------------------------------------------------------------------------
-# The dashboard's own "My Filters" panel - tick any of these and only
-# stocks meeting your chosen count of them show up anywhere on the page
-# (Matching Now, High Conviction, the main table). Unlike the backtest's
+# The screener's fixed 4-parameter confluence check - not user-editable
+# (a bigger "My Filters" panel with 8 configurable checks used to live
+# here; it's been replaced by 3 always-on tiers - see _apply_param_tier
+# below - which are simpler to read at a glance and don't require
+# manually ticking boxes every session). Unlike the backtest's
 # PARAM_DEFS (crossover EVENTS replayed bar-by-bar over history), these
 # are CURRENT STATE checks evaluated fresh on every scan - appropriate
-# for "what does the live screener show me right now", not a historical
-# entry trigger. web.py reads the ?fparams=...&frequired=N query string
-# (a real GET form, so it's shareable/bookmarkable and the dashboard's
-# existing 20s auto-refresh - which re-fetches the same URL including
-# its query string - keeps respecting it automatically).
+# for "what does the live screener show me right now".
 # --------------------------------------------------------------------------
 
 SCREEN_PARAM_DEFS = [
     {"id": "rsi_state", "label": "RSI (vs its smoothing line)"},
     {"id": "macd_state", "label": "MACD (vs signal line)"},
     {"id": "ema_bb_state", "label": "EMA9 vs Bollinger Mid"},
-    {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
     {"id": "rel_volume", "label": "Relative Volume > 1.2x (20-bar avg)"},
-    {"id": "oi_structure", "label": "OI % Structure agrees (today's price+OI Buildup matching direction)"},
-    {"id": "oi_break_signal", "label": "OI Break Signal (building AND accelerating, matching direction)"},
-    {"id": "htf_trend", "label": "Higher-timeframe (4h) trend agrees (15-min scans only)"},
 ]
 SCREEN_PARAM_IDS = [p["id"] for p in SCREEN_PARAM_DEFS]
 
 
 def _screen_param_match(r, param_id) -> bool:
-    """Does this row's CURRENT direction hold up under one selected
-    filter parameter? Missing/unavailable data (e.g. OI not fetchable
-    for this symbol) counts as NOT matching rather than silently
-    passing - you ticked the box because you want that condition
-    actually confirmed, not assumed."""
+    """Does this row's CURRENT direction hold up under one of the 4
+    fixed screener parameters? Missing/unavailable data counts as NOT
+    matching rather than silently passing."""
     direction = r.get("direction")
     if not direction:
         return False
@@ -62,55 +57,28 @@ def _screen_param_match(r, param_id) -> bool:
         return r.get("macd_state") == direction
     if param_id == "ema_bb_state":
         return r.get("ema_bb_state") == direction
-    if param_id == "rsi_threshold":
-        rsi = r.get("rsi")
-        if rsi is None:
-            return False
-        return rsi > RSI_OVERBOUGHT if direction == "Bullish" else rsi < RSI_OVERSOLD
     if param_id == "rel_volume":
         return bool(r.get("vol_confirmed"))
-    if param_id == "oi_structure":
-        # Today's cumulative price+OI% move since session open (see
-        # scanner.classify_oi_structure) - the softer OI check: OI is
-        # building in your direction, no requirement on how fast.
-        structure = r.get("oi_structure")
-        if not structure:
-            return False
-        return (
-            (direction == "Bullish" and structure == "Long Buildup")
-            or (direction == "Bearish" and structure == "Short Buildup")
-        )
-    if param_id == "oi_break_signal":
-        # The stricter, scan-to-scan-aware OI check: not just building,
-        # but building FASTER than its own recent pace right now (or an
-        # outright spike) - see _apply_oi_screener_fields' accel_strong.
-        # This is "percentage AND acceleration" combined into one flag.
-        break_signal = r.get("oi_break_signal")
-        if not break_signal:
-            return False
-        return (
-            (direction == "Bullish" and break_signal == "Break Up")
-            or (direction == "Bearish" and break_signal == "Break Down")
-        )
-    if param_id == "htf_trend":
-        return bool(r.get("htf_agrees", True))
     return False
 
 
-def custom_filter_match(r, params, required: int) -> bool:
-    """True if this row currently satisfies at least `required` of your
-    ticked `params`. Always excludes rows still inside the noisy
-    opening-window (see indicators.OPENING_WINDOW_MINUTES) and rows
-    with no computed signal at all (errors, or aligned/direction
-    missing) - a custom filter should never surface those."""
-    if r.get("error") or not r.get("direction") or r.get("aligned") is None:
-        return False
-    if r.get("in_opening_window"):
-        return False
-    if not params:
-        return True
-    count = sum(1 for p in params if _screen_param_match(r, p))
-    return count >= required
+def _apply_param_tier(results):
+    """Mutates each result dict in place, attaching param_match_count
+    (0-4: how many of the 4 fixed SCREEN_PARAM_DEFS agree with this
+    row's current direction) and param_tier (2, 3, or 4 - the bucket
+    this row belongs to; None if it matched fewer than 2, or has no
+    signal at all / is still inside the opening window). Each row lands
+    in exactly ONE tier (its exact match count), not every tier it
+    clears, so the dashboard's three tier sections never show the same
+    stock twice."""
+    for r in results:
+        if r.get("error") or not r.get("direction") or r.get("in_opening_window"):
+            r["param_match_count"] = None
+            r["param_tier"] = None
+            continue
+        count = sum(1 for p in SCREEN_PARAM_IDS if _screen_param_match(r, p))
+        r["param_match_count"] = count
+        r["param_tier"] = count if count >= 2 else None
 
 _state_lock = threading.Lock()
 _state = {
@@ -138,39 +106,59 @@ def trigger_rescan():
 
 
 def _apply_oi_trend(results):
-    """Mutates each result dict in place, attaching oi_change,
-    oi_change_pct, oi_trend_label and oi_unusual based on this symbol's
+    """Mutates each result dict in place, attaching the rolling-window
+    OI acceleration fields (oi_chg_15m_pct, oi_chg_30m_pct,
+    oi_chg_60m_pct, oi_acceleration, oi_accel_label - see
+    scanner.compute_oi_acceleration) based on this symbol's timestamped
     OI history across scans. Must be called while holding _state_lock -
-    it reads and appends to _state["oi_history"]."""
+    it reads and appends to _state["oi_history"].
+
+    oi_trend_label is kept as an alias for oi_accel_label (falling back
+    to "New" when there's not enough history yet) purely so existing
+    call sites/templates that already read oi_trend_label keep working
+    without having to touch every one of them."""
     history = _state["oi_history"]
+    now = now_ist()
+    cutoff = now - dt.timedelta(minutes=OI_HISTORY_MAX_MINUTES)
     for r in results:
         symbol, oi = r.get("symbol"), r.get("oi")
         if not symbol or oi is None:
             continue
         hist = history.setdefault(symbol, [])
-        hist.append(oi)
-        if len(hist) > OI_HISTORY_MAX:
-            del hist[: len(hist) - OI_HISTORY_MAX]
-        trend = classify_oi_trend(hist)
-        r["oi_change"] = trend["change"]
-        r["oi_change_pct"] = trend["change_pct"]
-        r["oi_trend_label"] = trend["label"]
-        r["oi_unusual"] = trend["unusual"]
+        # Migration guard: older persisted state stored plain numbers
+        # instead of {"ts", "oi"} dicts - those can't be time-windowed,
+        # so drop them rather than let a stale format crash the scan.
+        hist[:] = [e for e in hist if isinstance(e, dict) and e.get("ts")]
+        hist.append({"ts": now.isoformat(), "oi": oi})
+        cutoff_iso = cutoff.isoformat()
+        hist[:] = [e for e in hist if e["ts"] >= cutoff_iso]
+
+        accel = compute_oi_acceleration(hist, now)
+        r["oi_chg_15m_pct"] = accel["chg_15m"]
+        r["oi_chg_30m_pct"] = accel["chg_30m"]
+        r["oi_chg_60m_pct"] = accel["chg_60m"]
+        r["oi_chg_prior_30m_pct"] = accel["chg_prior_30m"]
+        r["oi_chg_prior_60m_pct"] = accel["chg_prior_60m"]
+        r["oi_acceleration"] = accel["acceleration"]
+        r["oi_accel_label"] = accel["accel_label"]
+        r["oi_trend_label"] = accel["accel_label"] or "New"
 
 
 def _apply_oi_screener_fields(results):
     """Attaches the dashboard's OI-driven fields to each result: works
     out today's price/OI move since session open (distinct from
-    _apply_oi_trend's scan-to-scan numbers above), classifies the
-    4-quadrant OI Structure from that, flags whether that structure just
-    changed this scan ("stage": "New"), derives a decisive "oi_break_signal"
-    (Break Up / Break Down) when OI is building in a direction AND
-    accelerating faster than its own recent pace, and cross-references
-    the existing confluence signal (this symbol's own aligned/direction)
-    to mark "positional_qualified" - a stock that isn't just showing an
-    OI structure, but one that agrees with your confluence signal too.
-    Must be called after _apply_oi_trend (needs oi_trend_label/
-    oi_unusual already set) and while holding _state_lock."""
+    _apply_oi_trend's rolling-window numbers above) plus today's OI
+    move vs. YESTERDAY's closing OI ("Day OI Change %"), classifies the
+    4-quadrant OI Structure from the since-open move, flags whether
+    that structure just changed this scan ("stage": "New"), derives a
+    decisive "oi_break_signal" (Break Up / Break Down) when OI is
+    building in a direction AND accelerating faster than its own recent
+    pace, and cross-references the existing confluence signal (this
+    symbol's own aligned/direction) to mark "positional_qualified" - a
+    stock that isn't just showing an OI structure, but one that agrees
+    with your confluence signal too. Must be called after
+    _apply_oi_trend (needs oi_accel_label already set) and while
+    holding _state_lock."""
     today = now_ist().date().isoformat()
     baseline = _state["oi_day_baseline"]
     prev_structure = _state["oi_structure_prev"]
@@ -181,24 +169,38 @@ def _apply_oi_screener_fields(results):
             continue
 
         base = baseline.get(symbol)
-        if base is None or base.get("date") != today or oi is None or close is None:
+        if base is None or base.get("date") != today:
             # First scan of a new trading day (or first time we've ever
-            # seen this symbol, or OI/close briefly unavailable) - reset
-            # today's baseline to whatever we have right now.
+            # seen this symbol) - carry forward whatever OI we last saw
+            # yesterday as "previous day close" for Day OI Change %,
+            # then reset today's open/close baseline to right now.
+            prev_close_oi = base.get("oi_last") if base else None
             if oi is not None and close is not None:
-                baseline[symbol] = {"date": today, "oi": oi, "close": close}
+                baseline[symbol] = {
+                    "date": today, "oi": oi, "close": close,
+                    "prev_close_oi": prev_close_oi, "oi_last": oi,
+                }
             base = baseline.get(symbol)
+        elif oi is not None:
+            # Same trading day - keep today's open snapshot fixed, but
+            # track the latest OI seen so it's ready to become
+            # TOMORROW's "previous close" on the next day's rollover.
+            base["oi_last"] = oi
 
-        price_chg_pct = oi_chg_pct = None
+        price_chg_pct = oi_chg_pct = day_oi_chg_pct = None
         if base and base.get("date") == today and oi is not None and close is not None:
             if base["close"]:
                 price_chg_pct = (close - base["close"]) / base["close"] * 100
             if base["oi"]:
                 oi_chg_pct = (oi - base["oi"]) / base["oi"] * 100
+            prev_close_oi = base.get("prev_close_oi")
+            if prev_close_oi:
+                day_oi_chg_pct = (oi - prev_close_oi) / prev_close_oi * 100
 
         structure = classify_oi_structure(price_chg_pct, oi_chg_pct)
         r["price_chg_today_pct"] = price_chg_pct
         r["oi_chg_today_pct"] = oi_chg_pct
+        r["oi_day_chg_pct"] = day_oi_chg_pct
         r["oi_structure"] = structure
 
         r["stage"] = "New" if structure and prev_structure.get(symbol) not in (None, structure) else None
@@ -206,14 +208,14 @@ def _apply_oi_screener_fields(results):
             prev_structure[symbol] = structure
 
         # A decisive OI signal: not just "OI is building", but "OI is
-        # building AND doing so faster than its own recent pace" (or an
-        # outright spike) - that combination is what actually suggests
-        # fresh conviction rather than routine drift. Long Buildup +
-        # strong acceleration reads as a bullish break-up; Short
-        # Buildup + strong acceleration reads as a bearish break-down.
-        # Relies on oi_trend_label/oi_unusual already being set by
+        # building AND doing so faster than its own recent pace right
+        # now" - that combination is what actually suggests fresh
+        # conviction rather than routine drift. Long Buildup + strong/
+        # moderate acceleration reads as a bullish break-up; Short
+        # Buildup + strong/moderate acceleration reads as a bearish
+        # break-down. Relies on oi_accel_label already being set by
         # _apply_oi_trend, which always runs first in the scan loop.
-        accel_strong = r.get("oi_trend_label") == "Accelerating" or bool(r.get("oi_unusual"))
+        accel_strong = r.get("oi_accel_label") in ("Strong acceleration", "Moderate acceleration")
         oi_break_signal = None
         if structure == "Long Buildup" and accel_strong:
             oi_break_signal = "Break Up"
@@ -261,12 +263,16 @@ def _apply_oi_screener_fields(results):
         )
 
 
+_ACCELERATING_LABELS = ("Strong acceleration", "Moderate acceleration")
+
+
 def _detect_oi_accel_events(results):
-    """Returns the rows whose oi_trend_label (see classify_oi_trend)
-    just transitioned INTO "Accelerating" on this scan, compared to
+    """Returns the rows whose oi_accel_label (see
+    scanner.compute_oi_acceleration) just transitioned INTO "Strong
+    acceleration" or "Moderate acceleration" on this scan, compared to
     what it was last scan - i.e. the moment OI starts accelerating for
     that symbol, not every scan while it stays accelerating. Must be
-    called after _apply_oi_trend (needs this scan's oi_trend_label
+    called after _apply_oi_trend (needs this scan's oi_accel_label
     already set) and while holding _state_lock, same as the OI
     functions above - it reads and updates _state["oi_label_prev"]."""
     prev = _state["oi_label_prev"]
@@ -275,8 +281,8 @@ def _detect_oi_accel_events(results):
         symbol = r.get("symbol")
         if not symbol or r.get("error"):
             continue
-        label = r.get("oi_trend_label")
-        if label == "Accelerating" and prev.get(symbol) != "Accelerating":
+        label = r.get("oi_accel_label")
+        if label in _ACCELERATING_LABELS and prev.get(symbol) not in _ACCELERATING_LABELS:
             events.append(r)
         if label:
             prev[symbol] = label
@@ -352,6 +358,7 @@ def _run_loop():
                 try:
                     results = scan_watchlist(kite)
                     with _state_lock:
+                        _apply_param_tier(results)
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
                         oi_events = _detect_oi_accel_events(results)

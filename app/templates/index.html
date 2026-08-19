@@ -107,6 +107,13 @@
   .mn-col-title.bear { color: var(--red); }
   .mn-chip-scroll { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 5px; align-content: flex-start; max-height: 240px; overflow-y: auto; padding-right: 4px; }
 
+  /* Parameter Screener: 3 always-on tiers (2/3/4-of-4), side by side */
+  .tier-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .tier-grid { grid-template-columns: 1fr; } }
+  .tier-col { min-width: 0; }
+  .tier-count { font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; }
+  .tier-chips { max-height: 260px; overflow-y: auto; }
+
   /* Master table */
   .table-card { padding: 0; overflow: hidden; }
   .table-card-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -138,11 +145,11 @@
   .oi-down { color: var(--red); font-size: 11px; font-weight: 700; margin-left: 6px; white-space: nowrap; }
   .oi-trend-warn { color: var(--amber); font-weight: 700; }
   .oi-accel-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 700; white-space: nowrap; font-family: var(--sans); }
-  .oi-accel-badge.accelerating { background: var(--green-bg); color: var(--green); }
-  .oi-accel-badge.weakening { background: var(--red-bg); color: var(--red); }
-  .oi-accel-badge.transitional { background: var(--accent-bg); color: var(--accent); }
-  .oi-accel-badge.stable, .oi-accel-badge.flat, .oi-accel-badge.new { background: #1a2029; color: var(--dim); font-weight: 600; }
-  .oi-accel-badge.unusual { background: rgba(240,185,11,0.14); color: var(--amber); border: 1px solid rgba(240,185,11,0.35); }
+  .oi-accel-badge.strong-acceleration { background: var(--green-bg); color: var(--green); }
+  .oi-accel-badge.moderate-acceleration { background: rgba(240,185,11,0.14); color: var(--amber); }
+  .oi-accel-badge.weakening { background: rgba(240,185,11,0.1); color: var(--amber); }
+  .oi-accel-badge.possible-exit-unwinding { background: var(--red-bg); color: var(--red); }
+  .oi-accel-badge.stable, .oi-accel-badge.new { background: #1a2029; color: var(--dim); font-weight: 600; }
   .vol-cell span { font-weight: 700; }
   .vol-warm { color: var(--amber); }
   .vol-hot { color: var(--red); }
@@ -202,7 +209,7 @@
       </button>
     </div>
     {% endif %}
-    <nav><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -279,85 +286,61 @@
         <input type="hidden" name="ema_length" value="{{ ema_length }}">
         <input type="hidden" name="bb_length" value="{{ bb_length }}">
       </form>
-    </div>
-    <form method="GET" action="/" id="my-filters-form">
-      <div class="toolbar-row">
-        <span class="toolbar-label">My Filters</span>
-        {% for p in screen_param_defs %}
-        <label class="pill-chk" title="{{ p.label }}">
-          <input type="checkbox" name="fparams" value="{{ p.id }}" {{ 'checked' if p.id in fparams else '' }}>
-          <span>{{ p.label }}</span>
-        </label>
-        {% endfor %}
-        <div class="tb-required">
-          <label for="mf-required">Require</label>
-          <input type="number" id="mf-required" name="frequired" value="{{ frequired if frequired else 1 }}" min="1" max="{{ screen_param_defs|length }}">
-          <label for="mf-required">of ticked</label>
+      <span class="tb-status">{{ total_scanned }} scanned</span>
+      <details class="qs-popover">
+        <summary>⚙ Settings</summary>
+        <div class="qs-popover-body">
+          <form method="POST" action="/quick-settings" class="quick-settings-form">
+            <input type="hidden" name="timeframe" value="{{ timeframe }}">
+            <div class="qs-field">
+              <label for="qs-min-required">Core required</label>
+              <select id="qs-min-required" name="min_required">
+                <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-3</option>
+                <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-3 (strict)</option>
+              </select>
+            </div>
+            <div class="qs-field">
+              <label for="qs-macd-preset">MACD preset</label>
+              <select id="qs-macd-preset" name="macd_preset">
+                {% for mp in valid_presets %}
+                <option value="{{ mp }}" {% if mp == macd_preset %}selected{% endif %}>{{ mp }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="qs-field">
+              <label for="qs-rsi">RSI len</label>
+              <input id="qs-rsi" type="number" name="rsi_length" value="{{ rsi_length }}" min="1">
+            </div>
+            <div class="qs-field">
+              <label for="qs-rsi-smooth">RSI smooth</label>
+              <input id="qs-rsi-smooth" type="number" name="rsi_smooth_length" value="{{ rsi_smooth_length }}" min="1">
+            </div>
+            <div class="qs-field">
+              <label for="qs-macd-fast">MACD fast</label>
+              <input id="qs-macd-fast" type="number" name="macd_fast" value="{{ macd_fast }}" min="1">
+            </div>
+            <div class="qs-field">
+              <label for="qs-macd-slow">MACD slow</label>
+              <input id="qs-macd-slow" type="number" name="macd_slow" value="{{ macd_slow }}" min="1">
+            </div>
+            <div class="qs-field">
+              <label for="qs-macd-signal">MACD signal</label>
+              <input id="qs-macd-signal" type="number" name="macd_signal" value="{{ macd_signal }}" min="1">
+            </div>
+            <div class="qs-field">
+              <label for="qs-ema">EMA len</label>
+              <input id="qs-ema" type="number" name="ema_length" value="{{ ema_length }}" min="1">
+            </div>
+            <div class="qs-field">
+              <label for="qs-bb">BB len</label>
+              <input id="qs-bb" type="number" name="bb_length" value="{{ bb_length }}" min="1">
+            </div>
+            <button type="submit" class="qs-apply-btn">Apply</button>
+            <p class="qs-note" style="flex-basis:100%;">Changes apply immediately. Watchlist &amp; scan interval are on the <a href="/settings">Settings page</a>.</p>
+          </form>
         </div>
-        <button type="submit" class="tb-btn">Apply</button>
-        {% if filters_active %}
-        <a href="/" class="tb-clear">Clear</a>
-        {% endif %}
-        <span class="tb-status">{% if filters_active %}Showing {{ results|length }} / {{ total_scanned }}{% else %}{{ total_scanned }} scanned &middot; no filters active{% endif %}</span>
-        <details class="qs-popover">
-          <summary>⚙ Settings</summary>
-          <div class="qs-popover-body">
-            <form method="POST" action="/quick-settings" class="quick-settings-form">
-              <input type="hidden" name="timeframe" value="{{ timeframe }}">
-              <div class="qs-field">
-                <label for="qs-min-required">Core required</label>
-                <select id="qs-min-required" name="min_required">
-                  <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-3</option>
-                  <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-3 (strict)</option>
-                </select>
-              </div>
-              <div class="qs-field">
-                <label for="qs-macd-preset">MACD preset</label>
-                <select id="qs-macd-preset" name="macd_preset">
-                  {% for mp in valid_presets %}
-                  <option value="{{ mp }}" {% if mp == macd_preset %}selected{% endif %}>{{ mp }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="qs-field">
-                <label for="qs-rsi">RSI len</label>
-                <input id="qs-rsi" type="number" name="rsi_length" value="{{ rsi_length }}" min="1">
-              </div>
-              <div class="qs-field">
-                <label for="qs-rsi-smooth">RSI smooth</label>
-                <input id="qs-rsi-smooth" type="number" name="rsi_smooth_length" value="{{ rsi_smooth_length }}" min="1">
-              </div>
-              <div class="qs-field">
-                <label for="qs-macd-fast">MACD fast</label>
-                <input id="qs-macd-fast" type="number" name="macd_fast" value="{{ macd_fast }}" min="1">
-              </div>
-              <div class="qs-field">
-                <label for="qs-macd-slow">MACD slow</label>
-                <input id="qs-macd-slow" type="number" name="macd_slow" value="{{ macd_slow }}" min="1">
-              </div>
-              <div class="qs-field">
-                <label for="qs-macd-signal">MACD signal</label>
-                <input id="qs-macd-signal" type="number" name="macd_signal" value="{{ macd_signal }}" min="1">
-              </div>
-              <div class="qs-field">
-                <label for="qs-ema">EMA len</label>
-                <input id="qs-ema" type="number" name="ema_length" value="{{ ema_length }}" min="1">
-              </div>
-              <div class="qs-field">
-                <label for="qs-bb">BB len</label>
-                <input id="qs-bb" type="number" name="bb_length" value="{{ bb_length }}" min="1">
-              </div>
-              <button type="submit" class="qs-apply-btn">Apply</button>
-              <p class="qs-note" style="flex-basis:100%;">Changes apply immediately. Watchlist &amp; scan interval are on the <a href="/settings">Settings page</a>.</p>
-            </form>
-          </div>
-        </details>
-      </div>
-      {% if filters_active and results|length == 0 %}
-      <p class="mf-empty-inline">Nothing meets your ticked filters right now - try unticking one, lowering Require, or Clear.</p>
-      {% endif %}
-      <p class="tb-note">Tick what matters to you - the whole page (panels + table below) narrows to stocks meeting at least "Require" of them. First {{ opening_window_minutes }} min after open (9:15&ndash;{{ opening_window_end }}) always excluded.</p>
-    </form>
+      </details>
+    </div>
   </div>
 
   <div class="signals-grid">
@@ -435,6 +418,38 @@
     </div>
   </div>
 
+  <div class="card" id="param-screener">
+    <h2>Parameter Screener <span class="sub">RSI &middot; MACD &middot; EMA9/BB &middot; Rel Volume - always on, nothing to tick</span></h2>
+    {% set ns4 = namespace(t2=0, t3=0, t4=0) %}
+    {% for r in results %}
+      {% if not r.error and r.param_tier == 2 %}{% set ns4.t2 = ns4.t2 + 1 %}
+      {% elif not r.error and r.param_tier == 3 %}{% set ns4.t3 = ns4.t3 + 1 %}
+      {% elif not r.error and r.param_tier == 4 %}{% set ns4.t4 = ns4.t4 + 1 %}
+      {% endif %}
+    {% endfor %}
+    <div class="tier-grid">
+      {% for tier in [4, 3, 2] %}
+      <div class="tier-col">
+        <h3 class="mn-col-title">{{ tier }} of 4 Match <span class="tier-count">({{ ns4.t4 if tier == 4 else (ns4.t3 if tier == 3 else ns4.t2) }})</span></h3>
+        <div class="match-chips tier-chips">
+          {% for r in results %}
+            {% if not r.error and r.param_tier == tier %}
+            <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+              <span class="mc-top">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span></span>
+              {{ chip_stats(r) }}
+            </a>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% if (tier == 4 and ns4.t4 == 0) or (tier == 3 and ns4.t3 == 0) or (tier == 2 and ns4.t2 == 0) %}
+        <p class="mn-empty">None right now.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <p class="tb-note">Each stock appears in exactly one tier (its exact match count), so the three columns never overlap. First {{ opening_window_minutes }} min after open (9:15&ndash;{{ opening_window_end }}) always excluded. See the <a href="/oi-screener">OI Screener</a> for these same stocks' Open Interest value, % change, and acceleration.</p>
+  </div>
+
   {% if insights_enabled %}
   <div class="card insights-card">
     <h2>AI Insights <span class="ai-badge">Claude</span></h2>
@@ -485,9 +500,9 @@
           <th>
             <select id="f-oitrend" onchange="applyFilters()">
               <option value="">All</option>
-              <option>Accelerating</option><option>Stable</option><option>Weakening</option>
-              <option>Transitional</option><option>Flat</option><option>New</option>
-              <option value="Unusual">⚠ Unusual only</option>
+              <option>Strong acceleration</option><option>Moderate acceleration</option>
+              <option>Stable</option><option>Weakening</option>
+              <option>Possible exit/unwinding</option><option>New</option>
               <option value="BreakUp">▲ Break Up only</option>
               <option value="BreakDown">▼ Break Down only</option>
             </select>
@@ -512,7 +527,6 @@
             data-emabb="{{ r.ema_bb_state or '' }}"
             data-structure="{{ r.oi_structure or '' }}"
             data-oitrend="{{ r.oi_trend_label or '' }}"
-            data-unusual="{{ '1' if r.oi_unusual else '0' }}"
             data-break="{{ 'BreakUp' if r.oi_break_signal == 'Break Up' else ('BreakDown' if r.oi_break_signal == 'Break Down' else '') }}"
             data-aligned="{{ r.aligned if r.aligned is not none else '' }}"
             data-signal="{{ signal_dir }}"
@@ -540,9 +554,9 @@
             {% endif %}
             {% else %}—{% endif %}
           </td>
-          <td data-sort="{{ r.oi_change_pct if r.oi_change_pct is not none else '' }}">
+          <td data-sort="{{ r.oi_acceleration if r.oi_acceleration is not none else '' }}">
             {% if r.oi is defined and r.oi is not none %}
-            <span class="oi-accel-badge {{ (r.oi_trend_label or 'New')|lower }} {{ 'unusual' if r.oi_unusual else '' }}">{% if r.oi_unusual %}⚠ {% endif %}{{ r.oi_trend_label or 'New' }}</span>
+            <span class="oi-accel-badge {{ (r.oi_trend_label or 'New')|lower|replace(' ', '-')|replace('/', '-') }}">{{ r.oi_trend_label or 'New' }}{% if r.oi_acceleration is not none %} ({{ '{:+.2f}'.format(r.oi_acceleration) }}pp){% endif %}</span>
             {% else %}—{% endif %}
           </td>
           <td data-sort="{{ r.vol_multiple if r.vol_multiple is not none else (r.volume if r.volume is not none else '') }}" class="vol-cell">
@@ -579,14 +593,17 @@
     This page updates itself live in the background every 20 seconds (no full reload, so your
     filters, sort order, and scroll position stay put). <strong>OI</strong> = today's Open
     Interest with Structure badge (buildup/unwind vs today's open) and % change.
-    <strong>OI Accel</strong> compares this scan's OI move to the previous one - a bold Break
-    Up/Down badge means it's building <em>and</em> accelerating. <strong>Vol</strong> = latest
-    candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red above
-    3&times;). A <span class="confirm-badge">✓</span> = "Confirmed": volume above 1.2&times;
-    average and (15-min scans) the 4-hour trend agreeing - Telegram alerts only fire for
-    confirmed signals. Want a bigger-picture read? Switch Timeframe (top-left of the filter bar)
-    to 4hour, or use the <a href="/backtest">Backtest</a> page. Signals are directional input,
-    not investment advice.
+    <strong>OI Accel</strong> compares OI's move in the latest 30 minutes to the 30 minutes
+    before that (in percentage points) - Strong/Moderate acceleration means it's building
+    faster than its own recent pace; a bold Break Up/Down badge means the OI Structure agrees
+    with that acceleration too. See the <a href="/oi-screener">OI Screener</a> for the full
+    breakdown (15/30/60-min windows, Day OI Change vs yesterday's close). <strong>Vol</strong> =
+    latest candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red
+    above 3&times;). A <span class="confirm-badge">✓</span> = "Confirmed": volume above
+    1.2&times; average and (15-min scans) the 4-hour trend agreeing - Telegram alerts only fire
+    for confirmed signals. Want a bigger-picture read? Switch Timeframe (top-left of the filter
+    bar) to 4hour, or use the <a href="/backtest">Backtest</a> page. Signals are directional
+    input, not investment advice.
   </div>
 </div>
 <script>
@@ -816,9 +833,7 @@
       if (ok && emabbQ && row.getAttribute('data-emabb') !== emabbQ) ok = false;
       if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
       if (ok && oitrendQ) {
-        if (oitrendQ === 'Unusual') {
-          if (row.getAttribute('data-unusual') !== '1') ok = false;
-        } else if (oitrendQ === 'BreakUp' || oitrendQ === 'BreakDown') {
+        if (oitrendQ === 'BreakUp' || oitrendQ === 'BreakDown') {
           if (row.getAttribute('data-break') !== oitrendQ) ok = false;
         } else if (row.getAttribute('data-oitrend') !== oitrendQ) {
           ok = false;
@@ -832,35 +847,8 @@
 
   makeSortable();
 
-  // My Filters "Require" defaults to matching ALL ticked boxes (AND
-  // logic) - this is what most people expect from "show only stocks
-  // meeting MY requirements". It stays in sync with the ticked count as
-  // you tick/untick, unless you've manually typed your own number into
-  // the field, in which case your choice is left alone (just clamped to
-  // never exceed the ticked count).
-  (function () {
-    var form = document.getElementById('my-filters-form');
-    if (!form) return;
-    var boxes = Array.from(form.querySelectorAll('input[name=fparams]'));
-    var requiredInput = document.getElementById('mf-required');
-    var manualOverride = false;
-    requiredInput.addEventListener('input', function () { manualOverride = true; });
-    function sync() {
-      var checked = boxes.filter(function (b) { return b.checked; });
-      requiredInput.max = Math.max(checked.length, 1);
-      if (!checked.length) { manualOverride = false; return; }
-      if (!manualOverride) {
-        requiredInput.value = checked.length;
-      } else if (Number(requiredInput.value) > checked.length) {
-        requiredInput.value = checked.length;
-      }
-    }
-    boxes.forEach(function (b) { b.addEventListener('change', sync); });
-    sync();
-  })();
-
   var DASHBOARD_REFRESH_MS = 20000;
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody'];
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'param-screener', 'main-tbody'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

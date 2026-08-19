@@ -62,29 +62,11 @@ def dashboard():
     state = get_state()
     all_results = state["results"]
 
-    # "My Filters" - a real GET form (checkboxes named fparams, so the
-    # browser submits repeated ?fparams=x&fparams=y query params Flask
-    # reads with getlist) rather than JS-built state, so it's shareable/
-    # bookmarkable and the dashboard's own 20s auto-refresh - which
-    # re-fetches window.location.pathname + window.location.search -
-    # keeps respecting it automatically without any extra wiring.
-    fparams = tuple(p for p in request.args.getlist("fparams") if p in background.SCREEN_PARAM_IDS)
-    try:
-        frequired = int(request.args.get("frequired", len(fparams)))
-    except ValueError:
-        frequired = len(fparams)
-    frequired = max(1, min(frequired, len(fparams))) if fparams else 0
-    filters_active = bool(fparams)
-    results = (
-        [r for r in all_results if background.custom_filter_match(r, fparams, frequired)]
-        if filters_active else all_results
-    )
-
     return render_template(
         "index.html",
         logged_in=logged_in,
         login_url=login_url,
-        results=results,
+        results=all_results,
         total_scanned=len(all_results),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
@@ -104,9 +86,6 @@ def dashboard():
         insights_enabled=insights_enabled(),
         telegram_enabled=alerts.telegram_enabled(),
         screen_param_defs=background.SCREEN_PARAM_DEFS,
-        fparams=list(fparams),
-        frequired=frequired,
-        filters_active=filters_active,
         opening_window_minutes=indicators.OPENING_WINDOW_MINUTES,
         opening_window_end="9:%02d" % (15 + indicators.OPENING_WINDOW_MINUTES),
     )
@@ -307,6 +286,31 @@ def api_alerts_recent():
 @require_dashboard_password
 def api_alerts_oi_recent():
     return jsonify({"alerts": alerts.get_recent_oi(limit=20)})
+
+
+@app.route("/oi-screener")
+@require_dashboard_password
+def oi_screener_page():
+    return render_template(
+        "oi_screener.html",
+        logged_in=kite_auth.is_logged_in_today(),
+        timeframe=settings.TIMEFRAME,
+        min_required=settings.MIN_REQUIRED,
+    )
+
+
+@app.route("/api/oi-screener")
+@require_dashboard_password
+def api_oi_screener():
+    # Deliberately NOT every scanned symbol - only rows that are
+    # currently in one of the 2/3/4-of-4 parameter screener tiers (see
+    # background._apply_param_tier). An unfiltered "every F&O stock's
+    # OI" list is mostly noise; this page is meant to answer "of the
+    # stocks the confluence screener already flagged, what's their OI
+    # actually doing" - not to be a second, independent universe.
+    state = get_state()
+    results = [r for r in state["results"] if not r.get("error") and r.get("param_tier")]
+    return jsonify({"results": results, "min_required": settings.MIN_REQUIRED})
 
 
 @app.route("/api/alerts/test", methods=["POST"])

@@ -147,25 +147,31 @@ def _format_oi_message(r, timeframe):
     break_note = f" - {r['oi_break_signal']}" if r.get("oi_break_signal") else ""
     chg = r.get("oi_chg_today_pct")
     chg_note = f", {chg:+.1f}% today" if chg is not None else ""
+    accel = r.get("oi_acceleration")
+    accel_note = f" - accel {accel:+.2f}pp (30m)" if accel is not None else ""
     dir_note = f" ({r['direction']} confluence)" if r.get("direction") else ""
-    return f"\U0001F4C8 {r['symbol']} OI just started Accelerating{break_note}{chg_note}{dir_note} on {timeframe}"
+    label = r.get("oi_accel_label") or "Accelerating"
+    return f"\U0001F4C8 {r['symbol']} OI just started {label}{break_note}{chg_note}{accel_note}{dir_note} on {timeframe}"
 
 
 def process_oi_events(events, timeframe):
     """Records OI-acceleration transition events (background.py's
     _detect_oi_accel_events - fires once when a symbol's OI trend just
-    turned "Accelerating", not every scan while it stays that way) to
-    a small in-app rolling log the dashboard polls via
-    /api/alerts/oi_recent for a toast pop. Kept separate from the
-    price-signal alerts above since these fire on a different
-    condition (OI trend, not RSI/MACD/EMA confluence) and In-app only
-    for now - not pushed to Telegram, to avoid doubling up phone
-    notifications for something that isn't a trade signal by itself."""
+    turned "Strong acceleration" or "Moderate acceleration", not every
+    scan while it stays that way) to a small in-app rolling log the
+    dashboard polls via /api/alerts/oi_recent for a toast pop. Kept
+    separate from the price-signal alerts above since these fire on a
+    different condition (OI acceleration, not RSI/MACD/EMA confluence)
+    and In-app only for now - not pushed to Telegram, to avoid doubling
+    up phone notifications for something that isn't a trade signal by
+    itself."""
     for r in events or []:
         entry = {
             "symbol": r.get("symbol"), "timeframe": timeframe, "close": r.get("close"),
             "direction": r.get("direction"), "oi": r.get("oi"),
             "oi_chg_today_pct": r.get("oi_chg_today_pct"),
+            "oi_acceleration": r.get("oi_acceleration"),
+            "oi_accel_label": r.get("oi_accel_label"),
             "oi_break_signal": r.get("oi_break_signal"),
             "text": _format_oi_message(r, timeframe),
             "detected_at": now_ist().isoformat(timespec="seconds"),

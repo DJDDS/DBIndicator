@@ -144,52 +144,115 @@ def fetch_oi_map(kite, symbols: list) -> dict:
     return oi_map
 
 
-def classify_oi_trend(history: list) -> dict:
-    """Given a symbol's recent OI samples (oldest first, with the
-    just-fetched current value as the last element), classifies how OI
-    is moving scan-to-scan:
-
-    - change / change_pct: raw move vs. the previous scan
-    - label: "Accelerating" (this move is meaningfully bigger than the
-      last one, same direction), "Stable" (steady move, similar size to
-      the last one), "Weakening" (same direction but noticeably
-      smaller), "Transitional" (direction just flipped), "Flat" (no
-      change), or "New" (not enough history yet to compare)
-    - unusual: True if this move is much bigger than this symbol's own
-      recent scan-to-scan moves (>3x the recent average) - a possible
-      spike, tracked independently of the label above.
-
-    Callers own building/persisting `history` (background.py keeps one
-    per symbol) - this function is a pure calculation over whatever
-    list it's handed."""
-    if len(history) < 2:
-        return {"change": None, "change_pct": None, "label": "New", "unusual": False}
-
-    current, prev = history[-1], history[-2]
-    change = current - prev
-    change_pct = (change / prev * 100) if prev else None
-
-    deltas = [history[i] - history[i - 1] for i in range(1, len(history) - 1)]
-    recent = deltas[-10:]
-    avg_abs = (sum(abs(d) for d in recent) / len(recent)) if recent else 0
-    unusual = bool(avg_abs) and abs(change) > 3 * avg_abs
-
-    prev_change = deltas[-1] if deltas else None
-    if change == 0:
-        label = "Flat"
-    elif prev_change is None or prev_change == 0 or (change > 0) != (prev_change > 0):
-        # No prior move to compare against, or direction just flipped.
-        label = "Stable" if prev_change is None else "Transitional"
-    else:
-        ratio = abs(change) / abs(prev_change)
-        if ratio > 1.3:
-            label = "Accelerating"
-        elif ratio < 0.7:
-            label = "Weakening"
+def _oi_sample_at_or_before(history: list, cutoff: dt.datetime):
+    """history is a list of {"ts": ISO-8601 string, "oi": number} dicts,
+    oldest first. Returns the OI value of the most recent sample whose
+    timestamp is <= cutoff, or None if every sample is newer than
+    cutoff (not enough history yet)."""
+    found = None
+    for entry in history:
+        ts = entry.get("ts")
+        if not ts:
+            continue
+        try:
+            sample_dt = dt.datetime.fromisoformat(ts)
+        except ValueError:
+            continue
+        if sample_dt <= cutoff:
+            found = entry.get("oi")
         else:
-            label = "Stable"
+            break
+    return found
 
-    return {"change": change, "change_pct": change_pct, "label": label, "unusual": unusual}
+
+def _pct_change(current, prior):
+    if current is None or prior is None or prior == 0:
+        return None
+    return (current - prior) / prior * 100
+
+
+def compute_oi_acceleration(history: list, now: "dt.datetime") -> dict:
+    """Precise, time-windowed OI acceleration - replaces the old
+    scan-to-scan-only comparison, which conflated "3 minutes apart" and
+    "30 minutes apart" into the same signal depending on scan interval.
+
+    history: this symbol's OI samples so far today, oldest first, as
+    {"ts": ISO datetime string, "oi": number} dicts (the just-fetched
+    current value is the last element). Callers own building/persisting
+    this list (background.py keeps one per symbol).
+
+    Rolling-window changes (each looks back from `now`, using the
+    closest sample at or before that point - scans don't land on exact
+    minute boundaries):
+      - chg_15m / chg_30m / chg_60m: OI % change from ~N minutes ago to
+        now - chg_30m is the primary early-alert window, chg_60m the
+        stronger confirmation window, chg_15m the fastest/noisiest.
+      - chg_prior_30m: OI % change over the 30-60-minutes-ago window
+        (i.e. the 30-minute window immediately BEFORE the latest one) -
+        used only to compute acceleration below.
+      - chg_prior_60m: OI % change over the 60-120-minutes-ago window -
+        a longer-baseline check on whether a buildup is strengthening
+        or fading over the last couple of hours, not just the last
+        half-hour.
+
+    acceleration = chg_30m - chg_prior_30m, in percentage points: how
+    much faster (or slower) OI is building right now vs the 30 minutes
+    immediately before. A stock can show a big whole-day OI number while
+    actually unwinding in the latest window - for a fresh positional
+    entry, this recent-direction read matters more than the cumulative
+    one alone.
+
+    accel_label buckets that percentage-point figure:
+      > +2.00        Strong acceleration
+      +0.5 to +1.00  Moderate acceleration
+      -0.30 to +0.30 Stable
+      < -0.30        Weakening
+      < -2.00        Possible exit / unwinding
+    (the 1.00-2.00 and 0.30-0.5 gaps aren't specified, so they're folded
+    into the nearer/stronger neighbouring bucket rather than left
+    unlabeled - see the elif order below.)"""
+    if not history:
+        return {
+            "chg_15m": None, "chg_30m": None, "chg_60m": None,
+            "chg_prior_30m": None, "chg_prior_60m": None,
+            "acceleration": None, "accel_label": None,
+        }
+
+    current = history[-1].get("oi")
+    oi_15m_ago = _oi_sample_at_or_before(history, now - dt.timedelta(minutes=15))
+    oi_30m_ago = _oi_sample_at_or_before(history, now - dt.timedelta(minutes=30))
+    oi_60m_ago = _oi_sample_at_or_before(history, now - dt.timedelta(minutes=60))
+    oi_120m_ago = _oi_sample_at_or_before(history, now - dt.timedelta(minutes=120))
+
+    chg_15m = _pct_change(current, oi_15m_ago)
+    chg_30m = _pct_change(current, oi_30m_ago)
+    chg_60m = _pct_change(current, oi_60m_ago)
+    # "Prior" windows are changes BETWEEN two past points, not vs. now.
+    chg_prior_30m = _pct_change(oi_30m_ago, oi_60m_ago)
+    chg_prior_60m = _pct_change(oi_60m_ago, oi_120m_ago)
+
+    acceleration = None
+    if chg_30m is not None and chg_prior_30m is not None:
+        acceleration = chg_30m - chg_prior_30m
+
+    accel_label = None
+    if acceleration is not None:
+        if acceleration > 2.00:
+            accel_label = "Strong acceleration"
+        elif acceleration >= 0.5:
+            accel_label = "Moderate acceleration"
+        elif acceleration >= -0.30:
+            accel_label = "Stable"
+        elif acceleration >= -2.00:
+            accel_label = "Weakening"
+        else:
+            accel_label = "Possible exit/unwinding"
+
+    return {
+        "chg_15m": chg_15m, "chg_30m": chg_30m, "chg_60m": chg_60m,
+        "chg_prior_30m": chg_prior_30m, "chg_prior_60m": chg_prior_60m,
+        "acceleration": acceleration, "accel_label": accel_label,
+    }
 
 
 def classify_oi_structure(price_chg_pct, oi_chg_pct, threshold: float = 0.05) -> str:
@@ -317,42 +380,20 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
                 "4-hour resample produced 0 bars from %d raw 60-minute candles for token=%s",
                 raw_count, instrument_token,
             )
-        else:
-            # resample+dropna can't tell "genuinely complete bar" apart
-            # from "today's bar that's still filling up" - a bucket with
-            # even one 60-minute candle in it survives dropna() even
-            # though it's only, say, 1 hour into its own 4-hour window.
-            # Without this, compute_signal's "last CLOSED candle" would
-            # sometimes actually be a STILL-FORMING one, whose
-            # RSI/MACD/EMA state can keep changing bar-to-bar as more
-            # 60-minute candles arrive later the same day - exactly the
-            # kind of flip-flopping "always giving issues" symptom that
-            # was reported. So the last row is dropped whenever it's
-            # today's bucket and hasn't actually reached its own close
-            # time yet (accounting for the final bucket of the day being
-            # a short 13:15-15:30 bar, not a full 4 hours).
-            # Kite's own timestamps come back timezone-AWARE (fixed IST
-            # offset), while now_ist() is deliberately naive (see its
-            # docstring - that's what the historical_data() request
-            # params need) - comparing the two directly raises "can't
-            # compare offset-naive and offset-aware datetimes". Strip
-            # tzinfo from the candle timestamp before comparing; both
-            # sides already represent the same IST wall-clock time, so
-            # this is safe and isn't an actual timezone conversion.
-            last_ts = df.index[-1]
-            last_ts_cmp = last_ts.tz_localize(None) if last_ts.tzinfo is not None else last_ts
-            now = now_ist()
-            if last_ts_cmp.date() == now.date():
-                session_close = last_ts_cmp.replace(hour=15, minute=30, second=0, microsecond=0)
-                expected_close = min(last_ts_cmp + dt.timedelta(hours=4), session_close)
-                if now < expected_close and len(df) > 1:
-                    df = df.iloc[:-1]
-            if len(df) < 30:
-                log.info(
-                    "4-hour resample only produced %d closed bars (from %d raw candles) for "
-                    "token=%s - indicators may still be warming up",
-                    len(df), raw_count, instrument_token,
-                )
+        elif len(df) < 30:
+            # The last row here can be a still-forming bucket (e.g. the
+            # 13:15 bar before market close at 15:30) - that's intentional:
+            # every other timeframe already shows its current in-progress
+            # candle rather than waiting for it to close, so 4-hour does
+            # the same for consistency ("live" data over a stable-but-stale
+            # reading). Its RSI/MACD/EMA state can shift a bit as later
+            # 60-minute candles arrive the same day, same as any other
+            # intraday timeframe's most recent candle.
+            log.info(
+                "4-hour resample only produced %d bars (from %d raw candles) for "
+                "token=%s - indicators may still be warming up",
+                len(df), raw_count, instrument_token,
+            )
     return df
 
 
