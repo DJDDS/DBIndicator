@@ -317,12 +317,33 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
                 "4-hour resample produced 0 bars from %d raw 60-minute candles for token=%s",
                 raw_count, instrument_token,
             )
-        elif len(df) < 30:
-            log.info(
-                "4-hour resample only produced %d bars (from %d raw candles) for token=%s - "
-                "indicators may still be warming up",
-                len(df), raw_count, instrument_token,
-            )
+        else:
+            # resample+dropna can't tell "genuinely complete bar" apart
+            # from "today's bar that's still filling up" - a bucket with
+            # even one 60-minute candle in it survives dropna() even
+            # though it's only, say, 1 hour into its own 4-hour window.
+            # Without this, compute_signal's "last CLOSED candle" would
+            # sometimes actually be a STILL-FORMING one, whose
+            # RSI/MACD/EMA state can keep changing bar-to-bar as more
+            # 60-minute candles arrive later the same day - exactly the
+            # kind of flip-flopping "always giving issues" symptom that
+            # was reported. So the last row is dropped whenever it's
+            # today's bucket and hasn't actually reached its own close
+            # time yet (accounting for the final bucket of the day being
+            # a short 13:15-15:30 bar, not a full 4 hours).
+            last_ts = df.index[-1]
+            now = now_ist()
+            if last_ts.date() == now.date():
+                session_close = last_ts.replace(hour=15, minute=30, second=0, microsecond=0)
+                expected_close = min(last_ts + dt.timedelta(hours=4), session_close)
+                if now < expected_close and len(df) > 1:
+                    df = df.iloc[:-1]
+            if len(df) < 30:
+                log.info(
+                    "4-hour resample only produced %d closed bars (from %d raw candles) for "
+                    "token=%s - indicators may still be warming up",
+                    len(df), raw_count, instrument_token,
+                )
     return df
 
 

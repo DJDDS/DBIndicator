@@ -61,6 +61,15 @@ def _cross_down(a, b):
 
 _INTRADAY_TIMEFRAMES = ("15minute", "4hour")
 
+# Timeframes whose OWN candle size is smaller than OPENING_WINDOW_MINUTES,
+# i.e. a candle labeled 9:15 genuinely IS (part of) the noisy opening
+# window itself. Deliberately separate from _INTRADAY_TIMEFRAMES above:
+# a 4-hour bar labeled 9:15 spans the ENTIRE 9:15-13:15 block, not just
+# the first 15 minutes, so applying this check to it would wrongly
+# exclude every stock's current 4-hour bar for the first four hours of
+# every trading day - that was a real bug, not a hypothetical one.
+_OPENING_WINDOW_TIMEFRAMES = ("15minute",)
+
 REL_VOLUME_THRESHOLD = 1.2  # vol_confirmed: latest candle's volume vs its own 20-bar average
 RSI_OVERBOUGHT = 65   # rsi_threshold param's Bullish side (backtest.py and the dashboard's
 RSI_OVERSOLD = 35     # custom filter both import these two, so they stay in sync) - Bearish side
@@ -73,9 +82,11 @@ OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9
 def _in_opening_window(ts, timeframe: str) -> bool:
     """True if this candle's timestamp falls within the first
     OPENING_WINDOW_MINUTES minutes after the 9:15 IST market open. Only
-    meaningful for intraday timeframes - a daily/weekly candle spans a
-    whole session (or more), so this never applies to those."""
-    if timeframe not in _INTRADAY_TIMEFRAMES:
+    meaningful for a timeframe whose own candle size is smaller than
+    that window (see _OPENING_WINDOW_TIMEFRAMES) - a daily/weekly/4-hour
+    candle spans a whole session (or more), so this never applies to
+    those regardless of what its bin label happens to be."""
+    if timeframe not in _OPENING_WINDOW_TIMEFRAMES:
         return False
     market_open = ts.replace(hour=9, minute=15, second=0, microsecond=0)
     return market_open <= ts < market_open + dt.timedelta(minutes=OPENING_WINDOW_MINUTES)
