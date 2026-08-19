@@ -288,7 +288,9 @@ def backtest_page():
         logged_in=kite_auth.is_logged_in_today(),
         valid_timeframes=config.VALID_TIMEFRAMES,
         default_timeframe=settings.TIMEFRAME,
-        min_required=settings.MIN_REQUIRED,
+        param_defs=backtest.PARAM_DEFS,
+        default_params=list(backtest.DEFAULT_PARAMS),
+        default_required=backtest.DEFAULT_REQUIRED,
         state=backtest.get_backtest_state(),
     )
 
@@ -316,8 +318,24 @@ def api_backtest_start():
     if not horizons:
         return jsonify({"started": False, "reason": "at least one horizon is required"}), 400
 
+    params_raw = form.get("params", "")
+    params = tuple(p.strip() for p in params_raw.split(",") if p.strip())
+    params = tuple(p for p in params if p in backtest.PARAM_IDS)
+    if not params:
+        return jsonify({"started": False, "reason": "select at least one parameter"}), 400
+    try:
+        required = int(form.get("required", backtest.DEFAULT_REQUIRED))
+    except ValueError:
+        return jsonify({"started": False, "reason": "required must be a number"}), 400
+    if not (1 <= required <= len(params)):
+        return jsonify({
+            "started": False,
+            "reason": f"required must be between 1 and {len(params)} (the number of parameters you selected)",
+        }), 400
+
     result = backtest.start_backtest(
-        kite, symbols=settings.WATCHLIST, timeframe=timeframe, days=days, horizons=horizons
+        kite, symbols=settings.WATCHLIST, timeframe=timeframe, days=days, horizons=horizons,
+        params=params, required=required,
     )
     return jsonify(result)
 

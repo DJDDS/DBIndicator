@@ -1,20 +1,29 @@
 """
-Historical backtest for the core RSI + MACD + EMA/Bollinger confluence
-signal - the same 3-indicator rule that fires a fresh alert on the live
-dashboard (Quick Settings' Required dropdown: 2-of-3 or 3-of-3 strict;
-see alerts.py, which triggers on this exact fresh_signal crossover
-event, not just a lingering "still aligned" state). Instead of guessing
-a win rate, this replays that exact rule bar by bar over real historical
-price data pulled from your own Kite connection, and reports what
-actually would have happened - win rate, average return, and worst
-drawdown per trade, at whichever holding-period horizons you pick, with
-Bullish and Bearish setups broken out separately since a strategy's
-edge (or lack of one) often differs by direction.
+Historical backtest for a customizable RSI/MACD/EMA-BB/volume signal.
+Rather than a single fixed 3-indicator rule, you choose which of the
+available PARAM_DEFS to combine (checkboxes on the backtest page) and
+how many of your chosen ones must agree at once (the "required" count) -
+so you can test your own combination, not just the dashboard's default.
 
-Deliberately does NOT layer on Open Interest structure, OI
-acceleration, volume, or VWAP - this tests the pure 3-parameter
-confluence signal on its own, not the broader "High-Conviction"
-composite filter shown on the dashboard.
+Available parameters (see PARAM_DEFS below):
+  - RSI Cross / MACD Cross / EMA-BB Cross: the original 3 crossover
+    events - each fires only on the exact bar the cross happens (see
+    indicators.py's rsi_up/rsi_dn etc.), same events that trigger a
+    Telegram alert (alerts.py keys off fresh_signal, not a lingering
+    "still aligned" state - see the git history on this file for why
+    that distinction matters: a majority-state check is always true
+    with 3 indicators and silently produces zero backtest trades).
+  - RSI Threshold: RSI > 65 for Bullish, RSI < 35 for Bearish - a
+    momentum/extremity state rather than a crossover, so it can span
+    many consecutive bars.
+  - Relative Volume: today's bar's volume vs its own 20-bar average,
+    > 1.2x - a conviction/confirmation state, applied the same way to
+    both directions.
+
+A signal fires the moment at least `required` of your chosen parameters
+agree on the same direction at once; a rising-edge check still turns
+that into discrete entries (so a state that stays true for a stretch of
+bars only counts as one trade, not one per bar).
 
 Reuses indicators.compute_series() directly rather than reimplementing
 the indicator math in a separate form, so results here stay faithful
@@ -52,6 +61,24 @@ _RATE_LIMIT_PAUSE = 0.35  # ~3 req/sec, matching Kite's historical-data rate lim
 MAX_TRADES_RETURNED = 500  # cap on the trade-by-trade list sent to the browser
                             # (see run_backtest) - summary stats always use every trade
 
+RSI_OVERBOUGHT = 65    # rsi_threshold param's Bullish side
+RSI_OVERSOLD = 35      # rsi_threshold param's mirrored Bearish side
+REL_VOLUME_THRESHOLD = 1.2   # rel_volume param: today's bar vs its 20-bar avg volume
+
+# The full menu of selectable backtest parameters - shown as checkboxes on
+# the backtest page (web.py passes PARAM_DEFS straight to the template so
+# labels stay in one place). Add a new one here and in _param_bull_bear().
+PARAM_DEFS = [
+    {"id": "rsi_cross", "label": "RSI Cross (vs its smoothing line)"},
+    {"id": "macd_cross", "label": "MACD Cross (vs signal line)"},
+    {"id": "ema_bb_cross", "label": "EMA9 vs Bollinger Mid Cross"},
+    {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
+    {"id": "rel_volume", "label": f"Relative Volume > {REL_VOLUME_THRESHOLD}x (20-bar avg) - confirmation only, combine with a directional parameter"},
+]
+PARAM_IDS = [p["id"] for p in PARAM_DEFS]
+DEFAULT_PARAMS = ("rsi_cross", "macd_cross", "ema_bb_cross")  # the original 3-indicator rule
+DEFAULT_REQUIRED = 2
+
 
 # --------------------------------------------------------------------------
 # Background job plumbing (mirrors background.py's pattern: a lock-guarded
@@ -80,7 +107,8 @@ def _progress_cb(done, total, symbol):
         _bt_state["progress"] = {"done": done, "total": total, "symbol": symbol}
 
 
-def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS) -> dict:
+def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS,
+                    params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED) -> dict:
     """Kicks off a backtest run in a background thread. Returns
     {"started": True} or {"started": False, "reason": ...} if one is
     already running - only one backtest runs at a time."""
@@ -89,24 +117,31 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
             return {"started": False, "reason": "A backtest is already running."}
         symbols = list(symbols or settings.WATCHLIST)
         timeframe = timeframe or settings.TIMEFRAME
+        params = tuple(params)
         _bt_state["status"] = "running"
         _bt_state["progress"] = {"done": 0, "total": len(symbols), "symbol": None}
-        _bt_state["params"] = {"timeframe": timeframe, "days": days, "horizons": list(horizons)}
+        _bt_state["params"] = {
+            "timeframe": timeframe, "days": days, "horizons": list(horizons),
+            "params": list(params), "required": required,
+        }
         _bt_state["result"] = None
         _bt_state["error"] = None
         _bt_state["started_at"] = now_ist().isoformat(timespec="seconds")
         _bt_state["finished_at"] = None
 
     thread = threading.Thread(
-        target=_run_backtest_job, args=(kite, symbols, timeframe, days, horizons), daemon=True
+        target=_run_backtest_job, args=(kite, symbols, timeframe, days, horizons, params, required), daemon=True
     )
     thread.start()
     return {"started": True}
 
 
-def _run_backtest_job(kite, symbols, timeframe, days, horizons):
+def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required):
     try:
-        result = run_backtest(kite, symbols, timeframe=timeframe, days=days, horizons=horizons, progress_cb=_progress_cb)
+        result = run_backtest(
+            kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
+            params=params, required=required, progress_cb=_progress_cb,
+        )
         with _bt_lock:
             _bt_state["status"] = "done"
             _bt_state["result"] = result
@@ -126,9 +161,8 @@ def _run_backtest_job(kite, symbols, timeframe, days, horizons):
 
 def _fetch_history(token, timeframe, days, kite):
     """Returns a DataFrame of open/high/low/close/volume candles for one
-    symbol - just the one Kite API call needed for the pure 3-indicator
-    signal (no futures/OI lookup, unlike the old High-Conviction
-    backtest, since this rule doesn't use OI at all)."""
+    symbol - just the one Kite API call needed (no futures/OI lookup,
+    since none of the selectable parameters use OI)."""
     to_date = now_ist()
     from_date = to_date - dt.timedelta(days=days)
     interval = "60minute" if timeframe == "4hour" else timeframe
@@ -148,33 +182,67 @@ def _fetch_history(token, timeframe, days, kite):
 
 
 # --------------------------------------------------------------------------
-# Vectorized replay of the 3-indicator confluence signal over a symbol's
+# Vectorized replay of the chosen parameter combination over a symbol's
 # full history
 # --------------------------------------------------------------------------
 
-def _fresh_signal_series(series: dict):
-    """Mirrors compute_signal()'s fresh_signal field bar-by-bar - the same
-    event that fires a Telegram alert (alerts.py keys off r["fresh_signal"],
-    not a lingering "still aligned" state). A signal fires on the specific
-    bar where RSI/MACD/EMA-BB CROSSOVERS (rsi_up/rsi_dn, macd_up/macd_dn,
-    ema_up/ema_dn - each true only on the exact bar the cross happens)
-    reach settings.MIN_REQUIRED in the same direction.
+def _param_bull_bear(series: dict, param_id: str):
+    """Returns (bullish_bool_series, bearish_bool_series) for one
+    selectable parameter, aligned to series' index. The *_cross
+    parameters are single-bar pulses (true only on the exact bar the
+    cross happens); rsi_threshold and rel_volume are states that can
+    stay true for a stretch of consecutive bars."""
+    if param_id == "rsi_cross":
+        return series["rsi_up"], series["rsi_dn"]
+    if param_id == "macd_cross":
+        return series["macd_up"], series["macd_dn"]
+    if param_id == "ema_bb_cross":
+        return series["ema_up"], series["ema_dn"]
+    if param_id == "rsi_threshold":
+        rsi_line = series["rsi_line"]
+        return rsi_line > RSI_OVERBOUGHT, rsi_line < RSI_OVERSOLD
+    if param_id == "rel_volume":
+        volume = series["df"]["volume"]
+        vol_avg = series["vol_avg"]
+        rel_vol = volume / vol_avg.replace(0, np.nan)
+        is_hot = rel_vol.notna() & (rel_vol > REL_VOLUME_THRESHOLD)
+        return is_hot, is_hot.copy()  # same condition confirms either direction
+    raise ValueError(f"unknown backtest parameter: {param_id}")
 
-    Deliberately NOT based on the continuous "aligned >= min_required"
-    majority state used elsewhere for display (index.html's Matching Now
-    list, background.py's positional_qualified): with 3 indicators the
-    majority side is always >= 2 by construction (you can't split 3 ways
-    into anything narrower than 2-1), so that state is true on almost
-    every bar once MIN_REQUIRED=2 - a rising-edge entry off of it would
-    only ever fire once, at the very first bar of data, which is exactly
-    the bug this replaces. Crossovers are momentary events, so they stay
-    meaningful as backtest entry triggers."""
-    bull_count = series["rsi_up"].astype(int) + series["macd_up"].astype(int) + series["ema_up"].astype(int)
-    bear_count = series["rsi_dn"].astype(int) + series["macd_dn"].astype(int) + series["ema_dn"].astype(int)
-    is_bull = bull_count >= settings.MIN_REQUIRED
-    is_bear = bear_count >= settings.MIN_REQUIRED
+
+def _signal_series(series: dict, params, required: int):
+    """Combines the chosen parameters bar-by-bar: has_signal is true on
+    any bar where at least `required` of them agree on the same
+    direction at once. Deliberately NOT the continuous "aligned >=
+    min_required" majority state used elsewhere for display (index.html's
+    Matching Now list, background.py's positional_qualified) - with only
+    the original 3 crossover parameters selected that state is always
+    >= 2 by construction (3 things can't split narrower than 2-1), which
+    would make has_signal always true and silently produce zero trades.
+    Mixing in threshold-type parameters (rsi_threshold, rel_volume) is
+    safe here because those are genuine, sometimes-false conditions."""
+    index = series["rsi_line"].index
+    bull_count = pd.Series(0, index=index)
+    bear_count = pd.Series(0, index=index)
+    for param_id in params:
+        bull, bear = _param_bull_bear(series, param_id)
+        bull_count = bull_count + bull.reindex(index).fillna(False).astype(int)
+        bear_count = bear_count + bear.reindex(index).fillna(False).astype(int)
+
+    # Directional dominance, not just threshold-reached: rel_volume's
+    # bull/bear flags are literally the same series (it's a confirmation
+    # condition with no inherent direction of its own), so bull_count and
+    # bear_count can tie at >= required simultaneously - e.g. selecting
+    # rel_volume by itself. Without this guard that tie would always get
+    # silently labeled "Bullish", inventing a direction that isn't really
+    # there. Requiring the OTHER side to stay below `required` means a
+    # pure confirmation-only selection correctly produces zero trades
+    # instead of mislabeled ones - combine it with at least one directional
+    # parameter (a *_cross or rsi_threshold) to get real entries.
+    is_bull = (bull_count >= required) & (bear_count < required)
+    is_bear = (bear_count >= required) & (bull_count < required)
     has_signal = is_bull | is_bear
-    direction = pd.Series(np.where(is_bull, "Bullish", "Bearish"), index=bull_count.index)
+    direction = pd.Series(np.where(is_bull, "Bullish", "Bearish"), index=index)
     return has_signal, direction
 
 
@@ -228,17 +296,16 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
     }
 
 
-def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons):
-    """Entry = the bar where a fresh RSI/MACD/EMA-BB crossover signal
-    fires (see _fresh_signal_series) - the same event that would have
-    sent you a Telegram alert. Still de-duped via a rising edge so a
-    signal that stays true for a couple of consecutive bars only counts
-    once. No OI, volume or VWAP involved - purely the 3 indicators."""
+def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required):
+    """Entry = the bar where your chosen parameter combination first
+    reaches `required` agreement (see _signal_series), de-duped via a
+    rising edge so a signal that stays true for a stretch of bars only
+    counts once."""
     series = compute_series(df, timeframe)
     if "error" in series:
         return []
 
-    has_signal, direction = _fresh_signal_series(series)
+    has_signal, direction = _signal_series(series, params, required)
     entries = has_signal & ~has_signal.shift(1).fillna(False)
 
     trades = []
@@ -297,9 +364,17 @@ def _summarize(trades, horizons):
     }
 
 
-def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS, progress_cb=None) -> dict:
+def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
+                  params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None) -> dict:
     days = min(int(days or 30), MAX_BACKTEST_DAYS)
     horizons = tuple(sorted({int(h) for h in horizons if int(h) > 0})) or DEFAULT_HORIZONS
+
+    params = tuple(p for p in (params or ()) if p in PARAM_IDS) or DEFAULT_PARAMS
+    try:
+        required = int(required)
+    except (TypeError, ValueError):
+        required = DEFAULT_REQUIRED
+    required = max(1, min(required, len(params)))
 
     instruments = _load_instrument_map(kite)
     to_date = now_ist()
@@ -329,7 +404,9 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
             continue
 
         try:
-            symbol_trades = _replay_symbol(df, symbol, timeframe, window_start.replace(tzinfo=None), horizons)
+            symbol_trades = _replay_symbol(
+                df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("Backtest replay failed for %s", symbol)
             symbol_notes[symbol] = f"replay failed: {exc}"
@@ -341,12 +418,12 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
 
     trades.sort(key=lambda t: t["entry_time"])
 
-    # Without OI/volume filtering the signal fires far more often -
-    # a loose 2-of-3 Required setting over a big watchlist can produce
-    # thousands of trades. Win-rate/return stats below are computed from
-    # the FULL trade list either way; only the trade-by-trade list sent
-    # to the browser for display is capped, so the page stays responsive
-    # and the response doesn't balloon into megabytes.
+    # A loose combination (few required out of many chosen) fires far
+    # more often - can produce thousands of trades over a big watchlist.
+    # Win-rate/return stats below are computed from the FULL trade list
+    # either way; only the trade-by-trade list sent to the browser for
+    # display is capped, so the page stays responsive and the response
+    # doesn't balloon into megabytes.
     summary = _summarize(trades, horizons)
     total_trade_count = len(trades)
     display_trades = trades[-MAX_TRADES_RETURNED:]
@@ -355,7 +432,8 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "timeframe": timeframe,
         "days_requested": days,
         "horizons": list(horizons),
-        "min_required": settings.MIN_REQUIRED,
+        "params": list(params),
+        "required": required,
         "window_start": window_start.isoformat(timespec="seconds"),
         "window_end": to_date.isoformat(timespec="seconds"),
         "symbols_scanned": len(symbols),

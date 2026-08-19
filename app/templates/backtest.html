@@ -68,23 +68,21 @@
   <div class="card">
     <h2>What this does</h2>
     <p>
-      Replays the core 3-indicator confluence signal - RSI vs its smoothing line, MACD vs its
-      signal line, and EMA vs the Bollinger middle band - bar by bar over real historical price
-      data from your Kite connection. An entry fires the moment alignment first reaches your
-      Quick Settings "Required" threshold (currently <strong>{{ min_required }}-of-3</strong>),
-      exactly matching how the live dashboard decides a stock "has a signal." Deliberately does
-      <strong>not</strong> factor in Open Interest, volume, or VWAP - this tests the pure
-      3-parameter strategy on its own, separate from the broader "High-Conviction" filter on the
-      dashboard. Results are broken out for Bullish and Bearish setups separately, since a
-      strategy's edge often differs by direction.
+      Replays whichever parameters you pick below - bar by bar over real historical price data
+      from your Kite connection. An entry fires the moment at least your chosen "Required" count
+      of them agree on the same direction at once. Deliberately does <strong>not</strong> factor
+      in Open Interest or VWAP - this tests your own combination of indicator and volume
+      conditions on its own, separate from the broader "High-Conviction" filter on the dashboard.
+      Results are broken out for Bullish and Bearish setups separately, since a strategy's edge
+      often differs by direction.
     </p>
     <p>
-      <strong>Read before trusting the numbers:</strong> a low Required setting (2-of-3) fires
-      often and can produce hundreds of trades even over a short window - a high trade count
-      makes the win rate more statistically meaningful, but still isn't a guarantee of future
-      performance. A strict 3-of-3 setting fires far less often, so don't be surprised by a
-      small trade count there. This is not investment advice - use it to sanity-check the rule,
-      not as a promise of returns.
+      <strong>Read before trusting the numbers:</strong> picking fewer required out of more
+      selected parameters fires often and can produce hundreds of trades even over a short
+      window - a high trade count makes the win rate more statistically meaningful, but still
+      isn't a guarantee of future performance. Requiring most or all of your selected parameters
+      fires far less often, so don't be surprised by a small trade count there. This is not
+      investment advice - use it to sanity-check the rule, not as a promise of returns.
     </p>
   </div>
 
@@ -114,6 +112,23 @@
           </div>
         </div>
       </div>
+      <div style="margin-top:16px;">
+        <label>Parameters (pick your own combination)</label>
+        <div class="horizons" id="bt-params">
+          {% for p in param_defs %}
+          <label class="chk" style="display:flex; margin-bottom:6px;">
+            <input type="checkbox" name="param" value="{{ p.id }}" {{ 'checked' if p.id in default_params else '' }}> {{ p.label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="row" style="grid-template-columns: 1fr 3fr; margin-top:6px;">
+        <div>
+          <label for="bt-required">Required (of selected)</label>
+          <input type="number" id="bt-required" name="required" value="{{ default_required }}" min="1" max="{{ param_defs|length }}">
+          <div class="hint" id="bt-required-hint"></div>
+        </div>
+      </div>
       <div style="margin-top:18px;">
         <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Backtest</button>
         <span class="hint" id="bt-form-hint" style="margin-left:10px;"></span>
@@ -129,6 +144,7 @@
 
   <div class="card" id="bt-results">
     <h2>Results</h2>
+    <p class="hint" id="bt-signal-desc" style="margin:-4px 0 14px;"></p>
     <div class="stat-tiles" id="bt-tiles"></div>
     <div id="bt-groups"></div>
 
@@ -154,6 +170,9 @@
 
 <script>
 const initialState = {{ state | tojson }};
+const PARAM_LABELS = {};
+{% for p in param_defs %}PARAM_LABELS['{{ p.id }}'] = {{ p.label | tojson }};
+{% endfor %}
 
 function fmtPct(v) {
   if (v === null || v === undefined) return '—';
@@ -199,6 +218,11 @@ function renderResult(result) {
   const allOv = (summary.all || {}).overall || {};
   const bullOv = (summary.bullish || {}).overall || {};
   const bearOv = (summary.bearish || {}).overall || {};
+
+  const chosenParams = result.params || [];
+  const chosenLabels = chosenParams.map(p => PARAM_LABELS[p] || p);
+  document.getElementById('bt-signal-desc').textContent =
+    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}`;
 
   const tiles = document.getElementById('bt-tiles');
   tiles.innerHTML = `
@@ -291,6 +315,23 @@ function updateUI(state) {
   }
 }
 
+function selectedParamCheckboxes() {
+  return Array.from(document.querySelectorAll('input[name=param]'));
+}
+
+function syncRequiredMax() {
+  const checked = selectedParamCheckboxes().filter(el => el.checked);
+  const requiredInput = document.getElementById('bt-required');
+  const hint = document.getElementById('bt-required-hint');
+  requiredInput.max = Math.max(checked.length, 1);
+  if (checked.length && Number(requiredInput.value) > checked.length) {
+    requiredInput.value = checked.length;
+  }
+  hint.textContent = checked.length ? `1–${checked.length} (you've selected ${checked.length})` : 'Select at least one parameter above.';
+}
+selectedParamCheckboxes().forEach(el => el.addEventListener('change', syncRequiredMax));
+syncRequiredMax();
+
 document.getElementById('bt-form').addEventListener('submit', function (e) {
   e.preventDefault();
   const form = new FormData(this);
@@ -299,10 +340,23 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
     document.getElementById('bt-form-hint').textContent = 'Pick at least one horizon.';
     return;
   }
+  const params = selectedParamCheckboxes().filter(el => el.checked).map(el => el.value);
+  if (!params.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one parameter.';
+    return;
+  }
+  const required = Number(document.getElementById('bt-required').value) || 1;
+  if (required < 1 || required > params.length) {
+    document.getElementById('bt-form-hint').textContent =
+      `Required must be between 1 and ${params.length} (the number of parameters you selected).`;
+    return;
+  }
   const body = new URLSearchParams();
   body.set('timeframe', form.get('timeframe'));
   body.set('days', form.get('days'));
   body.set('horizons', horizons.join(','));
+  body.set('params', params.join(','));
+  body.set('required', String(required));
   document.getElementById('bt-form-hint').textContent = '';
   fetch('/api/backtest/start', { method: 'POST', body: body })
     .then(r => r.json())
