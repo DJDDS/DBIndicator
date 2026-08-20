@@ -21,15 +21,19 @@
   .signal-card { text-align: center; padding: 28px 22px; }
   .signal-card.bull { border-color: rgba(46,204,113,0.4); }
   .signal-card.bear { border-color: rgba(239,68,68,0.4); }
+  .signal-card.wait { border-color: rgba(245,165,36,0.35); }
   .big-direction { font-size: 34px; font-weight: 800; letter-spacing: 0.01em; }
   .big-direction.bull { color: var(--green); }
   .big-direction.bear { color: var(--red); }
+  .big-direction.wait { color: var(--amber); font-size: 28px; }
   .big-price { font-size: 20px; color: var(--muted); margin-top: 4px; }
+  .trade-reason { margin-top: 6px; font-size: 13px; color: var(--amber); }
   .confirmed-line { margin-top: 10px; font-size: 14px; }
   .confirmed-badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; }
   .confirmed-badge.yes { background: rgba(46,204,113,0.15); color: var(--green); }
   .confirmed-badge.no { background: rgba(255,255,255,0.06); color: var(--muted); }
   .opening-note { margin-top: 10px; font-size: 12px; color: var(--amber); }
+  .direction-sub { margin-top: 8px; font-size: 12px; color: var(--muted); }
   .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
   @media (max-width: 700px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
   .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; text-align: center; }
@@ -78,6 +82,8 @@
   <div class="card signal-card" id="signal-card">
     <div class="big-direction" id="big-direction">&mdash;</div>
     <div class="big-price" id="big-price">&mdash;</div>
+    <div class="direction-sub" id="direction-sub"></div>
+    <div class="trade-reason" id="trade-reason" style="display:none;"></div>
     <div class="confirmed-line" id="confirmed-line"></div>
     <div class="opening-note" id="opening-note" style="display:none;">Within the first 15 minutes of the open (before 9:30) - signal held back, still warming up.</div>
   </div>
@@ -90,10 +96,11 @@
   </div>
 
   <div class="card" id="levels-card">
+    <div class="tile-label" style="margin-bottom:12px;">Trade Ticket (informational only - nothing here is ever auto-placed)</div>
     <div class="levels-row">
-      <div class="level"><div class="level-label">Suggested Stop</div><div class="level-value stop" id="level-stop">&mdash;</div></div>
+      <div class="level"><div class="level-label">Stop Loss</div><div class="level-value stop" id="level-stop">&mdash;</div></div>
       <div class="level"><div class="level-label">Entry (LTP)</div><div class="level-value entry" id="level-entry">&mdash;</div></div>
-      <div class="level"><div class="level-label">Suggested Target</div><div class="level-value target" id="level-target">&mdash;</div></div>
+      <div class="level"><div class="level-label">Target</div><div class="level-value target" id="level-target">&mdash;</div></div>
       <div class="level"><div class="level-label">R:R</div><div class="level-value entry" id="level-rr">&mdash;</div></div>
     </div>
   </div>
@@ -101,6 +108,9 @@
   <p class="footnote">
     OHLCV is sourced from the nearest-expiry NIFTY 50 index futures contract, not the raw index - the raw index
     reports 0 volume on Kite historical data, which would permanently zero out the Relative Volume parameter below.
+    <strong>BUY/SELL/WAIT</strong> at the top is the actual trade call - BUY or SELL only shows once
+    {{ min_required }} of 4 parameters agree AND the opening-window warm-up has passed; otherwise it shows WAIT with
+    the reason underneath, and "Underlying bias" still shows which way price currently leans even while waiting.
     <strong>Confirmed</strong> = how many of the 4 scalp parameters currently agree with the shown direction
     ({{ min_required }} of 4 required to count as a signal). <strong>EMA 5/13</strong> and <strong>VWAP</strong>
     show which side price is currently on (fast EMA vs slower EMA; last traded price vs the running intraday VWAP)
@@ -126,6 +136,8 @@
       document.getElementById('big-direction').textContent = '—';
       document.getElementById('big-direction').className = 'big-direction';
       document.getElementById('big-price').textContent = (sig && sig.error) ? sig.error : 'Waiting for first scan...';
+      document.getElementById('direction-sub').textContent = '';
+      document.getElementById('trade-reason').style.display = 'none';
       document.getElementById('confirmed-line').innerHTML = '';
       document.getElementById('opening-note').style.display = 'none';
       ['tile-ema', 'tile-vwap', 'tile-rsi', 'tile-vol'].forEach(function (id) { document.getElementById(id).textContent = '—'; });
@@ -135,12 +147,27 @@
       return;
     }
 
-    var cls = sig.direction === 'Bullish' ? 'bull' : 'bear';
+    // Lead with the trade instruction (BUY/SELL/WAIT), not the bare
+    // direction - trade_action/trade_label/trade_reason come straight
+    // from scalper.compute_scalp_signal, which already folds
+    // signal_confirmed + opening-window into a single decisive call.
+    var action = sig.trade_action || 'WAIT';
+    var cls = action === 'BUY' ? 'bull' : action === 'SELL' ? 'bear' : 'wait';
+    var arrow = action === 'BUY' ? '▲ ' : action === 'SELL' ? '▼ ' : '⏸ ';
     contractEl.textContent = 'Contract: ' + (sig.future_symbol || '—');
     document.getElementById('signal-card').className = 'card signal-card ' + cls;
-    document.getElementById('big-direction').textContent = (sig.direction === 'Bullish' ? '▲ ' : '▼ ') + sig.direction;
+    document.getElementById('big-direction').textContent = arrow + (sig.trade_label || action);
     document.getElementById('big-direction').className = 'big-direction ' + cls;
     document.getElementById('big-price').textContent = fmtPrice(sig.close);
+    document.getElementById('direction-sub').textContent = 'Underlying bias: ' + (sig.direction || '—');
+
+    var reasonEl = document.getElementById('trade-reason');
+    if (action === 'WAIT' && sig.trade_reason) {
+      reasonEl.textContent = sig.trade_reason;
+      reasonEl.style.display = 'block';
+    } else {
+      reasonEl.style.display = 'none';
+    }
 
     var badgeCls = sig.signal_confirmed ? 'yes' : 'no';
     document.getElementById('confirmed-line').innerHTML = '<span class="confirmed-badge ' + badgeCls + '">' + sig.confirmed_count + ' of 4' + (sig.signal_confirmed ? ' - confirmed' : '') + '</span>';

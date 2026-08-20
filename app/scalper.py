@@ -179,6 +179,23 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
     in_opening_window = _in_opening_window(df.index[i], SCALP_TIMEFRAME)
     signal_confirmed = confirmed_count >= MIN_REQUIRED_SCALP and not in_opening_window
 
+    # Trade-actionable framing, on top of the raw direction/confirmed
+    # fields above: rather than making the caller translate "Bullish +
+    # confirmed" into "go long" themselves, decide the actual instruction
+    # here. WAIT (not BUY/SELL) whenever signal_confirmed is False, with a
+    # short reason so the page can explain *why* there's no trade right
+    # now instead of just showing a blank/muted state.
+    if signal_confirmed:
+        trade_action = "BUY" if direction == "Bullish" else "SELL"
+        trade_reason = None
+    else:
+        trade_action = "WAIT"
+        if in_opening_window:
+            trade_reason = "Opening-window warm-up (first 15 min of the session)"
+        else:
+            trade_reason = "Only %d of 4 aligned (need %d)" % (confirmed_count, MIN_REQUIRED_SCALP)
+    trade_label = (trade_action + " NIFTY FUT") if trade_action != "WAIT" else "NO TRADE - WAIT"
+
     atr_val = series["atr"].iloc[i]
     entry = float(close.iloc[i])
     stop = target = None
@@ -204,6 +221,9 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
         "confirmed_count": confirmed_count,
         "in_opening_window": in_opening_window,
         "signal_confirmed": signal_confirmed,
+        "trade_action": trade_action,
+        "trade_label": trade_label,
+        "trade_reason": trade_reason,
         "atr": round(float(atr_val), 2) if pd.notna(atr_val) else None,
         "stop": stop,
         "target": target,

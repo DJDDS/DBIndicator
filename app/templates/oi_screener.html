@@ -127,6 +127,13 @@
       <option value="">All Tiers</option>
       <option value="4">4 of 4</option><option value="3">3 of 4</option><option value="2">2 of 4</option>
     </select>
+    <select id="f-oimove" title="Filters on the biggest of Day/15m/30m/60m OI % change">
+      <option value="">Any OI Move</option>
+      <option value="has">OI actually moving (has data)</option>
+      <option value="1">OI move ≥ 1%</option>
+      <option value="2">OI move ≥ 2%</option>
+      <option value="5">OI move ≥ 5%</option>
+    </select>
     <div class="toolbar-spacer"></div>
     <div class="toolbar-meta">
       <span id="symbol-count">— symbols</span> &middot; <span id="updated-at">not loaded yet</span>
@@ -174,7 +181,9 @@
     cumulative one alone. <strong>OI Structure</strong> compares today's price move against today's OI move (both
     since session open): both up is fresh buying (Long Buildup), both down is longs exiting (Long Unwinding), price
     down with OI up is fresh shorting (Short Buildup), price up with OI down is shorts covering (Short Covering).
-    This page refreshes itself roughly every 20 seconds - no need to reload.
+    The <strong>OI Move</strong> filter lets you jump straight to symbols whose OI numbers are actually moving -
+    "has data" hides rows still showing "—" (not enough scan history yet), and the % thresholds hide anything
+    moving less than that. This page refreshes itself roughly every 20 seconds - no need to reload.
   </p>
 
   {% endif %}
@@ -193,6 +202,17 @@
   }
   function fmtNum(v) {
     return (v === null || v === undefined) ? '—' : v.toLocaleString('en-IN');
+  }
+
+  function oiMoveMax(r) {
+    // Biggest of the four OI-change readings we track, ignoring
+    // whichever ones aren't populated yet (still "—") - used by the
+    // "OI Move" filter so it's easy to isolate symbols whose OI numbers
+    // are actually firing instead of scrolling past a page of dashes.
+    var vals = [r.oi_day_chg_pct, r.oi_chg_15m_pct, r.oi_chg_30m_pct, r.oi_chg_60m_pct]
+      .filter(function (v) { return v !== null && v !== undefined && !isNaN(v); })
+      .map(Math.abs);
+    return vals.length ? Math.max.apply(null, vals) : null;
   }
 
   function structureClass(s) {
@@ -235,8 +255,10 @@
       return;
     }
     tbody.innerHTML = rows.map(function (r) {
+      var move = oiMoveMax(r);
       return '<tr class="data-row" data-symbol="' + r.symbol + '" data-structure="' + (r.oi_structure || '') +
         '" data-accel="' + (r.oi_accel_label || '') + '" data-tier="' + (r.param_tier || '') +
+        '" data-oimove="' + (move === null ? '' : move) +
         '" onclick="window.location=\'/chart/' + r.symbol + '\'">' + rowHtml(r) + '</tr>';
     }).join('');
   }
@@ -257,12 +279,22 @@
     var structureQ = document.getElementById('f-structure').value;
     var accelQ = document.getElementById('f-accel').value;
     var tierQ = document.getElementById('f-tier').value;
+    var oimoveQ = document.getElementById('f-oimove').value;
     document.querySelectorAll('#oi-tbody tr.data-row').forEach(function (row) {
       var ok = true;
       if (symbolQ && (row.getAttribute('data-symbol') || '').indexOf(symbolQ) === -1) ok = false;
       if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
       if (ok && accelQ && row.getAttribute('data-accel') !== accelQ) ok = false;
       if (ok && tierQ && row.getAttribute('data-tier') !== tierQ) ok = false;
+      if (ok && oimoveQ) {
+        var moveAttr = row.getAttribute('data-oimove');
+        var move = moveAttr === '' ? null : parseFloat(moveAttr);
+        if (oimoveQ === 'has') {
+          if (move === null) ok = false;
+        } else if (move === null || move < parseFloat(oimoveQ)) {
+          ok = false;
+        }
+      }
       row.classList.toggle('filtered-out', !ok);
     });
   }
@@ -297,7 +329,7 @@
   });
 
   ['f-symbol'].forEach(function (id) { document.getElementById(id).addEventListener('input', applyFilters); });
-  ['f-structure', 'f-accel', 'f-tier'].forEach(function (id) {
+  ['f-structure', 'f-accel', 'f-tier', 'f-oimove'].forEach(function (id) {
     document.getElementById(id).addEventListener('change', applyFilters);
   });
 
