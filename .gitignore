@@ -4,6 +4,7 @@ scanner_settings.json
 last_scan_results.json
 param_weights.json
 scalp_results.json
+multi_tf_results.json
 __pycache__/
 *.pyc
 .venv/

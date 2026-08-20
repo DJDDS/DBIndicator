@@ -58,6 +58,14 @@ PARAM_WEIGHTS_FILE = os.getenv("PARAM_WEIGHTS_FILE", "param_weights.json")
 # background loop on its own faster cadence.
 SCALP_RESULTS_FILE = os.getenv("SCALP_RESULTS_FILE", "scalp_results.json")
 
+# Where the dashboard's always-on 15-minute/60-minute/4-hour panel persists
+# its last scan per timeframe (also gitignored) - same restart-resilience
+# reasoning as SCAN_RESULTS_FILE above. See background.py's
+# MULTI_TF_TIMEFRAMES/_run_multi_tf_loop - this is a separate, additive
+# scan loop from the single Settings > Timeframe pipeline, so it gets its
+# own state/persistence file rather than sharing SCAN_RESULTS_FILE.
+MULTI_TF_RESULTS_FILE = os.getenv("MULTI_TF_RESULTS_FILE", "multi_tf_results.json")
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

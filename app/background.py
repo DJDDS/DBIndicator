@@ -11,7 +11,7 @@ import threading
 import time
 
 from . import alerts, kite_auth
-from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE
+from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
     classify_oi_structure, fetch_index_direction,
@@ -500,4 +500,142 @@ def _run_loop():
 
 def start_background_scanner():
     thread = threading.Thread(target=_run_loop, daemon=True)
+    thread.start()
+
+
+# --------------------------------------------------------------------------
+# Multi-timeframe dashboard panel - scans 15-minute, 60-minute, and 4-hour
+# independently of the single Settings > Timeframe pipeline above, each on
+# its own schedule matched to how often that candle size actually produces
+# new information (no point re-scanning a 4-hour bar every 3 minutes the
+# way the 15-minute one needs). Added because picking one timeframe to see
+# "the" signal meant switching back and forth in Settings just to check
+# what a different timeframe was saying - this keeps all three visible on
+# the dashboard at once instead, with the existing single-timeframe
+# pipeline (and everything downstream of it - OI Screener, Alerts,
+# Backtest, positional_qualified/high_conviction) completely untouched.
+#
+# Deliberately its own state/lock/persistence file rather than folding
+# into _state above - this runs 3 independent scan_watchlist() calls on 3
+# different schedules from one thread, which is a different shape than
+# the single always-in-sync _state the rest of this module manages.
+# --------------------------------------------------------------------------
+
+MULTI_TF_TIMEFRAMES = ("15minute", "60minute", "4hour")
+
+# Seconds between re-scans, PER timeframe - not how often the dashboard
+# page refreshes (that's still the usual 20s client-side poll industry-
+# wide across this app); this is how often each timeframe's own Kite
+# historical_data call actually re-runs. 15-minute matches the existing
+# single-timeframe default (SCAN_INTERVAL_SECONDS' own default of 180s);
+# 60-minute and 4-hour are deliberately slower since their own candles
+# close far less often, so there's little informational gain (and real
+# extra Kite API load) in scanning them as fast as the 15-minute one.
+MULTI_TF_SCAN_INTERVAL_SECONDS = {
+    "15minute": 180,   # 3 min
+    "60minute": 600,   # 10 min - candle only closes hourly
+    "4hour": 900,      # 15 min - candle only closes every 4 hours
+}
+
+_multi_tf_lock = threading.Lock()
+_multi_tf_state = {
+    tf: {"results": [], "last_scan": None, "last_error": None} for tf in MULTI_TF_TIMEFRAMES
+}
+# Epoch seconds (time.time()) each timeframe is next due to be re-scanned -
+# 0.0 for all three at startup so every timeframe scans on the very first
+# loop iteration after a (re)start, rather than waiting a full interval.
+_multi_tf_next_due = {tf: 0.0 for tf in MULTI_TF_TIMEFRAMES}
+
+
+def _load_persisted_multi_tf_state():
+    if not os.path.exists(MULTI_TF_RESULTS_FILE):
+        return
+    try:
+        with open(MULTI_TF_RESULTS_FILE) as f:
+            saved = json.load(f)
+        if not isinstance(saved, dict):
+            return
+        with _multi_tf_lock:
+            for tf in MULTI_TF_TIMEFRAMES:
+                entry = saved.get(tf)
+                if isinstance(entry, dict):
+                    _multi_tf_state[tf]["results"] = entry.get("results", [])
+                    _multi_tf_state[tf]["last_scan"] = entry.get("last_scan")
+                    _multi_tf_state[tf]["last_error"] = None
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+def _save_persisted_multi_tf_state():
+    with _multi_tf_lock:
+        snapshot = {
+            tf: {"results": _multi_tf_state[tf]["results"], "last_scan": _multi_tf_state[tf]["last_scan"]}
+            for tf in MULTI_TF_TIMEFRAMES
+        }
+    try:
+        with open(MULTI_TF_RESULTS_FILE, "w") as f:
+            json.dump(snapshot, f, default=str)
+    except Exception:  # noqa: BLE001 - persistence must never crash the scan loop
+        log.exception("Failed to persist multi-timeframe results")
+
+
+_load_persisted_multi_tf_state()
+
+
+def get_multi_tf_state():
+    with _multi_tf_lock:
+        return {tf: dict(_multi_tf_state[tf]) for tf in MULTI_TF_TIMEFRAMES}
+
+
+def _scan_one_multi_tf(kite, tf):
+    """One timeframe's worth of the multi-tf panel: the same
+    scan_watchlist() + param-tier bucketing + index-agreement gate the
+    single-timeframe pipeline uses (so "Confirmed" means the same thing
+    here as it does everywhere else in the app), but deliberately skipping
+    _apply_oi_trend/_apply_oi_screener_fields/_apply_weighted_score - this
+    panel only needs symbol/direction/aligned/signal_confirmed/close, and
+    running the OI-history/day-baseline machinery 3x per cycle for data
+    this panel never displays would just be extra work and extra state to
+    persist for nothing."""
+    results = scan_watchlist(kite, timeframe=tf)
+    index_direction, _, _ = fetch_index_direction(kite, tf)
+    _apply_param_tier(results)
+    _apply_index_filter(results, index_direction)
+    with _multi_tf_lock:
+        _multi_tf_state[tf]["results"] = results
+        _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")
+        _multi_tf_state[tf]["last_error"] = None
+
+
+def _run_multi_tf_loop():
+    while True:
+        try:
+            kite = kite_auth.get_kite_client()
+            if kite is not None and is_market_open():
+                now = time.time()
+                scanned_any = False
+                for tf in MULTI_TF_TIMEFRAMES:
+                    if now < _multi_tf_next_due[tf]:
+                        continue
+                    try:
+                        _scan_one_multi_tf(kite, tf)
+                    except Exception as exc:  # noqa: BLE001 - one timeframe's failure must never block the others
+                        log.exception("Multi-timeframe scan failed for %s", tf)
+                        with _multi_tf_lock:
+                            _multi_tf_state[tf]["last_error"] = str(exc)
+                    _multi_tf_next_due[tf] = now + MULTI_TF_SCAN_INTERVAL_SECONDS[tf]
+                    scanned_any = True
+                if scanned_any:
+                    _save_persisted_multi_tf_state()
+            # Check every 30s regardless of each timeframe's own interval -
+            # cheap (just a few dict comparisons), and keeps whichever
+            # timeframe is due next from waiting longer than necessary.
+            time.sleep(30)
+        except Exception:  # noqa: BLE001 - never let this thread die
+            log.exception("Multi-timeframe scan loop hit an unexpected error - retrying")
+            time.sleep(30)
+
+
+def start_multi_tf_scanner():
+    thread = threading.Thread(target=_run_multi_tf_loop, daemon=True)
     thread.start()

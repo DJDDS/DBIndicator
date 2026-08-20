@@ -107,6 +107,15 @@
   .mn-col-title.bear { color: var(--red); }
   .mn-chip-scroll { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 5px; align-content: flex-start; max-height: 240px; overflow-y: auto; padding-right: 4px; }
 
+  /* Multi-Timeframe Signals: 15-min/60-min/4-hour, always visible - each
+     reuses the exact same match-chip/mn-* classes above at a shorter
+     scroll height, stacked with a divider instead of side-by-side, since
+     there are three of these instead of one. */
+  .mtf-block + .mtf-block { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .mtf-block h3 { margin: 0; font-size: 12.5px; color: var(--text); font-weight: 700; }
+  .mtf-block .sub { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .mtf-block .mn-chip-scroll { max-height: 140px; }
+
   /* Parameter Screener: 3 always-on tiers (2/3/4-of-4), side by side */
   .tier-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
   @media (max-width: 900px) { .tier-grid { grid-template-columns: 1fr; } }
@@ -354,6 +363,65 @@
         </div>
       </details>
     </div>
+  </div>
+
+  {% macro mtf_block(label, entry) %}
+    {% set ns3 = namespace(bull=0, bear=0) %}
+    {% for r in entry.results %}
+      {% if not r.error and r.aligned is defined and r.aligned >= min_required %}
+        {% if r.direction == 'Bullish' %}{% set ns3.bull = ns3.bull + 1 %}{% else %}{% set ns3.bear = ns3.bear + 1 %}{% endif %}
+      {% endif %}
+    {% endfor %}
+    <div class="mtf-block">
+      <div class="mn-header-row">
+        <h3>{{ label }} <span class="sub">{{ entry.last_scan or "waiting for first scan..." }}</span></h3>
+        <div class="mn-counts">
+          <span class="bull">▲ {{ ns3.bull }}</span>
+          <span class="bear">▼ {{ ns3.bear }}</span>
+        </div>
+      </div>
+      {% if entry.last_error %}
+      <p class="mn-empty" style="color:var(--red);">Last scan hit an error: {{ entry.last_error }}</p>
+      {% elif ns3.bull == 0 and ns3.bear == 0 %}
+      <p class="mn-empty">Nothing matching right now.</p>
+      {% else %}
+      <div class="mn-columns">
+        <div>
+          <h4 class="mn-col-title bull">▲ Bullish ({{ ns3.bull }})</h4>
+          <div class="mn-chip-scroll">
+            {% for r in entry.results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+              {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
+              <a class="match-chip bull {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" href="/chart/{{ r.symbol }}">
+                <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
+              </a>
+              {% endif %}
+            {% endfor %}
+            {% if ns3.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+          </div>
+        </div>
+        <div>
+          <h4 class="mn-col-title bear">▼ Bearish ({{ ns3.bear }})</h4>
+          <div class="mn-chip-scroll">
+            {% for r in entry.results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
+              {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
+              <a class="match-chip bear {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" href="/chart/{{ r.symbol }}">
+                <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
+              </a>
+              {% endif %}
+            {% endfor %}
+            {% if ns3.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  {% endmacro %}
+
+  <div class="card" id="multi-tf-panel">
+    <h2>⏱ Multi-Timeframe Signals <span class="sub">15-min / 60-min / 4-hour, always on - independent of the Timeframe selector above</span></h2>
+    {{ mtf_block("15-Minute", multi_tf["15minute"]) }}
+    {{ mtf_block("60-Minute", multi_tf["60minute"]) }}
+    {{ mtf_block("4-Hour", multi_tf["4hour"]) }}
   </div>
 
   <div class="signals-grid">
@@ -895,7 +963,7 @@
   makeSortable();
 
   var DASHBOARD_REFRESH_MS = 20000;
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'param-screener', 'main-tbody'];
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'param-screener', 'main-tbody', 'multi-tf-panel'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

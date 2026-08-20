@@ -51,6 +51,7 @@ def _ensure_scanner_running():
     global _scanner_started
     if not _scanner_started:
         start_background_scanner()
+        background.start_multi_tf_scanner()
         scalper.start_scalp_scanner()
         _scanner_started = True
 
@@ -94,6 +95,7 @@ def dashboard():
         index_close=state.get("index_close"),
         index_chg_pct=state.get("index_chg_pct"),
         require_index_agreement=settings.REQUIRE_INDEX_AGREEMENT,
+        multi_tf=background.get_multi_tf_state(),
     )
 
 
