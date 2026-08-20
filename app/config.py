@@ -77,14 +77,18 @@ DEFAULT_WATCHLIST = [
     "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "WIPRO", "ONGC", "TATAMOTORS",
 ]
 
-# Valid values for TIMEFRAME. 30-minute and 60-minute were dropped as
-# unnecessary in-between options. "4hour" is synthesized by resampling
+# Valid values for TIMEFRAME. 30-minute was dropped as an unnecessary
+# in-between option; 60-minute was dropped for the same reason earlier
+# but re-added on request - it's a native Kite interval (no resampling
+# needed, unlike "4hour"/"week" below), gets its own HTF (daily) trend
+# check in indicators._HTF_RESAMPLE, and its own OI/warmup lookback in
+# scanner._lookback_days already. "4hour" is synthesized by resampling
 # Kite's native 60-minute candles (Kite has no native 4H interval) -
 # see scanner.py - and stays selectable here as a normal scan timeframe;
 # it's the separate always-on 4-hour CROSS-CHECK scan (background.py's
 # old parallel pass feeding "positional_qualified") that was removed,
 # not 4-hour itself. "week" is synthesized by resampling daily candles.
-VALID_TIMEFRAMES = ["15minute", "4hour", "day", "week"]
+VALID_TIMEFRAMES = ["15minute", "60minute", "4hour", "day", "week"]
 VALID_MACD_PRESETS = ["auto", "15min", "30min", "custom"]
 
 _TUNABLE_FIELDS = [

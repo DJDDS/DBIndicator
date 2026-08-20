@@ -59,7 +59,7 @@ def _cross_down(a, b):
     return (a.shift(1) >= b.shift(1)) & (a < b)
 
 
-_INTRADAY_TIMEFRAMES = ("3minute", "15minute", "4hour")
+_INTRADAY_TIMEFRAMES = ("3minute", "15minute", "60minute", "4hour")
 
 # Timeframes whose OWN candle size is smaller than OPENING_WINDOW_MINUTES,
 # i.e. a candle labeled 9:15 genuinely IS (part of) the noisy opening
