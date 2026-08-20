@@ -36,11 +36,26 @@
   .live-dot::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .table-scroll { overflow-x: auto; }
+  /* 14 columns is wider than most windows, so this table always needs
+     horizontal scroll somewhere - two things make that usable instead of
+     just looking cut off: the Symbol column stays pinned via
+     position:sticky so you never lose track of which row you're on, and
+     a right-edge shadow (toggled by JS below based on actual scroll
+     position) makes it visually obvious there's more to scroll to,
+     instead of relying on a scrollbar that's easy to miss. */
+  .table-scroll { overflow-x: auto; position: relative; }
+  .table-scroll.has-more-right::after {
+    content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 28px;
+    background: linear-gradient(to right, transparent, rgba(0,0,0,0.4));
+    pointer-events: none;
+  }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; background: #171b28; color: var(--muted); padding: 10px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; cursor: pointer; user-select: none; }
   th:hover { color: var(--text); }
   td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th.sym-col, td.sym-col { position: sticky; left: 0; z-index: 2; background: var(--card); }
+  th.sym-col { background: #171b28; z-index: 6; }
+  tr.data-row:hover td.sym-col { background: #171b28; }
   tr.data-row:hover td { background: rgba(255,255,255,0.03); cursor: pointer; }
   tr.data-row.filtered-out { display: none; }
   a.sym-link { color: #6ea8fe; text-decoration: none; font-weight: 700; }
@@ -124,7 +139,7 @@
     <table id="oi-table">
       <thead>
         <tr>
-          <th data-col="0" data-type="text">Symbol</th>
+          <th data-col="0" data-type="text" class="sym-col">Symbol</th>
           <th data-col="1" data-type="num">Price</th>
           <th data-col="2" data-type="num">Price Chg %</th>
           <th data-col="3" data-type="num" data-default-dir="desc">OI Value</th>
@@ -196,7 +211,7 @@
     var accel = r.oi_accel_label || 'New';
     var tier = r.param_tier || '';
     return '' +
-      '<td data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
+      '<td class="sym-col" data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
       '<td data-sort="' + (r.close != null ? r.close : '') + '">' + (r.close != null ? r.close.toLocaleString('en-IN') : '—') + '</td>' +
       '<td data-sort="' + (priceChg != null ? priceChg : '') + '" class="' + (priceChg > 0 ? 'green-text' : priceChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(priceChg) + '</td>' +
       '<td data-sort="' + (r.oi != null ? r.oi : '') + '">' + fmtNum(r.oi) + '</td>' +
@@ -293,6 +308,7 @@
       updateTiles(latestResults);
       applySort();
       applyFilters();
+      updateScrollShadow();
       document.getElementById('updated-at').textContent = 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       fetch('/api/alerts/oi_recent').then(function (r) { return r.json(); }).then(function (d) {
         document.getElementById('tile-alerts').textContent = (d.alerts || []).length;
@@ -302,9 +318,23 @@
     });
   }
 
+  function updateScrollShadow() {
+    var scroller = document.querySelector('.table-scroll');
+    if (!scroller) return;
+    var moreToScroll = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft > 4;
+    scroller.classList.toggle('has-more-right', moreToScroll);
+  }
+
+  var scrollEl = document.querySelector('.table-scroll');
+  if (scrollEl) {
+    scrollEl.addEventListener('scroll', updateScrollShadow);
+    window.addEventListener('resize', updateScrollShadow);
+  }
+
   if (document.getElementById('oi-tbody')) {
     loadData();
     setInterval(loadData, 20000);
+    setTimeout(updateScrollShadow, 300);  // after the first render's actual widths settle
   }
 </script>
 </body>

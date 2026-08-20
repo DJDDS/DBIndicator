@@ -1,13 +1,27 @@
 """
 NIFTY 50 Scalping Screener - a separate, faster signal engine from the
 main swing-style dashboard (indicators.py/background.py), purpose-built
-for fast intraday scalp entries on the 50 NIFTY 50 constituent stocks.
+for fast intraday NIFTY 50 INDEX scalping (e.g. trading NIFTY futures or
+ATM options off this signal) - NOT a per-stock screener. Earlier builds
+of this scanned the 50 individual NIFTY 50 constituent stocks instead;
+that was a misread of the actual ask and has been removed - this now
+watches exactly ONE instrument.
 
 Runs on its own 3-minute timeframe and its own background loop
 (SCALP_SCAN_INTERVAL_SECONDS, much faster than the main scanner's
 configurable interval) - deliberately independent of settings.TIMEFRAME/
 settings.WATCHLIST so it never interferes with, or gets reconfigured by,
 changes made to the main screener on the Settings page.
+
+The OHLCV feed comes from the nearest-expiry NIFTY 50 INDEX FUTURES
+contract (scanner._load_nifty_future), not the raw index. Kite reports
+0 volume on raw index historical data (confirmed earlier in this app's
+own backtest work - a solo Relative Volume backtest on "NIFTY 50" always
+produces zero trades), which would permanently zero out this engine's
+Relative Volume parameter if it read the index directly. The futures
+contract is a real, tradeable instrument with genuine volume - and
+realistically what you'd actually place a NIFTY 50 scalp trade through
+anyway.
 
 Four scalp-specific parameters, each contributing to a 0-4 "confirmed"
 count (same N-of-4 confluence shape as the main screener, MIN_REQUIRED_SCALP
@@ -24,12 +38,11 @@ Every signal also carries an ATR-based suggested stop-loss/target -
 informational only, meant to help you size a manual order, never an
 instruction to place one and never auto-executed.
 
-A NIFTY 50 index-direction bias is attached to every row (index_agrees) -
-reuses scanner.fetch_index_direction on this same 3-minute timeframe -
-so you can see at a glance whether a stock's scalp signal is swimming
-with or against the index's own current momentum. Purely informational
-here (no hard gate/setting to enable/disable it, unlike the main
-screener's REQUIRE_INDEX_AGREEMENT) - keeps this a fast, simple v1.
+Same opening-window convention as the main screener's 15-minute
+timeframe (indicators.OPENING_WINDOW_MINUTES): signal_confirmed is held
+False for the first 15 minutes after the 9:15 IST open (until 9:30) -
+the most gap-driven, unreliable minutes of the day - even though the
+other fields still populate normally underneath.
 """
 import datetime as dt
 import json
@@ -43,34 +56,10 @@ import pandas as pd
 
 from . import kite_auth
 from .config import settings, SCALP_RESULTS_FILE
-from .indicators import rsi, compute_atr, session_vwap_series, _cross_up, _cross_down
-from .scanner import (
-    _load_instrument_map, fetch_candles, fetch_index_direction, is_market_open, now_ist,
-)
+from .indicators import rsi, compute_atr, session_vwap_series, _cross_up, _cross_down, _in_opening_window
+from .scanner import fetch_candles, is_market_open, now_ist, _load_nifty_future
 
 log = logging.getLogger(__name__)
-
-# --------------------------------------------------------------------------
-# NIFTY 50 constituents, as of Dec 2025 (NSE's own weightage table cross-
-# checked against its published top-10-by-weightage). The index rebalances
-# semi-annually (typically March/September) - a stock that's been swapped
-# out since will simply come back "symbol not found on NSE" from
-# scan_scalp_watchlist below (same graceful per-symbol degradation the main
-# scan_watchlist already uses for a bad symbol) rather than breaking the
-# scan, but this list is worth refreshing after each rebalance.
-# --------------------------------------------------------------------------
-NIFTY50_STOCKS = sorted([
-    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK",
-    "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BEL", "BHARTIARTL",
-    "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL",
-    "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HINDALCO",
-    "HINDUNILVR", "ICICIBANK", "INDIGO", "INFY", "ITC",
-    "JIOFIN", "JSWSTEEL", "KOTAKBANK", "LT", "M&M",
-    "MARUTI", "MAXHEALTH", "NESTLEIND", "NTPC", "ONGC",
-    "POWERGRID", "RELIANCE", "SBILIFE", "SHRIRAMFIN", "SBIN",
-    "SUNPHARMA", "TCS", "TATACONSUM", "TMPV", "TATASTEEL",
-    "TECHM", "TITAN", "TRENT", "ULTRACEMCO", "WIPRO",
-])
 
 SCALP_TIMEFRAME = "3minute"
 
@@ -136,11 +125,12 @@ def compute_scalp_series(df: pd.DataFrame) -> dict:
 
 
 def compute_scalp_signal(df: pd.DataFrame) -> dict:
-    """df must have open/high/low/close/volume columns, oldest row first.
-    Returns the latest bar's scalp state, or {"error": ...} if there
-    isn't enough history / VWAP hasn't started accumulating yet (only
-    possible in the first sliver of a session before any volume has
-    printed - vwap_series is NaN there).
+    """df must have open/high/low/close/volume columns, oldest row first
+    (NIFTY futures candles - see module docstring). Returns the latest
+    bar's scalp state, or {"error": ...} if there isn't enough history /
+    VWAP hasn't started accumulating yet (only possible in the first
+    sliver of a session before any volume has printed - vwap_series is
+    NaN there).
 
     Direction is decided by 3 STATE votes (which side each parameter is
     CURRENTLY on, not whether it just crossed): EMA5 vs EMA13, price vs
@@ -179,7 +169,15 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
     vol_confirmed = bool(vol_multiple is not None and vol_multiple >= SCALP_REL_VOLUME_THRESHOLD)
 
     confirmed_count = dir_match_count + int(vol_confirmed)  # 2-4
-    signal_confirmed = confirmed_count >= MIN_REQUIRED_SCALP
+
+    # Same opening-window convention as the main screener's 15-minute
+    # timeframe (indicators.OPENING_WINDOW_MINUTES=15, i.e. held back
+    # until 9:30) - the first few minutes after the open are usually the
+    # most gap-driven and unreliable of the day. Only signal_confirmed is
+    # suppressed; every other field below still reflects the real
+    # current reading.
+    in_opening_window = _in_opening_window(df.index[i], SCALP_TIMEFRAME)
+    signal_confirmed = confirmed_count >= MIN_REQUIRED_SCALP and not in_opening_window
 
     atr_val = series["atr"].iloc[i]
     entry = float(close.iloc[i])
@@ -204,6 +202,7 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
         "vol_confirmed": vol_confirmed,
         "direction": direction,
         "confirmed_count": confirmed_count,
+        "in_opening_window": in_opening_window,
         "signal_confirmed": signal_confirmed,
         "atr": round(float(atr_val), 2) if pd.notna(atr_val) else None,
         "stop": stop,
@@ -213,60 +212,34 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
     }
 
 
-def scan_scalp_watchlist(kite) -> list:
-    """Same per-symbol error-isolation pattern as scanner.scan_watchlist -
-    one bad/renamed symbol never aborts the rest of the scan."""
-    instruments = _load_instrument_map(kite)
-    results = []
-    for symbol in NIFTY50_STOCKS:
-        token = instruments.get(symbol)
-        if not token:
-            results.append({"symbol": symbol, "error": "symbol not found on NSE"})
-            continue
-        try:
-            df = fetch_candles(kite, token, SCALP_TIMEFRAME)
-            if df.empty:
-                results.append({"symbol": symbol, "error": "no candle data returned"})
-                continue
-            signal = compute_scalp_signal(df)
-            if "error" in signal:
-                results.append({"symbol": symbol, "error": signal["error"]})
-                continue
-            signal["symbol"] = symbol
-            results.append(signal)
-        except Exception as exc:  # noqa: BLE001 - keep scanning the rest of the watchlist
-            log.warning("Scalp scan failed for %s: %s", symbol, exc)
-            results.append({"symbol": symbol, "error": str(exc)})
-    return results
-
-
-def _apply_index_bias(results, index_direction):
-    """Attaches index_agrees to every non-error row - None index_direction
-    (no opinion available this cycle) is left as None too, same
-    "no opinion, not a mismatch" convention background._apply_index_filter
-    uses for the main screener. Purely informational here - never revokes
-    signal_confirmed, unlike the main screener's opt-in strict gate."""
-    for r in results:
-        if r.get("error"):
-            continue
-        r["index_agrees"] = None if index_direction is None else (r.get("direction") == index_direction)
+def scan_nifty_scalp(kite) -> dict:
+    """Resolves the current NIFTY future and returns its scalp signal, or
+    {"error": ...} if the contract/candles aren't available yet. Single
+    dict, not a list - there's exactly one instrument to watch."""
+    token, fut_symbol = _load_nifty_future(kite)
+    if not token:
+        return {"error": "could not resolve current NIFTY futures contract"}
+    df = fetch_candles(kite, token, SCALP_TIMEFRAME)
+    if df.empty:
+        return {"error": "no candle data returned"}
+    signal = compute_scalp_signal(df)
+    signal["future_symbol"] = fut_symbol
+    return signal
 
 
 # --------------------------------------------------------------------------
 # Background loop - independent thread, own state, own persistence file.
 # Mirrors background.py's _run_loop shape (never let the thread die, log
-# and retry instead) but simpler: no OI, no alerts, no rescan-event (there's
-# no settings page for scalp params yet to need a wake-immediately trigger).
+# and retry instead) but simpler: single instrument, no OI, no alerts, no
+# rescan-event (there's no settings page for scalp params yet to need a
+# wake-immediately trigger).
 # --------------------------------------------------------------------------
 
 _scalp_lock = threading.Lock()
 _scalp_state = {
-    "results": [],
+    "signal": None,
     "last_scan": None,
     "last_error": None,
-    "index_direction": None,
-    "index_close": None,
-    "index_chg_pct": None,
 }
 
 
@@ -276,13 +249,10 @@ def _load_persisted_scalp_state():
     try:
         with open(SCALP_RESULTS_FILE) as f:
             saved = json.load(f)
-        if isinstance(saved, dict) and "results" in saved:
+        if isinstance(saved, dict) and "signal" in saved:
             with _scalp_lock:
-                _scalp_state["results"] = saved.get("results", [])
+                _scalp_state["signal"] = saved.get("signal")
                 _scalp_state["last_scan"] = saved.get("last_scan")
-                _scalp_state["index_direction"] = saved.get("index_direction")
-                _scalp_state["index_close"] = saved.get("index_close")
-                _scalp_state["index_chg_pct"] = saved.get("index_chg_pct")
                 _scalp_state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -291,11 +261,8 @@ def _load_persisted_scalp_state():
 def _save_persisted_scalp_state():
     with _scalp_lock:
         snapshot = {
-            "results": _scalp_state["results"],
+            "signal": _scalp_state["signal"],
             "last_scan": _scalp_state["last_scan"],
-            "index_direction": _scalp_state["index_direction"],
-            "index_close": _scalp_state["index_close"],
-            "index_chg_pct": _scalp_state["index_chg_pct"],
         }
     try:
         with open(SCALP_RESULTS_FILE, "w") as f:
@@ -318,16 +285,11 @@ def _run_scalp_loop():
             kite = kite_auth.get_kite_client()
             if kite is not None and is_market_open():
                 try:
-                    results = scan_scalp_watchlist(kite)
-                    index_direction, index_close, index_chg_pct = fetch_index_direction(kite, SCALP_TIMEFRAME)
-                    _apply_index_bias(results, index_direction)
+                    signal = scan_nifty_scalp(kite)
                     with _scalp_lock:
-                        _scalp_state["results"] = results
-                        _scalp_state["index_direction"] = index_direction
-                        _scalp_state["index_close"] = index_close
-                        _scalp_state["index_chg_pct"] = index_chg_pct
+                        _scalp_state["signal"] = signal
                         _scalp_state["last_scan"] = now_ist().isoformat(timespec="seconds")
-                        _scalp_state["last_error"] = None
+                        _scalp_state["last_error"] = signal.get("error")
                     _save_persisted_scalp_state()
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Scalp scan failed")

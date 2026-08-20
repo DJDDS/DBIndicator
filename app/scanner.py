@@ -111,6 +111,55 @@ def _load_current_fut_map(kite) -> dict:
     return fut_map
 
 
+_nifty_fut_cache = {"date": None, "token": None, "symbol": None}
+
+
+def _load_nifty_future(kite):
+    """Resolves the nearest-expiry (current month) NIFTY 50 INDEX futures
+    contract - e.g. "NIFTY26AUGFUT" - (instrument_token, tradingsymbol),
+    or (None, None) if unresolved. Deliberately separate from
+    _load_current_fut_map above, which explicitly EXCLUDES index names
+    (NIFTY included, via _NON_STOCK_FNO_NAMES) since that map is only
+    ever used for STOCK Open Interest.
+
+    scalper.py uses this rather than the raw NIFTY 50 index itself
+    (scanner._load_index_token) because Kite reports 0 volume on index
+    historical data - confirmed earlier in this app's own backtest work
+    (a solo Relative Volume backtest on "NIFTY 50" produces zero trades)
+    - which would permanently zero out the Relative Volume parameter of
+    the scalp engine. The futures contract is a real, tradeable
+    instrument with genuine volume, and realistically what you'd
+    actually place a NIFTY 50 scalp trade through anyway. Cached for the
+    day, same reasoning as _load_current_fut_map (the near-month
+    contract only rolls over once a month, on expiry)."""
+    today = dt.date.today()
+    if _nifty_fut_cache["date"] == today.isoformat() and _nifty_fut_cache["token"]:
+        return _nifty_fut_cache["token"], _nifty_fut_cache["symbol"]
+    try:
+        instruments = kite.instruments("NFO")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("NIFTY future instrument lookup failed: %s", exc)
+        return None, None
+    nearest = None
+    for row in instruments:
+        if row.get("instrument_type") != "FUT":
+            continue
+        if (row.get("name") or "").strip().upper() != "NIFTY":
+            continue
+        expiry = row.get("expiry")
+        if not expiry or expiry < today:
+            continue
+        if nearest is None or expiry < nearest[0]:
+            nearest = (expiry, row["instrument_token"], row["tradingsymbol"])
+    if nearest is None:
+        return None, None
+    _, token, symbol = nearest
+    _nifty_fut_cache["date"] = today.isoformat()
+    _nifty_fut_cache["token"] = token
+    _nifty_fut_cache["symbol"] = symbol
+    return token, symbol
+
+
 def fetch_oi_map(kite, symbols: list) -> dict:
     """Batch-fetches current Open Interest for the given underlying
     stock symbols via their near-month futures contract, one quote()
@@ -427,7 +476,7 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
             if df.empty:
                 results.append({"symbol": symbol, "error": "no candle data returned"})
                 continue
-            signal = compute_signal(df, timeframe)
+            signal = compute_signal(df, timeframe, now=now_ist())
             signal["symbol"] = symbol
             # Always set these keys (None when unavailable) rather than
             # omitting them - the dashboard template checks "r.oi is not

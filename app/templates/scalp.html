@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0b0e14; --card: #12151f; --border: #232838; --text: #e6e9ef; --muted: #8b93a7;
-    --green: #2ecc71; --red: #ef4444; --accent: #3b82f6; --amber: #f5a524; --navy: #12151f;
+    --green: #2ecc71; --red: #ef4444; --accent: #3b82f6; --amber: #f5a524;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
@@ -16,60 +16,49 @@
   header p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
   header nav a { color: var(--text); text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.06); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border); }
   header nav a:hover { background: rgba(255,255,255,0.1); }
-  .wrap { max-width: 1500px; margin: 22px auto; padding: 0 16px 40px; }
-  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
-  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
-  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
-  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .wrap { max-width: 900px; margin: 22px auto; padding: 0 16px 40px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin-bottom: 16px; }
+  .signal-card { text-align: center; padding: 28px 22px; }
+  .signal-card.bull { border-color: rgba(46,204,113,0.4); }
+  .signal-card.bear { border-color: rgba(239,68,68,0.4); }
+  .big-direction { font-size: 34px; font-weight: 800; letter-spacing: 0.01em; }
+  .big-direction.bull { color: var(--green); }
+  .big-direction.bear { color: var(--red); }
+  .big-price { font-size: 20px; color: var(--muted); margin-top: 4px; }
+  .confirmed-line { margin-top: 10px; font-size: 14px; }
+  .confirmed-badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+  .confirmed-badge.yes { background: rgba(46,204,113,0.15); color: var(--green); }
+  .confirmed-badge.no { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .opening-note { margin-top: 10px; font-size: 12px; color: var(--amber); }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 700px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; text-align: center; }
   .tile-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
-  .tile-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+  .tile-value { font-size: 17px; font-weight: 700; margin-top: 6px; }
   .tile-value.green { color: var(--green); }
   .tile-value.red { color: var(--red); }
-  .tile-value.amber { color: var(--amber); }
   .tile-value.muted { color: var(--muted); }
-  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-  .toolbar input, .toolbar select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; }
-  .toolbar input { min-width: 200px; }
-  .toolbar-spacer { flex: 1; }
-  .toolbar-meta { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .tile-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .levels-row { display: flex; justify-content: space-around; gap: 12px; flex-wrap: wrap; }
+  .level { text-align: center; }
+  .level-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .level-value { font-size: 22px; font-weight: 700; margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .level-value.stop { color: var(--red); }
+  .level-value.entry { color: var(--text); }
+  .level-value.target { color: var(--green); }
+  .meta-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
   .live-dot { display: inline-flex; align-items: center; gap: 6px; background: rgba(46,204,113,0.12); color: var(--green); padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
   .live-dot::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .table-scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; background: #171b28; color: var(--muted); padding: 10px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; cursor: pointer; user-select: none; }
-  th:hover { color: var(--text); }
-  td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  tr.data-row:hover td { background: rgba(255,255,255,0.03); cursor: pointer; }
-  tr.data-row.filtered-out { display: none; }
-  a.sym-link { color: #6ea8fe; text-decoration: none; font-weight: 700; }
-  a.sym-link:hover { text-decoration: underline; }
-  .green-text { color: var(--green); font-weight: 600; }
-  .red-text { color: var(--red); font-weight: 600; }
-  .muted-text { color: var(--muted); }
-  .signal-pill { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
-  .signal-pill.bull { background: rgba(46,204,113,0.15); color: var(--green); }
-  .signal-pill.bear { background: rgba(239,68,68,0.15); color: var(--red); }
-  .badge { display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: 11.5px; font-weight: 700; }
-  .badge.confirmed { background: rgba(46,204,113,0.15); color: var(--green); }
-  .badge.not-confirmed { background: rgba(255,255,255,0.06); color: var(--muted); }
-  .badge.agree { background: rgba(46,204,113,0.1); color: #7fd8a2; }
-  .badge.disagree { background: rgba(245,165,36,0.12); color: var(--amber); }
-  .badge.no-opinion { background: rgba(255,255,255,0.06); color: var(--muted); }
-  tr.data-row.confirmed-row td:first-child { border-left: 3px solid var(--green); }
   .empty-note { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
-  .footnote { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.6; }
-  .market-banner { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
-  .market-banner .bull { color: var(--green); font-weight: 700; }
-  .market-banner .bear { color: var(--red); font-weight: 700; }
+  .footnote { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.6; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>NIFTY 50 Scalp Screener</h1>
-    <p>{{ timeframe }} confluence signals across all {{ stock_count }} NIFTY 50 stocks &middot; {{ min_required }} of 4 required (Fast EMA cross, Session VWAP, RSI(7) momentum, Relative Volume)</p>
+    <p>{{ timeframe }} confluence signal on the NIFTY 50 index futures contract &middot; {{ min_required }} of 4 required (Fast EMA cross, Session VWAP, RSI(7) momentum, Relative Volume)</p>
   </div>
   <nav><a href="/">&larr; Dashboard</a></nav>
 </header>
@@ -81,216 +70,108 @@
   </div>
   {% else %}
 
-  <p class="market-banner" id="market-banner">NIFTY 50: <span class="muted-text">&mdash;</span></p>
-
-  <div class="tiles" id="tiles">
-    <div class="tile"><div class="tile-label">Confirmed Signals</div><div class="tile-value green" id="tile-confirmed">&mdash;</div></div>
-    <div class="tile"><div class="tile-label">Bullish</div><div class="tile-value green" id="tile-bullish">&mdash;</div></div>
-    <div class="tile"><div class="tile-label">Bearish</div><div class="tile-value red" id="tile-bearish">&mdash;</div></div>
-    <div class="tile"><div class="tile-label">Agrees With Index</div><div class="tile-value amber" id="tile-agree">&mdash;</div></div>
-    <div class="tile"><div class="tile-label">Symbols Scanned</div><div class="tile-value muted" id="tile-scanned">&mdash;</div></div>
+  <div class="meta-row">
+    <span id="contract-label">Contract: &mdash;</span>
+    <span><span id="updated-at">not loaded yet</span> &middot; <span class="live-dot">Live</span></span>
   </div>
 
-  <div class="toolbar">
-    <input type="text" id="f-symbol" placeholder="&#128269; Search symbol...">
-    <select id="f-direction">
-      <option value="">All Directions</option>
-      <option value="Bullish">Bullish</option>
-      <option value="Bearish">Bearish</option>
-    </select>
-    <select id="f-confirmed">
-      <option value="">All Signals</option>
-      <option value="yes">Confirmed only</option>
-    </select>
-    <div class="toolbar-spacer"></div>
-    <div class="toolbar-meta">
-      <span id="symbol-count">&mdash; symbols</span> &middot; <span id="updated-at">not loaded yet</span>
-      <span class="live-dot">Live</span>
-    </div>
+  <div class="card signal-card" id="signal-card">
+    <div class="big-direction" id="big-direction">&mdash;</div>
+    <div class="big-price" id="big-price">&mdash;</div>
+    <div class="confirmed-line" id="confirmed-line"></div>
+    <div class="opening-note" id="opening-note" style="display:none;">Within the first 15 minutes of the open (before 9:30) - signal held back, still warming up.</div>
   </div>
 
-  <div class="card">
-    <div class="table-scroll">
-    <table id="scalp-table">
-      <thead>
-        <tr>
-          <th data-col="0" data-type="text">Symbol</th>
-          <th data-col="1" data-type="num">Price</th>
-          <th data-col="2" data-type="text">Direction</th>
-          <th data-col="3" data-type="num" data-default-dir="desc">Confirmed</th>
-          <th data-col="4" data-type="text">EMA 5/13</th>
-          <th data-col="5" data-type="text">VWAP</th>
-          <th data-col="6" data-type="num">RSI(7)</th>
-          <th data-col="7" data-type="num" data-default-dir="desc">Vol Multiple</th>
-          <th data-col="8" data-type="text">Index Bias</th>
-          <th data-col="9" data-type="num">Suggested Stop</th>
-          <th data-col="10" data-type="num">Suggested Target</th>
-          <th data-col="11" data-type="text">R:R</th>
-        </tr>
-      </thead>
-      <tbody id="scalp-tbody">
-        <tr><td colspan="12" class="empty-note">Loading...</td></tr>
-      </tbody>
-    </table>
+  <div class="grid4" id="tiles">
+    <div class="tile"><div class="tile-label">EMA 5/13</div><div class="tile-value muted" id="tile-ema">&mdash;</div></div>
+    <div class="tile"><div class="tile-label">VWAP</div><div class="tile-value muted" id="tile-vwap">&mdash;</div><div class="tile-sub" id="tile-vwap-price"></div></div>
+    <div class="tile"><div class="tile-label">RSI(7)</div><div class="tile-value muted" id="tile-rsi">&mdash;</div></div>
+    <div class="tile"><div class="tile-label">Vol Multiple</div><div class="tile-value muted" id="tile-vol">&mdash;</div><div class="tile-sub">needs &ge; {{ rel_volume_threshold }}x</div></div>
+  </div>
+
+  <div class="card" id="levels-card">
+    <div class="levels-row">
+      <div class="level"><div class="level-label">Suggested Stop</div><div class="level-value stop" id="level-stop">&mdash;</div></div>
+      <div class="level"><div class="level-label">Entry (LTP)</div><div class="level-value entry" id="level-entry">&mdash;</div></div>
+      <div class="level"><div class="level-label">Suggested Target</div><div class="level-value target" id="level-target">&mdash;</div></div>
+      <div class="level"><div class="level-label">R:R</div><div class="level-value entry" id="level-rr">&mdash;</div></div>
     </div>
   </div>
 
   <p class="footnote">
-    <strong>Confirmed</strong> = how many of the 4 scalp parameters currently agree with the row's direction
-    ({{ min_required }} of 4 required to count as a signal, highlighted with a green left edge). <strong>EMA 5/13</strong>
-    and <strong>VWAP</strong> show which side price is currently on (fast EMA vs slower EMA; last traded price vs the
-    running intraday VWAP) - not whether a cross just happened this instant. <strong>RSI(7)</strong> above 50 leans
-    Bullish, below 50 leans Bearish. <strong>Vol Multiple</strong> is today's volume vs its own 20-bar average; needs
-    to be at or above {{ '1.5' }}x to count as confirmed. <strong>Index Bias</strong> compares this row's direction
-    against NIFTY 50's own current confluence direction on the same {{ timeframe }} timeframe - "agree" means the
-    stock is moving with the index, "against" means it's moving opposite the index's own momentum right now (shown
-    for context, never filtered out automatically). <strong>Suggested Stop/Target</strong> are ATR(14)-based
-    (0.75x ATR stop, 1.5x ATR target, ~1:2 risk:reward) - informational only, meant to help you size a manual order;
-    nothing here is ever auto-placed or auto-executed. This page refreshes itself roughly every 20 seconds during
-    market hours - no need to reload.
+    OHLCV is sourced from the nearest-expiry NIFTY 50 index futures contract, not the raw index - the raw index
+    reports 0 volume on Kite historical data, which would permanently zero out the Relative Volume parameter below.
+    <strong>Confirmed</strong> = how many of the 4 scalp parameters currently agree with the shown direction
+    ({{ min_required }} of 4 required to count as a signal). <strong>EMA 5/13</strong> and <strong>VWAP</strong>
+    show which side price is currently on (fast EMA vs slower EMA; last traded price vs the running intraday VWAP)
+    - not whether a cross just happened this instant. <strong>RSI(7)</strong> above 50 leans Bullish, below 50
+    leans Bearish. <strong>Suggested Stop/Target</strong> are ATR(14)-based (0.75x ATR stop, 1.5x ATR target,
+    ~1:2 risk:reward) - informational only, meant to help you size a manual order; nothing here is ever
+    auto-placed or auto-executed. This page refreshes itself roughly every 20 seconds during market hours - no
+    need to reload.
   </p>
 
   {% endif %}
 </div>
 <script>
-  var currentSort = { col: 3, dir: 'desc', type: 'num' };
-  var latestResults = [];
-
   function fmtPrice(v) { return (v === null || v === undefined) ? '&mdash;' : v.toFixed(2); }
-  function fmtNum(v, dp) { return (v === null || v === undefined) ? '&mdash;' : v.toFixed(dp === undefined ? 2 : dp); }
 
-  function indexBiasBadge(agrees) {
-    if (agrees === null || agrees === undefined) return '<span class="badge no-opinion">no opinion</span>';
-    return agrees ? '<span class="badge agree">agrees</span>' : '<span class="badge disagree">against</span>';
-  }
+  function render(data) {
+    var sig = data.signal;
+    var contractEl = document.getElementById('contract-label');
+    var updatedEl = document.getElementById('updated-at');
 
-  function rowHtml(r) {
-    var dirClass = r.direction === 'Bullish' ? 'bull' : 'bear';
-    var confirmedBadge = r.signal_confirmed
-      ? '<span class="badge confirmed">' + r.confirmed_count + ' of 4</span>'
-      : '<span class="badge not-confirmed">' + (r.confirmed_count != null ? r.confirmed_count + ' of 4' : '&mdash;') + '</span>';
-    return '' +
-      '<td data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
-      '<td data-sort="' + (r.close != null ? r.close : '') + '">' + fmtPrice(r.close) + '</td>' +
-      '<td data-sort="' + (r.direction || '') + '"><span class="signal-pill ' + dirClass + '">' + (r.direction === 'Bullish' ? '&#9650; Bullish' : '&#9660; Bearish') + '</span></td>' +
-      '<td data-sort="' + (r.confirmed_count != null ? r.confirmed_count : '') + '">' + confirmedBadge + '</td>' +
-      '<td data-sort="' + (r.ema_state || '') + '" class="' + (r.ema_state === 'Bullish' ? 'green-text' : 'red-text') + '">' + (r.ema_state || '&mdash;') + '</td>' +
-      '<td data-sort="' + (r.vwap_state || '') + '" class="' + (r.vwap_state === 'Bullish' ? 'green-text' : 'red-text') + '">' + (r.vwap_state || '&mdash;') + ' <span class="muted-text">(' + fmtPrice(r.vwap) + ')</span></td>' +
-      '<td data-sort="' + (r.rsi != null ? r.rsi : '') + '">' + fmtNum(r.rsi, 1) + '</td>' +
-      '<td data-sort="' + (r.vol_multiple != null ? r.vol_multiple : '') + '" class="' + (r.vol_confirmed ? 'green-text' : 'muted-text') + '">' + (r.vol_multiple != null ? r.vol_multiple + 'x' : '&mdash;') + '</td>' +
-      '<td data-sort="' + (r.index_agrees === true ? '1' : r.index_agrees === false ? '0' : '') + '">' + indexBiasBadge(r.index_agrees) + '</td>' +
-      '<td data-sort="' + (r.stop != null ? r.stop : '') + '">' + fmtPrice(r.stop) + '</td>' +
-      '<td data-sort="' + (r.target != null ? r.target : '') + '">' + fmtPrice(r.target) + '</td>' +
-      '<td data-sort="' + (r.risk_reward || '') + '">' + (r.risk_reward ? '1:' + r.risk_reward : '&mdash;') + '</td>';
-  }
-
-  function buildRows(results) {
-    var tbody = document.getElementById('scalp-tbody');
-    var rows = results.filter(function (r) { return !r.error; });
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="12" class="empty-note">No scalp data yet - waiting for the next scan.</td></tr>';
+    if (!sig || sig.error) {
+      contractEl.textContent = sig && sig.future_symbol ? 'Contract: ' + sig.future_symbol : 'Contract: —';
+      document.getElementById('big-direction').textContent = '—';
+      document.getElementById('big-direction').className = 'big-direction';
+      document.getElementById('big-price').textContent = (sig && sig.error) ? sig.error : 'Waiting for first scan...';
+      document.getElementById('confirmed-line').innerHTML = '';
+      document.getElementById('opening-note').style.display = 'none';
+      ['tile-ema', 'tile-vwap', 'tile-rsi', 'tile-vol'].forEach(function (id) { document.getElementById(id).textContent = '—'; });
+      document.getElementById('tile-vwap-price').textContent = '';
+      ['level-stop', 'level-entry', 'level-target', 'level-rr'].forEach(function (id) { document.getElementById(id).textContent = '—'; });
+      updatedEl.textContent = data.last_scan ? 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'waiting for first scan...';
       return;
     }
-    tbody.innerHTML = rows.map(function (r) {
-      return '<tr class="data-row' + (r.signal_confirmed ? ' confirmed-row' : '') + '" data-symbol="' + r.symbol +
-        '" data-direction="' + (r.direction || '') + '" data-confirmed="' + (r.signal_confirmed ? 'yes' : 'no') +
-        '" onclick="window.location=\'/chart/' + r.symbol + '\'">' + rowHtml(r) + '</tr>';
-    }).join('');
+
+    var cls = sig.direction === 'Bullish' ? 'bull' : 'bear';
+    contractEl.textContent = 'Contract: ' + (sig.future_symbol || '—');
+    document.getElementById('signal-card').className = 'card signal-card ' + cls;
+    document.getElementById('big-direction').textContent = (sig.direction === 'Bullish' ? '▲ ' : '▼ ') + sig.direction;
+    document.getElementById('big-direction').className = 'big-direction ' + cls;
+    document.getElementById('big-price').textContent = fmtPrice(sig.close);
+
+    var badgeCls = sig.signal_confirmed ? 'yes' : 'no';
+    document.getElementById('confirmed-line').innerHTML = '<span class="confirmed-badge ' + badgeCls + '">' + sig.confirmed_count + ' of 4' + (sig.signal_confirmed ? ' - confirmed' : '') + '</span>';
+    document.getElementById('opening-note').style.display = sig.in_opening_window ? 'block' : 'none';
+
+    document.getElementById('tile-ema').textContent = sig.ema_state || '—';
+    document.getElementById('tile-ema').className = 'tile-value ' + (sig.ema_state === 'Bullish' ? 'green' : 'red');
+    document.getElementById('tile-vwap').textContent = sig.vwap_state || '—';
+    document.getElementById('tile-vwap').className = 'tile-value ' + (sig.vwap_state === 'Bullish' ? 'green' : 'red');
+    document.getElementById('tile-vwap-price').textContent = sig.vwap != null ? fmtPrice(sig.vwap) : '';
+    document.getElementById('tile-rsi').textContent = sig.rsi != null ? sig.rsi.toFixed(1) : '—';
+    document.getElementById('tile-rsi').className = 'tile-value ' + (sig.rsi_state === 'Bullish' ? 'green' : 'red');
+    document.getElementById('tile-vol').textContent = sig.vol_multiple != null ? sig.vol_multiple + 'x' : '—';
+    document.getElementById('tile-vol').className = 'tile-value ' + (sig.vol_confirmed ? 'green' : 'muted');
+
+    document.getElementById('level-stop').textContent = fmtPrice(sig.stop);
+    document.getElementById('level-entry').textContent = fmtPrice(sig.close);
+    document.getElementById('level-target').textContent = fmtPrice(sig.target);
+    document.getElementById('level-rr').textContent = sig.risk_reward ? '1:' + sig.risk_reward : '—';
+
+    updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
-
-  function updateTiles(results, minRequired) {
-    var valid = results.filter(function (r) { return !r.error; });
-    var count = function (fn) { return valid.filter(fn).length; };
-    document.getElementById('tile-confirmed').textContent = count(function (r) { return r.signal_confirmed; });
-    document.getElementById('tile-bullish').textContent = count(function (r) { return r.direction === 'Bullish'; });
-    document.getElementById('tile-bearish').textContent = count(function (r) { return r.direction === 'Bearish'; });
-    document.getElementById('tile-agree').textContent = count(function (r) { return r.index_agrees === true; });
-    document.getElementById('tile-scanned').textContent = valid.length;
-    document.getElementById('symbol-count').textContent = valid.length + ' symbols';
-  }
-
-  function updateMarketBanner(data) {
-    var el = document.getElementById('market-banner');
-    if (!data.index_direction) {
-      el.innerHTML = 'NIFTY 50: <span class="muted-text">&mdash;</span>';
-      return;
-    }
-    var cls = data.index_direction === 'Bullish' ? 'bull' : 'bear';
-    var arrow = data.index_direction === 'Bullish' ? '&#9650;' : '&#9660;';
-    var chg = (data.index_chg_pct != null) ? ' (' + (data.index_chg_pct > 0 ? '+' : '') + data.index_chg_pct.toFixed(2) + '%)' : '';
-    el.innerHTML = 'NIFTY 50: <span class="' + cls + '">' + arrow + ' ' + data.index_direction + chg + '</span>';
-  }
-
-  function applyFilters() {
-    var symbolQ = (document.getElementById('f-symbol').value || '').trim().toUpperCase();
-    var directionQ = document.getElementById('f-direction').value;
-    var confirmedQ = document.getElementById('f-confirmed').value;
-    document.querySelectorAll('#scalp-tbody tr.data-row').forEach(function (row) {
-      var ok = true;
-      if (symbolQ && (row.getAttribute('data-symbol') || '').indexOf(symbolQ) === -1) ok = false;
-      if (ok && directionQ && row.getAttribute('data-direction') !== directionQ) ok = false;
-      if (ok && confirmedQ && row.getAttribute('data-confirmed') !== confirmedQ) ok = false;
-      row.classList.toggle('filtered-out', !ok);
-    });
-  }
-
-  function applySort() {
-    var tbody = document.getElementById('scalp-tbody');
-    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
-    if (!rows.length) return;
-    var col = currentSort.col, asc = currentSort.dir === 'asc';
-    rows.sort(function (a, b) {
-      var ac = a.children[col], bc = b.children[col];
-      var av = ac ? (ac.getAttribute('data-sort') || '') : '';
-      var bv = bc ? (bc.getAttribute('data-sort') || '') : '';
-      var an = parseFloat(av), bn = parseFloat(bv);
-      var cmp = (av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
-      return asc ? cmp : -cmp;
-    });
-    rows.forEach(function (r) { tbody.appendChild(r); });
-  }
-
-  document.querySelectorAll('#scalp-table thead th').forEach(function (th) {
-    th.addEventListener('click', function () {
-      var col = parseInt(th.getAttribute('data-col'), 10);
-      if (currentSort.col === col) {
-        currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        currentSort.col = col;
-        currentSort.dir = th.getAttribute('data-default-dir') || 'asc';
-      }
-      applySort();
-    });
-  });
-
-  ['f-symbol'].forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) el.addEventListener('input', applyFilters);
-  });
-  ['f-direction', 'f-confirmed'].forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) el.addEventListener('change', applyFilters);
-  });
 
   function loadData() {
-    fetch('/api/scalp/results').then(function (r) { return r.json(); }).then(function (data) {
-      latestResults = data.results || [];
-      buildRows(latestResults);
-      updateTiles(latestResults, data.min_required);
-      updateMarketBanner(data);
-      applySort();
-      applyFilters();
-      var updatedEl = document.getElementById('updated-at');
-      if (updatedEl) {
-        updatedEl.textContent = data.last_scan ? 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'waiting for first scan...';
-      }
-    }).catch(function () {
-      var updatedEl = document.getElementById('updated-at');
-      if (updatedEl) updatedEl.textContent = 'update failed - retrying...';
+    fetch('/api/scalp/results').then(function (r) { return r.json(); }).then(render).catch(function () {
+      var el = document.getElementById('updated-at');
+      if (el) el.textContent = 'update failed - retrying...';
     });
   }
 
-  if (document.getElementById('scalp-tbody')) {
+  if (document.getElementById('signal-card')) {
     loadData();
     setInterval(loadData, 20000);
   }

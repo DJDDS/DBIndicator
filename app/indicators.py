@@ -101,6 +101,41 @@ def _in_opening_window(ts, timeframe: str) -> bool:
     market_open = ts.replace(hour=9, minute=15, second=0, microsecond=0)
     return market_open <= ts < market_open + dt.timedelta(minutes=OPENING_WINDOW_MINUTES)
 
+
+# A 4-hour candle is always labeled by its BUCKET's start (9:15 or 13:15,
+# see fetch_candles' resample origin/offset) for its ENTIRE real four-hour
+# span - so _in_opening_window's candle-label check above can't be reused
+# for it: `market_open <= ts < market_open + N minutes` would stay True
+# for the whole 9:15-13:15 block (ts never advances past "9:15" as a
+# label until the next bucket starts), wrongly suppressing signal_confirmed
+# for four hours instead of just the first few minutes. That's exactly why
+# "4hour" was deliberately left out of _OPENING_WINDOW_TIMEFRAMES.
+# _in_4hour_warmup below checks REAL wall-clock time against the block
+# boundary instead of the candle's label, so it only ever suppresses the
+# first FOUR_HOUR_WARMUP_MINUTES of actual elapsed time - safe to combine
+# with the label-based check above without that over-suppression bug.
+FOUR_HOUR_WARMUP_MINUTES = 30
+_FOUR_HOUR_BLOCK_STARTS = (dt.time(9, 15), dt.time(13, 15))  # matches fetch_candles' 4h resample origin
+
+
+def _in_4hour_warmup(now, timeframe: str) -> bool:
+    """True if `now` (real current IST time, passed in by the live caller
+    - None for anything that isn't live-scanning, e.g. a backtest replay,
+    which never sets this and so never triggers it) falls within the
+    first FOUR_HOUR_WARMUP_MINUTES of the four-hour block currently
+    forming. Not enough real 60-minute sub-bars have accumulated into a
+    freshly-started 4-hour bucket yet for its indicators to be reliable -
+    this is what was actually behind "4-hour scan results aren't right
+    right after market open," not noise in the traditional
+    gap-driven-open sense _in_opening_window guards against."""
+    if timeframe != "4hour" or now is None:
+        return False
+    for block_start_t in _FOUR_HOUR_BLOCK_STARTS:
+        block_start = now.replace(hour=block_start_t.hour, minute=block_start_t.minute, second=0, microsecond=0)
+        if block_start <= now < block_start + dt.timedelta(minutes=FOUR_HOUR_WARMUP_MINUTES):
+            return True
+    return False
+
 # Resample spec for each timeframe's "higher timeframe" trend read, used by
 # _higher_timeframe_direction below - reuses whatever candles were already
 # fetched for the main scan (no extra Kite API call, so no added rate-limit
@@ -283,11 +318,17 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     }
 
 
-def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
+def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     """df must have a 'close' column, oldest row first. Returns the
     latest confluence state - current bullish/bearish alignment count,
     whether a fresh signal fired on the most recently CLOSED candle,
-    and the individual indicator values for display."""
+    and the individual indicator values for display.
+
+    `now` is the real current IST time, only meaningful for "4hour" (see
+    _in_4hour_warmup) - pass it from a live caller (scanner.py does);
+    leave it None for anything replaying historical bars (nothing in
+    backtest.py calls this function at all, but the default keeps this
+    safe for any future caller that doesn't have a real "now" either)."""
     series = compute_series(df, timeframe)
     if "error" in series:
         return series
@@ -386,7 +427,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str) -> dict:
     htf_direction = _higher_timeframe_direction(df, timeframe)
     htf_agrees = True if htf_direction is None else (htf_direction == direction)
 
-    in_opening_window = _in_opening_window(df.index[i], timeframe)
+    in_opening_window = _in_opening_window(df.index[i], timeframe) or _in_4hour_warmup(now, timeframe)
 
     return {
         "close": round(float(close.iloc[i]), 2),

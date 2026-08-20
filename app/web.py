@@ -337,7 +337,7 @@ def scalp_page():
         logged_in=kite_auth.is_logged_in_today(),
         timeframe=scalper.SCALP_TIMEFRAME,
         min_required=scalper.MIN_REQUIRED_SCALP,
-        stock_count=len(scalper.NIFTY50_STOCKS),
+        rel_volume_threshold=scalper.SCALP_REL_VOLUME_THRESHOLD,
     )
 
 
@@ -346,12 +346,9 @@ def scalp_page():
 def api_scalp_results():
     state = scalper.get_scalp_state()
     return jsonify({
-        "results": state["results"],
+        "signal": state["signal"],
         "last_scan": state["last_scan"],
         "last_error": state["last_error"],
-        "index_direction": state["index_direction"],
-        "index_close": state["index_close"],
-        "index_chg_pct": state["index_chg_pct"],
         "min_required": scalper.MIN_REQUIRED_SCALP,
     })
 
