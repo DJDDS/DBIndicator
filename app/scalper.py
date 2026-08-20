@@ -86,6 +86,36 @@ ATR_TARGET_MULT = 1.5  # suggested target = entry +/- 1.5x ATR (~1:2 R:R)
 
 SCALP_SCAN_INTERVAL_SECONDS = 45  # much faster than the main scanner - scalping is time-sensitive
 
+# Higher-timeframe trend read for the scalp signal, mirroring
+# indicators._higher_timeframe_direction's approach for the main screener
+# (see indicators._HTF_RESAMPLE) - resamples the SAME 3-minute NIFTY
+# futures candles already fetched into a coarser 15-minute bucket and
+# reads which way ITS OWN fast/slow EMA leans. This is a genuinely
+# different read from the other 3 scalp votes: EMA(5/13) on the 3-minute
+# chart can flip several times an hour, and session VWAP resets every
+# morning - neither tells you whether the last 15-30 minutes have
+# actually been trending up or down. No extra Kite call (same candles,
+# just resampled).
+SCALP_HTF_RESAMPLE_RULE = "15min"
+
+
+def _scalp_htf_direction(df: pd.DataFrame):
+    """Returns "Bullish"/"Bearish", or None if there isn't enough
+    resampled 15-minute history yet (early in the session) - treated as
+    "no opinion" by the caller, same convention as indicators.py's
+    htf_agrees, so it never blocks every trade before the day's history
+    has built up."""
+    htf_df = df.resample(SCALP_HTF_RESAMPLE_RULE).agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    ).dropna()
+    warmup = SLOW_EMA_LENGTH + 5
+    if len(htf_df) < warmup:
+        return None
+    close = htf_df["close"]
+    ema_fast = close.ewm(span=FAST_EMA_LENGTH, adjust=False).mean()
+    ema_slow = close.ewm(span=SLOW_EMA_LENGTH, adjust=False).mean()
+    return "Bullish" if ema_fast.iloc[-1] > ema_slow.iloc[-1] else "Bearish"
+
 
 def compute_scalp_series(df: pd.DataFrame) -> dict:
     """Computes every scalp indicator series for the full df. Returns
@@ -177,7 +207,20 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
     # suppressed; every other field below still reflects the real
     # current reading.
     in_opening_window = _in_opening_window(df.index[i], SCALP_TIMEFRAME)
-    signal_confirmed = confirmed_count >= MIN_REQUIRED_SCALP and not in_opening_window
+
+    # Higher-timeframe (15-min) trend agreement - a genuine 5th check,
+    # kept separate from confirmed_count/MIN_REQUIRED_SCALP (same
+    # pattern as indicators.py's htf_agrees for the main screener): it
+    # gates the trade call but isn't just another vote toward the 3-of-4
+    # count, since "which way the last 15-30 minutes have trended" is a
+    # meaningfully different question from "do this instant's 3-minute
+    # indicators agree with each other". None (not enough resampled
+    # history yet) is always treated as agreeing, so it never blocks
+    # trades early in the session before 15-min history has built up.
+    htf_direction = _scalp_htf_direction(df)
+    htf_agrees = True if htf_direction is None else (htf_direction == direction)
+
+    signal_confirmed = confirmed_count >= MIN_REQUIRED_SCALP and not in_opening_window and htf_agrees
 
     # Trade-actionable framing, on top of the raw direction/confirmed
     # fields above: rather than making the caller translate "Bullish +
@@ -192,6 +235,8 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
         trade_action = "WAIT"
         if in_opening_window:
             trade_reason = "Opening-window warm-up (first 15 min of the session)"
+        elif not htf_agrees:
+            trade_reason = "Against the 15-min trend (currently %s)" % htf_direction
         else:
             trade_reason = "Only %d of 4 aligned (need %d)" % (confirmed_count, MIN_REQUIRED_SCALP)
     trade_label = (trade_action + " NIFTY FUT") if trade_action != "WAIT" else "NO TRADE - WAIT"
@@ -220,6 +265,8 @@ def compute_scalp_signal(df: pd.DataFrame) -> dict:
         "direction": direction,
         "confirmed_count": confirmed_count,
         "in_opening_window": in_opening_window,
+        "htf_direction": htf_direction,
+        "htf_agrees": htf_agrees,
         "signal_confirmed": signal_confirmed,
         "trade_action": trade_action,
         "trade_label": trade_label,

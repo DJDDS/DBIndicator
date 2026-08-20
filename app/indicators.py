@@ -139,11 +139,20 @@ def _in_4hour_warmup(now, timeframe: str) -> bool:
 # Resample spec for each timeframe's "higher timeframe" trend read, used by
 # _higher_timeframe_direction below - reuses whatever candles were already
 # fetched for the main scan (no extra Kite API call, so no added rate-limit
-# risk) resampled into a coarser bucket. Only 15minute has an entry right
-# now, since that's the timeframe false signals were reported on; other
-# timeframes simply have no higher-timeframe opinion (see htf_agrees below).
+# risk) resampled into a coarser bucket, and "label" picks which MACD
+# preset compute_series uses for that resampled bucket (see
+# macd_params_for_timeframe - "day"/"week" both fall through to the
+# custom/default preset, same as "4hour" always has).
+#
+# 60minute and 4hour both use a daily HTF opinion rather than weekly -
+# 4hour's own lookback (120 days) only yields ~17 resampled WEEKLY bars,
+# short of the ~22 compute_series needs to warm up (BB_LENGTH+2), so a
+# weekly HTF read would silently come back "no opinion" almost always.
+# Daily easily clears that bar for both.
 _HTF_RESAMPLE = {
-    "15minute": {"rule": "4h", "kwargs": {"origin": "start_day", "offset": "9h15min"}},
+    "15minute": {"rule": "4h", "kwargs": {"origin": "start_day", "offset": "9h15min"}, "label": "4hour"},
+    "60minute": {"rule": "1D", "kwargs": {}, "label": "day"},
+    "4hour": {"rule": "1D", "kwargs": {}, "label": "day"},
 }
 
 
@@ -161,7 +170,7 @@ def _higher_timeframe_direction(df: pd.DataFrame, timeframe: str):
     htf_df = df.resample(spec["rule"], **spec["kwargs"]).agg(
         {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     ).dropna()
-    htf_series = compute_series(htf_df, "4hour")
+    htf_series = compute_series(htf_df, spec.get("label", "4hour"))
     if "error" in htf_series:
         return None
     i = len(htf_df) - 1

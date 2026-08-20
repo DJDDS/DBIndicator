@@ -34,7 +34,7 @@
   .confirmed-badge.no { background: rgba(255,255,255,0.06); color: var(--muted); }
   .opening-note { margin-top: 10px; font-size: 12px; color: var(--amber); }
   .direction-sub { margin-top: 8px; font-size: 12px; color: var(--muted); }
-  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .grid4 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
   @media (max-width: 700px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
   .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; text-align: center; }
   .tile-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
@@ -93,6 +93,7 @@
     <div class="tile"><div class="tile-label">VWAP</div><div class="tile-value muted" id="tile-vwap">&mdash;</div><div class="tile-sub" id="tile-vwap-price"></div></div>
     <div class="tile"><div class="tile-label">RSI(7)</div><div class="tile-value muted" id="tile-rsi">&mdash;</div></div>
     <div class="tile"><div class="tile-label">Vol Multiple</div><div class="tile-value muted" id="tile-vol">&mdash;</div><div class="tile-sub">needs &ge; {{ rel_volume_threshold }}x</div></div>
+    <div class="tile"><div class="tile-label">15m Trend</div><div class="tile-value muted" id="tile-htf">&mdash;</div><div class="tile-sub">gates the trade call</div></div>
   </div>
 
   <div class="card" id="levels-card">
@@ -109,13 +110,17 @@
     OHLCV is sourced from the nearest-expiry NIFTY 50 index futures contract, not the raw index - the raw index
     reports 0 volume on Kite historical data, which would permanently zero out the Relative Volume parameter below.
     <strong>BUY/SELL/WAIT</strong> at the top is the actual trade call - BUY or SELL only shows once
-    {{ min_required }} of 4 parameters agree AND the opening-window warm-up has passed; otherwise it shows WAIT with
-    the reason underneath, and "Underlying bias" still shows which way price currently leans even while waiting.
-    <strong>Confirmed</strong> = how many of the 4 scalp parameters currently agree with the shown direction
-    ({{ min_required }} of 4 required to count as a signal). <strong>EMA 5/13</strong> and <strong>VWAP</strong>
-    show which side price is currently on (fast EMA vs slower EMA; last traded price vs the running intraday VWAP)
-    - not whether a cross just happened this instant. <strong>RSI(7)</strong> above 50 leans Bullish, below 50
-    leans Bearish. <strong>Suggested Stop/Target</strong> are ATR(14)-based (0.75x ATR stop, 1.5x ATR target,
+    {{ min_required }} of 4 parameters agree, the opening-window warm-up has passed, AND the 15-minute trend agrees;
+    otherwise it shows WAIT with the reason underneath, and "Underlying bias" still shows which way price currently
+    leans even while waiting. <strong>Confirmed</strong> = how many of the 4 scalp parameters currently agree with
+    the shown direction ({{ min_required }} of 4 required to count as a signal). <strong>EMA 5/13</strong> and
+    <strong>VWAP</strong> show which side price is currently on (fast EMA vs slower EMA; last traded price vs the
+    running intraday VWAP) - not whether a cross just happened this instant. <strong>RSI(7)</strong> above 50 leans
+    Bullish, below 50 leans Bearish. <strong>15m Trend</strong> resamples the same candles into 15-minute bars and
+    reads which way THEIR OWN fast/slow EMA leans - a genuinely different, slower read than the 3-minute votes above
+    it, meant to stop a brief 3-minute blip from firing a trade against the last 15-30 minutes' real direction; a
+    &#9888; marks it currently disagreeing with the trade call (blocking it), and it stays neutral/grey until enough
+    of the session has printed to have an opinion. <strong>Suggested Stop/Target</strong> are ATR(14)-based (0.75x ATR stop, 1.5x ATR target,
     ~1:2 risk:reward) - informational only, meant to help you size a manual order; nothing here is ever
     auto-placed or auto-executed. This page refreshes itself roughly every 20 seconds during market hours - no
     need to reload.
@@ -140,7 +145,7 @@
       document.getElementById('trade-reason').style.display = 'none';
       document.getElementById('confirmed-line').innerHTML = '';
       document.getElementById('opening-note').style.display = 'none';
-      ['tile-ema', 'tile-vwap', 'tile-rsi', 'tile-vol'].forEach(function (id) { document.getElementById(id).textContent = '—'; });
+      ['tile-ema', 'tile-vwap', 'tile-rsi', 'tile-vol', 'tile-htf'].forEach(function (id) { document.getElementById(id).textContent = '—'; });
       document.getElementById('tile-vwap-price').textContent = '';
       ['level-stop', 'level-entry', 'level-target', 'level-rr'].forEach(function (id) { document.getElementById(id).textContent = '—'; });
       updatedEl.textContent = data.last_scan ? 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'waiting for first scan...';
@@ -182,6 +187,8 @@
     document.getElementById('tile-rsi').className = 'tile-value ' + (sig.rsi_state === 'Bullish' ? 'green' : 'red');
     document.getElementById('tile-vol').textContent = sig.vol_multiple != null ? sig.vol_multiple + 'x' : '—';
     document.getElementById('tile-vol').className = 'tile-value ' + (sig.vol_confirmed ? 'green' : 'muted');
+    document.getElementById('tile-htf').textContent = sig.htf_direction ? (sig.htf_direction + (sig.htf_agrees ? '' : ' ⚠')) : 'Building...';
+    document.getElementById('tile-htf').className = 'tile-value ' + (sig.htf_direction == null ? 'muted' : sig.htf_direction === 'Bullish' ? 'green' : 'red');
 
     document.getElementById('level-stop').textContent = fmtPrice(sig.stop);
     document.getElementById('level-entry').textContent = fmtPrice(sig.close);
