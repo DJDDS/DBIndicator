@@ -531,38 +531,6 @@
     </div>
   </div>
 
-  <div class="card" id="param-screener">
-    <h2>Parameter Screener <span class="sub">RSI &middot; MACD &middot; EMA9/BB &middot; Rel Volume - always on, nothing to tick</span></h2>
-    {% set ns4 = namespace(t2=0, t3=0, t4=0) %}
-    {% for r in results %}
-      {% if not r.error and r.param_tier == 2 %}{% set ns4.t2 = ns4.t2 + 1 %}
-      {% elif not r.error and r.param_tier == 3 %}{% set ns4.t3 = ns4.t3 + 1 %}
-      {% elif not r.error and r.param_tier == 4 %}{% set ns4.t4 = ns4.t4 + 1 %}
-      {% endif %}
-    {% endfor %}
-    <div class="tier-grid">
-      {% for tier in [4, 3, 2] %}
-      <div class="tier-col">
-        <h3 class="mn-col-title">{{ tier }} of 4 Match <span class="tier-count">({{ ns4.t4 if tier == 4 else (ns4.t3 if tier == 3 else ns4.t2) }})</span></h3>
-        <div class="match-chips tier-chips">
-          {% for r in results %}
-            {% if not r.error and r.param_tier == tier %}
-            <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-              <span class="mc-top">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span></span>
-              {{ chip_stats(r) }}
-            </a>
-            {% endif %}
-          {% endfor %}
-        </div>
-        {% if (tier == 4 and ns4.t4 == 0) or (tier == 3 and ns4.t3 == 0) or (tier == 2 and ns4.t2 == 0) %}
-        <p class="mn-empty">None right now.</p>
-        {% endif %}
-      </div>
-      {% endfor %}
-    </div>
-    <p class="tb-note">Each stock appears in exactly one tier (its exact match count), so the three columns never overlap. First {{ opening_window_minutes }} min after open (9:15&ndash;{{ opening_window_end }}) always excluded. See the <a href="/oi-screener">OI Screener</a> for these same stocks' Open Interest value, % change, and acceleration.</p>
-  </div>
-
   {% if insights_enabled %}
   <div class="card insights-card">
     <h2>AI Insights <span class="ai-badge">Claude</span></h2>
@@ -995,7 +963,7 @@
   makeSortable();
 
   var DASHBOARD_REFRESH_MS = 20000;
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'param-screener', 'main-tbody', 'multi-tf-panel'];
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {
