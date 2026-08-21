@@ -118,6 +118,7 @@
   .mtf-block .tier-grid { gap: 10px; margin-top: 10px; }
   .mtf-block .tier-chips { max-height: 140px; }
   .mtf-block .tier-col h4 { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); }
+  .mtf-market { font-weight: 400; color: var(--muted); font-family: var(--sans); margin-right: 4px; }
 
   /* Parameter Screener: 3 always-on tiers (2/3/4-of-4), side by side */
   .tier-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
@@ -300,13 +301,6 @@
         <input type="hidden" name="rel_volume_threshold" value="{{ rel_volume_threshold }}">
       </form>
       <span class="tb-status">{{ total_scanned }} scanned</span>
-      <span class="tb-status" title="NIFTY 50's own confluence direction on this timeframe - the Index/Market-trend filter (Settings page) can require your signals to agree with this before counting as Confirmed.">
-        {% if index_direction %}
-        Market: <span class="{{ 'bull' if index_direction == 'Bullish' else 'bear' }}">{{ '▲' if index_direction == 'Bullish' else '▼' }} {{ index_direction }}{% if index_chg_pct is not none %} ({{ '{:+.2f}'.format(index_chg_pct) }}%){% endif %}</span>{% if require_index_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
-        {% else %}
-        Market: —
-        {% endif %}
-      </span>
       <details class="qs-popover">
         <summary>⚙ Settings</summary>
         <div class="qs-popover-body">
@@ -386,6 +380,13 @@
       <div class="mn-header-row">
         <h3>{{ label }} <span class="sub">{{ entry.last_scan or "waiting for first scan..." }}</span></h3>
         <div class="mn-counts">
+          <span class="mtf-market" title="NIFTY 50's own confluence direction on this timeframe - the Index/Market-trend filter (Settings page) can require your signals to agree with this before counting as Confirmed.">
+            {% if entry.index_direction %}
+            Market: <span class="{{ 'bull' if entry.index_direction == 'Bullish' else 'bear' }}">{{ '▲' if entry.index_direction == 'Bullish' else '▼' }}{% if entry.index_chg_pct is not none %} ({{ '{:+.2f}'.format(entry.index_chg_pct) }}%){% endif %}</span>{% if require_index_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
+            {% else %}
+            Market: —
+            {% endif %}
+          </span>
           <span class="bull">▲ {{ ns3.bull }}</span>
           <span class="bear">▼ {{ ns3.bear }}</span>
         </div>

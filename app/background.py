@@ -539,7 +539,11 @@ MULTI_TF_SCAN_INTERVAL_SECONDS = {
 
 _multi_tf_lock = threading.Lock()
 _multi_tf_state = {
-    tf: {"results": [], "last_scan": None, "last_error": None} for tf in MULTI_TF_TIMEFRAMES
+    tf: {
+        "results": [], "last_scan": None, "last_error": None,
+        "index_direction": None, "index_close": None, "index_chg_pct": None,
+    }
+    for tf in MULTI_TF_TIMEFRAMES
 }
 # Epoch seconds (time.time()) each timeframe is next due to be re-scanned -
 # 0.0 for all three at startup so every timeframe scans on the very first
@@ -562,6 +566,9 @@ def _load_persisted_multi_tf_state():
                     _multi_tf_state[tf]["results"] = entry.get("results", [])
                     _multi_tf_state[tf]["last_scan"] = entry.get("last_scan")
                     _multi_tf_state[tf]["last_error"] = None
+                    _multi_tf_state[tf]["index_direction"] = entry.get("index_direction")
+                    _multi_tf_state[tf]["index_close"] = entry.get("index_close")
+                    _multi_tf_state[tf]["index_chg_pct"] = entry.get("index_chg_pct")
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -569,7 +576,13 @@ def _load_persisted_multi_tf_state():
 def _save_persisted_multi_tf_state():
     with _multi_tf_lock:
         snapshot = {
-            tf: {"results": _multi_tf_state[tf]["results"], "last_scan": _multi_tf_state[tf]["last_scan"]}
+            tf: {
+                "results": _multi_tf_state[tf]["results"],
+                "last_scan": _multi_tf_state[tf]["last_scan"],
+                "index_direction": _multi_tf_state[tf]["index_direction"],
+                "index_close": _multi_tf_state[tf]["index_close"],
+                "index_chg_pct": _multi_tf_state[tf]["index_chg_pct"],
+            }
             for tf in MULTI_TF_TIMEFRAMES
         }
     try:
@@ -598,13 +611,16 @@ def _scan_one_multi_tf(kite, tf):
     this panel never displays would just be extra work and extra state to
     persist for nothing."""
     results = scan_watchlist(kite, timeframe=tf)
-    index_direction, _, _ = fetch_index_direction(kite, tf)
+    index_direction, index_close, index_chg_pct = fetch_index_direction(kite, tf)
     _apply_param_tier(results)
     _apply_index_filter(results, index_direction)
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")
         _multi_tf_state[tf]["last_error"] = None
+        _multi_tf_state[tf]["index_direction"] = index_direction
+        _multi_tf_state[tf]["index_close"] = index_close
+        _multi_tf_state[tf]["index_chg_pct"] = index_chg_pct
 
 
 def _run_multi_tf_loop():
