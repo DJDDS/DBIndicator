@@ -356,6 +356,7 @@ def backtest_page():
         default_params=list(backtest.DEFAULT_PARAMS),
         default_required=backtest.DEFAULT_REQUIRED,
         filter_defs=backtest.FILTER_DEFS,
+        cost_presets=backtest.COST_PRESETS,
         state=backtest.get_backtest_state(),
         weights_state=backtest.get_weights_state(),
         index_symbols=backtest.INDEX_SYMBOLS,
@@ -431,6 +432,22 @@ def api_backtest_start():
     filters_raw = form.get("filters", "")
     filters = {f.strip() for f in filters_raw.split(",") if f.strip() and f.strip() in backtest.FILTER_IDS}
 
+    # Transaction-cost + train/holdout split (NEXT_HORIZON_RESEARCH.md
+    # Finding 2) - all three default to 0 (raw return, no split), exactly
+    # matching every prior form submission that never sent these fields.
+    try:
+        cost_pct = max(0.0, float(form.get("cost_pct", 0) or 0))
+    except ValueError:
+        return jsonify({"started": False, "reason": "cost_pct must be a number"}), 400
+    try:
+        slippage_pct = max(0.0, float(form.get("slippage_pct", 0) or 0))
+    except ValueError:
+        return jsonify({"started": False, "reason": "slippage_pct must be a number"}), 400
+    try:
+        holdout_pct = min(90.0, max(0.0, float(form.get("holdout_pct", 0) or 0)))
+    except ValueError:
+        return jsonify({"started": False, "reason": "holdout_pct must be a number"}), 400
+
     result = backtest.start_backtest(
         kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, horizons=horizons,
         params=params, required=required,
@@ -438,6 +455,7 @@ def api_backtest_start():
         require_regime_volume="require_regime_volume" in filters,
         exclude_opening_window="exclude_opening_window" in filters,
         require_volume_flow="require_volume_flow" in filters,
+        cost_pct=cost_pct, slippage_pct=slippage_pct, holdout_pct=holdout_pct,
     )
     return jsonify(result)
 
