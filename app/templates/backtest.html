@@ -129,6 +129,16 @@
           {% endfor %}
         </div>
       </div>
+      <div style="margin-top:16px;">
+        <label>Live-parity filters (optional - all off by default, matches the live dashboard's gates on top of the vote above)</label>
+        <div class="horizons" id="bt-filters">
+          {% for f in filter_defs %}
+          <label class="chk" style="display:flex; margin-bottom:6px;">
+            <input type="checkbox" name="filter" value="{{ f.id }}"> {{ f.label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
       <div class="row" style="grid-template-columns: 1fr 3fr; margin-top:6px;">
         <div>
           <label for="bt-required">Required (of selected)</label>
@@ -240,6 +250,11 @@ const initialState = {{ state | tojson }};
 const PARAM_LABELS = {};
 {% for p in param_defs %}PARAM_LABELS['{{ p.id }}'] = {{ p.label | tojson }};
 {% endfor %}
+const FILTER_LABELS = {
+  require_htf: 'HTF agreement',
+  require_regime_volume: 'Regime-adaptive volume',
+  exclude_opening_window: 'Opening-window excluded',
+};
 
 function fmtPct(v) {
   if (v === null || v === undefined) return '—';
@@ -288,8 +303,11 @@ function renderResult(result) {
 
   const chosenParams = result.params || [];
   const chosenLabels = chosenParams.map(p => PARAM_LABELS[p] || p);
+  const activeFilters = ['require_htf', 'require_regime_volume', 'exclude_opening_window']
+    .filter(k => result[k]).map(k => FILTER_LABELS[k] || k);
+  const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
   document.getElementById('bt-signal-desc').textContent =
-    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}`;
+    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}`;
 
   const tiles = document.getElementById('bt-tiles');
   tiles.innerHTML = `
@@ -418,6 +436,7 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
       `Required must be between 1 and ${params.length} (the number of parameters you selected).`;
     return;
   }
+  const filters = Array.from(document.querySelectorAll('input[name=filter]:checked')).map(el => el.value);
   const body = new URLSearchParams();
   body.set('universe', form.get('universe') || 'watchlist');
   body.set('timeframe', form.get('timeframe'));
@@ -425,6 +444,7 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
   body.set('horizons', horizons.join(','));
   body.set('params', params.join(','));
   body.set('required', String(required));
+  body.set('filters', filters.join(','));
   document.getElementById('bt-form-hint').textContent = '';
   fetch('/api/backtest/start', { method: 'POST', body: body })
     .then(r => r.json())

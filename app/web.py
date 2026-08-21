@@ -378,6 +378,7 @@ def backtest_page():
         param_defs=backtest.PARAM_DEFS,
         default_params=list(backtest.DEFAULT_PARAMS),
         default_required=backtest.DEFAULT_REQUIRED,
+        filter_defs=backtest.FILTER_DEFS,
         state=backtest.get_backtest_state(),
         weights_state=backtest.get_weights_state(),
         index_symbols=backtest.INDEX_SYMBOLS,
@@ -446,9 +447,19 @@ def api_backtest_start():
             "reason": f"required must be between 1 and {len(params)} (the number of parameters you selected)",
         }), 400
 
+    # The 3 optional live-parity gates (FILTER_DEFS) - same comma-separated
+    # convention as "params" above, sent as a "filters" field so a run that
+    # opts into none of them (the default, every prior form submission)
+    # behaves identically to before this was added.
+    filters_raw = form.get("filters", "")
+    filters = {f.strip() for f in filters_raw.split(",") if f.strip() and f.strip() in backtest.FILTER_IDS}
+
     result = backtest.start_backtest(
         kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, horizons=horizons,
         params=params, required=required,
+        require_htf="require_htf" in filters,
+        require_regime_volume="require_regime_volume" in filters,
+        exclude_opening_window="exclude_opening_window" in filters,
     )
     return jsonify(result)
 

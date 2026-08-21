@@ -29,6 +29,19 @@ Reuses indicators.compute_series() directly rather than reimplementing
 the indicator math in a separate form, so results here stay faithful
 to what the live dashboard is actually computing.
 
+Three optional FILTER_DEFS checkboxes (require_htf, require_regime_volume,
+exclude_opening_window - see _signal_series) let you additionally replay
+the same GATES the live screener applies on top of its 4 parameters
+(higher-timeframe trend agreement, the ADX-regime-scaled Relative Volume
+bar, and the opening-window/4-hour-warmup suppression - see
+indicators.compute_signal). All three default OFF, so existing behaviour
+and every prior backtest result is unchanged unless you opt in - turning
+all three on is what makes a backtest run genuinely comparable to what
+"Confirmed" means live, closing the gap this module's docstring used to
+just warn about. See _htf_direction_series/_regime_volume_hot_series/
+_opening_window_mask below for the vectorized, no-lookahead replay of
+each one.
+
 Runs as its own background thread (like the main scanner) rather than
 inside a request handler - fetching + replaying a whole watchlist can
 take a while, well past what a web request should block on. Poll
@@ -44,7 +57,10 @@ import numpy as np
 import pandas as pd
 
 from .config import settings, PARAM_WEIGHTS_FILE
-from .indicators import compute_series, RSI_OVERBOUGHT, RSI_OVERSOLD
+from .indicators import (
+    compute_series, RSI_OVERBOUGHT, RSI_OVERSOLD,
+    _compute_adx, _classify_regime, _in_opening_window, _in_4hour_warmup, _HTF_RESAMPLE,
+)
 from .scanner import _load_instrument_map, _load_index_token, now_ist
 
 # Index symbols selectable as "also backtest" checkboxes on the Backtest
@@ -88,6 +104,31 @@ PARAM_IDS = [p["id"] for p in PARAM_DEFS]
 DEFAULT_PARAMS = ("rsi_cross", "macd_cross", "ema_bb_cross")  # the original 3-indicator rule
 DEFAULT_REQUIRED = 2
 
+# Optional GATES (not votes - see _signal_series) that replay the same
+# checks indicators.compute_signal applies live on top of its 4-parameter
+# vote, before it counts a bar as "Confirmed". Shown as a separate row of
+# checkboxes on the backtest page, distinct from PARAM_DEFS above: these
+# don't add to bull_count/bear_count, they can only SUPPRESS a signal your
+# chosen parameters already agree on. All default OFF so nothing here
+# changes any existing backtest/weight-run result unless you opt in.
+FILTER_DEFS = [
+    {
+        "id": "require_htf",
+        "label": "Higher-timeframe trend agreement (matches the live screener's HTF filter)",
+    },
+    {
+        "id": "require_regime_volume",
+        "label": "Regime-adaptive Relative Volume threshold (stricter bar when ADX reads Ranging, matches live) "
+                  "- only changes anything if Relative Volume is also selected above",
+    },
+    {
+        "id": "exclude_opening_window",
+        "label": "Exclude the opening-window / 4-hour warm-up (first 15 min after 9:15, or first 30 min of "
+                  "each 4-hour block, matches live)",
+    },
+]
+FILTER_IDS = [f["id"] for f in FILTER_DEFS]
+
 
 # --------------------------------------------------------------------------
 # Background job plumbing (mirrors background.py's pattern: a lock-guarded
@@ -117,10 +158,14 @@ def _progress_cb(done, total, symbol):
 
 
 def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS,
-                    params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED) -> dict:
+                    params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
+                    require_htf=False, require_regime_volume=False, exclude_opening_window=False) -> dict:
     """Kicks off a backtest run in a background thread. Returns
     {"started": True} or {"started": False, "reason": ...} if one is
-    already running - only one backtest runs at a time."""
+    already running - only one backtest runs at a time. The three
+    require_htf/require_regime_volume/exclude_opening_window flags are the
+    FILTER_DEFS gates above - all default False, matching every prior
+    caller/test that only ever passed params/required."""
     with _bt_lock:
         if _bt_state["status"] == "running":
             return {"started": False, "reason": "A backtest is already running."}
@@ -132,6 +177,8 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
         _bt_state["params"] = {
             "timeframe": timeframe, "days": days, "horizons": list(horizons),
             "params": list(params), "required": required,
+            "require_htf": bool(require_htf), "require_regime_volume": bool(require_regime_volume),
+            "exclude_opening_window": bool(exclude_opening_window),
         }
         _bt_state["result"] = None
         _bt_state["error"] = None
@@ -139,17 +186,23 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
         _bt_state["finished_at"] = None
 
     thread = threading.Thread(
-        target=_run_backtest_job, args=(kite, symbols, timeframe, days, horizons, params, required), daemon=True
+        target=_run_backtest_job,
+        args=(kite, symbols, timeframe, days, horizons, params, required,
+              require_htf, require_regime_volume, exclude_opening_window),
+        daemon=True,
     )
     thread.start()
     return {"started": True}
 
 
-def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required):
+def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required,
+                       require_htf=False, require_regime_volume=False, exclude_opening_window=False):
     try:
         result = run_backtest(
             kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
             params=params, required=required, progress_cb=_progress_cb,
+            require_htf=require_htf, require_regime_volume=require_regime_volume,
+            exclude_opening_window=exclude_opening_window,
         )
         with _bt_lock:
             _bt_state["status"] = "done"
@@ -195,12 +248,21 @@ def _fetch_history(token, timeframe, days, kite):
 # full history
 # --------------------------------------------------------------------------
 
-def _param_bull_bear(series: dict, param_id: str):
+def _param_bull_bear(series: dict, param_id: str, rel_volume_hot: pd.Series = None):
     """Returns (bullish_bool_series, bearish_bool_series) for one
     selectable parameter, aligned to series' index. The *_cross
     parameters are single-bar pulses (true only on the exact bar the
     cross happens); rsi_threshold and rel_volume are states that can
-    stay true for a stretch of consecutive bars."""
+    stay true for a stretch of consecutive bars.
+
+    rel_volume_hot, when given (see _signal_series' require_regime_volume
+    handling), REPLACES the plain flat-threshold "hot" read with the
+    ADX-regime-scaled one from _regime_volume_hot_series - this is how
+    the regime-adaptive volume threshold is wired in: it only ever
+    changes what "hot" means for the rel_volume parameter's OWN vote, it
+    never adds a separate mandatory gate of its own, mirroring how ADX
+    regime only ever scales indicators.compute_signal's existing 4th
+    parameter live, rather than acting as a 5th vote."""
     if param_id == "rsi_cross":
         return series["rsi_up"], series["rsi_dn"]
     if param_id == "macd_cross":
@@ -211,15 +273,113 @@ def _param_bull_bear(series: dict, param_id: str):
         rsi_line = series["rsi_line"]
         return rsi_line > RSI_OVERBOUGHT, rsi_line < RSI_OVERSOLD
     if param_id == "rel_volume":
-        volume = series["df"]["volume"]
-        vol_avg = series["vol_avg"]
-        rel_vol = volume / vol_avg.replace(0, np.nan)
-        is_hot = rel_vol.notna() & (rel_vol > settings.REL_VOLUME_THRESHOLD)
+        if rel_volume_hot is not None:
+            is_hot = rel_volume_hot
+        else:
+            volume = series["df"]["volume"]
+            vol_avg = series["vol_avg"]
+            rel_vol = volume / vol_avg.replace(0, np.nan)
+            is_hot = rel_vol.notna() & (rel_vol > settings.REL_VOLUME_THRESHOLD)
         return is_hot, is_hot.copy()  # same condition confirms either direction
     raise ValueError(f"unknown backtest parameter: {param_id}")
 
 
-def _signal_series(series: dict, params, required: int):
+def _regime_volume_hot_series(series: dict) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's regime-adaptive
+    Relative Volume bar: ADX classifies EVERY bar's own Trending/Ranging/
+    Transitional regime (_compute_adx/_classify_regime, same as live),
+    and only a Ranging bar gets REL_VOLUME_THRESHOLD scaled up by
+    RANGING_VOL_MULTIPLIER - Trending/Transitional/unknown-regime bars
+    use your configured threshold unchanged, exactly like
+    compute_signal's `vol_threshold_multiplier = RANGING_VOL_MULTIPLIER
+    if regime == "Ranging" else 1.0`. Only meaningful if "rel_volume" is
+    one of your chosen PARAM_DEFS for this run - see _param_bull_bear."""
+    df = series["df"]
+    adx_series = _compute_adx(df, settings.ADX_LENGTH)
+    regime = adx_series.apply(_classify_regime)
+    multiplier = regime.map({"Ranging": settings.RANGING_VOL_MULTIPLIER}).fillna(1.0)
+    effective_threshold = settings.REL_VOLUME_THRESHOLD * multiplier
+    rel_vol = df["volume"] / series["vol_avg"].replace(0, np.nan)
+    return rel_vol.notna() & (rel_vol > effective_threshold)
+
+
+def _htf_direction_series(df: pd.DataFrame, timeframe: str) -> pd.Series:
+    """Vectorized, no-lookahead replay of indicators._higher_timeframe_
+    direction across a WHOLE backtest window (live only ever reads the
+    single latest bucket - a backtest replay needs a direction opinion at
+    EVERY bar, which is a materially different problem, not just a loop
+    over the live function).
+
+    Live safely reads the CURRENTLY-forming HTF bucket, because it's only
+    ever built from candles that have actually arrived by "now" - there's
+    no future data in it to leak. Naively resampling the FULL history
+    here and reading each bucket's fully-closed OHLC would NOT be safe
+    the same way: an early bar inside a still-forming 4-hour bucket would
+    be reading that bucket's EVENTUAL close, i.e. its own future - real
+    lookahead bias. To avoid that, every bar here only ever sees its most
+    recently FULLY CLOSED HTF bucket's direction (shift by one bucket,
+    then merge_asof direction="backward" to align back onto the
+    fine-grained index) - a conservative, explicitly one-bucket-stale
+    choice, not a literal replay of live's read.
+
+    Returns an object Series aligned to df's index: "Bullish"/"Bearish",
+    or None where this timeframe has no HTF entry (see _HTF_RESAMPLE) or
+    the owning bucket hadn't finished warming up its own indicators yet."""
+    spec = _HTF_RESAMPLE.get(timeframe)
+    if spec is None or df.empty:
+        return pd.Series(None, index=df.index, dtype=object)
+
+    htf_df = df.resample(spec["rule"], **spec["kwargs"]).agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    ).dropna()
+    htf_series = compute_series(htf_df, spec.get("label", "4hour"))
+    if "error" in htf_series:
+        return pd.Series(None, index=df.index, dtype=object)
+
+    # Only trust a bucket once ALL of its own indicators have actually
+    # warmed up - compute_series' own len() guard only protects the
+    # LATEST bar (all live ever reads), not every earlier bar in this
+    # backtest's full htf_df, so without this an early, still-warming
+    # bucket's NaN indicator values would compare as False across the
+    # board (NaN > x is always False, never NaN, in pandas) and get
+    # mislabeled "Bearish" by construction instead of "no opinion yet".
+    warm = (
+        htf_series["rsi_smooth"].notna() & htf_series["macd_line"].notna()
+        & htf_series["signal_line"].notna() & htf_series["ema9"].notna() & htf_series["bb_mid"].notna()
+    )
+    align_count = (
+        (htf_series["rsi_line"] > htf_series["rsi_smooth"]).astype(int)
+        + (htf_series["macd_line"] > htf_series["signal_line"]).astype(int)
+        + (htf_series["ema9"] > htf_series["bb_mid"]).astype(int)
+    )
+    bucket_direction = pd.Series(np.where(align_count >= 2, "Bullish", "Bearish"), index=htf_df.index, dtype=object)
+    bucket_direction = bucket_direction.where(warm, other=None)
+    # Shift by ONE full bucket so a bar can only ever see the last FULLY
+    # CLOSED bucket's direction, never its own still-forming one.
+    bucket_direction_prior = bucket_direction.shift(1)
+
+    fine = pd.DataFrame({"ts": df.index}).sort_values("ts")
+    htf_lookup = pd.DataFrame({"ts": bucket_direction_prior.index, "htf_dir": bucket_direction_prior.values}).sort_values("ts")
+    merged = pd.merge_asof(fine, htf_lookup, on="ts", direction="backward")
+    return pd.Series(merged["htf_dir"].values, index=df.index)
+
+
+def _opening_window_mask(df: pd.DataFrame, timeframe: str) -> pd.Series:
+    """Vectorized replay of indicators._in_opening_window OR'd with
+    _in_4hour_warmup, across every bar in df - each bar's OWN timestamp
+    stands in for "the current wall-clock time as of that bar" (a
+    backtest replay has no separate real "now" the way a live scan
+    does), which is exactly the historically-correct read: it reproduces
+    what a live scan running at that exact past moment would have seen."""
+    return pd.Series(
+        [bool(_in_opening_window(ts, timeframe) or _in_4hour_warmup(ts, timeframe)) for ts in df.index],
+        index=df.index,
+    )
+
+
+def _signal_series(series: dict, params, required: int, timeframe: str = None,
+                    require_htf: bool = False, require_regime_volume: bool = False,
+                    exclude_opening_window: bool = False):
     """Combines the chosen parameters bar-by-bar: has_signal is true on
     any bar where at least `required` of them agree on the same
     direction at once. Deliberately NOT the continuous "aligned >=
@@ -229,12 +389,25 @@ def _signal_series(series: dict, params, required: int):
     >= 2 by construction (3 things can't split narrower than 2-1), which
     would make has_signal always true and silently produce zero trades.
     Mixing in threshold-type parameters (rsi_threshold, rel_volume) is
-    safe here because those are genuine, sometimes-false conditions."""
+    safe here because those are genuine, sometimes-false conditions.
+
+    require_htf/require_regime_volume/exclude_opening_window (all default
+    False) replay the same GATES indicators.compute_signal applies live
+    on top of its own 4-parameter vote before calling a bar
+    "signal_confirmed" - see _htf_direction_series/_regime_volume_hot_
+    series/_opening_window_mask above. Unlike PARAM_DEFS these never add
+    to bull_count/bear_count; they can only SUPPRESS a bar your chosen
+    parameters already agreed on, exactly like live's
+    `signal_confirmed = aligned >= MIN_REQUIRED and htf_agrees and not
+    in_opening_window`. require_htf/exclude_opening_window need
+    `timeframe` (raises if omitted while set)."""
     index = series["rsi_line"].index
+    rel_volume_hot = _regime_volume_hot_series(series) if require_regime_volume else None
+
     bull_count = pd.Series(0, index=index)
     bear_count = pd.Series(0, index=index)
     for param_id in params:
-        bull, bear = _param_bull_bear(series, param_id)
+        bull, bear = _param_bull_bear(series, param_id, rel_volume_hot=rel_volume_hot)
         bull_count = bull_count + bull.reindex(index).fillna(False).astype(int)
         bear_count = bear_count + bear.reindex(index).fillna(False).astype(int)
 
@@ -252,6 +425,20 @@ def _signal_series(series: dict, params, required: int):
     is_bear = (bear_count >= required) & (bull_count < required)
     has_signal = is_bull | is_bear
     direction = pd.Series(np.where(is_bull, "Bullish", "Bearish"), index=index)
+
+    if require_htf:
+        if not timeframe:
+            raise ValueError("require_htf needs a timeframe")
+        htf_dir = _htf_direction_series(series["df"], timeframe).reindex(index)
+        htf_agrees = htf_dir.isna() | (htf_dir == direction)
+        has_signal = has_signal & htf_agrees
+
+    if exclude_opening_window:
+        if not timeframe:
+            raise ValueError("exclude_opening_window needs a timeframe")
+        in_window = _opening_window_mask(series["df"], timeframe).reindex(index).fillna(False)
+        has_signal = has_signal & ~in_window
+
     return has_signal, direction
 
 
@@ -305,7 +492,8 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
     }
 
 
-def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required):
+def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required,
+                    require_htf=False, require_regime_volume=False, exclude_opening_window=False):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -314,7 +502,11 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
     if "error" in series:
         return []
 
-    has_signal, direction = _signal_series(series, params, required)
+    has_signal, direction = _signal_series(
+        series, params, required, timeframe=timeframe,
+        require_htf=require_htf, require_regime_volume=require_regime_volume,
+        exclude_opening_window=exclude_opening_window,
+    )
     # shift(..., fill_value=False) instead of shift(1).fillna(False): a
     # plain shift(1) on a bool Series introduces a leading NaN, which
     # upcasts the whole series to object dtype - then fillna(False) has to
@@ -399,8 +591,12 @@ def _summarize(trades, horizons):
 
 
 def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
-                  params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None) -> dict:
+                  params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None,
+                  require_htf=False, require_regime_volume=False, exclude_opening_window=False) -> dict:
     days = min(int(days or 30), MAX_BACKTEST_DAYS)
+    require_htf = bool(require_htf)
+    require_regime_volume = bool(require_regime_volume)
+    exclude_opening_window = bool(exclude_opening_window)
     horizons = tuple(sorted({int(h) for h in horizons if int(h) > 0})) or DEFAULT_HORIZONS
 
     params = tuple(p for p in (params or ()) if p in PARAM_IDS) or DEFAULT_PARAMS
@@ -441,7 +637,9 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
 
         try:
             symbol_trades = _replay_symbol(
-                df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required
+                df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required,
+                require_htf=require_htf, require_regime_volume=require_regime_volume,
+                exclude_opening_window=exclude_opening_window,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("Backtest replay failed for %s", symbol)
@@ -470,6 +668,9 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "horizons": list(horizons),
         "params": list(params),
         "required": required,
+        "require_htf": require_htf,
+        "require_regime_volume": require_regime_volume,
+        "exclude_opening_window": exclude_opening_window,
         "window_start": window_start.isoformat(timespec="seconds"),
         "window_end": to_date.isoformat(timespec="seconds"),
         "symbols_scanned": len(symbols),
