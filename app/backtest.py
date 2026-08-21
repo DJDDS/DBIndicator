@@ -99,6 +99,7 @@ PARAM_DEFS = [
     {"id": "ema_bb_cross", "label": "EMA9 vs Bollinger Mid Cross"},
     {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
     {"id": "rel_volume", "label": "Relative Volume above your configured threshold (20-bar avg, Settings page) - confirmation only, combine with a directional parameter"},
+    {"id": "cmf_flow", "label": "Chaikin Money Flow sign (directional volume - Bullish if recent volume skewed toward up-closes, Bearish if down-closes; distinct from the magnitude-only Relative Volume above - see PARAMETER_ANALYSIS_2.md Finding #2)"},
 ]
 PARAM_IDS = [p["id"] for p in PARAM_DEFS]
 DEFAULT_PARAMS = ("rsi_cross", "macd_cross", "ema_bb_cross")  # the original 3-indicator rule
@@ -125,6 +126,11 @@ FILTER_DEFS = [
         "id": "exclude_opening_window",
         "label": "Exclude the opening-window / 4-hour warm-up (first 15 min after 9:15, or first 30 min of "
                   "each 4-hour block, matches live)",
+    },
+    {
+        "id": "require_volume_flow",
+        "label": "Volume-flow agreement (Chaikin Money Flow sign must match your signal's direction, matches "
+                  "live's optional REQUIRE_VOLUME_FLOW_AGREEMENT gate)",
     },
 ]
 FILTER_IDS = [f["id"] for f in FILTER_DEFS]
@@ -159,13 +165,15 @@ def _progress_cb(done, total, symbol):
 
 def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS,
                     params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
-                    require_htf=False, require_regime_volume=False, exclude_opening_window=False) -> dict:
+                    require_htf=False, require_regime_volume=False, exclude_opening_window=False,
+                    require_volume_flow=False) -> dict:
     """Kicks off a backtest run in a background thread. Returns
     {"started": True} or {"started": False, "reason": ...} if one is
-    already running - only one backtest runs at a time. The three
-    require_htf/require_regime_volume/exclude_opening_window flags are the
-    FILTER_DEFS gates above - all default False, matching every prior
-    caller/test that only ever passed params/required."""
+    already running - only one backtest runs at a time. The four
+    require_htf/require_regime_volume/exclude_opening_window/require_
+    volume_flow flags are the FILTER_DEFS gates above - all default
+    False, matching every prior caller/test that only ever passed
+    params/required."""
     with _bt_lock:
         if _bt_state["status"] == "running":
             return {"started": False, "reason": "A backtest is already running."}
@@ -178,7 +186,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
             "timeframe": timeframe, "days": days, "horizons": list(horizons),
             "params": list(params), "required": required,
             "require_htf": bool(require_htf), "require_regime_volume": bool(require_regime_volume),
-            "exclude_opening_window": bool(exclude_opening_window),
+            "exclude_opening_window": bool(exclude_opening_window), "require_volume_flow": bool(require_volume_flow),
         }
         _bt_state["result"] = None
         _bt_state["error"] = None
@@ -188,7 +196,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
     thread = threading.Thread(
         target=_run_backtest_job,
         args=(kite, symbols, timeframe, days, horizons, params, required,
-              require_htf, require_regime_volume, exclude_opening_window),
+              require_htf, require_regime_volume, exclude_opening_window, require_volume_flow),
         daemon=True,
     )
     thread.start()
@@ -196,13 +204,14 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
 
 
 def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required,
-                       require_htf=False, require_regime_volume=False, exclude_opening_window=False):
+                       require_htf=False, require_regime_volume=False, exclude_opening_window=False,
+                       require_volume_flow=False):
     try:
         result = run_backtest(
             kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
             params=params, required=required, progress_cb=_progress_cb,
             require_htf=require_htf, require_regime_volume=require_regime_volume,
-            exclude_opening_window=exclude_opening_window,
+            exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
         )
         with _bt_lock:
             _bt_state["status"] = "done"
@@ -281,7 +290,28 @@ def _param_bull_bear(series: dict, param_id: str, rel_volume_hot: pd.Series = No
             rel_vol = volume / vol_avg.replace(0, np.nan)
             is_hot = rel_vol.notna() & (rel_vol > settings.REL_VOLUME_THRESHOLD)
         return is_hot, is_hot.copy()  # same condition confirms either direction
+    if param_id == "cmf_flow":
+        # Directional, unlike rel_volume above - genuinely has its own
+        # bull/bear read (Chaikin Money Flow's sign), reused straight
+        # from compute_series (see indicators._compute_cmf) rather than
+        # recomputed here, same "reuse compute_series" convention as
+        # every other parameter in this function.
+        cmf = series["cmf"]
+        return cmf > 0, cmf < 0
     raise ValueError(f"unknown backtest parameter: {param_id}")
+
+
+def _volume_flow_agree_series(series: dict, direction: pd.Series) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's vol_flow_agrees -
+    does Chaikin Money Flow's sign (see indicators._compute_cmf, reused
+    from compute_series' own "cmf" column) agree with each bar's own
+    chosen direction? NaN or exactly-0.0 CMF (not enough history yet, or
+    a genuinely flat read) is treated as agreeing - same "None means
+    agree" convention used by _htf_direction_series/require_htf above,
+    so a bar with no CMF opinion yet is never silently suppressed."""
+    cmf = series["cmf"]
+    flow_dir = pd.Series(np.where(cmf > 0, "Bullish", np.where(cmf < 0, "Bearish", None)), index=cmf.index, dtype=object)
+    return flow_dir.isna() | (flow_dir == direction)
 
 
 def _regime_volume_hot_series(series: dict) -> pd.Series:
@@ -379,7 +409,7 @@ def _opening_window_mask(df: pd.DataFrame, timeframe: str) -> pd.Series:
 
 def _signal_series(series: dict, params, required: int, timeframe: str = None,
                     require_htf: bool = False, require_regime_volume: bool = False,
-                    exclude_opening_window: bool = False):
+                    exclude_opening_window: bool = False, require_volume_flow: bool = False):
     """Combines the chosen parameters bar-by-bar: has_signal is true on
     any bar where at least `required` of them agree on the same
     direction at once. Deliberately NOT the continuous "aligned >=
@@ -391,15 +421,18 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     Mixing in threshold-type parameters (rsi_threshold, rel_volume) is
     safe here because those are genuine, sometimes-false conditions.
 
-    require_htf/require_regime_volume/exclude_opening_window (all default
-    False) replay the same GATES indicators.compute_signal applies live
-    on top of its own 4-parameter vote before calling a bar
+    require_htf/require_regime_volume/exclude_opening_window/require_
+    volume_flow (all default False) replay the same GATES
+    indicators.compute_signal (plus background.py's opt-in filters)
+    apply live on top of the parameter vote before calling a bar
     "signal_confirmed" - see _htf_direction_series/_regime_volume_hot_
-    series/_opening_window_mask above. Unlike PARAM_DEFS these never add
-    to bull_count/bear_count; they can only SUPPRESS a bar your chosen
-    parameters already agreed on, exactly like live's
-    `signal_confirmed = aligned >= MIN_REQUIRED and htf_agrees and not
-    in_opening_window`. require_htf/exclude_opening_window need
+    series/_opening_window_mask/_volume_flow_agree_series above. Unlike
+    PARAM_DEFS these never add to bull_count/bear_count; they can only
+    SUPPRESS a bar your chosen parameters already agreed on, exactly
+    like live's `signal_confirmed = aligned >= MIN_REQUIRED and
+    htf_agrees and not in_opening_window` (further revoked by
+    background.py's REQUIRE_INDEX_AGREEMENT/REQUIRE_VOLUME_FLOW_AGREEMENT
+    when those are on). require_htf/exclude_opening_window need
     `timeframe` (raises if omitted while set)."""
     index = series["rsi_line"].index
     rel_volume_hot = _regime_volume_hot_series(series) if require_regime_volume else None
@@ -438,6 +471,10 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
             raise ValueError("exclude_opening_window needs a timeframe")
         in_window = _opening_window_mask(series["df"], timeframe).reindex(index).fillna(False)
         has_signal = has_signal & ~in_window
+
+    if require_volume_flow:
+        flow_agrees = _volume_flow_agree_series(series, direction).reindex(index).fillna(True)
+        has_signal = has_signal & flow_agrees
 
     return has_signal, direction
 
@@ -493,7 +530,8 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 
 
 def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required,
-                    require_htf=False, require_regime_volume=False, exclude_opening_window=False):
+                    require_htf=False, require_regime_volume=False, exclude_opening_window=False,
+                    require_volume_flow=False):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -505,7 +543,7 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
     has_signal, direction = _signal_series(
         series, params, required, timeframe=timeframe,
         require_htf=require_htf, require_regime_volume=require_regime_volume,
-        exclude_opening_window=exclude_opening_window,
+        exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
     )
     # shift(..., fill_value=False) instead of shift(1).fillna(False): a
     # plain shift(1) on a bool Series introduces a leading NaN, which
@@ -592,11 +630,13 @@ def _summarize(trades, horizons):
 
 def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
                   params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None,
-                  require_htf=False, require_regime_volume=False, exclude_opening_window=False) -> dict:
+                  require_htf=False, require_regime_volume=False, exclude_opening_window=False,
+                  require_volume_flow=False) -> dict:
     days = min(int(days or 30), MAX_BACKTEST_DAYS)
     require_htf = bool(require_htf)
     require_regime_volume = bool(require_regime_volume)
     exclude_opening_window = bool(exclude_opening_window)
+    require_volume_flow = bool(require_volume_flow)
     horizons = tuple(sorted({int(h) for h in horizons if int(h) > 0})) or DEFAULT_HORIZONS
 
     params = tuple(p for p in (params or ()) if p in PARAM_IDS) or DEFAULT_PARAMS
@@ -639,7 +679,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
             symbol_trades = _replay_symbol(
                 df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required,
                 require_htf=require_htf, require_regime_volume=require_regime_volume,
-                exclude_opening_window=exclude_opening_window,
+                exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("Backtest replay failed for %s", symbol)
@@ -671,6 +711,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "require_htf": require_htf,
         "require_regime_volume": require_regime_volume,
         "exclude_opening_window": exclude_opening_window,
+        "require_volume_flow": require_volume_flow,
         "window_start": window_start.isoformat(timespec="seconds"),
         "window_end": to_date.isoformat(timespec="seconds"),
         "symbols_scanned": len(symbols),

@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, indicators, kite_auth, scalper, scanner
+from . import alerts, backtest, background, config, indicators, kite_auth, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -52,7 +52,6 @@ def _ensure_scanner_running():
     if not _scanner_started:
         start_background_scanner()
         background.start_multi_tf_scanner()
-        scalper.start_scalp_scanner()
         _scanner_started = True
 
 
@@ -95,6 +94,7 @@ def dashboard():
         index_close=state.get("index_close"),
         index_chg_pct=state.get("index_chg_pct"),
         require_index_agreement=settings.REQUIRE_INDEX_AGREEMENT,
+        require_volume_flow_agreement=settings.REQUIRE_VOLUME_FLOW_AGREEMENT,
         multi_tf=background.get_multi_tf_state(),
     )
 
@@ -173,6 +173,7 @@ def settings_page():
             # OLD value forever, making it impossible to ever uncheck) -
             # "on" only when Flask actually received the field.
             "REQUIRE_INDEX_AGREEMENT": form.get("require_index_agreement") == "on",
+            "REQUIRE_VOLUME_FLOW_AGREEMENT": form.get("require_volume_flow_agreement") == "on",
         }
         errors = settings.update(**payload)
         saved = not errors
@@ -331,30 +332,6 @@ def api_oi_screener():
     return jsonify({"results": results, "min_required": settings.MIN_REQUIRED})
 
 
-@app.route("/scalp")
-@require_dashboard_password
-def scalp_page():
-    return render_template(
-        "scalp.html",
-        logged_in=kite_auth.is_logged_in_today(),
-        timeframe=scalper.SCALP_TIMEFRAME,
-        min_required=scalper.MIN_REQUIRED_SCALP,
-        rel_volume_threshold=scalper.SCALP_REL_VOLUME_THRESHOLD,
-    )
-
-
-@app.route("/api/scalp/results")
-@require_dashboard_password
-def api_scalp_results():
-    state = scalper.get_scalp_state()
-    return jsonify({
-        "signal": state["signal"],
-        "last_scan": state["last_scan"],
-        "last_error": state["last_error"],
-        "min_required": scalper.MIN_REQUIRED_SCALP,
-    })
-
-
 @app.route("/api/alerts/test", methods=["POST"])
 @require_dashboard_password
 def api_alerts_test():
@@ -460,6 +437,7 @@ def api_backtest_start():
         require_htf="require_htf" in filters,
         require_regime_volume="require_regime_volume" in filters,
         exclude_opening_window="exclude_opening_window" in filters,
+        require_volume_flow="require_volume_flow" in filters,
     )
     return jsonify(result)
 

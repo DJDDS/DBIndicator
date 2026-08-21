@@ -105,6 +105,7 @@ _TUNABLE_FIELDS = [
     "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
     "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
+    "REQUIRE_VOLUME_FLOW_AGREEMENT",
 ]
 
 
@@ -151,6 +152,15 @@ def _env_defaults():
         # Off by default so existing behaviour doesn't change until you
         # opt in.
         "REQUIRE_INDEX_AGREEMENT": os.getenv("REQUIRE_INDEX_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # Volume-flow filter (see background._apply_volume_flow_filter and
+        # indicators.compute_signal's vol_flow_direction/vol_flow_agrees,
+        # via Chaikin Money Flow - PARAMETER_ANALYSIS_2.md Finding #2):
+        # when on, a row whose direction disagrees with its own recent CMF
+        # sign (i.e. the volume backing the move looks like distribution,
+        # not buying, for a Bullish row - or vice versa) loses its
+        # "Confirmed" status. Off by default, same reasoning as
+        # REQUIRE_INDEX_AGREEMENT above.
+        "REQUIRE_VOLUME_FLOW_AGREEMENT": os.getenv("REQUIRE_VOLUME_FLOW_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
     }
 
 
@@ -268,6 +278,13 @@ class Settings:
                 clean["REQUIRE_INDEX_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_INDEX_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_VOLUME_FLOW_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_VOLUME_FLOW_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_VOLUME_FLOW_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_VOLUME_FLOW_AGREEMENT"] = bool(val)
 
         if errors:
             return errors

@@ -222,7 +222,7 @@
       </button>
     </div>
     {% endif %}
-    <nav><a href="/scalp">Scalp</a><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -555,7 +555,7 @@
           <th class="sortable" data-col="4">EMA/BB <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="5">OI <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="6">OI Accel <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="7">Vol <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="7" title="Relative Volume magnitude, plus a small &#9650;/&#9660; Chaikin Money Flow badge showing whether recent volume actually skewed toward buying or selling">Vol <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="8">Aligned <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="9">Signal <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="10">Regime <span class="sort-arrow"></span></th>
@@ -653,6 +653,12 @@
             <span class="{{ 'vol-hot' if r.vol_multiple is not none and r.vol_multiple >= 3 else ('vol-warm' if r.vol_multiple is not none and r.vol_multiple >= 1.5 else '') }}">
               {{ '{:,}'.format(r.volume) }}{% if r.vol_multiple is defined and r.vol_multiple is not none %} &middot; {{ r.vol_multiple }}x{% endif %}
             </span>
+            {% if r.vol_flow_direction is defined and r.vol_flow_direction %}
+            <span class="{{ 'bull' if r.vol_flow_direction == 'Bullish' else 'bear' }}" style="font-size:11px; margin-left:3px;"
+                  title="Chaikin Money Flow: {{ r.cmf }} - recent volume has skewed toward {{ 'up-closes (buying pressure)' if r.vol_flow_direction == 'Bullish' else 'down-closes (distribution)' }}{% if r.vol_flow_agrees is defined and r.vol_flow_agrees == false %} - disagrees with this row's own direction{% endif %}">
+              {{ '▲' if r.vol_flow_direction == 'Bullish' else '▼' }}
+            </span>
+            {% endif %}
             {% else %}—{% endif %}
           </td>
           <td data-sort="{{ r.aligned }}">{{ r.aligned }} / 4</td>

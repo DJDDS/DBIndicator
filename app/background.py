@@ -89,6 +89,25 @@ def _apply_index_filter(results, index_direction):
             r["signal_confirmed"] = False
 
 
+def _apply_volume_flow_filter(results):
+    """Mutates each result dict in place: when settings.
+    REQUIRE_VOLUME_FLOW_AGREEMENT is on, a row that already has
+    vol_flow_agrees=False (set by indicators.compute_signal via Chaikin
+    Money Flow - see PARAMETER_ANALYSIS_2.md Finding #2) also loses its
+    signal_confirmed status - same shape as _apply_index_filter just
+    above, just reading a field compute_signal already attached instead
+    of a separately-fetched index reading. Off by default; vol_flow_
+    direction/vol_flow_agrees are always attached by compute_signal
+    either way, purely for display (the small ▲/▼ badge next to Volume)."""
+    if not settings.REQUIRE_VOLUME_FLOW_AGREEMENT:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("vol_flow_agrees") is False:
+            r["signal_confirmed"] = False
+
+
 # Equal-weight fallback for weighted_score below, until you've run
 # "Auto-Weight Parameters" on the Backtest page at least once - matches
 # the plain aligned/4 count in spirit (every parameter counts the same).
@@ -450,6 +469,7 @@ def _run_loop():
                     with _state_lock:
                         _apply_param_tier(results)
                         _apply_index_filter(results, index_direction)
+                        _apply_volume_flow_filter(results)
                         _apply_weighted_score(results)
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
@@ -614,6 +634,7 @@ def _scan_one_multi_tf(kite, tf):
     index_direction, index_close, index_chg_pct = fetch_index_direction(kite, tf)
     _apply_param_tier(results)
     _apply_index_filter(results, index_direction)
+    _apply_volume_flow_filter(results)
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")

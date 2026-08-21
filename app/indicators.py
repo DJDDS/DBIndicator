@@ -84,6 +84,19 @@ RSI_OVERSOLD = 35     # (Bearish side). Not part of the 4-parameter screener bel
 ADX_TRENDING_THRESHOLD = 25
 ADX_RANGING_THRESHOLD = 18
 
+# Chaikin Money Flow - a bounded (-1..+1), DIRECTIONAL read of recent
+# volume, unlike Relative Volume above (vol_confirmed/vol_multiple - pure
+# magnitude, no "up" or "down" of its own). See _compute_cmf below and
+# PARAMETER_ANALYSIS_2.md Finding #2: a huge volume spike on a red candle
+# scores identically to one on a green candle under Relative Volume alone;
+# CMF is what lets the screener tell "volume spiked and it was net buying"
+# apart from "volume spiked, but it was actually distribution". Standard
+# 20-period lookback, kept as a fixed constant rather than yet another
+# tunable Settings field - same reasoning as the ADX thresholds just
+# above, it's the conventional length for this indicator rather than
+# something that benefits from per-user tuning the way RSI/EMA/BB do.
+CMF_LENGTH = 20
+
 OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9:15 IST open
                               # are excluded from signal_confirmed/in_opening_window below -
                               # these candles are usually the most gap-driven and noisy of the day
@@ -239,6 +252,23 @@ def _classify_regime(adx_value):
     return "Transitional"
 
 
+def _compute_cmf(df: pd.DataFrame, length: int) -> pd.Series:
+    """Chaikin Money Flow: weights each bar's volume by where its close
+    landed within that bar's own high-low range (Money Flow Multiplier -
+    +1 means it closed at the high, -1 at the low, 0 for a flat/doji bar
+    where high==low), sums that weighted volume ("Money Flow Volume")
+    over `length` bars, and normalizes by total volume over the same
+    window. Result is bounded roughly -1..+1: positive means recent
+    volume has skewed toward up-closes (real buying pressure), negative
+    means down-closes (distribution) - see CMF_LENGTH above."""
+    high, low, close, volume = df["high"], df["low"], df["close"], df["volume"]
+    mfm = ((close - low) - (high - close)) / (high - low).replace(0, np.nan)
+    mfm = mfm.fillna(0.0)  # a flat/doji bar contributes zero directional weight, not NaN
+    mfv = mfm * volume
+    vol_sum = volume.rolling(length, min_periods=5).sum()
+    return mfv.rolling(length, min_periods=5).sum() / vol_sum.replace(0, np.nan)
+
+
 def session_vwap(df: pd.DataFrame, timeframe: str):
     """Volume-weighted average price for just today's candles (resets
     every session, like a broker terminal's VWAP) - not meaningful on
@@ -303,6 +333,7 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     bb_lower = bb_mid - 2 * bb_std
 
     vol_avg = df["volume"].rolling(20, min_periods=5).mean()
+    cmf = _compute_cmf(df, CMF_LENGTH)
 
     rsi_up, rsi_dn = _cross_up(rsi_line, rsi_smooth), _cross_down(rsi_line, rsi_smooth)
     macd_up, macd_dn = _cross_up(macd_line, signal_line), _cross_down(macd_line, signal_line)
@@ -320,6 +351,7 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
         "bb_upper": bb_upper,
         "bb_lower": bb_lower,
         "vol_avg": vol_avg,
+        "cmf": cmf,
         "rsi_up": rsi_up, "rsi_dn": rsi_dn,
         "macd_up": macd_up, "macd_dn": macd_dn,
         "ema_up": ema_up, "ema_dn": ema_dn,
@@ -422,6 +454,26 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     # it used to be.
     vol_confirmed = bool(vol_multiple is not None and vol_multiple >= effective_vol_threshold)
 
+    # vol_flow_direction/vol_flow_agrees: a DIRECTIONAL read of the same
+    # volume, via Chaikin Money Flow (see _compute_cmf/CMF_LENGTH above) -
+    # separate from vol_confirmed above (magnitude only) and deliberately
+    # NOT folded into `aligned` below: doing so would silently change
+    # every existing signal's score and invalidate any Auto-Weight
+    # Parameters run computed before this existed (see
+    # PARAMETER_ANALYSIS_2.md Finding #2). None means "not enough volume
+    # history yet to judge" (or CMF read exactly 0.0) - treated as
+    # agreeing, same convention as htf_direction=None above, so it never
+    # silently blocks anything unless settings.REQUIRE_VOLUME_FLOW_AGREEMENT
+    # is explicitly turned on (applied a layer up, in background.py's
+    # _apply_volume_flow_filter - mirrors how REQUIRE_INDEX_AGREEMENT is
+    # applied, not baked in here).
+    cmf_raw = series["cmf"].iloc[i]
+    cmf_value = round(float(cmf_raw), 3) if pd.notna(cmf_raw) else None
+    vol_flow_direction = None
+    if cmf_value:  # None or exactly 0.0 both mean "no opinion"
+        vol_flow_direction = "Bullish" if cmf_value > 0 else "Bearish"
+    vol_flow_agrees = True if vol_flow_direction is None else (vol_flow_direction == direction)
+
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of
     # them by construction, plus Relative Volume as an independent 4th).
@@ -460,6 +512,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "vol_multiple": vol_multiple,
         "volume": volume,
         "vol_confirmed": vol_confirmed,
+        "cmf": cmf_value,
+        "vol_flow_direction": vol_flow_direction,
+        "vol_flow_agrees": vol_flow_agrees,
         "adx": adx_value,
         "regime": regime,
         "vol_threshold_effective": effective_vol_threshold,

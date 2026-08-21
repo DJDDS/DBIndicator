@@ -123,6 +123,13 @@
           </label>
           <div class="hint">When on, a row whose direction disagrees with NIFTY 50's own current direction loses its "Confirmed" status (and Positional Qualified / High Conviction) - counter-trend trades have historically had a lower win rate. Off by default.</div>
         </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_volume_flow_agreement" name="require_volume_flow_agreement" {% if s.REQUIRE_VOLUME_FLOW_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require volume-flow agreement
+          </label>
+          <div class="hint">When on, a row whose direction disagrees with its own recent Chaikin Money Flow reading (the small &#9650;/&#9660; badge next to Volume - is recent volume actually buying or selling pressure, not just magnitude) loses its "Confirmed" status. Off by default.</div>
+        </div>
       </div>
     </div>
 
