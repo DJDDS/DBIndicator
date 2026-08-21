@@ -296,6 +296,7 @@ const FILTER_LABELS = {
   require_regime_volume: 'Regime-adaptive volume',
   exclude_opening_window: 'Opening-window excluded',
   require_volume_flow: 'Volume-flow agreement (CMF)',
+  require_candle_pattern: 'Candlestick-pattern agreement',
 };
 
 function fmtPct(v) {
@@ -345,7 +346,7 @@ function renderResult(result) {
 
   const chosenParams = result.params || [];
   const chosenLabels = chosenParams.map(p => PARAM_LABELS[p] || p);
-  const activeFilters = ['require_htf', 'require_regime_volume', 'exclude_opening_window', 'require_volume_flow']
+  const activeFilters = ['require_htf', 'require_regime_volume', 'exclude_opening_window', 'require_volume_flow', 'require_candle_pattern']
     .filter(k => result[k]).map(k => FILTER_LABELS[k] || k);
   const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
   const costParts = [];

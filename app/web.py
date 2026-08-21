@@ -95,6 +95,7 @@ def dashboard():
         index_chg_pct=state.get("index_chg_pct"),
         require_index_agreement=settings.REQUIRE_INDEX_AGREEMENT,
         require_volume_flow_agreement=settings.REQUIRE_VOLUME_FLOW_AGREEMENT,
+        require_candle_pattern_agreement=settings.REQUIRE_CANDLE_PATTERN_AGREEMENT,
         multi_tf=background.get_multi_tf_state(),
     )
 
@@ -174,6 +175,7 @@ def settings_page():
             # "on" only when Flask actually received the field.
             "REQUIRE_INDEX_AGREEMENT": form.get("require_index_agreement") == "on",
             "REQUIRE_VOLUME_FLOW_AGREEMENT": form.get("require_volume_flow_agreement") == "on",
+            "REQUIRE_CANDLE_PATTERN_AGREEMENT": form.get("require_candle_pattern_agreement") == "on",
         }
         errors = settings.update(**payload)
         saved = not errors
@@ -455,6 +457,7 @@ def api_backtest_start():
         require_regime_volume="require_regime_volume" in filters,
         exclude_opening_window="exclude_opening_window" in filters,
         require_volume_flow="require_volume_flow" in filters,
+        require_candle_pattern="require_candle_pattern" in filters,
         cost_pct=cost_pct, slippage_pct=slippage_pct, holdout_pct=holdout_pct,
     )
     return jsonify(result)

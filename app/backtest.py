@@ -100,6 +100,7 @@ PARAM_DEFS = [
     {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
     {"id": "rel_volume", "label": "Relative Volume above your configured threshold (20-bar avg, Settings page) - confirmation only, combine with a directional parameter"},
     {"id": "cmf_flow", "label": "Chaikin Money Flow sign (directional volume - Bullish if recent volume skewed toward up-closes, Bearish if down-closes; distinct from the magnitude-only Relative Volume above - see PARAMETER_ANALYSIS_2.md Finding #2)"},
+    {"id": "candle_pattern", "label": "Candlestick pattern (Engulfing / Hammer-family / Morning-Evening Star - reads the raw shape of recent price action, not a smoothed derivative like the others above - see NEXT_HORIZON_RESEARCH.md)"},
 ]
 PARAM_IDS = [p["id"] for p in PARAM_DEFS]
 DEFAULT_PARAMS = ("rsi_cross", "macd_cross", "ema_bb_cross")  # the original 3-indicator rule
@@ -131,6 +132,12 @@ FILTER_DEFS = [
         "id": "require_volume_flow",
         "label": "Volume-flow agreement (Chaikin Money Flow sign must match your signal's direction, matches "
                   "live's optional REQUIRE_VOLUME_FLOW_AGREEMENT gate)",
+    },
+    {
+        "id": "require_candle_pattern",
+        "label": "Candlestick-pattern agreement (most recent Engulfing/Hammer-family/Morning-Evening Star "
+                  "pattern must match your signal's direction, matches live's optional "
+                  "REQUIRE_CANDLE_PATTERN_AGREEMENT gate)",
     },
 ]
 FILTER_IDS = [f["id"] for f in FILTER_DEFS]
@@ -187,16 +194,17 @@ def _progress_cb(done, total, symbol):
 def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS,
                     params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                    require_volume_flow=False, cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0) -> dict:
+                    require_volume_flow=False, require_candle_pattern=False,
+                    cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0) -> dict:
     """Kicks off a backtest run in a background thread. Returns
     {"started": True} or {"started": False, "reason": ...} if one is
-    already running - only one backtest runs at a time. The four
+    already running - only one backtest runs at a time. The five
     require_htf/require_regime_volume/exclude_opening_window/require_
-    volume_flow flags are the FILTER_DEFS gates above - all default
-    False, matching every prior caller/test that only ever passed
-    params/required. cost_pct/slippage_pct/holdout_pct (NEXT_HORIZON_
-    RESEARCH.md Finding 2) all default to 0.0 - raw, un-costed, no
-    holdout split - for the same reason."""
+    volume_flow/require_candle_pattern flags are the FILTER_DEFS gates
+    above - all default False, matching every prior caller/test that
+    only ever passed params/required. cost_pct/slippage_pct/holdout_pct
+    (NEXT_HORIZON_RESEARCH.md Finding 2) all default to 0.0 - raw,
+    un-costed, no holdout split - for the same reason."""
     with _bt_lock:
         if _bt_state["status"] == "running":
             return {"started": False, "reason": "A backtest is already running."}
@@ -210,6 +218,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
             "params": list(params), "required": required,
             "require_htf": bool(require_htf), "require_regime_volume": bool(require_regime_volume),
             "exclude_opening_window": bool(exclude_opening_window), "require_volume_flow": bool(require_volume_flow),
+            "require_candle_pattern": bool(require_candle_pattern),
             "cost_pct": cost_pct, "slippage_pct": slippage_pct, "holdout_pct": holdout_pct,
         }
         _bt_state["result"] = None
@@ -221,7 +230,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
         target=_run_backtest_job,
         args=(kite, symbols, timeframe, days, horizons, params, required,
               require_htf, require_regime_volume, exclude_opening_window, require_volume_flow,
-              cost_pct, slippage_pct, holdout_pct),
+              require_candle_pattern, cost_pct, slippage_pct, holdout_pct),
         daemon=True,
     )
     thread.start()
@@ -230,13 +239,15 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
 
 def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required,
                        require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                       require_volume_flow=False, cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0):
+                       require_volume_flow=False, require_candle_pattern=False,
+                       cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0):
     try:
         result = run_backtest(
             kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
             params=params, required=required, progress_cb=_progress_cb,
             require_htf=require_htf, require_regime_volume=require_regime_volume,
             exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
+            require_candle_pattern=require_candle_pattern,
             cost_pct=cost_pct, slippage_pct=slippage_pct, holdout_pct=holdout_pct,
         )
         with _bt_lock:
@@ -324,6 +335,14 @@ def _param_bull_bear(series: dict, param_id: str, rel_volume_hot: pd.Series = No
         # every other parameter in this function.
         cmf = series["cmf"]
         return cmf > 0, cmf < 0
+    if param_id == "candle_pattern":
+        # Directional, like cmf_flow above - reused straight from
+        # compute_series' own "candle_direction" column (see
+        # indicators._compute_candle_pattern) rather than recomputed
+        # here, same "reuse compute_series" convention as every other
+        # parameter in this function.
+        cd = series["candle_direction"]
+        return cd == "Bullish", cd == "Bearish"
     raise ValueError(f"unknown backtest parameter: {param_id}")
 
 
@@ -338,6 +357,20 @@ def _volume_flow_agree_series(series: dict, direction: pd.Series) -> pd.Series:
     cmf = series["cmf"]
     flow_dir = pd.Series(np.where(cmf > 0, "Bullish", np.where(cmf < 0, "Bearish", None)), index=cmf.index, dtype=object)
     return flow_dir.isna() | (flow_dir == direction)
+
+
+def _candle_pattern_agree_series(series: dict, direction: pd.Series) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's candle_agrees -
+    does the most recent candlestick pattern's direction (see
+    indicators._compute_candle_pattern, reused from compute_series' own
+    "candle_direction" column) agree with each bar's own chosen
+    direction? None (no pattern fired, or a bullish and bearish pattern
+    both fired on the same bar) is treated as agreeing - same "None
+    means agree" convention used by _volume_flow_agree_series/require_
+    htf above, so a bar with no candle-pattern opinion is never silently
+    suppressed."""
+    cd = series["candle_direction"]
+    return cd.isna() | (cd == direction)
 
 
 def _regime_volume_hot_series(series: dict) -> pd.Series:
@@ -435,7 +468,8 @@ def _opening_window_mask(df: pd.DataFrame, timeframe: str) -> pd.Series:
 
 def _signal_series(series: dict, params, required: int, timeframe: str = None,
                     require_htf: bool = False, require_regime_volume: bool = False,
-                    exclude_opening_window: bool = False, require_volume_flow: bool = False):
+                    exclude_opening_window: bool = False, require_volume_flow: bool = False,
+                    require_candle_pattern: bool = False):
     """Combines the chosen parameters bar-by-bar: has_signal is true on
     any bar where at least `required` of them agree on the same
     direction at once. Deliberately NOT the continuous "aligned >=
@@ -448,18 +482,20 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     safe here because those are genuine, sometimes-false conditions.
 
     require_htf/require_regime_volume/exclude_opening_window/require_
-    volume_flow (all default False) replay the same GATES
-    indicators.compute_signal (plus background.py's opt-in filters)
-    apply live on top of the parameter vote before calling a bar
-    "signal_confirmed" - see _htf_direction_series/_regime_volume_hot_
-    series/_opening_window_mask/_volume_flow_agree_series above. Unlike
-    PARAM_DEFS these never add to bull_count/bear_count; they can only
-    SUPPRESS a bar your chosen parameters already agreed on, exactly
-    like live's `signal_confirmed = aligned >= MIN_REQUIRED and
-    htf_agrees and not in_opening_window` (further revoked by
-    background.py's REQUIRE_INDEX_AGREEMENT/REQUIRE_VOLUME_FLOW_AGREEMENT
-    when those are on). require_htf/exclude_opening_window need
-    `timeframe` (raises if omitted while set)."""
+    volume_flow/require_candle_pattern (all default False) replay the
+    same GATES indicators.compute_signal (plus background.py's opt-in
+    filters) apply live on top of the parameter vote before calling a
+    bar "signal_confirmed" - see _htf_direction_series/_regime_volume_
+    hot_series/_opening_window_mask/_volume_flow_agree_series/
+    _candle_pattern_agree_series above. Unlike PARAM_DEFS these never
+    add to bull_count/bear_count; they can only SUPPRESS a bar your
+    chosen parameters already agreed on, exactly like live's
+    `signal_confirmed = aligned >= MIN_REQUIRED and htf_agrees and not
+    in_opening_window` (further revoked by background.py's
+    REQUIRE_INDEX_AGREEMENT/REQUIRE_VOLUME_FLOW_AGREEMENT/
+    REQUIRE_CANDLE_PATTERN_AGREEMENT when those are on).
+    require_htf/exclude_opening_window need `timeframe` (raises if
+    omitted while set)."""
     index = series["rsi_line"].index
     rel_volume_hot = _regime_volume_hot_series(series) if require_regime_volume else None
 
@@ -501,6 +537,10 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     if require_volume_flow:
         flow_agrees = _volume_flow_agree_series(series, direction).reindex(index).fillna(True)
         has_signal = has_signal & flow_agrees
+
+    if require_candle_pattern:
+        candle_agrees = _candle_pattern_agree_series(series, direction).reindex(index).fillna(True)
+        has_signal = has_signal & candle_agrees
 
     return has_signal, direction
 
@@ -584,7 +624,7 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 
 def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required,
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                    require_volume_flow=False, cost_pct=0.0, slippage_pct=0.0):
+                    require_volume_flow=False, require_candle_pattern=False, cost_pct=0.0, slippage_pct=0.0):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -597,6 +637,7 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         series, params, required, timeframe=timeframe,
         require_htf=require_htf, require_regime_volume=require_regime_volume,
         exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
+        require_candle_pattern=require_candle_pattern,
     )
     # shift(..., fill_value=False) instead of shift(1).fillna(False): a
     # plain shift(1) on a bool Series introduces a leading NaN, which
@@ -705,12 +746,14 @@ def _summarize_by_split(trades, horizons, split_iso: str):
 def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
                   params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None,
                   require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                  require_volume_flow=False, cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0) -> dict:
+                  require_volume_flow=False, require_candle_pattern=False,
+                  cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0) -> dict:
     days = min(int(days or 30), MAX_BACKTEST_DAYS)
     require_htf = bool(require_htf)
     require_regime_volume = bool(require_regime_volume)
     exclude_opening_window = bool(exclude_opening_window)
     require_volume_flow = bool(require_volume_flow)
+    require_candle_pattern = bool(require_candle_pattern)
     try:
         cost_pct = max(0.0, float(cost_pct or 0.0))
     except (TypeError, ValueError):
@@ -766,6 +809,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
                 df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required,
                 require_htf=require_htf, require_regime_volume=require_regime_volume,
                 exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
+                require_candle_pattern=require_candle_pattern,
                 cost_pct=cost_pct, slippage_pct=slippage_pct,
             )
         except Exception as exc:  # noqa: BLE001
@@ -814,6 +858,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "require_regime_volume": require_regime_volume,
         "exclude_opening_window": exclude_opening_window,
         "require_volume_flow": require_volume_flow,
+        "require_candle_pattern": require_candle_pattern,
         "cost_pct": cost_pct,
         "slippage_pct": slippage_pct,
         "holdout_pct": holdout_pct,

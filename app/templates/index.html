@@ -673,6 +673,12 @@
             {% if r.index_agrees is defined and r.index_agrees == false %}
             <span title="Counter-trend vs NIFTY 50's current direction" style="color:var(--amber);">⚠</span>
             {% endif %}
+            {% if r.candle_pattern is defined and r.candle_pattern %}
+            <span class="{{ 'bull' if r.candle_direction == 'Bullish' else 'bear' }}" style="font-size:11px; margin-left:3px;"
+                  title="Candlestick pattern: {{ r.candle_pattern }} ({{ r.candle_direction }}){% if r.candle_agrees is defined and r.candle_agrees == false %} - disagrees with this row's own direction{% endif %}">
+              🕯{{ '▲' if r.candle_direction == 'Bullish' else '▼' }}
+            </span>
+            {% endif %}
           </td>
           <td data-sort="{{ r.regime or '' }}">
             {% if r.regime %}

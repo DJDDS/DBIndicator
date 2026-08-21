@@ -105,7 +105,7 @@ _TUNABLE_FIELDS = [
     "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
     "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
-    "REQUIRE_VOLUME_FLOW_AGREEMENT",
+    "REQUIRE_VOLUME_FLOW_AGREEMENT", "REQUIRE_CANDLE_PATTERN_AGREEMENT",
 ]
 
 
@@ -161,6 +161,15 @@ def _env_defaults():
         # "Confirmed" status. Off by default, same reasoning as
         # REQUIRE_INDEX_AGREEMENT above.
         "REQUIRE_VOLUME_FLOW_AGREEMENT": os.getenv("REQUIRE_VOLUME_FLOW_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # Candlestick-pattern filter (see background._apply_candle_pattern_
+        # filter and indicators.compute_signal's candle_pattern/
+        # candle_direction/candle_agrees, via _compute_candle_pattern -
+        # engulfing/hammer-family/morning-evening-star): when on, a row
+        # whose direction disagrees with its own most recent candlestick
+        # pattern loses its "Confirmed" status. Off by default, same
+        # reasoning as REQUIRE_INDEX_AGREEMENT/REQUIRE_VOLUME_FLOW_AGREEMENT
+        # above.
+        "REQUIRE_CANDLE_PATTERN_AGREEMENT": os.getenv("REQUIRE_CANDLE_PATTERN_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
     }
 
 
@@ -285,6 +294,13 @@ class Settings:
                 clean["REQUIRE_VOLUME_FLOW_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_VOLUME_FLOW_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_CANDLE_PATTERN_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_CANDLE_PATTERN_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_CANDLE_PATTERN_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_CANDLE_PATTERN_AGREEMENT"] = bool(val)
 
         if errors:
             return errors

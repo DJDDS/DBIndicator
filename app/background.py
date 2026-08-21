@@ -108,6 +108,24 @@ def _apply_volume_flow_filter(results):
             r["signal_confirmed"] = False
 
 
+def _apply_candle_pattern_filter(results):
+    """Mutates each result dict in place: when settings.
+    REQUIRE_CANDLE_PATTERN_AGREEMENT is on, a row that already has
+    candle_agrees=False (set by indicators.compute_signal via
+    _compute_candle_pattern) also loses its signal_confirmed status -
+    same shape as _apply_volume_flow_filter just above. Off by default;
+    candle_pattern/candle_direction/candle_agrees are always attached by
+    compute_signal either way, purely for display (the small candle
+    badge next to the Signal column)."""
+    if not settings.REQUIRE_CANDLE_PATTERN_AGREEMENT:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("candle_agrees") is False:
+            r["signal_confirmed"] = False
+
+
 # Equal-weight fallback for weighted_score below, until you've run
 # "Auto-Weight Parameters" on the Backtest page at least once - matches
 # the plain aligned/4 count in spirit (every parameter counts the same).
@@ -470,6 +488,7 @@ def _run_loop():
                         _apply_param_tier(results)
                         _apply_index_filter(results, index_direction)
                         _apply_volume_flow_filter(results)
+                        _apply_candle_pattern_filter(results)
                         _apply_weighted_score(results)
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
@@ -635,6 +654,7 @@ def _scan_one_multi_tf(kite, tf):
     _apply_param_tier(results)
     _apply_index_filter(results, index_direction)
     _apply_volume_flow_filter(results)
+    _apply_candle_pattern_filter(results)
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")

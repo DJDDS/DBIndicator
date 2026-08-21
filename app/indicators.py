@@ -97,6 +97,18 @@ ADX_RANGING_THRESHOLD = 18
 # something that benefits from per-user tuning the way RSI/EMA/BB do.
 CMF_LENGTH = 20
 
+# Candlestick pattern recognition - a THIRD, independent read on top of
+# RSI/MACD/EMA-BB (which are all smoothed derivatives of price - see
+# NEXT_HORIZON_RESEARCH.md's redundancy note) and CMF (a volume read):
+# this reads the raw multi-bar SHAPE of price action instead, which is
+# genuinely different information, not another oscillator. How many
+# bars BEFORE the pattern to look back at (excluding the pattern's own
+# bars) to decide whether it formed after an up-move or a down-move -
+# needed because a hammer-shaped candle is bullish (a rejected sell-off)
+# after a downtrend but bearish ("Hanging Man", a rejected rally) after
+# an uptrend - same candle shape, opposite meaning depending on context.
+CANDLE_TREND_LOOKBACK = 5
+
 OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9:15 IST open
                               # are excluded from signal_confirmed/in_opening_window below -
                               # these candles are usually the most gap-driven and noisy of the day
@@ -269,6 +281,115 @@ def _compute_cmf(df: pd.DataFrame, length: int) -> pd.Series:
     return mfv.rolling(length, min_periods=5).sum() / vol_sum.replace(0, np.nan)
 
 
+def _compute_candle_pattern(df: pd.DataFrame):
+    """Vectorized, no-lookahead candlestick pattern recognition. Every
+    boolean below is computed ONLY from bar i and bars strictly BEFORE
+    it (via .shift()) - never a future bar - so a pattern "confirmed" at
+    bar i's close is exactly what a live scan would have seen at that
+    same moment, same convention as every other series in this module.
+
+    Detects three families, in ascending bar-count (and, for same-bar
+    conflicts, roughly ascending reliability - a 2-3 bar pattern is a
+    stronger tell than a single-candle shape alone):
+      - Engulfing (2 bars): current candle's real body fully engulfs the
+        prior candle's opposite-colored body - a sharp reversal in
+        sentiment within a single bar.
+      - Hammer-family (1 bar, context-dependent): a small body with one
+        long shadow and one short one. The SAME shape reads as bullish
+        (Hammer/Inverted Hammer - a rejected move against the prior
+        trend) after a down-move, or bearish (Hanging Man/Shooting Star)
+        after an up-move - see CANDLE_TREND_LOOKBACK above.
+      - Morning/Evening Star (3 bars): a strong trend candle, a small
+        "star" body, then a strong opposite-direction candle closing
+        back past the midpoint of the first candle's body - a classic
+        3-bar exhaustion-and-reversal shape.
+
+    Returns (direction, name): two object Series aligned to df's index.
+    direction is "Bullish"/"Bearish"/None (None when no pattern fired,
+    OR when a bullish and a bearish pattern both fired on the very same
+    bar - genuinely conflicting signals, treated as "no opinion" rather
+    than arbitrarily picking one). name is a human-readable label for
+    display (e.g. "Bullish Engulfing"), or None alongside a None
+    direction. When more than one same-direction pattern fires on one
+    bar, engulfing wins the display label over star, which wins over the
+    hammer-family, reflecting that ordering's typical reliability -
+    direction itself doesn't depend on this priority since same-
+    direction patterns never conflict."""
+    o, h, l, c = df["open"], df["high"], df["low"], df["close"]
+    body = c - o
+    body_abs = body.abs()
+    rng = (h - l).replace(0, np.nan)
+    upper_shadow = h - np.maximum(o, c)
+    lower_shadow = np.minimum(o, c) - l
+
+    lb = CANDLE_TREND_LOOKBACK
+    # Prior-trend context uses only bars BEFORE the pattern's own bar(s) -
+    # close.shift(1) (the bar right before the pattern candle) vs.
+    # close.shift(1 + lb) (lb bars before that) - so the pattern candle's
+    # own move never contaminates the "what was the trend leading in"
+    # read.
+    prior_close = c.shift(1)
+    prior_trend_up = prior_close > c.shift(1 + lb)
+    prior_trend_down = prior_close < c.shift(1 + lb)
+
+    # --- Engulfing (2 bars: this bar + the one before it) ---
+    prev_o, prev_c = o.shift(1), c.shift(1)
+    bullish_engulfing = (prev_c < prev_o) & (c > o) & (o <= prev_c) & (c >= prev_o)
+    bearish_engulfing = (prev_c > prev_o) & (c < o) & (o >= prev_c) & (c <= prev_o)
+
+    # --- Hammer-family shape (1 bar): small body, one long shadow, one
+    # short one. Same shape test for both hammer-type (long lower shadow)
+    # and shooting-star-type (long upper shadow); prior_trend_up/down
+    # decides which label/direction it gets.
+    small_body = body_abs <= 0.35 * rng
+    hammer_shape = small_body & (lower_shadow >= 2 * body_abs) & (upper_shadow <= 0.25 * rng)
+    inverted_shape = small_body & (upper_shadow >= 2 * body_abs) & (lower_shadow <= 0.25 * rng)
+    hammer = hammer_shape & prior_trend_down          # bullish - rejected sell-off
+    hanging_man = hammer_shape & prior_trend_up        # bearish - rejected rally, same shape
+    inverted_hammer = inverted_shape & prior_trend_down  # bullish
+    shooting_star = inverted_shape & prior_trend_up      # bearish
+
+    # --- Morning/Evening Star (3 bars: this bar + the 2 before it) ---
+    b1_o, b1_c = o.shift(2), c.shift(2)
+    star_body = body_abs.shift(1)
+    b1_body = (b1_o - b1_c).abs()
+    star_is_small = star_body <= 0.5 * b1_body.replace(0, np.nan)
+    b1_mid = (b1_o + b1_c) / 2
+    morning_star = (b1_c < b1_o) & star_is_small & (c > o) & (c > b1_mid)
+    evening_star = (b1_c > b1_o) & star_is_small & (c < o) & (c < b1_mid)
+
+    bullish_any = bullish_engulfing | hammer | inverted_hammer | morning_star
+    bearish_any = bearish_engulfing | hanging_man | shooting_star | evening_star
+    conflict = bullish_any & bearish_any  # both fired on the same bar - no clear opinion
+
+    direction = pd.Series(
+        np.where(conflict, None, np.where(bullish_any, "Bullish", np.where(bearish_any, "Bearish", None))),
+        index=df.index, dtype=object,
+    )
+
+    name = pd.Series(None, index=df.index, dtype=object)
+    # Assign in ascending priority so the LAST assignment (highest
+    # priority - engulfing) wins wherever multiple same-direction
+    # patterns overlap on one bar. Never overwrites a conflict bar since
+    # those are already forced to direction=None above and excluded here
+    # by construction (a conflict bar has both a bullish_any and
+    # bearish_any pattern true, but name assignment below is keyed off
+    # the same masks, so a conflicted bar picks up a name from whichever
+    # runs last - harmless since direction=None is what callers actually
+    # branch on for display/scoring; name is cosmetic only).
+    name[hammer] = "Hammer"
+    name[hanging_man] = "Hanging Man"
+    name[inverted_hammer] = "Inverted Hammer"
+    name[shooting_star] = "Shooting Star"
+    name[morning_star] = "Morning Star"
+    name[evening_star] = "Evening Star"
+    name[bullish_engulfing] = "Bullish Engulfing"
+    name[bearish_engulfing] = "Bearish Engulfing"
+    name[direction.isna()] = None
+
+    return direction, name
+
+
 def session_vwap(df: pd.DataFrame, timeframe: str):
     """Volume-weighted average price for just today's candles (resets
     every session, like a broker terminal's VWAP) - not meaningful on
@@ -334,6 +455,7 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
 
     vol_avg = df["volume"].rolling(20, min_periods=5).mean()
     cmf = _compute_cmf(df, CMF_LENGTH)
+    candle_direction, candle_pattern_name = _compute_candle_pattern(df)
 
     rsi_up, rsi_dn = _cross_up(rsi_line, rsi_smooth), _cross_down(rsi_line, rsi_smooth)
     macd_up, macd_dn = _cross_up(macd_line, signal_line), _cross_down(macd_line, signal_line)
@@ -352,6 +474,8 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
         "bb_lower": bb_lower,
         "vol_avg": vol_avg,
         "cmf": cmf,
+        "candle_direction": candle_direction,
+        "candle_pattern_name": candle_pattern_name,
         "rsi_up": rsi_up, "rsi_dn": rsi_dn,
         "macd_up": macd_up, "macd_dn": macd_dn,
         "ema_up": ema_up, "ema_dn": ema_dn,
@@ -474,6 +598,21 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         vol_flow_direction = "Bullish" if cmf_value > 0 else "Bearish"
     vol_flow_agrees = True if vol_flow_direction is None else (vol_flow_direction == direction)
 
+    # candle_pattern/candle_direction/candle_agrees: the multi-bar SHAPE
+    # of recent price action (see _compute_candle_pattern/
+    # CANDLE_TREND_LOOKBACK above) - a genuinely different kind of read
+    # from RSI/MACD/EMA-BB (all smoothed derivatives of the same close
+    # series) or CMF (a volume read). Same "None means agree" convention
+    # as htf_direction/vol_flow_direction above: None (no pattern fired,
+    # or a bullish and bearish pattern both fired on this bar) is treated
+    # as agreeing, so it never silently blocks anything unless
+    # settings.REQUIRE_CANDLE_PATTERN_AGREEMENT is explicitly turned on
+    # (applied a layer up, in background.py's _apply_candle_pattern_filter -
+    # mirrors _apply_volume_flow_filter, not baked in here).
+    candle_direction_val = series["candle_direction"].iloc[i]
+    candle_pattern_val = series["candle_pattern_name"].iloc[i]
+    candle_agrees = True if candle_direction_val is None else (candle_direction_val == direction)
+
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of
     # them by construction, plus Relative Volume as an independent 4th).
@@ -515,6 +654,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "cmf": cmf_value,
         "vol_flow_direction": vol_flow_direction,
         "vol_flow_agrees": vol_flow_agrees,
+        "candle_pattern": candle_pattern_val,
+        "candle_direction": candle_direction_val,
+        "candle_agrees": candle_agrees,
         "adx": adx_value,
         "regime": regime,
         "vol_threshold_effective": effective_vol_threshold,
