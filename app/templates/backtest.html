@@ -146,42 +146,6 @@
           <div class="hint" id="bt-required-hint"></div>
         </div>
       </div>
-      <div style="margin-top:16px;">
-        <label>Transaction costs (optional - default is raw price return, matches prior behaviour)</label>
-        <div class="hint" style="margin-bottom:8px;">
-          Real Zerodha F&amp;O round-trip costs run roughly 0.06-0.10% of notional for stock futures vs
-          roughly 0.6-1%+ of premium for options (STT/exchange charges on options are levied on premium,
-          not notional). A small average edge in a raw backtest can be entirely illusory once these are
-          applied - pick a preset below, or edit the numbers directly.
-        </div>
-        <div class="row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
-          <div>
-            <label for="bt-cost-preset">Cost preset</label>
-            <select id="bt-cost-preset">
-              {% for c in cost_presets %}
-              <option value="{{ c.id }}" data-cost="{{ c.cost_pct }}" data-slip="{{ c.slippage_pct }}">{{ c.label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label for="bt-cost-pct">Round-trip cost %</label>
-            <input type="number" id="bt-cost-pct" name="cost_pct" value="0" min="0" max="20" step="0.01">
-          </div>
-          <div>
-            <label for="bt-slippage-pct">Per-leg slippage %</label>
-            <input type="number" id="bt-slippage-pct" name="slippage_pct" value="0" min="0" max="20" step="0.01">
-          </div>
-          <div>
-            <label for="bt-holdout-pct">Holdout %</label>
-            <input type="number" id="bt-holdout-pct" name="holdout_pct" value="0" min="0" max="90" step="1">
-          </div>
-        </div>
-        <div class="hint" style="margin-top:6px;">
-          Holdout % reserves the last that share of the requested date window as out-of-sample data -
-          results below will then show train vs. holdout separately, so you can see whether performance
-          holds up on data this parameter choice never saw. 0 (default) runs the whole window as one pooled set.
-        </div>
-      </div>
       <div style="margin-top:18px;">
         <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Backtest</button>
         <span class="hint" id="bt-form-hint" style="margin-left:10px;"></span>
@@ -259,11 +223,6 @@
     <h2>Results</h2>
     <p class="hint" id="bt-signal-desc" style="margin:-4px 0 14px;"></p>
     <div class="stat-tiles" id="bt-tiles"></div>
-    <div id="bt-split-wrap" style="display:none; margin-top:18px;">
-      <h2 style="font-size:13px;">Train vs. holdout (out-of-sample check)</h2>
-      <p class="hint" id="bt-split-desc" style="margin:-4px 0 10px;"></p>
-      <div id="bt-split"></div>
-    </div>
     <div id="bt-groups"></div>
 
     <div id="bt-skipped-wrap" style="margin-top:18px; display:none;">
@@ -349,12 +308,8 @@ function renderResult(result) {
   const activeFilters = ['require_htf', 'require_regime_volume', 'exclude_opening_window', 'require_volume_flow', 'require_candle_pattern']
     .filter(k => result[k]).map(k => FILTER_LABELS[k] || k);
   const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
-  const costParts = [];
-  if (result.cost_pct) costParts.push(`${result.cost_pct}% round-trip cost`);
-  if (result.slippage_pct) costParts.push(`${result.slippage_pct}% per-leg slippage`);
-  const costSuffix = costParts.length ? ` — net of ${costParts.join(' + ')}` : ' — raw price return (no costs applied)';
   document.getElementById('bt-signal-desc').textContent =
-    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}${costSuffix}`;
+    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}`;
 
   const tiles = document.getElementById('bt-tiles');
   tiles.innerHTML = `
@@ -365,22 +320,6 @@ function renderResult(result) {
   `;
 
   const horizons = result.horizons || [];
-
-  const splitWrap = document.getElementById('bt-split-wrap');
-  const th = result.train_holdout;
-  if (th) {
-    splitWrap.style.display = 'block';
-    document.getElementById('bt-split-desc').textContent =
-      `Split at ${th.split_at.replace('T', ' ')} — data before is "train", data at/after is "holdout" ` +
-      `(the last ${result.holdout_pct}% of the requested window). A strategy that only works on train ` +
-      `and falls apart on holdout is the classic sign of an overfit/data-snooped rule.`;
-    document.getElementById('bt-split').innerHTML =
-      renderGroup('Train', th.train && th.train.all, horizons) +
-      renderGroup('Holdout (out-of-sample)', th.holdout && th.holdout.all, horizons);
-  } else {
-    splitWrap.style.display = 'none';
-    document.getElementById('bt-split').innerHTML = '';
-  }
 
   document.getElementById('bt-groups').innerHTML =
     renderGroup('All Trades', summary.all, horizons) +
@@ -481,13 +420,6 @@ function syncRequiredMax() {
 selectedParamCheckboxes().forEach(el => el.addEventListener('change', syncRequiredMax));
 syncRequiredMax();
 
-document.getElementById('bt-cost-preset').addEventListener('change', function () {
-  const opt = this.selectedOptions[0];
-  if (!opt) return;
-  document.getElementById('bt-cost-pct').value = opt.dataset.cost;
-  document.getElementById('bt-slippage-pct').value = opt.dataset.slip;
-});
-
 document.getElementById('bt-form').addEventListener('submit', function (e) {
   e.preventDefault();
   const form = new FormData(this);
@@ -516,9 +448,6 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
   body.set('params', params.join(','));
   body.set('required', String(required));
   body.set('filters', filters.join(','));
-  body.set('cost_pct', document.getElementById('bt-cost-pct').value || '0');
-  body.set('slippage_pct', document.getElementById('bt-slippage-pct').value || '0');
-  body.set('holdout_pct', document.getElementById('bt-holdout-pct').value || '0');
   document.getElementById('bt-form-hint').textContent = '';
   fetch('/api/backtest/start', { method: 'POST', body: body })
     .then(r => r.json())

@@ -143,27 +143,6 @@ FILTER_DEFS = [
 FILTER_IDS = [f["id"] for f in FILTER_DEFS]
 
 
-# Transaction-cost presets for the backtest UI (NEXT_HORIZON_RESEARCH.md
-# Finding 2). Figures are round-trip cost_pct (brokerage + STT + exchange
-# + SEBI + stamp + GST, charged once per completed trade) and per-leg
-# slippage_pct (applied twice inside _compute_trade - once per fill),
-# both expressed as a % of notional/premium. Stock-futures numbers come
-# from Zerodha's published F&O charge structure applied to a liquid vs.
-# thin order book; options numbers reflect that STT/exchange charges on
-# options are levied on PREMIUM, not notional, which is structurally why
-# they run roughly 6-10x higher as a percentage even though the rupee
-# brokerage itself is flat. These are deliberately approximate, editable
-# starting points, not a claim of precision - the whole point of Finding
-# 2 is that even a rough cost haircut is far more honest than the
-# previous default of assuming costs are zero.
-COST_PRESETS = [
-    {"id": "none", "label": "None (raw price return, prior behaviour)", "cost_pct": 0.0, "slippage_pct": 0.0},
-    {"id": "futures_liquid", "label": "Stock futures - liquid (e.g. Nifty50 names)", "cost_pct": 0.08, "slippage_pct": 0.05},
-    {"id": "futures_illiquid", "label": "Stock futures - less liquid / mid-cap", "cost_pct": 0.10, "slippage_pct": 0.15},
-    {"id": "options", "label": "Options (cost as % of premium, not notional)", "cost_pct": 0.8, "slippage_pct": 0.5},
-]
-
-
 # --------------------------------------------------------------------------
 # Background job plumbing (mirrors background.py's pattern: a lock-guarded
 # state dict + a daemon thread, polled from the dashboard)
@@ -194,17 +173,14 @@ def _progress_cb(done, total, symbol):
 def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS,
                     params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                    require_volume_flow=False, require_candle_pattern=False,
-                    cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0) -> dict:
+                    require_volume_flow=False, require_candle_pattern=False) -> dict:
     """Kicks off a backtest run in a background thread. Returns
     {"started": True} or {"started": False, "reason": ...} if one is
     already running - only one backtest runs at a time. The five
     require_htf/require_regime_volume/exclude_opening_window/require_
     volume_flow/require_candle_pattern flags are the FILTER_DEFS gates
     above - all default False, matching every prior caller/test that
-    only ever passed params/required. cost_pct/slippage_pct/holdout_pct
-    (NEXT_HORIZON_RESEARCH.md Finding 2) all default to 0.0 - raw,
-    un-costed, no holdout split - for the same reason."""
+    only ever passed params/required."""
     with _bt_lock:
         if _bt_state["status"] == "running":
             return {"started": False, "reason": "A backtest is already running."}
@@ -219,7 +195,6 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
             "require_htf": bool(require_htf), "require_regime_volume": bool(require_regime_volume),
             "exclude_opening_window": bool(exclude_opening_window), "require_volume_flow": bool(require_volume_flow),
             "require_candle_pattern": bool(require_candle_pattern),
-            "cost_pct": cost_pct, "slippage_pct": slippage_pct, "holdout_pct": holdout_pct,
         }
         _bt_state["result"] = None
         _bt_state["error"] = None
@@ -230,7 +205,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
         target=_run_backtest_job,
         args=(kite, symbols, timeframe, days, horizons, params, required,
               require_htf, require_regime_volume, exclude_opening_window, require_volume_flow,
-              require_candle_pattern, cost_pct, slippage_pct, holdout_pct),
+              require_candle_pattern),
         daemon=True,
     )
     thread.start()
@@ -239,8 +214,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
 
 def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required,
                        require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                       require_volume_flow=False, require_candle_pattern=False,
-                       cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0):
+                       require_volume_flow=False, require_candle_pattern=False):
     try:
         result = run_backtest(
             kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
@@ -248,7 +222,6 @@ def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required
             require_htf=require_htf, require_regime_volume=require_regime_volume,
             exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
             require_candle_pattern=require_candle_pattern,
-            cost_pct=cost_pct, slippage_pct=slippage_pct, holdout_pct=holdout_pct,
         )
         with _bt_lock:
             _bt_state["status"] = "done"
@@ -545,38 +518,13 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     return has_signal, direction
 
 
-def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str, horizons,
-                    cost_pct: float = 0.0, slippage_pct: float = 0.0):
+def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str, horizons):
     """Entry is executed at the NEXT bar's open after the signal bar
     (never the signal bar's own close, to avoid lookahead bias).
     Returns are computed at each requested horizon (in bars), plus the
     single worst adverse move (drawdown) seen at any point during the
     longest hold - None if there isn't enough remaining data for even
-    the shortest horizon.
-
-    cost_pct/slippage_pct (both default 0.0 - raw price return, exactly
-    the prior behaviour) let a run report returns NET of realistic
-    Zerodha F&O transaction costs and execution slippage, per
-    NEXT_HORIZON_RESEARCH.md Finding 2: without this, a backtest showing
-    a small average edge can be entirely illusory once real costs are
-    applied - options round-trip costs alone run roughly 0.6-1%+ of
-    premium versus roughly 0.06-0.10% of notional for stock futures, a
-    gap this app's own default parameters can't see without opting in
-    here. Both are expressed as a flat, direction-agnostic percentage
-    subtracted from the raw return: cost_pct is the round-trip
-    brokerage/STT/exchange/SEBI/stamp/GST hit (a single flat deduction,
-    since it's charged once per completed round trip regardless of which
-    way you traded), and slippage_pct is a PER-LEG execution-slippage
-    assumption applied twice (once for the entry fill, once for the exit
-    fill) since both legs are exposed to it independently - deliberately
-    a simple, symmetric, easy-to-verify model rather than adjusting the
-    entry/exit price directionally, matching how the underlying cost
-    research itself is expressed (a flat round-trip % of notional/
-    premium, not a directional fill simulation). Only returns_pct is
-    cost-adjusted - mae_pct (used for stop-sizing) is deliberately left
-    on raw, un-costed price action, since it represents the worst
-    UNREALIZED intrabar excursion a stop would have needed to survive,
-    a different concept from realized, cost-adjusted P&L at exit."""
+    the shortest horizon."""
     if entry_pos + 1 >= len(df):
         return None
     entry_price = float(df["open"].iloc[entry_pos + 1])
@@ -599,15 +547,13 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
     else:
         mae_pct = min(0.0, float((entry_price - hold_slice["high"].max()) / entry_price * 100))
 
-    total_cost_pct = max(0.0, cost_pct) + 2 * max(0.0, slippage_pct)
     returns = {}
     for h in horizons:
         exit_pos = entry_pos + 1 + h
         if exit_pos >= len(df):
             continue
         exit_price = float(df["close"].iloc[exit_pos])
-        raw_return_pct = sign * (exit_price - entry_price) / entry_price * 100
-        returns[h] = round(raw_return_pct - total_cost_pct, 3)
+        returns[h] = round(sign * (exit_price - entry_price) / entry_price * 100, 3)
     if not returns:
         return None
 
@@ -624,7 +570,7 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 
 def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required,
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                    require_volume_flow=False, require_candle_pattern=False, cost_pct=0.0, slippage_pct=0.0):
+                    require_volume_flow=False, require_candle_pattern=False):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -661,8 +607,7 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         ts = df.index[pos]
         if ts.to_pydatetime().replace(tzinfo=None) < window_start:
             continue  # inside the warm-up buffer, not the requested window
-        trade = _compute_trade(df, pos, direction.iloc[pos], symbol, horizons,
-                                cost_pct=cost_pct, slippage_pct=slippage_pct)
+        trade = _compute_trade(df, pos, direction.iloc[pos], symbol, horizons)
         if trade:
             trade["vol_confirmed_at_entry"] = bool(vol_hot.iloc[pos])
             trades.append(trade)
@@ -723,49 +668,16 @@ def _summarize(trades, horizons):
     }
 
 
-def _summarize_by_split(trades, horizons, split_iso: str):
-    """Splits an already-computed trade list into train (entry_time <
-    split_iso) and holdout (entry_time >= split_iso) groups, each
-    summarized the same way _summarize does the pooled set - lets a
-    SINGLE backtest run (one fetch, one replay) also answer "does this
-    configuration's performance hold up on data it wasn't looked at
-    while choosing parameters", per NEXT_HORIZON_RESEARCH.md Finding 2,
-    without a second fetch/replay pass. entry_time strings are ISO 8601
-    from the same tz-naive index format throughout this module, so a
-    plain string comparison against split_iso is a correct chronological
-    comparison - no need to re-parse to datetime."""
-    train = [t for t in trades if t["entry_time"] < split_iso]
-    holdout = [t for t in trades if t["entry_time"] >= split_iso]
-    return {
-        "split_at": split_iso,
-        "train": _summarize(train, horizons),
-        "holdout": _summarize(holdout, horizons),
-    }
-
-
 def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
                   params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None,
                   require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                  require_volume_flow=False, require_candle_pattern=False,
-                  cost_pct=0.0, slippage_pct=0.0, holdout_pct=0.0) -> dict:
+                  require_volume_flow=False, require_candle_pattern=False) -> dict:
     days = min(int(days or 30), MAX_BACKTEST_DAYS)
     require_htf = bool(require_htf)
     require_regime_volume = bool(require_regime_volume)
     exclude_opening_window = bool(exclude_opening_window)
     require_volume_flow = bool(require_volume_flow)
     require_candle_pattern = bool(require_candle_pattern)
-    try:
-        cost_pct = max(0.0, float(cost_pct or 0.0))
-    except (TypeError, ValueError):
-        cost_pct = 0.0
-    try:
-        slippage_pct = max(0.0, float(slippage_pct or 0.0))
-    except (TypeError, ValueError):
-        slippage_pct = 0.0
-    try:
-        holdout_pct = min(90.0, max(0.0, float(holdout_pct or 0.0)))
-    except (TypeError, ValueError):
-        holdout_pct = 0.0
     horizons = tuple(sorted({int(h) for h in horizons if int(h) > 0})) or DEFAULT_HORIZONS
 
     params = tuple(p for p in (params or ()) if p in PARAM_IDS) or DEFAULT_PARAMS
@@ -810,7 +722,6 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
                 require_htf=require_htf, require_regime_volume=require_regime_volume,
                 exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
                 require_candle_pattern=require_candle_pattern,
-                cost_pct=cost_pct, slippage_pct=slippage_pct,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("Backtest replay failed for %s", symbol)
@@ -833,21 +744,6 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
     total_trade_count = len(trades)
     display_trades = trades[-MAX_TRADES_RETURNED:]
 
-    # Train/holdout out-of-sample split (NEXT_HORIZON_RESEARCH.md Finding
-    # 2): holdout_pct=0 (the default) leaves train_holdout as None and
-    # changes nothing else - every prior caller/test that never passed
-    # this gets byte-identical results. When > 0, the LAST holdout_pct%
-    # of the requested window (by calendar time, not trade count - a
-    # date-based split, never a shuffle, since order matters for a
-    # legitimate out-of-sample test) is held out; split_summary reports
-    # both halves so you can see at a glance whether performance
-    # actually survives on data this exact parameter choice never saw.
-    train_holdout = None
-    if holdout_pct > 0:
-        split_dt = window_start + (to_date - window_start) * (1 - holdout_pct / 100)
-        split_iso = split_dt.replace(tzinfo=None).isoformat(timespec="seconds")
-        train_holdout = _summarize_by_split(trades, horizons, split_iso)
-
     return {
         "timeframe": timeframe,
         "days_requested": days,
@@ -859,10 +755,6 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "exclude_opening_window": exclude_opening_window,
         "require_volume_flow": require_volume_flow,
         "require_candle_pattern": require_candle_pattern,
-        "cost_pct": cost_pct,
-        "slippage_pct": slippage_pct,
-        "holdout_pct": holdout_pct,
-        "train_holdout": train_holdout,
         "window_start": window_start.isoformat(timespec="seconds"),
         "window_end": to_date.isoformat(timespec="seconds"),
         "symbols_scanned": len(symbols),
