@@ -179,6 +179,7 @@
   .oi-break-badge.down { background: var(--red-bg); color: var(--red); border-color: rgba(234,57,67,0.4); }
   .chart-link { font-size: 11px; color: var(--accent); text-decoration: none; font-family: var(--sans); }
   .chart-link:hover { text-decoration: underline; }
+  .journal-log-link { display: block; margin-top: 3px; color: var(--dim); }
 
   .alert-toggle-wrap { display: flex; align-items: center; gap: 8px; }
   .alert-toggle-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; }
@@ -222,7 +223,7 @@
       </button>
     </div>
     {% endif %}
-    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/journal">Journal</a><a href="/settings">Settings</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -688,7 +689,14 @@
           <td data-sort="{{ r.weighted_score if r.weighted_score is not none else '' }}">
             {{ r.weighted_score if r.weighted_score is not none else '—' }}{% if r.weighted_score is not none %}%{% endif %}
           </td>
-          <td><a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a></td>
+          <td>
+            <a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a>
+            {% if r.direction in ('Bullish', 'Bearish') %}
+            <a class="chart-link journal-log-link" href="#" data-symbol="{{ r.symbol }}"
+               onclick="event.stopPropagation(); logPaperTrade(this); return false;"
+               title="Log this as a paper trade in the Signal Journal">Log</a>
+            {% endif %}
+          </td>
           {% endif %}
         </tr>
         {% else %}
@@ -752,6 +760,29 @@
     });
   }
   loadInsights();
+
+  function logPaperTrade(link) {
+    var symbol = link.dataset.symbol;
+    var original = link.textContent;
+    link.textContent = '…';
+    var body = new URLSearchParams();
+    body.set('symbol', symbol);
+    fetch('/api/journal/log', { method: 'POST', body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.logged) {
+          link.textContent = 'Logged ✓';
+          link.title = 'Logged - view it on the Signal Journal page';
+        } else {
+          link.textContent = original;
+          alert(res.reason || 'Could not log this trade.');
+        }
+      })
+      .catch(function () {
+        link.textContent = original;
+        alert('Could not log this trade - network error.');
+      });
+  }
 
   (function () {
     var toggle = document.getElementById('desktop-alert-toggle');

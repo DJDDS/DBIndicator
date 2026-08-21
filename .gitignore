@@ -5,6 +5,7 @@ last_scan_results.json
 param_weights.json
 scalp_results.json
 multi_tf_results.json
+signal_journal.json
 __pycache__/
 *.pyc
 .venv/

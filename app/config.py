@@ -66,6 +66,21 @@ SCALP_RESULTS_FILE = os.getenv("SCALP_RESULTS_FILE", "scalp_results.json")
 # own state/persistence file rather than sharing SCAN_RESULTS_FILE.
 MULTI_TF_RESULTS_FILE = os.getenv("MULTI_TF_RESULTS_FILE", "multi_tf_results.json")
 
+# Where the forward-testing signal journal's logged paper trades are
+# persisted (also gitignored) - same restart-resilience reasoning as
+# SCAN_RESULTS_FILE above, kept in its own file since journal.py owns an
+# independent, small, hand-curated list rather than a full scan's worth
+# of rows every cycle. NOTE (see journal.py's module docstring): unlike
+# a real database, this is still just a local file on the container's
+# disk - with no persistent Railway volume attached, any trade that is
+# still OPEN (not yet resolved) at the moment of a redeploy is lost, the
+# same limitation SCAN_RESULTS_FILE/PARAM_WEIGHTS_FILE already have.
+# Already-RESOLVED trades survive a redeploy just fine (they're written
+# back to this file the moment they resolve); the /journal page's CSV
+# export exists specifically so you can save a permanent copy before a
+# deploy if you have trades you don't want to risk.
+JOURNAL_FILE = os.getenv("JOURNAL_FILE", "signal_journal.json")
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

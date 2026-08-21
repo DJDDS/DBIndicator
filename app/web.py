@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, indicators, kite_auth, scanner
+from . import alerts, backtest, background, config, indicators, journal, kite_auth, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -467,6 +467,86 @@ def api_backtest_start():
 @require_dashboard_password
 def api_backtest_status():
     return jsonify(backtest.get_backtest_state())
+
+
+@app.route("/journal")
+@require_dashboard_password
+def journal_page():
+    return render_template(
+        "journal.html",
+        logged_in=kite_auth.is_logged_in_today(),
+        default_horizon_bars=journal.DEFAULT_HORIZON_BARS,
+        state=journal.get_journal_state(),
+    )
+
+
+@app.route("/api/journal/log", methods=["POST"])
+@require_dashboard_password
+def api_journal_log():
+    """Logs a paper trade from a CURRENT live dashboard row - re-reads
+    the row straight from background.get_state()["results"] server-side
+    (looked up by symbol) rather than trusting any indicator values the
+    client might submit, so a stale/tampered form can't log a trade with
+    fabricated readings."""
+    form = request.form
+    symbol = form.get("symbol", "")
+    row = next((r for r in get_state()["results"] if r.get("symbol") == symbol), None)
+    if row is None or row.get("error") or row.get("direction") not in ("Bullish", "Bearish"):
+        return jsonify({"logged": False, "reason": "No current signal for this symbol to log."}), 400
+
+    try:
+        horizon_bars = int(form.get("horizon_bars", journal.DEFAULT_HORIZON_BARS))
+    except ValueError:
+        return jsonify({"logged": False, "reason": "horizon_bars must be a number"}), 400
+    try:
+        cost_pct = max(0.0, float(form.get("cost_pct", 0) or 0))
+    except ValueError:
+        return jsonify({"logged": False, "reason": "cost_pct must be a number"}), 400
+    try:
+        slippage_pct = max(0.0, float(form.get("slippage_pct", 0) or 0))
+    except ValueError:
+        return jsonify({"logged": False, "reason": "slippage_pct must be a number"}), 400
+
+    try:
+        trade = journal.log_paper_trade(
+            row, timeframe=settings.TIMEFRAME, horizon_bars=horizon_bars,
+            cost_pct=cost_pct, slippage_pct=slippage_pct,
+        )
+    except ValueError as exc:
+        return jsonify({"logged": False, "reason": str(exc)}), 400
+    return jsonify({"logged": True, "trade": trade})
+
+
+@app.route("/api/journal/delete", methods=["POST"])
+@require_dashboard_password
+def api_journal_delete():
+    trade_id = request.form.get("id", "")
+    removed = journal.delete_trade(trade_id)
+    return jsonify({"deleted": removed})
+
+
+@app.route("/journal/export.csv")
+@require_dashboard_password
+def journal_export_csv():
+    import csv
+    import io
+
+    trades = journal.get_journal_state()["trades"]
+    buf = io.StringIO()
+    fieldnames = [
+        "id", "symbol", "timeframe", "direction", "horizon_bars", "status",
+        "signal_time", "entry_time", "entry_price", "exit_time", "exit_price",
+        "return_pct", "mae_pct", "outcome", "cost_pct", "slippage_pct", "logged_at",
+    ]
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for t in trades:
+        writer.writerow(t)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=signal_journal.csv"},
+    )
 
 
 @app.route("/api/weights/start", methods=["POST"])

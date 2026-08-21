@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, kite_auth
+from . import alerts, journal, kite_auth
 from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
@@ -508,6 +508,18 @@ def _run_loop():
                             alerts.process_oi_events(oi_events, settings.TIMEFRAME)
                         except Exception:  # noqa: BLE001 - alerting must never break scanning
                             log.exception("OI acceleration alert processing failed")
+                    # Forward-testing signal journal (NEXT_HORIZON_RESEARCH.md
+                    # Finding 3): fills entries and resolves exits for any
+                    # open paper trades, using freshly-fetched candles - same
+                    # per-cycle cadence as everything else in this branch, and
+                    # deliberately only attempted while the market is open
+                    # (see journal.resolve_open_trades) since no new candles
+                    # close otherwise, so an off-hours attempt would just be a
+                    # wasted no-op fetch.
+                    try:
+                        journal.resolve_open_trades(kite)
+                    except Exception:  # noqa: BLE001 - journal resolution must never break scanning
+                        log.exception("Signal journal resolution failed")
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Background scan failed")
                     with _state_lock:

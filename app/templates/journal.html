@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Journal - Confluence Signal</title>
+<style>
+  :root {
+    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
+    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
+  header nav a:hover { background: rgba(255,255,255,0.28); }
+  .wrap { max-width: 1000px; margin: 24px auto; padding: 0 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px 26px; margin-bottom: 20px; }
+  .card h2 { margin: 0 0 10px; font-size: 15px; color: var(--navy); }
+  .card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .msg-warn { background: #fff6e0; border: 1px solid #f0dca0; color: #7a5b00; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .msg-err { background: #fbe7e7; border: 1px solid #f0b7b7; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
+         padding: 9px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .win-good { color: var(--green); font-weight: 700; }
+  .win-bad { color: var(--red); font-weight: 700; }
+  .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 4px; }
+  .tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .tile .tv { font-size: 20px; font-weight: 700; color: var(--navy); }
+  .tile .tl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .bull { color: var(--green); }
+  .bear { color: var(--red); }
+  .status-pill { padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .status-pill.open { background: #fff6e0; color: #7a5b00; }
+  .status-pill.resolved { background: #eef1f5; color: var(--navy); }
+  .del-link { font-size: 11px; color: var(--muted); text-decoration: none; }
+  .del-link:hover { color: var(--red); text-decoration: underline; }
+  .trades-scroll { max-height: 520px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Signal Journal</h1>
+  <nav><a href="/">&larr; Dashboard</a></nav>
+</header>
+<div class="wrap">
+
+  {% if not logged_in %}
+  <div class="msg-err">Log in to Kite on the dashboard first - resolving open paper trades needs a live Kite session to pull fresh candles.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Forward-testing signal journal</h2>
+    <p>
+      Click "Log" next to any live signal on the Dashboard to record it as a paper trade here. Entry fills at the
+      NEXT bar's open after the bar you logged from (never that bar's own close - no lookahead), and it resolves once
+      enough new bars have closed at your horizon - the exact same convention the Backtest page uses, so a trade
+      logged here is a genuine like-for-like comparison against what a backtest on the same symbol/timeframe/params
+      would have predicted. Resolution runs automatically in the background scan loop while the market is open -
+      just leave this tab closed and check back later.
+    </p>
+    <p class="hint">
+      This scoreboard reports REALIZED forward performance only - it isn't automatically compared against a
+      backtest number. To see how it stacks up, run the same watchlist/timeframe/parameters through the
+      <a href="/backtest">Backtest</a> page over a matching date range.
+    </p>
+    <div class="msg-warn">
+      Like every other piece of scan state in this app, the journal lives in a local file on the server - there is
+      no persistent storage volume attached. A trade still marked <strong>Open</strong> at the moment of a redeploy
+      will be lost; already-<strong>Resolved</strong> trades are safe. Use "Export CSV" below before deploying if
+      you have open trades you don't want to risk.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Scoreboard</h2>
+    <div class="stat-tiles">
+      <div class="tile"><div class="tv">{{ state.summary.open_count }}</div><div class="tl">Open</div></div>
+      <div class="tile"><div class="tv">{{ state.summary.all.count }}</div><div class="tl">Resolved</div></div>
+      <div class="tile"><div class="tv">{{ state.summary.all.win_rate_pct if state.summary.all.win_rate_pct is not none else '—' }}{% if state.summary.all.win_rate_pct is not none %}%{% endif %}</div><div class="tl">Win rate</div></div>
+      <div class="tile"><div class="tv">{{ state.summary.all.avg_return_pct if state.summary.all.avg_return_pct is not none else '—' }}{% if state.summary.all.avg_return_pct is not none %}%{% endif %}</div><div class="tl">Avg return</div></div>
+      <div class="tile"><div class="tv">{{ state.summary.bullish.count }} / {{ state.summary.bullish.win_rate_pct if state.summary.bullish.win_rate_pct is not none else '—' }}{% if state.summary.bullish.win_rate_pct is not none %}%{% endif %}</div><div class="tl">Bullish trades / win rate</div></div>
+      <div class="tile"><div class="tv">{{ state.summary.bearish.count }} / {{ state.summary.bearish.win_rate_pct if state.summary.bearish.win_rate_pct is not none else '—' }}{% if state.summary.bearish.win_rate_pct is not none %}%{% endif %}</div><div class="tl">Bearish trades / win rate</div></div>
+    </div>
+    <div style="margin-top:14px;">
+      <a class="btn" href="/journal/export.csv">Export CSV</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Trades ({{ state.trades|length }})</h2>
+    {% if not state.trades %}
+    <p>Nothing logged yet - click "Log" next to a Bullish/Bearish row on the <a href="/">Dashboard</a> to get started.</p>
+    {% else %}
+    <div class="trades-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Dir</th><th>TF</th><th>Horizon</th><th>Status</th>
+            <th>Signal time</th><th>Entry</th><th>Exit</th><th>Return</th><th>Outcome</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in state.trades %}
+          <tr>
+            <td>{{ t.symbol }}</td>
+            <td class="{{ 'bull' if t.direction == 'Bullish' else 'bear' }}">{{ '▲' if t.direction == 'Bullish' else '▼' }}</td>
+            <td>{{ t.timeframe }}</td>
+            <td>{{ t.horizon_bars }}b</td>
+            <td><span class="status-pill {{ t.status }}">{{ t.status|capitalize }}</span></td>
+            <td>{{ (t.signal_time or '')[:16].replace('T', ' ') }}</td>
+            <td>{% if t.entry_price is not none %}{{ t.entry_price }}{% else %}pending{% endif %}</td>
+            <td>{% if t.exit_price is not none %}{{ t.exit_price }}{% else %}—{% endif %}</td>
+            <td class="{{ 'win-good' if t.return_pct is not none and t.return_pct > 0 else ('win-bad' if t.return_pct is not none and t.return_pct < 0 else '') }}">
+              {% if t.return_pct is not none %}{{ '{:+.2f}'.format(t.return_pct) }}%{% else %}—{% endif %}
+            </td>
+            <td>{{ t.outcome or '—' }}</td>
+            <td><a class="del-link" href="#" data-id="{{ t.id }}" onclick="deleteTrade(this); return false;">Remove</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+<script>
+  function deleteTrade(link) {
+    if (!confirm('Remove this journal entry? This cannot be undone.')) return;
+    var body = new URLSearchParams();
+    body.set('id', link.dataset.id);
+    fetch('/api/journal/delete', { method: 'POST', body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.deleted) {
+          link.closest('tr').remove();
+        } else {
+          alert('Could not remove this entry.');
+        }
+      });
+  }
+</script>
+</body>
+</html>
