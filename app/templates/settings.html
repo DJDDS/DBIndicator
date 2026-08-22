@@ -137,6 +137,25 @@
           </label>
           <div class="hint">When on, a row whose direction disagrees with its own most recent candlestick pattern (the small candle badge next to Signal - Engulfing/Hammer-family/Morning-Evening Star, a read of price SHAPE rather than a smoothed derivative like RSI/MACD/EMA-BB) loses its "Confirmed" status. Off by default.</div>
         </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_sector_agreement" name="require_sector_agreement" {% if s.REQUIRE_SECTOR_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require sector agreement
+          </label>
+          <div class="hint">When on, a row whose direction disagrees with its own NSE sectoral index's current direction (e.g. a Bullish HDFCBANK row while NIFTY BANK itself reads Bearish) loses its "Confirmed" status. A symbol without a known sector mapping is never blocked by this. Off by default.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_breadth_agreement" name="require_breadth_agreement" {% if s.REQUIRE_BREADTH_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require breadth agreement
+          </label>
+          <div class="hint">When on, a row whose direction is decisively against the watchlist's own current advance/decline split (below the threshold % to the right) loses its "Confirmed" status. This reads breadth from your WATCHLIST, not the full NSE market - Kite has no cheap full-market breadth feed. Off by default.</div>
+        </div>
+        <div>
+          <label for="breadth_threshold_pct">Breadth threshold %</label>
+          <input type="number" id="breadth_threshold_pct" name="breadth_threshold_pct" min="0" max="100" step="1" value="{{ s.BREADTH_THRESHOLD_PCT }}">
+          <div class="hint">Minimum % of the watchlist's resolved rows that must share a row's own direction for breadth to "agree" with it. Only changes anything if Require breadth agreement (above) is on.</div>
+        </div>
       </div>
     </div>
 

@@ -541,22 +541,24 @@ def _load_index_token(kite, tradingsymbol: str = _INDEX_SYMBOL):
     return token
 
 
-def fetch_index_direction(kite, timeframe: str):
-    """Reads NIFTY 50's own confluence direction on the given timeframe,
-    for the Index/Market-trend filter. Returns (direction, close,
-    chg_pct) - any/all of which can be None (index token unresolved,
-    no candle data yet, or not enough history for the indicators to
-    warm up) - callers should treat None as "no opinion available this
+def fetch_instrument_direction(kite, tradingsymbol: str, timeframe: str):
+    """Reads ANY index instrument's own confluence direction on the
+    given timeframe - the shared implementation behind fetch_index_
+    direction (NIFTY 50) and fetch_sector_directions (sector indices
+    like NIFTY BANK/NIFTY IT below). Returns (direction, close,
+    chg_pct) - any/all of which can be None (token unresolved, no
+    candle data yet, or not enough history for the indicators to warm
+    up) - callers should treat None as "no opinion available this
     scan", not an error. Reuses the exact same fetch_candles/
     compute_signal path used for every watchlist stock, so this costs
     exactly one extra Kite API call per scan cycle (two the first time,
-    while the index token is still being resolved) rather than a
-    parallel/duplicate code path. Deliberately swallows every exception
-    itself (rather than letting the caller's try/except handle it) so a
-    transient index-fetch hiccup can never cost the rest of that scan
-    cycle's stock results."""
+    while the token is still being resolved) rather than a parallel/
+    duplicate code path. Deliberately swallows every exception itself
+    (rather than letting the caller's try/except handle it) so a
+    transient fetch hiccup for one instrument can never cost the rest
+    of that scan cycle's results."""
     try:
-        token = _load_index_token(kite)
+        token = _load_index_token(kite, tradingsymbol)
         if not token:
             return None, None, None
         df = fetch_candles(kite, token, timeframe)
@@ -573,8 +575,164 @@ def fetch_index_direction(kite, timeframe: str):
                 chg_pct = round((close - prev_close) / prev_close * 100, 2)
         return signal.get("direction"), close, chg_pct
     except Exception as exc:  # noqa: BLE001 - see docstring
-        log.warning("Index direction fetch failed: %s", exc)
+        log.warning("Instrument direction fetch failed for %r: %s", tradingsymbol, exc)
         return None, None, None
+
+
+def fetch_index_direction(kite, timeframe: str):
+    """Reads NIFTY 50's own confluence direction on the given timeframe,
+    for the Index/Market-trend filter. Thin wrapper over
+    fetch_instrument_direction (kept as its own function/signature so
+    every existing caller - background.py's main scan loop and the
+    multi-timeframe panel - is untouched)."""
+    return fetch_instrument_direction(kite, _INDEX_SYMBOL, timeframe)
+
+
+# --------------------------------------------------------------------------
+# Sector relative strength (NEXT_HORIZON_RESEARCH.md Finding 5): maps each
+# watchlist symbol to its NSE sectoral index, so the live dashboard can
+# compare a stock's own direction against its sector's current confluence
+# direction - genuinely different information from RSI/MACD/EMA-BB (all
+# re-expressions of the stock's OWN closing price), since this is about
+# the stock's context instead. Kite Connect doesn't expose any stock-to-
+# sector classification, so this map is hand-built from NSE's own index
+# constituent lists, covering a broad NSE F&O universe (not just the
+# default 20-symbol watchlist) so most symbols a user might add later
+# already resolve. A symbol not in this map simply gets sector_direction
+# =None downstream (background._apply_sector_filter) - the same "None
+# means agree, never blocks" convention used by every other optional
+# gate in this app - so an incomplete map degrades gracefully rather
+# than breaking anything.
+#
+# The index tradingsymbols below are NSE's standard sectoral indices, as
+# published under Kite Connect's own "INDICES" segment. If a particular
+# one doesn't resolve on your account's instrument dump (an unusual
+# renaming, or an index not carried), fetch_sector_directions below
+# swallows that failure per-sector exactly like fetch_index_direction
+# does for NIFTY 50 - every stock mapped to it just reads
+# sector_direction=None instead of erroring.
+# --------------------------------------------------------------------------
+
+SYMBOL_SECTOR_MAP = {
+    # NIFTY BANK
+    "HDFCBANK": "NIFTY BANK", "ICICIBANK": "NIFTY BANK", "KOTAKBANK": "NIFTY BANK",
+    "AXISBANK": "NIFTY BANK", "SBIN": "NIFTY BANK", "INDUSINDBK": "NIFTY BANK",
+    "BANKBARODA": "NIFTY BANK", "PNB": "NIFTY BANK", "AUBANK": "NIFTY BANK",
+    "FEDERALBNK": "NIFTY BANK", "IDFCFIRSTB": "NIFTY BANK", "BANDHANBNK": "NIFTY BANK",
+    "CANBK": "NIFTY BANK", "UNIONBANK": "NIFTY BANK", "RBLBANK": "NIFTY BANK",
+    "IDBI": "NIFTY BANK", "INDIANB": "NIFTY BANK", "BANKINDIA": "NIFTY BANK",
+    "YESBANK": "NIFTY BANK",
+    # NIFTY IT
+    "TCS": "NIFTY IT", "INFY": "NIFTY IT", "WIPRO": "NIFTY IT", "HCLTECH": "NIFTY IT",
+    "TECHM": "NIFTY IT", "LTIM": "NIFTY IT", "MPHASIS": "NIFTY IT", "COFORGE": "NIFTY IT",
+    "PERSISTENT": "NIFTY IT", "LTTS": "NIFTY IT", "OFSS": "NIFTY IT", "KPITTECH": "NIFTY IT",
+    "TATAELXSI": "NIFTY IT",
+    # NIFTY AUTO
+    "MARUTI": "NIFTY AUTO", "TATAMOTORS": "NIFTY AUTO", "M&M": "NIFTY AUTO",
+    "BAJAJ-AUTO": "NIFTY AUTO", "EICHERMOT": "NIFTY AUTO", "HEROMOTOCO": "NIFTY AUTO",
+    "TVSMOTOR": "NIFTY AUTO", "ASHOKLEY": "NIFTY AUTO", "BHARATFORG": "NIFTY AUTO",
+    "BALKRISIND": "NIFTY AUTO", "MRF": "NIFTY AUTO", "EXIDEIND": "NIFTY AUTO",
+    "MOTHERSON": "NIFTY AUTO", "BOSCHLTD": "NIFTY AUTO", "APOLLOTYRE": "NIFTY AUTO",
+    "AMARAJABAT": "NIFTY AUTO", "SONACOMS": "NIFTY AUTO", "UNOMINDA": "NIFTY AUTO",
+    # NIFTY PHARMA
+    "SUNPHARMA": "NIFTY PHARMA", "DRREDDY": "NIFTY PHARMA", "CIPLA": "NIFTY PHARMA",
+    "DIVISLAB": "NIFTY PHARMA", "AUROPHARMA": "NIFTY PHARMA", "LUPIN": "NIFTY PHARMA",
+    "TORNTPHARM": "NIFTY PHARMA", "ALKEM": "NIFTY PHARMA", "BIOCON": "NIFTY PHARMA",
+    "GLENMARK": "NIFTY PHARMA", "ZYDUSLIFE": "NIFTY PHARMA", "LAURUSLABS": "NIFTY PHARMA",
+    "IPCALAB": "NIFTY PHARMA", "GLAND": "NIFTY PHARMA", "ABBOTINDIA": "NIFTY PHARMA",
+    "SYNGENE": "NIFTY PHARMA",
+    # NIFTY FMCG
+    "HINDUNILVR": "NIFTY FMCG", "ITC": "NIFTY FMCG", "NESTLEIND": "NIFTY FMCG",
+    "BRITANNIA": "NIFTY FMCG", "TATACONSUM": "NIFTY FMCG", "DABUR": "NIFTY FMCG",
+    "GODREJCP": "NIFTY FMCG", "MARICO": "NIFTY FMCG", "COLPAL": "NIFTY FMCG",
+    "UBL": "NIFTY FMCG", "VBL": "NIFTY FMCG", "EMAMILTD": "NIFTY FMCG",
+    "PGHH": "NIFTY FMCG", "RADICO": "NIFTY FMCG",
+    # NIFTY METAL
+    "TATASTEEL": "NIFTY METAL", "JSWSTEEL": "NIFTY METAL", "HINDALCO": "NIFTY METAL",
+    "VEDL": "NIFTY METAL", "JINDALSTEL": "NIFTY METAL", "SAIL": "NIFTY METAL",
+    "NMDC": "NIFTY METAL", "NATIONALUM": "NIFTY METAL", "HINDZINC": "NIFTY METAL",
+    "APLAPOLLO": "NIFTY METAL", "JSL": "NIFTY METAL", "HINDCOPPER": "NIFTY METAL",
+    "RATNAMANI": "NIFTY METAL",
+    # NIFTY ENERGY
+    "RELIANCE": "NIFTY ENERGY", "ONGC": "NIFTY ENERGY", "NTPC": "NIFTY ENERGY",
+    "POWERGRID": "NIFTY ENERGY", "COALINDIA": "NIFTY ENERGY", "BPCL": "NIFTY ENERGY",
+    "IOC": "NIFTY ENERGY", "GAIL": "NIFTY ENERGY", "TATAPOWER": "NIFTY ENERGY",
+    "ADANIGREEN": "NIFTY ENERGY", "ADANIPOWER": "NIFTY ENERGY", "ADANIENSOL": "NIFTY ENERGY",
+    "HINDPETRO": "NIFTY ENERGY", "PETRONET": "NIFTY ENERGY", "IGL": "NIFTY ENERGY",
+    "OIL": "NIFTY ENERGY", "NHPC": "NIFTY ENERGY", "SJVN": "NIFTY ENERGY",
+    # NIFTY REALTY
+    "DLF": "NIFTY REALTY", "GODREJPROP": "NIFTY REALTY", "OBEROIRLTY": "NIFTY REALTY",
+    "PRESTIGE": "NIFTY REALTY", "PHOENIXLTD": "NIFTY REALTY", "LODHA": "NIFTY REALTY",
+    "BRIGADE": "NIFTY REALTY", "SOBHA": "NIFTY REALTY", "MAHLIFE": "NIFTY REALTY",
+    # NIFTY FIN SERVICE (non-bank financials)
+    "BAJFINANCE": "NIFTY FIN SERVICE", "BAJAJFINSV": "NIFTY FIN SERVICE",
+    "HDFCLIFE": "NIFTY FIN SERVICE", "SBILIFE": "NIFTY FIN SERVICE",
+    "ICICIGI": "NIFTY FIN SERVICE", "ICICIPRULI": "NIFTY FIN SERVICE",
+    "SHRIRAMFIN": "NIFTY FIN SERVICE", "CHOLAFIN": "NIFTY FIN SERVICE",
+    "PFC": "NIFTY FIN SERVICE", "RECLTD": "NIFTY FIN SERVICE",
+    "MUTHOOTFIN": "NIFTY FIN SERVICE", "LICHSGFIN": "NIFTY FIN SERVICE",
+    "SBICARD": "NIFTY FIN SERVICE", "M&MFIN": "NIFTY FIN SERVICE",
+    "LICI": "NIFTY FIN SERVICE", "IRFC": "NIFTY FIN SERVICE",
+    "MANAPPURAM": "NIFTY FIN SERVICE", "PAYTM": "NIFTY FIN SERVICE",
+    "PNBHOUSING": "NIFTY FIN SERVICE", "CANFINHOME": "NIFTY FIN SERVICE",
+    # NIFTY MEDIA
+    "ZEEL": "NIFTY MEDIA", "SUNTV": "NIFTY MEDIA", "PVRINOX": "NIFTY MEDIA",
+    "NETWORK18": "NIFTY MEDIA", "TV18BRDCST": "NIFTY MEDIA", "SAREGAMA": "NIFTY MEDIA",
+    # NIFTY OIL AND GAS (overlaps a little with Energy, kept as its own
+    # entry only for names not already assigned above)
+    "MGL": "NIFTY OIL AND GAS", "GUJGASLTD": "NIFTY OIL AND GAS",
+    "AEGISCHEM": "NIFTY OIL AND GAS",
+    # NIFTY HEALTHCARE (hospitals/diagnostics - distinct from NIFTY
+    # PHARMA's drugmakers above)
+    "APOLLOHOSP": "NIFTY HEALTHCARE", "MAXHEALTH": "NIFTY HEALTHCARE",
+    "FORTIS": "NIFTY HEALTHCARE", "METROPOLIS": "NIFTY HEALTHCARE",
+    "LALPATHLAB": "NIFTY HEALTHCARE",
+    # NIFTY CONSUMER DURABLES
+    "TITAN": "NIFTY CONSR DURBL", "HAVELLS": "NIFTY CONSR DURBL",
+    "VOLTAS": "NIFTY CONSR DURBL", "DIXON": "NIFTY CONSR DURBL",
+    "CROMPTON": "NIFTY CONSR DURBL", "WHIRLPOOL": "NIFTY CONSR DURBL",
+    "BLUESTARCO": "NIFTY CONSR DURBL", "KAJARIACER": "NIFTY CONSR DURBL",
+    "RAJESHEXPO": "NIFTY CONSR DURBL",
+    # NIFTY CHEMICALS
+    "PIDILITIND": "NIFTY CHEMICALS", "SRF": "NIFTY CHEMICALS", "UPL": "NIFTY CHEMICALS",
+    "AARTIIND": "NIFTY CHEMICALS", "DEEPAKNTR": "NIFTY CHEMICALS", "ATUL": "NIFTY CHEMICALS",
+    "TATACHEM": "NIFTY CHEMICALS", "NAVINFLUOR": "NIFTY CHEMICALS", "PIIND": "NIFTY CHEMICALS",
+    "COROMANDEL": "NIFTY CHEMICALS", "GNFC": "NIFTY CHEMICALS",
+    # NIFTY INFRA (construction/engineering/cement conglomerates that
+    # don't cleanly fit any sector above)
+    "LT": "NIFTY INFRA", "ULTRACEMCO": "NIFTY INFRA", "GRASIM": "NIFTY INFRA",
+    "SHREECEM": "NIFTY INFRA", "AMBUJACEM": "NIFTY INFRA", "ACC": "NIFTY INFRA",
+    "ADANIPORTS": "NIFTY INFRA", "IRB": "NIFTY INFRA", "NCC": "NIFTY INFRA",
+    "GMRINFRA": "NIFTY INFRA", "RVNL": "NIFTY INFRA", "CONCOR": "NIFTY INFRA",
+    "SIEMENS": "NIFTY INFRA", "ABB": "NIFTY INFRA", "CUMMINSIND": "NIFTY INFRA",
+    "POLYCAB": "NIFTY INFRA",
+    # Telecom + a handful of large names without a dedicated NSE
+    # sectoral index - deliberately left OUT of the map rather than
+    # force-fit into a wrong sector, so they read sector_direction=None
+    # (Airtel, defence PSUs, IT-adjacent conglomerates, etc.)
+}
+SECTOR_INDEXES = sorted(set(SYMBOL_SECTOR_MAP.values()))
+
+
+def fetch_sector_directions(kite, sector_symbols, timeframe: str) -> dict:
+    """Fetches each DISTINCT sector index's own current confluence
+    direction, once per index per scan cycle (not once per stock) -
+    same cost/caching shape as fetch_index_direction's single NIFTY 50
+    call, just repeated for however many distinct sectors are actually
+    present in the current watchlist (typically well under 20). Returns
+    {sector_tradingsymbol: direction_or_None} - a sector whose fetch
+    fails for any reason (bad index name, no data yet) simply maps to
+    None, exactly like fetch_index_direction's own failure mode, so one
+    bad sector lookup never affects any other sector or any stock's own
+    result. `sector_symbols` should be the distinct sector tradingsymbols
+    actually needed this cycle (see background._apply_sector_filter's
+    caller), not necessarily all of SECTOR_INDEXES - no point fetching a
+    sector nothing in the current watchlist maps to."""
+    out = {}
+    for sector in sector_symbols:
+        direction, _close, _chg = fetch_instrument_direction(kite, sector, timeframe)
+        out[sector] = direction
+    return out
 
 
 def is_market_open() -> bool:

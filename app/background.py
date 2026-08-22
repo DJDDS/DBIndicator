@@ -14,7 +14,8 @@ from . import alerts, journal, kite_auth
 from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
-    classify_oi_structure, fetch_index_direction,
+    classify_oi_structure, fetch_index_direction, fetch_sector_directions,
+    SYMBOL_SECTOR_MAP,
 )
 
 log = logging.getLogger(__name__)
@@ -126,6 +127,94 @@ def _apply_candle_pattern_filter(results):
             r["signal_confirmed"] = False
 
 
+def _apply_sector_filter(results, sector_directions):
+    """Mutates each result dict in place, attaching sector (the NSE
+    sectoral index this symbol maps to, or None if it isn't in
+    scanner.SYMBOL_SECTOR_MAP), sector_direction (that index's own
+    current confluence direction, from sector_directions - see
+    scanner.fetch_sector_directions), and sector_agrees - does this
+    row's own direction match its sector's? Same "None means agree"
+    convention used everywhere else: a symbol with no sector mapping,
+    or a sector whose fetch didn't resolve this cycle, always reads
+    sector_agrees=True, never blocking anything on its own.
+
+    When settings.REQUIRE_SECTOR_AGREEMENT is on, a row that disagrees
+    with its own sector also loses its signal_confirmed status - same
+    shape as _apply_index_filter, just keyed per-symbol by sector
+    instead of one shared index-wide value. Off by default; sector/
+    sector_direction/sector_agrees are always attached either way,
+    purely for display (the small sector badge next to Signal)."""
+    require = settings.REQUIRE_SECTOR_AGREEMENT
+    for r in results:
+        if r.get("error") or not r.get("direction"):
+            r["sector"] = None
+            r["sector_direction"] = None
+            r["sector_agrees"] = None
+            continue
+        sector = SYMBOL_SECTOR_MAP.get(r.get("symbol"))
+        r["sector"] = sector
+        sector_direction = sector_directions.get(sector) if sector else None
+        r["sector_direction"] = sector_direction
+        r["sector_agrees"] = True if sector_direction is None else (r["direction"] == sector_direction)
+        if require and r.get("signal_confirmed") and not r["sector_agrees"]:
+            r["signal_confirmed"] = False
+
+
+def _compute_breadth(results):
+    """Advances/declines across the CURRENT watchlist's own scan results
+    (not full-NSE breadth - Kite has no cheap all-market advance/decline
+    endpoint, so this is a watchlist-scoped proxy computed for free from
+    data this cycle already fetched, labelled as such wherever it's
+    shown). Only rows with a clear, error-free direction count toward
+    the total; rows with no signal at all are excluded rather than
+    counted as neutral. Returns {"bullish": int, "bearish": int,
+    "total": int, "bullish_pct": float|None, "bearish_pct": float|None}
+    - the two _pct fields are None when total is 0 (e.g. every row
+    errored), so callers never divide by zero."""
+    bullish = sum(1 for r in results if not r.get("error") and r.get("direction") == "Bullish")
+    bearish = sum(1 for r in results if not r.get("error") and r.get("direction") == "Bearish")
+    total = bullish + bearish
+    return {
+        "bullish": bullish,
+        "bearish": bearish,
+        "total": total,
+        "bullish_pct": round(bullish / total * 100, 1) if total else None,
+        "bearish_pct": round(bearish / total * 100, 1) if total else None,
+    }
+
+
+def _apply_breadth_filter(results, breadth):
+    """Mutates each result dict in place, attaching breadth_agrees - is
+    at least settings.BREADTH_THRESHOLD_PCT of the CURRENT watchlist's
+    resolved rows also pointing this row's own direction? None/empty
+    breadth (no resolved rows this cycle) always reads breadth_agrees
+    =True, same "never block on missing data" convention as every other
+    gate here.
+
+    When settings.REQUIRE_BREADTH_AGREEMENT is on, a row whose own
+    direction is decisively against the watchlist's current advance/
+    decline split also loses its signal_confirmed status - operationalizes
+    NEXT_HORIZON_RESEARCH.md Finding 5's "don't fully trust a bullish
+    breakout on a day the broader market is mostly declining" as a
+    watchlist-scoped proxy. Off by default; breadth_agrees is always
+    attached either way, purely for display."""
+    require = settings.REQUIRE_BREADTH_AGREEMENT
+    threshold = settings.BREADTH_THRESHOLD_PCT
+    total = breadth.get("total") or 0
+    for r in results:
+        if r.get("error") or not r.get("direction"):
+            r["breadth_agrees"] = None
+            continue
+        if total == 0:
+            r["breadth_agrees"] = True
+        elif r["direction"] == "Bullish":
+            r["breadth_agrees"] = (breadth.get("bullish_pct") or 0) >= threshold
+        else:
+            r["breadth_agrees"] = (breadth.get("bearish_pct") or 0) >= threshold
+        if require and r.get("signal_confirmed") and not r["breadth_agrees"]:
+            r["signal_confirmed"] = False
+
+
 # Equal-weight fallback for weighted_score below, until you've run
 # "Auto-Weight Parameters" on the Backtest page at least once - matches
 # the plain aligned/4 count in spirit (every parameter counts the same).
@@ -201,6 +290,7 @@ _state = {
     "index_direction": None,
     "index_close": None,
     "index_chg_pct": None,
+    "breadth": None,
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -484,11 +574,24 @@ def _run_loop():
                     # any failure, so a bad index fetch can never cost
                     # this cycle's actual stock results.
                     index_direction, index_close, index_chg_pct = fetch_index_direction(kite, settings.TIMEFRAME)
+                    # One more Kite call PER DISTINCT SECTOR actually
+                    # present in this cycle's results (typically well
+                    # under a dozen, not one per watchlist symbol) for
+                    # the sector relative-strength filter - see
+                    # scanner.fetch_sector_directions, same swallow-all-
+                    # failures contract as the index fetch above.
+                    sectors_needed = {SYMBOL_SECTOR_MAP[r["symbol"]] for r in results
+                                       if r.get("symbol") in SYMBOL_SECTOR_MAP}
+                    sector_directions = fetch_sector_directions(kite, sectors_needed, settings.TIMEFRAME) \
+                        if sectors_needed else {}
                     with _state_lock:
                         _apply_param_tier(results)
                         _apply_index_filter(results, index_direction)
                         _apply_volume_flow_filter(results)
                         _apply_candle_pattern_filter(results)
+                        _apply_sector_filter(results, sector_directions)
+                        breadth = _compute_breadth(results)
+                        _apply_breadth_filter(results, breadth)
                         _apply_weighted_score(results)
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
@@ -497,6 +600,7 @@ def _run_loop():
                         _state["index_direction"] = index_direction
                         _state["index_close"] = index_close
                         _state["index_chg_pct"] = index_chg_pct
+                        _state["breadth"] = breadth
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None
                     try:

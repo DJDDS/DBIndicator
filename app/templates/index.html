@@ -302,6 +302,11 @@
         <input type="hidden" name="rel_volume_threshold" value="{{ rel_volume_threshold }}">
       </form>
       <span class="tb-status">{{ total_scanned }} scanned</span>
+      {% if breadth and breadth.total %}
+      <span class="tb-status" title="Advance/decline split across your own watchlist's currently-resolved rows (not full-NSE breadth) - the Require breadth agreement gate on the Settings page compares each row's direction against this.">
+        Breadth: <span class="bull">{{ breadth.bullish }}▲</span> / <span class="bear">{{ breadth.bearish }}▼</span> ({{ breadth.bullish_pct }}% bullish){% if require_breadth_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
+      </span>
+      {% endif %}
       <details class="qs-popover">
         <summary>⚙ Settings</summary>
         <div class="qs-popover-body">
@@ -679,6 +684,15 @@
                   title="Candlestick pattern: {{ r.candle_pattern }} ({{ r.candle_direction }}){% if r.candle_agrees is defined and r.candle_agrees == false %} - disagrees with this row's own direction{% endif %}">
               🕯{{ '▲' if r.candle_direction == 'Bullish' else '▼' }}
             </span>
+            {% endif %}
+            {% if r.sector_direction is defined and r.sector_direction %}
+            <span class="{{ 'bull' if r.sector_direction == 'Bullish' else 'bear' }}" style="font-size:11px; margin-left:3px;"
+                  title="{{ r.sector }}: {{ r.sector_direction }}{% if r.sector_agrees is defined and r.sector_agrees == false %} - disagrees with this row's own direction{% endif %}">
+              ⬢{{ '▲' if r.sector_direction == 'Bullish' else '▼' }}
+            </span>
+            {% endif %}
+            {% if r.breadth_agrees is defined and r.breadth_agrees == false %}
+            <span title="Against the watchlist's own current advance/decline breadth" style="color:var(--amber);">⚖</span>
             {% endif %}
           </td>
           <td data-sort="{{ r.regime or '' }}">

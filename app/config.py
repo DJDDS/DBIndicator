@@ -121,6 +121,7 @@ _TUNABLE_FIELDS = [
     "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
     "REQUIRE_VOLUME_FLOW_AGREEMENT", "REQUIRE_CANDLE_PATTERN_AGREEMENT",
+    "REQUIRE_SECTOR_AGREEMENT", "REQUIRE_BREADTH_AGREEMENT", "BREADTH_THRESHOLD_PCT",
 ]
 
 
@@ -185,6 +186,36 @@ def _env_defaults():
         # reasoning as REQUIRE_INDEX_AGREEMENT/REQUIRE_VOLUME_FLOW_AGREEMENT
         # above.
         "REQUIRE_CANDLE_PATTERN_AGREEMENT": os.getenv("REQUIRE_CANDLE_PATTERN_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # Sector relative-strength filter (see background._apply_sector_
+        # filter and scanner.SYMBOL_SECTOR_MAP/fetch_sector_directions,
+        # NEXT_HORIZON_RESEARCH.md Finding 5): when on, a row whose
+        # direction disagrees with its own NSE sectoral index's current
+        # confluence direction loses its "Confirmed" status - genuinely
+        # different information from RSI/MACD/EMA-BB, since it's about
+        # the stock's sector context rather than another transform of
+        # its own closing price. A symbol not in SYMBOL_SECTOR_MAP always
+        # reads sector_direction=None (never blocks). Off by default,
+        # same reasoning as REQUIRE_INDEX_AGREEMENT above.
+        "REQUIRE_SECTOR_AGREEMENT": os.getenv("REQUIRE_SECTOR_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # Market-breadth filter (see background._compute_breadth/_apply_
+        # breadth_filter, NEXT_HORIZON_RESEARCH.md Finding 5): when on, a
+        # row whose direction is decisively against the CURRENT
+        # watchlist's own advance/decline split (not full-NSE breadth -
+        # Kite has no cheap full-market breadth endpoint, so this is a
+        # watchlist-scoped proxy, labelled as such on the dashboard) loses
+        # its "Confirmed" status. Off by default, same reasoning as every
+        # other REQUIRE_* gate above.
+        "REQUIRE_BREADTH_AGREEMENT": os.getenv("REQUIRE_BREADTH_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # Minimum % of the watchlist's resolved (Bullish/Bearish, error-
+        # free) rows that must share a row's own direction for breadth to
+        # be considered "agreeing" with it - e.g. the default 30 means a
+        # Bullish row needs at least 30% of the watchlist also reading
+        # Bullish; below that, breadth is considered decisively against
+        # it. Only matters when REQUIRE_BREADTH_AGREEMENT is on; always
+        # used to compute the informational breadth_agrees field either
+        # way (shown as a small badge, matching every other gate's
+        # always-attached-for-display convention).
+        "BREADTH_THRESHOLD_PCT": float(os.getenv("BREADTH_THRESHOLD_PCT", 30.0)),
     }
 
 
@@ -316,6 +347,29 @@ class Settings:
                 clean["REQUIRE_CANDLE_PATTERN_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_CANDLE_PATTERN_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_SECTOR_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_SECTOR_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_SECTOR_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_SECTOR_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_BREADTH_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_BREADTH_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_BREADTH_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_BREADTH_AGREEMENT"] = bool(val)
+
+        if "BREADTH_THRESHOLD_PCT" in kwargs:
+            try:
+                bt = float(kwargs["BREADTH_THRESHOLD_PCT"])
+                if not (0 < bt < 100):
+                    raise ValueError
+                clean["BREADTH_THRESHOLD_PCT"] = bt
+            except (TypeError, ValueError):
+                errors.append("Breadth threshold % must be a number between 0 and 100.")
 
         if errors:
             return errors
