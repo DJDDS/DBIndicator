@@ -42,6 +42,8 @@
   .del-link { font-size: 11px; color: var(--muted); text-decoration: none; }
   .del-link:hover { color: var(--red); text-decoration: underline; }
   .trades-scroll { max-height: 520px; overflow-y: auto; }
+  .low-sample { opacity: 0.55; }
+  .low-sample-note { font-size: 10.5px; color: var(--muted); font-style: italic; }
 </style>
 </head>
 <body>
@@ -91,6 +93,62 @@
     <div style="margin-top:14px;">
       <a class="btn" href="/journal/export.csv">Export CSV</a>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Confidence by setup</h2>
+    <p>
+      Realized win rate/avg return grouped by (direction, aligned) — a coarse but honest "setup type" split.
+      Rows below {{ confidence.min_sample }} resolved trades are greyed out and never feed the small "Journal"
+      badge on the <a href="/">Dashboard</a> — not enough evidence yet to mean anything.
+    </p>
+    {% if not confidence.by_setup %}
+    <p class="hint">No resolved trades yet — nothing to show here until at least one logged trade resolves.</p>
+    {% else %}
+    <table>
+      <thead>
+        <tr><th>Setup</th><th>Trades</th><th>Win rate</th><th>Avg return</th></tr>
+      </thead>
+      <tbody>
+        {% for s in confidence.by_setup %}
+        <tr class="{{ 'low-sample' if s.low_sample else '' }}">
+          <td><span class="{{ 'bull' if s.direction == 'Bullish' else 'bear' }}">{{ '▲' if s.direction == 'Bullish' else '▼' }} {{ s.direction }}</span> · {{ s.aligned }}/4 aligned</td>
+          <td>{{ s.count }}{% if s.low_sample %} <span class="low-sample-note">(low sample)</span>{% endif %}</td>
+          <td class="{{ 'win-good' if s.win_rate_pct is not none and s.win_rate_pct >= 50 else ('win-bad' if s.win_rate_pct is not none else '') }}">{{ s.win_rate_pct if s.win_rate_pct is not none else '—' }}{% if s.win_rate_pct is not none %}%{% endif %}</td>
+          <td>{{ s.avg_return_pct if s.avg_return_pct is not none else '—' }}{% if s.avg_return_pct is not none %}%{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Confidence by filter</h2>
+    <p>
+      For each of the optional agreement gates (Settings page), whether trades that satisfied it actually did
+      better than ones that didn't, in your own trading of your own watchlist — not a generic claim.
+    </p>
+    {% if not confidence.by_factor %}
+    <p class="hint">No resolved trades with a reading on any of these gates yet.</p>
+    {% else %}
+    <table>
+      <thead>
+        <tr><th>Filter</th><th>Agreed — trades</th><th>Agreed — win rate</th><th>Disagreed — trades</th><th>Disagreed — win rate</th></tr>
+      </thead>
+      <tbody>
+        {% for f in confidence.by_factor %}
+        <tr>
+          <td>{{ f.label }}</td>
+          <td class="{{ 'low-sample' if f.true.low_sample else '' }}">{{ f.true.count }}</td>
+          <td class="{{ 'low-sample' if f.true.low_sample else '' }} {{ 'win-good' if f.true.win_rate_pct is not none and f.true.win_rate_pct >= 50 else ('win-bad' if f.true.win_rate_pct is not none else '') }}">{{ f.true.win_rate_pct if f.true.win_rate_pct is not none else '—' }}{% if f.true.win_rate_pct is not none %}%{% endif %}</td>
+          <td class="{{ 'low-sample' if f.false.low_sample else '' }}">{{ f.false.count }}</td>
+          <td class="{{ 'low-sample' if f.false.low_sample else '' }} {{ 'win-good' if f.false.win_rate_pct is not none and f.false.win_rate_pct >= 50 else ('win-bad' if f.false.win_rate_pct is not none else '') }}">{{ f.false.win_rate_pct if f.false.win_rate_pct is not none else '—' }}{% if f.false.win_rate_pct is not none %}%{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
   </div>
 
   <div class="card">

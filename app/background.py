@@ -278,6 +278,22 @@ def _apply_weighted_score(results):
         r["weighted_score"] = round(score * 100, 1)
 
 
+def _apply_journal_confidence(results):
+    """Mutates each result dict in place, attaching journal_confidence -
+    a REALIZED win rate/avg return/count from YOUR OWN Signal Journal
+    history for rows sharing this row's (direction, aligned) setup (see
+    journal.get_setup_confidence/CONFIDENCE_MIN_SAMPLE). None whenever
+    that exact setup hasn't cleared the minimum sample yet - shown as
+    nothing on the dashboard rather than a misleadingly precise number
+    from a handful of trades. Cheap (in-memory list comprehensions over a
+    personal-sized journal, no I/O) - safe to call every scan cycle."""
+    for r in results:
+        if r.get("error") or not r.get("direction") or r.get("aligned") is None:
+            r["journal_confidence"] = None
+            continue
+        r["journal_confidence"] = journal.get_setup_confidence(r["direction"], r["aligned"])
+
+
 _state_lock = threading.Lock()
 _state = {
     "results": [],
@@ -593,6 +609,7 @@ def _run_loop():
                         breadth = _compute_breadth(results)
                         _apply_breadth_filter(results, breadth)
                         _apply_weighted_score(results)
+                        _apply_journal_confidence(results)
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
                         oi_events = _detect_oi_accel_events(results)

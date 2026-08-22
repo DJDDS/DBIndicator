@@ -425,6 +425,87 @@ def session_vwap_series(df: pd.DataFrame, timeframe: str) -> pd.Series:
     return cum_tp_vol / cum_vol.replace(0, np.nan)
 
 
+def _current_trend_anchor_pos(align_count: pd.Series):
+    """Integer position of the bar where the current confluence majority
+    (align_count >= 2 -> Bullish, else Bearish - same rule compute_signal
+    uses for `direction`) most recently FLIPPED, i.e. where the current
+    trend leg began. Falls back to the first bar with a valid (non-NaN)
+    align_count reading if no flip is found anywhere in the fetched
+    window (the whole available history has been one continuous
+    direction) - never None as long as at least one bar is valid, so the
+    anchored VWAP below always has somewhere to start from. Returns None
+    only if align_count has no valid readings at all (not enough history
+    yet - same "not enough candles" case compute_series already guards
+    against, kept here too since this can be called standalone via
+    compute_avwap_series)."""
+    valid = align_count.notna()
+    if not valid.any():
+        return None
+    valid_positions = np.flatnonzero(valid.values)
+    first_valid_pos = int(valid_positions[0])
+    bull = (align_count >= 2).values
+    anchor_pos = first_valid_pos
+    for k in range(len(bull) - 1, first_valid_pos, -1):
+        if bull[k] != bull[k - 1]:
+            anchor_pos = k
+            break
+    return anchor_pos
+
+
+def anchored_vwap_series(df: pd.DataFrame, anchor_pos) -> pd.Series:
+    """Volume-weighted average price computed from `anchor_pos` onward
+    only (not session-reset like session_vwap_series above) - "average
+    price paid since [anchor]", NaN before the anchor bar itself. Used
+    with anchor_pos = _current_trend_anchor_pos's result to get a VWAP
+    anchored to the start of the stock's CURRENT confluence trend leg
+    (see compute_avwap_series/compute_signal's avwap field) - genuinely
+    different from session VWAP (resets every day regardless of trend)
+    and meaningful on every timeframe, not just intraday ones."""
+    out = pd.Series(np.nan, index=df.index)
+    if anchor_pos is None or df.empty:
+        return out
+    typical = (df["high"] + df["low"] + df["close"]) / 3
+    tp_vol = typical * df["volume"]
+    seg_cum_tp_vol = tp_vol.iloc[anchor_pos:].cumsum()
+    seg_cum_vol = df["volume"].iloc[anchor_pos:].cumsum()
+    out.iloc[anchor_pos:] = (seg_cum_tp_vol / seg_cum_vol.replace(0, np.nan)).values
+    return out
+
+
+def _full_align_count_series(series: dict) -> pd.Series:
+    """The same 0-3 "how many of RSI/MACD/EMA-BB currently agree" count
+    compute_signal computes for just the LAST bar (align_count there),
+    but as a full series across every bar - needed for
+    _current_trend_anchor_pos's flip search. NaN comparisons (e.g.
+    rsi_line vs rsi_smooth during RSI's own warm-up window) evaluate to
+    plain False under ">" rather than propagating NaN, which would
+    otherwise silently mislabel not-yet-warmed-up bars as a real
+    "Bearish" reading - `valid_row` masks those bars back to NaN so
+    _current_trend_anchor_pos's first-valid-position logic (and its flip
+    search, which only ever looks at positions >= that) never sees a
+    fabricated reading."""
+    valid_row = (
+        series["rsi_line"].notna() & series["rsi_smooth"].notna()
+        & series["macd_line"].notna() & series["signal_line"].notna()
+        & series["ema9"].notna() & series["bb_mid"].notna()
+    )
+    raw_count = (
+        (series["rsi_line"] > series["rsi_smooth"]).astype(int)
+        + (series["macd_line"] > series["signal_line"]).astype(int)
+        + (series["ema9"] > series["bb_mid"]).astype(int)
+    )
+    return raw_count.where(valid_row)
+
+
+def compute_avwap_series(series: dict) -> pd.Series:
+    """Given a compute_series() result dict, returns the anchored-VWAP
+    series - factored out so /api/chart can plot the exact same line the
+    dashboard's AVWAP badge uses (see compute_signal) without duplicating
+    the RSI/MACD/EMA-BB alignment math here a second time."""
+    anchor_pos = _current_trend_anchor_pos(_full_align_count_series(series))
+    return anchored_vwap_series(series["df"], anchor_pos)
+
+
 def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     """Computes every indicator series for the full df (used by the
     chart API). Returns a dict of aligned pandas Series/DataFrame plus
@@ -534,6 +615,23 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     vs_vwap = None
     if vwap:
         vs_vwap = "Above" if close.iloc[i] > vwap else "Below"
+
+    # Anchored VWAP: average price paid since the CURRENT confluence
+    # trend leg began (see _current_trend_anchor_pos/anchored_vwap_series
+    # above) - unlike session VWAP above, this doesn't reset daily and is
+    # meaningful on every timeframe including day/week. None only when
+    # there isn't a single valid (post-warmup) bar to anchor from, which
+    # can't actually happen here since compute_series already guaranteed
+    # enough history for this same df earlier in this function.
+    avwap_anchor_pos = _current_trend_anchor_pos(_full_align_count_series(series))
+    avwap_series = anchored_vwap_series(df, avwap_anchor_pos)
+    avwap_raw = avwap_series.iloc[i]
+    avwap = round(float(avwap_raw), 2) if pd.notna(avwap_raw) else None
+    vs_avwap = None
+    avwap_anchor_time = None
+    if avwap is not None:
+        vs_avwap = "Above" if close.iloc[i] > avwap else "Below"
+        avwap_anchor_time = df.index[avwap_anchor_pos].isoformat()
 
     bb_upper, bb_lower = series["bb_upper"], series["bb_lower"]
     breakout_state = None
@@ -669,6 +767,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "timestamp": df.index[i].isoformat(),
         "vwap": round(vwap, 2) if vwap else None,
         "vs_vwap": vs_vwap,
+        "avwap": avwap,
+        "vs_avwap": vs_avwap,
+        "avwap_anchor_time": avwap_anchor_time,
         "breakout_state": breakout_state,
         "vol_multiple": vol_multiple,
         "volume": volume,

@@ -46,7 +46,7 @@
 
   <div id="charts" style="display:none;">
     <div class="card">
-      <div class="pane-title">Price · candlesticks · 9 EMA (orange) · Bollinger mid (purple)</div>
+      <div class="pane-title">Price · candlesticks · 9 EMA (orange) · Bollinger mid (purple) · Session VWAP (teal) · Anchored VWAP (magenta, dashed)</div>
       <div id="price-chart"></div>
     </div>
     <div class="card">
@@ -158,6 +158,11 @@ async function loadChart(timeframe) {
   emaSeries.setData(data.ema9 || []);
   const bbSeries = priceChart.addLineSeries({ color: '#7b2fbe', lineWidth: 2, priceLineVisible: false });
   bbSeries.setData(data.bb_mid || []);
+
+  const vwapSeries = priceChart.addLineSeries({ color: '#0f9d8f', lineWidth: 2, priceLineVisible: false });
+  vwapSeries.setData(data.vwap || []);
+  const avwapSeries = priceChart.addLineSeries({ color: '#c2185b', lineWidth: 1.5, lineStyle: LightweightCharts.LineStyle.Dashed, priceLineVisible: false });
+  avwapSeries.setData(data.avwap || []);
 
   rsiChart = makeChart(document.getElementById('rsi-chart'), 180, intraday);
   const rsiSeries = rsiChart.addLineSeries({ color: '#2e74b5', lineWidth: 2, priceLineVisible: false });

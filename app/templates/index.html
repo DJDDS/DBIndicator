@@ -640,6 +640,17 @@
               <span class="bear">SL {{ r.stop }}</span><span class="dim-sep"> · </span><span class="bull">TGT {{ r.target }}</span>{% if r.risk_reward is not none %}<span class="dim-sep"> (1:{{ r.risk_reward }})</span>{% endif %}
             </div>
             {% endif %}
+            {% if (r.vwap is defined and r.vwap is not none) or (r.avwap is defined and r.avwap is not none) %}
+            <div class="atr-risk">
+              {% if r.vwap is not none %}
+              <span class="{{ 'bull' if r.vs_vwap == 'Above' else 'bear' }}" title="Session VWAP: {{ r.vwap }} — today's volume-weighted average price, resets every session">VWAP {{ r.vwap }}</span>
+              {% endif %}
+              {% if r.vwap is not none and r.avwap is not none %}<span class="dim-sep"> · </span>{% endif %}
+              {% if r.avwap is not none %}
+              <span class="{{ 'bull' if r.vs_avwap == 'Above' else 'bear' }}" title="Anchored VWAP: {{ r.avwap }} — average price paid since this stock's current {{ r.direction }} confluence trend began ({{ r.avwap_anchor_time[:16].replace('T', ' ') if r.avwap_anchor_time else '' }}), doesn't reset daily">AVWAP {{ r.avwap }}</span>
+              {% endif %}
+            </div>
+            {% endif %}
           </td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
           <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
@@ -710,6 +721,12 @@
               📰
             </a>
             {% endif %}
+            {% if r.journal_confidence %}
+            <span class="{{ 'bull' if r.journal_confidence.win_rate_pct >= 50 else 'bear' }}" style="font-size:11px; margin-left:3px;"
+                  title="Your own Signal Journal: {{ r.direction }} + {{ r.aligned }}/4 aligned has resolved {{ r.journal_confidence.count }} paper trades at a {{ r.journal_confidence.win_rate_pct }}% win rate ({{ '{:+.2f}'.format(r.journal_confidence.avg_return_pct) }}% avg return) so far - realized history, not a guarantee. See /journal for the full breakdown.">
+              📓{{ r.journal_confidence.win_rate_pct }}%
+            </span>
+            {% endif %}
           </td>
           <td data-sort="{{ r.regime or '' }}">
             {% if r.regime %}
@@ -769,8 +786,14 @@
     Timeframe (top-left of the filter bar) to 4hour, or use the Backtest page. The small
     <span class="bear">SL</span> / <span class="bull">TGT</span> line under Close is a suggested
     stop-loss/target sized to this stock's own recent volatility (ATR) rather than a flat
-    percentage - display only, tune the ATR length and multipliers on the Settings page. Signals are
-    directional input, not investment advice.
+    percentage - display only, tune the ATR length and multipliers on the Settings page. A
+    <span style="font-size:11px;">📓</span> badge next to Signal shows the REALIZED win rate from your own
+    <a href="/journal">Signal Journal</a> for rows sharing this exact (direction, aligned) setup - only appears
+    once at least 5 of your own resolved paper trades share it, so it's never a misleading number from 1-2
+    trades. <strong>VWAP</strong>/<strong>AVWAP</strong> under Close (when shown) are the session volume-weighted
+    average price and an anchored version measured since this stock's current trend leg began - click any row's
+    chart to see both plotted over time. Green/red shows whether price is currently above or below each one.
+    Signals are directional input, not investment advice.
   </div>
 </div>
 <script>

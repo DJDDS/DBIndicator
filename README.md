@@ -100,6 +100,34 @@ side — nothing in this app needs to change.
 
 ---
 
+## VWAP &amp; Anchored VWAP
+
+Every row now shows a **VWAP** line under Close too (when available): the
+session's volume-weighted average price (resets every day, intraday
+timeframes only), alongside an **AVWAP** — volume-weighted average price
+since this stock's *current* confluence trend leg began, which doesn't
+reset daily and works on every timeframe including Day/Week. Both were
+already computed under the hood for other purposes (VWAP quietly fed the
+existing "High Conviction" classification) but never shown — now they
+are, green/red for above/below. Open any row's **Chart** to see both
+plotted as overlays (teal = VWAP, dashed magenta = AVWAP) alongside the
+existing EMA/Bollinger lines.
+
+## Journal-based confidence score
+
+If you've logged paper trades in the Signal Journal (**/journal** page), a small
+**📓** badge now appears next to Confirmed rows showing the REALIZED win
+rate your own resolved trades have had on that exact setup (direction +
+how many of the 4 parameters aligned) — e.g. "📓67%" means your own
+Bullish/3-of-4 trades have won 67% of the time so far. It only appears
+once at least 5 of your own resolved trades share that setup, so it's
+never a misleading number from 1-2 trades. The **/journal** page itself
+now also has two breakdown tables: win rate by setup, and win rate by
+each optional agreement filter (sector/breadth/candle-pattern/volume-
+flow/higher-timeframe) — a real, walk-forward answer to "does turning
+this filter on actually help", from your own trading, not a generic
+claim.
+
 ## Risk layer (ATR stop/target)
 
 Every row now shows a small suggested **stop-loss / target** line under its

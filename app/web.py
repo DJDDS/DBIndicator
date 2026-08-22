@@ -280,6 +280,15 @@ def chart_data(symbol):
             "macd": _points(series["macd_line"]),
             "macd_signal": _points(series["signal_line"]),
             "macd_hist": _points(series["macd_hist"]),
+            # Session VWAP (resets daily, intraday timeframes only - empty
+            # on day/week) and anchored VWAP (since the current confluence
+            # trend leg began - see indicators.compute_avwap_series,
+            # meaningful on every timeframe) - same two lines the
+            # dashboard's VWAP/AVWAP badges show, plotted here so you can
+            # see exactly where they've been tracking, not just their
+            # current value.
+            "vwap": _points(indicators.session_vwap_series(df, timeframe)),
+            "avwap": _points(indicators.compute_avwap_series(series)),
         }
         return jsonify(payload)
     except Exception as exc:  # noqa: BLE001
@@ -478,6 +487,7 @@ def journal_page():
         logged_in=kite_auth.is_logged_in_today(),
         default_horizon_bars=journal.DEFAULT_HORIZON_BARS,
         state=journal.get_journal_state(),
+        confidence=journal.get_confidence_stats(),
     )
 
 

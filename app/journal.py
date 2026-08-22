@@ -58,10 +58,63 @@ _SNAPSHOT_FIELDS = [
     "vol_multiple", "vol_confirmed", "cmf", "vol_flow_direction",
     "candle_pattern", "candle_direction", "htf_direction", "adx", "regime",
     "signal_confirmed", "weighted_score", "in_opening_window",
+    # Added for the journal-based confidence score (get_confidence_stats/
+    # get_setup_confidence below) - the individual gate-agreement booleans
+    # a row carried at the moment it was logged. candle_agrees/
+    # vol_flow_agrees/htf_agrees come straight off compute_signal's own
+    # return dict; sector_agrees/breadth_agrees are set a layer up by
+    # background.py's _apply_sector_filter/_apply_breadth_filter, so
+    # `row` must be a fully-enriched result row (post-background.py), not
+    # a bare compute_signal() output, for these two to be populated -
+    # true for every real call site (web.py's /api/journal/log always
+    # logs from a live scan result row). A trade logged BEFORE this field
+    # existed simply has it come back None on read (see .get() usage
+    # throughout this module) - never a crash, just "unknown/excluded"
+    # for grouping purposes.
+    "sector_agrees", "breadth_agrees", "candle_agrees", "vol_flow_agrees", "htf_agrees",
+]
+
+# Minimum RESOLVED trades a (direction, aligned) setup bucket or a
+# factor's True/False side needs before its win rate is surfaced
+# anywhere - a win rate computed from 1-2 trades is noise dressed up as a
+# number, and this app already has one hard lesson (the original
+# low-win-rate backtest) about not overstating what small samples say.
+# Below this, get_setup_confidence returns None (nothing shown on the
+# live dashboard) and get_confidence_stats still lists the bucket, but
+# flagged so the /journal page can grey it out rather than hide it
+# entirely (transparency there matters more than tidiness).
+CONFIDENCE_MIN_SAMPLE = 5
+
+# Individual gate-agreement factors tracked for the "by factor" breakdown
+# - mirrors exactly the REQUIRE_*_AGREEMENT settings this app already has
+# (see config.py), so "does turning this filter on historically help"
+# has a real answer instead of a guess.
+_CONFIDENCE_FACTORS = [
+    ("signal_confirmed", "Confirmed"),
+    ("sector_agrees", "Sector agrees"),
+    ("breadth_agrees", "Breadth agrees"),
+    ("candle_agrees", "Candle pattern agrees"),
+    ("vol_flow_agrees", "Volume-flow agrees"),
+    ("htf_agrees", "Higher-timeframe agrees"),
 ]
 
 _lock = threading.Lock()
 _state = {"trades": []}  # list of trade dicts, newest-logged last
+
+
+def _stats(group):
+    """count/win_rate_pct/avg_return_pct for a group of RESOLVED trades -
+    module-level (not nested in get_journal_state) so get_confidence_stats
+    below can reuse the exact same math rather than a second copy of it."""
+    if not group:
+        return {"count": 0, "win_rate_pct": None, "avg_return_pct": None}
+    g_wins = [t for t in group if t.get("return_pct") is not None and t["return_pct"] > 0]
+    rets = [t["return_pct"] for t in group if t.get("return_pct") is not None]
+    return {
+        "count": len(group),
+        "win_rate_pct": round(len(g_wins) / len(group) * 100, 1) if group else None,
+        "avg_return_pct": round(sum(rets) / len(rets), 3) if rets else None,
+    }
 
 
 def _load():
@@ -106,20 +159,8 @@ def get_journal_state():
         trades = list(reversed(_state["trades"]))  # newest first for display
 
     resolved = [t for t in trades if t["status"] == "resolved"]
-    wins = [t for t in resolved if t.get("return_pct") is not None and t["return_pct"] > 0]
     bullish_resolved = [t for t in resolved if t["direction"] == "Bullish"]
     bearish_resolved = [t for t in resolved if t["direction"] == "Bearish"]
-
-    def _stats(group):
-        if not group:
-            return {"count": 0, "win_rate_pct": None, "avg_return_pct": None}
-        g_wins = [t for t in group if t.get("return_pct") is not None and t["return_pct"] > 0]
-        rets = [t["return_pct"] for t in group if t.get("return_pct") is not None]
-        return {
-            "count": len(group),
-            "win_rate_pct": round(len(g_wins) / len(group) * 100, 1) if group else None,
-            "avg_return_pct": round(sum(rets) / len(rets), 3) if rets else None,
-        }
 
     summary = {
         "open_count": len([t for t in trades if t["status"] == "open"]),
@@ -128,6 +169,89 @@ def get_journal_state():
         "bearish": _stats(bearish_resolved),
     }
     return {"trades": trades, "summary": summary}
+
+
+def _resolved_snapshot_trades():
+    """RESOLVED trades, each paired with its own snapshot dict for
+    convenient (t, snap) iteration - a trade logged before `snapshot`
+    existed at all (very old journal.json) has snap={} via .get default,
+    so every .get() below still just reads None rather than raising."""
+    with _lock:
+        trades = list(_state["trades"])
+    return [(t, t.get("snapshot") or {}) for t in trades if t["status"] == "resolved"]
+
+
+def get_confidence_stats():
+    """Two complementary breakdowns of REALIZED forward performance from
+    the journal, computed fresh from whatever's currently resolved - no
+    caching, since this app's journal is small enough (a personal paper-
+    trading log, not a real trade blotter) that recomputing every call is
+    cheap.
+
+    "by_setup": win rate/avg return grouped by (direction, aligned) - a
+    coarse but statistically tractable "setup type" (2 directions x 3
+    aligned values = 6 buckets max, vs. a combinatorial explosion if this
+    grouped by every individual gate at once). Every bucket that has ever
+    had a resolved trade is listed, even under CONFIDENCE_MIN_SAMPLE -
+    the /journal page shows these as low-confidence rather than hiding
+    them, since seeing "2 trades, 100% win" for what it is (not enough
+    data, not a green light) is more honest than silence.
+
+    "by_factor": for each of the individual REQUIRE_*_AGREEMENT-style
+    gates (see _CONFIDENCE_FACTORS), splits resolved trades into the
+    True-side and False-side and reports each side's own win rate - "did
+    sector-agreeing trades actually do better than sector-disagreeing
+    ones, in MY trading of MY watchlist" rather than a generic claim.
+    Trades where that field is None (unknown/not applicable, e.g. a
+    symbol with no sector mapping) are excluded from both sides rather
+    than lumped into either - None means "no reading", not "disagreed"."""
+    resolved = _resolved_snapshot_trades()
+
+    by_setup = []
+    for direction in ("Bullish", "Bearish"):
+        for aligned in (2, 3, 4):
+            group = [t for t, snap in resolved if t["direction"] == direction and snap.get("aligned") == aligned]
+            if not group:
+                continue
+            stats = _stats(group)
+            stats.update(direction=direction, aligned=aligned, low_sample=stats["count"] < CONFIDENCE_MIN_SAMPLE)
+            by_setup.append(stats)
+    # Most-tested setups first - what you actually have real evidence on.
+    by_setup.sort(key=lambda s: s["count"], reverse=True)
+
+    by_factor = []
+    for key, label in _CONFIDENCE_FACTORS:
+        true_group = [t for t, snap in resolved if snap.get(key) is True]
+        false_group = [t for t, snap in resolved if snap.get(key) is False]
+        if not true_group and not false_group:
+            continue  # this factor never had a reading in any resolved trade yet
+        true_stats = _stats(true_group)
+        false_stats = _stats(false_group)
+        true_stats.update(low_sample=true_stats["count"] < CONFIDENCE_MIN_SAMPLE)
+        false_stats.update(low_sample=false_stats["count"] < CONFIDENCE_MIN_SAMPLE)
+        by_factor.append({"key": key, "label": label, "true": true_stats, "false": false_stats})
+
+    return {"by_setup": by_setup, "by_factor": by_factor, "min_sample": CONFIDENCE_MIN_SAMPLE}
+
+
+def get_setup_confidence(direction, aligned):
+    """The single (direction, aligned) bucket's stats from by_setup
+    above, or None if that exact setup has never been logged OR hasn't
+    cleared CONFIDENCE_MIN_SAMPLE yet - the live dashboard badge (see
+    background.py) only ever shows a number it can stand behind; a
+    sparse bucket shows nothing rather than a misleadingly precise
+    percentage. Cheap enough (a handful of list comprehensions over a
+    personal-sized journal) to call once per result row per scan cycle
+    without needing its own cache."""
+    if direction not in ("Bullish", "Bearish") or aligned not in (2, 3, 4):
+        return None
+    resolved = _resolved_snapshot_trades()
+    group = [t for t, snap in resolved if t["direction"] == direction and snap.get("aligned") == aligned]
+    if len(group) < CONFIDENCE_MIN_SAMPLE:
+        return None
+    stats = _stats(group)
+    stats.update(direction=direction, aligned=aligned)
+    return stats
 
 
 def log_paper_trade(row: dict, timeframe: str, horizon_bars: int = DEFAULT_HORIZON_BARS,
