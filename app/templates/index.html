@@ -195,6 +195,7 @@
   .toast.bear { border-left: 3px solid var(--red); }
   .toast.bull { border-left: 3px solid var(--green); }
   .toast.oi { border-left: 3px solid var(--amber); }
+  .toast.news { border-left: 3px solid #4a9eff; }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
   .insights-card h2 { color: var(--text); }
@@ -694,6 +695,12 @@
             {% if r.breadth_agrees is defined and r.breadth_agrees == false %}
             <span title="Against the watchlist's own current advance/decline breadth" style="color:var(--amber);">⚖</span>
             {% endif %}
+            {% if r.news %}
+            <a href="{{ r.news[0].url }}" target="_blank" rel="noopener" style="font-size:11px; margin-left:3px; text-decoration:none;"
+               title="{{ r.news[0].title }} ({{ r.news[0].source }}){% if r.news|length > 1 %} +{{ r.news|length - 1 }} more{% endif %}">
+              📰
+            </a>
+            {% endif %}
           </td>
           <td data-sort="{{ r.regime or '' }}">
             {% if r.regime %}
@@ -936,6 +943,40 @@
     }
     pollOi();
     setInterval(pollOi, 20000);
+
+    // News toasts (app/news.py) - fires once per genuinely new article
+    // matched to a symbol that was Confirmed at fetch time. Own toast
+    // style (blue) and click-through to the article, since unlike OI
+    // events this is meant to be actionable immediately.
+    var seenNews = new Set();
+    var firstNewsLoad = true;
+
+    function showNewsToast(a) {
+      var t = document.createElement('div');
+      t.className = 'toast news';
+      t.textContent = '\u{1F4F0} ' + a.symbol + ': ' + a.title;
+      t.style.cursor = 'pointer';
+      t.onclick = function () { if (a.url) window.open(a.url, '_blank', 'noopener'); };
+      wrap.appendChild(t);
+      setTimeout(function () { t.remove(); }, 15000);
+    }
+
+    function pollNews() {
+      fetch('/api/alerts/news_recent').then(function (r) { return r.json(); }).then(function (data) {
+        (data.alerts || []).forEach(function (a) {
+          var key = a.symbol + '|' + a.title + '|' + a.detected_at;
+          if (seenNews.has(key)) return;
+          seenNews.add(key);
+          if (!firstNewsLoad) {
+            showNewsToast(a);
+            beep();
+          }
+        });
+        firstNewsLoad = false;
+      }).catch(function () { /* ignore transient errors */ });
+    }
+    pollNews();
+    setInterval(pollNews, 20000);
   })();
 
   var currentSort = null; // {colIndex, asc}

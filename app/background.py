@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, journal, kite_auth
+from . import alerts, journal, kite_auth, news
 from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
@@ -624,6 +624,27 @@ def _run_loop():
                         journal.resolve_open_trades(kite)
                     except Exception:  # noqa: BLE001 - journal resolution must never break scanning
                         log.exception("Signal journal resolution failed")
+                    # News (NEXT_HORIZON_RESEARCH.md predates this - added
+                    # later, at your request): scoped to symbols CURRENTLY
+                    # Confirmed (the rows you'd actually act on), throttled/
+                    # capped internally by news.py to stay well under the
+                    # free Marketaux tier's 100/day budget. A skipped
+                    # (throttled/capped/not-configured) fetch just returns
+                    # the existing cache, so this is cheap to call every
+                    # cycle regardless.
+                    try:
+                        if news.news_enabled():
+                            confirmed_symbols = [r["symbol"] for r in results
+                                                  if not r.get("error") and r.get("signal_confirmed")]
+                            news_by_symbol = news.fetch_news_for_symbols(confirmed_symbols)
+                            for r in results:
+                                if r["symbol"] in news_by_symbol:
+                                    r["news"] = news_by_symbol[r["symbol"]][:3]
+                            new_articles = news.detect_new_articles(news_by_symbol, confirmed_symbols)
+                            if new_articles:
+                                alerts.process_news_articles(new_articles, settings.TIMEFRAME)
+                    except Exception:  # noqa: BLE001 - news must never break scanning
+                        log.exception("News fetch/alert failed")
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Background scan failed")
                     with _state_lock:

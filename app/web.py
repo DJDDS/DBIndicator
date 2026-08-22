@@ -316,6 +316,12 @@ def api_alerts_oi_recent():
     return jsonify({"alerts": alerts.get_recent_oi(limit=20)})
 
 
+@app.route("/api/alerts/news_recent")
+@require_dashboard_password
+def api_alerts_news_recent():
+    return jsonify({"alerts": alerts.get_recent_news(limit=20)})
+
+
 @app.route("/oi-screener")
 @require_dashboard_password
 def oi_screener_page():

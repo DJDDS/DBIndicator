@@ -94,6 +94,24 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# Optional - only needed for the news feature (app/news.py). Get a free
+# key at marketaux.com (100 requests/day, 3 articles/request on the free
+# plan - see news.py's own docstring for how that budget is spent).
+# Credential, not a tunable setting, like the Telegram/Anthropic keys
+# above - lives in .env only.
+MARKETAUX_API_TOKEN = os.getenv("MARKETAUX_API_TOKEN", "")
+# Minimum seconds between live news fetches (throttle, not a hard
+# schedule - the actual cadence also depends on the scan loop's own
+# interval). Default 900s (15 min) keeps a full trading day's worth of
+# polling comfortably under the free tier's 100/day cap even accounting
+# for redeploys and manual testing.
+NEWS_POLL_INTERVAL_SECONDS = int(os.getenv("NEWS_POLL_INTERVAL_SECONDS", 900))
+# Hard ceiling on live Marketaux calls per calendar day, persisted so a
+# redeploy can't reset it to zero and risk a burst - deliberately below
+# the free plan's real 100/day limit as a safety margin.
+NEWS_DAILY_CALL_CAP = int(os.getenv("NEWS_DAILY_CALL_CAP", 90))
+NEWS_STATE_FILE = os.getenv("NEWS_STATE_FILE", "news_state.json")
+
 DEFAULT_WATCHLIST = [
     "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "HINDUNILVR", "ITC",
     "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "AXISBANK", "BAJFINANCE",

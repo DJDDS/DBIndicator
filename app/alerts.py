@@ -35,6 +35,7 @@ _lock = threading.Lock()
 _seen = set()
 _recent = collections.deque(maxlen=100)
 _recent_oi = collections.deque(maxlen=100)
+_recent_news = collections.deque(maxlen=100)
 
 _TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
@@ -183,4 +184,45 @@ def process_oi_events(events, timeframe):
 def get_recent_oi(limit=20):
     with _lock:
         items = list(_recent_oi)[-limit:]
+    return list(reversed(items))
+
+
+def _format_news_message(symbol, article):
+    src = article.get("source") or "news"
+    sent = article.get("sentiment_score")
+    sent_note = f" (sentiment {sent:+.2f})" if isinstance(sent, (int, float)) else ""
+    return f"\U0001F4F0 {symbol}: {article.get('title')}{sent_note}\n{src} — {article.get('url')}"
+
+
+def process_news_articles(new_items, timeframe):
+    """new_items: [(symbol, article_dict), ...] from news.
+    detect_new_articles - fires once per genuinely new article (deduped
+    by Marketaux's own article uuid) for a symbol that was Confirmed at
+    the time it was fetched (see background._run_loop). Sent to BOTH
+    Telegram and the in-app rolling log - unlike OI-acceleration events
+    above (in-app only, since those aren't a trade signal by
+    themselves), fresh news on a Confirmed symbol IS exactly the "move
+    fast" signal this feature was built for, so it gets the same
+    push-notification treatment as a fresh confluence signal."""
+    for symbol, article in new_items or []:
+        entry = {
+            "symbol": symbol, "timeframe": timeframe, "title": article.get("title"),
+            "url": article.get("url"), "source": article.get("source"),
+            "published_at": article.get("published_at"),
+            "sentiment_score": article.get("sentiment_score"),
+            "text": _format_news_message(symbol, article),
+            "detected_at": now_ist().isoformat(timespec="seconds"),
+        }
+        with _lock:
+            _recent_news.append(entry)
+        if telegram_enabled():
+            try:
+                _telegram_call("sendMessage", chat_id=config.TELEGRAM_CHAT_ID, text=entry["text"])
+            except Exception as exc:  # noqa: BLE001 - alerting must never break scanning
+                log.warning("Telegram news alert failed for %s: %s", symbol, exc)
+
+
+def get_recent_news(limit=20):
+    with _lock:
+        items = list(_recent_news)[-limit:]
     return list(reversed(items))

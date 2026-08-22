@@ -69,6 +69,35 @@ Both channels are deduplicated per candle — you get exactly one alert
 per fresh signal on its closing candle, not one every scan interval
 while it stays the most recent signal.
 
+## News (optional)
+
+Attaches recent headlines to any **Confirmed** row (a small 📰 badge —
+hover for the headline, click through to read it) and fires the same
+Telegram/in-page alert as a fresh signal the moment a genuinely new
+article shows up for one of those symbols. Off entirely unless you set
+it up — no news source is built in by default.
+
+1. Sign up free at [marketaux.com](https://www.marketaux.com) (no card
+   needed) and grab your API key from the dashboard.
+2. Put it in `.env` as `MARKETAUX_API_TOKEN`, then restart the app.
+
+That's it — no chat ID or bot setup needed here, it reuses whatever
+Telegram config you already have from the Alerts section above (if any;
+without Telegram configured, news still shows on the dashboard and logs
+to the in-page toast, it just won't push to your phone).
+
+**A real limit worth knowing:** the free Marketaux plan allows 100
+requests/day and returns at most 3 articles per request, *total* —
+shared across however many of your symbols are Confirmed at once, not
+3 each. This app spends that budget deliberately: only Confirmed
+symbols are queried (not the whole watchlist), throttled to roughly
+every 15 minutes and capped well under the daily limit, so on a quiet
+day you'll see news for everything Confirmed, and on a day with many
+signals firing at once you'll see the handful Marketaux itself
+considers most relevant. Upgrading to a paid Marketaux plan (more
+requests/day and more articles/request) is just a higher tier on their
+side — nothing in this app needs to change.
+
 ---
 
 ## Part 1 — Get Kite Connect API access
@@ -200,7 +229,10 @@ Almost everything now lives in the **Settings** page in the browser, not
 lengths, minimum indicators required (2-of-3 or 3-of-3), and scan
 frequency. `.env` only holds secrets and one-time setup values:
 `KITE_API_KEY`, `KITE_API_SECRET`, `REDIRECT_URL`, `DASHBOARD_PASSWORD`,
-and the optional `ANTHROPIC_API_KEY` for AI Insights. Settings changes
+the optional `ANTHROPIC_API_KEY` for AI Insights, `TELEGRAM_BOT_TOKEN`/
+`TELEGRAM_CHAT_ID` for Telegram alerts, and the optional
+`MARKETAUX_API_TOKEN` for the News feature (see Alerts/News above for
+both). Settings changes
 are saved to `scanner_settings.json` next to the app, so they survive a
 restart too.
 
