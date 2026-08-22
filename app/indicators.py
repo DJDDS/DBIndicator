@@ -629,6 +629,28 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
 
     in_opening_window = _in_opening_window(df.index[i], timeframe) or _in_4hour_warmup(now, timeframe)
 
+    # ATR-based risk layer: a suggested stop-loss/target scaled to this
+    # stock's OWN recent volatility (Wilder's ATR - see compute_atr above)
+    # rather than a flat percentage, so a quiet stock gets a tight
+    # stop/target and a volatile one gets a wide one automatically. Pure
+    # display information alongside the signal - it never feeds into
+    # `aligned`/signal_confirmed and this app never places an order.
+    # None whenever there isn't enough history yet for ATR to have
+    # warmed up (same convention as vwap/adx above).
+    atr_series = compute_atr(df, settings.ATR_LENGTH)
+    atr_raw = atr_series.iloc[i]
+    atr_value = round(float(atr_raw), 2) if pd.notna(atr_raw) and atr_raw > 0 else None
+    stop = target = risk_reward = None
+    if atr_value:
+        entry = float(close.iloc[i])
+        if direction == "Bullish":
+            stop = round(entry - settings.ATR_STOP_MULTIPLIER * atr_value, 2)
+            target = round(entry + settings.ATR_TARGET_MULTIPLIER * atr_value, 2)
+        else:
+            stop = round(entry + settings.ATR_STOP_MULTIPLIER * atr_value, 2)
+            target = round(entry - settings.ATR_TARGET_MULTIPLIER * atr_value, 2)
+        risk_reward = round(settings.ATR_TARGET_MULTIPLIER / settings.ATR_STOP_MULTIPLIER, 2)
+
     return {
         "close": round(float(close.iloc[i]), 2),
         "rsi": round(float(rsi_line.iloc[i]), 1),
@@ -676,4 +698,8 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "signal_confirmed": bool(
             aligned >= settings.MIN_REQUIRED and htf_agrees and not in_opening_window
         ),
+        "atr": atr_value,
+        "stop": stop,
+        "target": target,
+        "risk_reward": risk_reward,
     }

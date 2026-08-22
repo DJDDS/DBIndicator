@@ -100,6 +100,19 @@ side — nothing in this app needs to change.
 
 ---
 
+## Risk layer (ATR stop/target)
+
+Every row now shows a small suggested **stop-loss / target** line under its
+Close price, sized to that stock's own recent volatility (Average True
+Range) instead of a flat percentage — a quiet stock gets a tight stop, a
+volatile one gets a wide one, automatically. Hover it for the raw ATR
+value. This is **display only** — nothing here places an order, and it
+never affects whether a row counts as Confirmed. Tune the ATR length and
+the stop/target multipliers on the **Settings** page (default 1.5x/3.0x
+ATR = a 1:2 risk-reward starting point).
+
+---
+
 ## Part 1 — Get Kite Connect API access
 
 1. Go to [developers.kite.trade](https://developers.kite.trade) and sign

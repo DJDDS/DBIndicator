@@ -100,6 +100,9 @@ def dashboard():
         require_breadth_agreement=settings.REQUIRE_BREADTH_AGREEMENT,
         breadth=state.get("breadth"),
         breadth_threshold_pct=settings.BREADTH_THRESHOLD_PCT,
+        atr_length=settings.ATR_LENGTH,
+        atr_stop_multiplier=settings.ATR_STOP_MULTIPLIER,
+        atr_target_multiplier=settings.ATR_TARGET_MULTIPLIER,
         multi_tf=background.get_multi_tf_state(),
     )
 
@@ -183,6 +186,9 @@ def settings_page():
             "REQUIRE_SECTOR_AGREEMENT": form.get("require_sector_agreement") == "on",
             "REQUIRE_BREADTH_AGREEMENT": form.get("require_breadth_agreement") == "on",
             "BREADTH_THRESHOLD_PCT": form.get("breadth_threshold_pct", settings.BREADTH_THRESHOLD_PCT),
+            "ATR_LENGTH": form.get("atr_length", settings.ATR_LENGTH),
+            "ATR_STOP_MULTIPLIER": form.get("atr_stop_multiplier", settings.ATR_STOP_MULTIPLIER),
+            "ATR_TARGET_MULTIPLIER": form.get("atr_target_multiplier", settings.ATR_TARGET_MULTIPLIER),
         }
         errors = settings.update(**payload)
         saved = not errors

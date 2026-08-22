@@ -140,6 +140,7 @@ _TUNABLE_FIELDS = [
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
     "REQUIRE_VOLUME_FLOW_AGREEMENT", "REQUIRE_CANDLE_PATTERN_AGREEMENT",
     "REQUIRE_SECTOR_AGREEMENT", "REQUIRE_BREADTH_AGREEMENT", "BREADTH_THRESHOLD_PCT",
+    "ATR_LENGTH", "ATR_STOP_MULTIPLIER", "ATR_TARGET_MULTIPLIER",
 ]
 
 
@@ -234,6 +235,20 @@ def _env_defaults():
         # way (shown as a small badge, matching every other gate's
         # always-attached-for-display convention).
         "BREADTH_THRESHOLD_PCT": float(os.getenv("BREADTH_THRESHOLD_PCT", 30.0)),
+        # ATR-based risk layer (see indicators.compute_signal's atr/stop/
+        # target/risk_reward, and compute_atr - Wilder's Average True
+        # Range, already used by scalper.py's own fixed-constant version
+        # of the same idea for NIFTY futures). Pure DISPLAY information -
+        # a suggested stop-loss/target scaled to each stock's own recent
+        # volatility rather than a flat percentage - never gates
+        # signal_confirmed and never places an order. ATR_LENGTH is the
+        # lookback for the ATR itself; ATR_STOP_MULTIPLIER/
+        # ATR_TARGET_MULTIPLIER scale it into a stop/target distance from
+        # the current close (default 1.5x/3.0x = a 1:2 risk-reward, a
+        # conventional swing-trading starting point - tune to taste).
+        "ATR_LENGTH": int(os.getenv("ATR_LENGTH", 14)),
+        "ATR_STOP_MULTIPLIER": float(os.getenv("ATR_STOP_MULTIPLIER", 1.5)),
+        "ATR_TARGET_MULTIPLIER": float(os.getenv("ATR_TARGET_MULTIPLIER", 3.0)),
     }
 
 
@@ -388,6 +403,33 @@ class Settings:
                 clean["BREADTH_THRESHOLD_PCT"] = bt
             except (TypeError, ValueError):
                 errors.append("Breadth threshold % must be a number between 0 and 100.")
+
+        if "ATR_LENGTH" in kwargs:
+            try:
+                atl = int(kwargs["ATR_LENGTH"])
+                if atl < 2:
+                    raise ValueError
+                clean["ATR_LENGTH"] = atl
+            except (TypeError, ValueError):
+                errors.append("ATR length must be a whole number of at least 2.")
+
+        if "ATR_STOP_MULTIPLIER" in kwargs:
+            try:
+                asm = float(kwargs["ATR_STOP_MULTIPLIER"])
+                if asm <= 0:
+                    raise ValueError
+                clean["ATR_STOP_MULTIPLIER"] = asm
+            except (TypeError, ValueError):
+                errors.append("ATR stop multiplier must be a positive number.")
+
+        if "ATR_TARGET_MULTIPLIER" in kwargs:
+            try:
+                atm = float(kwargs["ATR_TARGET_MULTIPLIER"])
+                if atm <= 0:
+                    raise ValueError
+                clean["ATR_TARGET_MULTIPLIER"] = atm
+            except (TypeError, ValueError):
+                errors.append("ATR target multiplier must be a positive number.")
 
         if errors:
             return errors

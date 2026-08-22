@@ -180,6 +180,8 @@
   .chart-link { font-size: 11px; color: var(--accent); text-decoration: none; font-family: var(--sans); }
   .chart-link:hover { text-decoration: underline; }
   .journal-log-link { display: block; margin-top: 3px; color: var(--dim); }
+  .atr-risk { margin-top: 3px; font-size: 10px; white-space: nowrap; }
+  .atr-risk .dim-sep { color: var(--dim); }
 
   .alert-toggle-wrap { display: flex; align-items: center; gap: 8px; }
   .alert-toggle-label { font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; }
@@ -631,7 +633,14 @@
           {% if r.error %}
           <td class="error-cell" colspan="12">{{ r.error }}</td>
           {% else %}
-          <td data-sort="{{ r.close }}">{{ r.close }}</td>
+          <td data-sort="{{ r.close }}">
+            {{ r.close }}
+            {% if r.stop is defined and r.stop is not none %}
+            <div class="atr-risk" title="ATR({{ atr_length }}) = {{ r.atr }} — suggested stop/target scaled to this stock's own recent volatility, informational only, no order is placed">
+              <span class="bear">SL {{ r.stop }}</span><span class="dim-sep"> · </span><span class="bull">TGT {{ r.target }}</span>{% if r.risk_reward is not none %}<span class="dim-sep"> (1:{{ r.risk_reward }})</span>{% endif %}
+            </div>
+            {% endif %}
+          </td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
           <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
           <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
@@ -757,7 +766,10 @@
     win rate instead of counted equally; run "Auto-Weight Parameters" on the
     <a href="/backtest">Backtest</a> page to compute real weights from your watchlist (defaults to
     equal 25%-each weighting, same as Aligned/4, until you do). Want a bigger-picture read? Switch
-    Timeframe (top-left of the filter bar) to 4hour, or use the Backtest page. Signals are
+    Timeframe (top-left of the filter bar) to 4hour, or use the Backtest page. The small
+    <span class="bear">SL</span> / <span class="bull">TGT</span> line under Close is a suggested
+    stop-loss/target sized to this stock's own recent volatility (ATR) rather than a flat
+    percentage - display only, tune the ATR length and multipliers on the Settings page. Signals are
     directional input, not investment advice.
   </div>
 </div>
