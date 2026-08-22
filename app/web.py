@@ -103,6 +103,7 @@ def dashboard():
         atr_length=settings.ATR_LENGTH,
         atr_stop_multiplier=settings.ATR_STOP_MULTIPLIER,
         atr_target_multiplier=settings.ATR_TARGET_MULTIPLIER,
+        risk_budget=journal.get_risk_budget_state(),
         multi_tf=background.get_multi_tf_state(),
     )
 
@@ -189,6 +190,10 @@ def settings_page():
             "ATR_LENGTH": form.get("atr_length", settings.ATR_LENGTH),
             "ATR_STOP_MULTIPLIER": form.get("atr_stop_multiplier", settings.ATR_STOP_MULTIPLIER),
             "ATR_TARGET_MULTIPLIER": form.get("atr_target_multiplier", settings.ATR_TARGET_MULTIPLIER),
+            "ACCOUNT_CAPITAL": form.get("account_capital", settings.ACCOUNT_CAPITAL),
+            "RISK_PER_TRADE_PCT": form.get("risk_per_trade_pct", settings.RISK_PER_TRADE_PCT),
+            "MAX_DAILY_RISK_PCT": form.get("max_daily_risk_pct", settings.MAX_DAILY_RISK_PCT),
+            "MAX_CONCURRENT_POSITIONS": form.get("max_concurrent_positions", settings.MAX_CONCURRENT_POSITIONS),
         }
         errors = settings.update(**payload)
         saved = not errors

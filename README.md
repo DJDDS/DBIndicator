@@ -128,6 +128,25 @@ flow/higher-timeframe) — a real, walk-forward answer to "does turning
 this filter on actually help", from your own trading, not a generic
 claim.
 
+## Risk management (position sizing &amp; daily limits)
+
+Your own research notes (see `NEXT_HORIZON_RESEARCH.md`) flagged this as
+more important to real outcomes than any indicator — so on the Settings
+page there's now a **Risk management** card: tell it your real **Account
+capital** and a **Risk per trade %** (1-2% is the typical starting point
+for F&amp;O), and every row's Close cell gains a **Qty** suggestion —
+fixed-fractional position sizing, computed off the ATR stop above, sized
+to risk exactly that % of your capital if the stop is hit. The toolbar
+also shows a **Risk** pill tracking trades you've logged in the [Signal
+Journal](#journal-based-confidence-score) today against your own
+**Max daily risk %**, **Max concurrent positions**, and a
+sector-concentration flag (2+ open trades in the same NSE sector today).
+None of this is enforced — this app places no real orders and has no
+visibility into your actual broker account, so nothing here can or does
+block you from logging another trade past a limit. It's a suggestion and
+a plain-language check-in against discipline you set for yourself, not
+automation.
+
 ## Risk layer (ATR stop/target)
 
 Every row now shows a small suggested **stop-loss / target** line under its
@@ -284,8 +303,12 @@ restart too.
   rate (see the earlier report) — treat this as one input, not a trading
   system to follow blindly. The AI Insights panel describes the scan
   data, it does not add new analysis beyond what's in the numbers.
-- **No stop-loss/target/order-placement logic** — this only detects and
-  displays signals, it does not place trades. That's intentional.
+- **No order-placement logic, still** — the app now suggests a
+  stop-loss/target (ATR-based) and a position-size (fixed-fractional,
+  see below), but these are display-only suggestions computed from
+  numbers you configured; it still doesn't place trades or know
+  anything about your real broker account/positions/P&L. That's
+  intentional.
 - **Single point of failure**: if your server goes down, or you forget
   to log in one morning, you get no signals (and no alerts) that day —
   there's no separate uptime monitor watching the app itself. Telegram

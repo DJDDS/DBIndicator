@@ -141,6 +141,7 @@ _TUNABLE_FIELDS = [
     "REQUIRE_VOLUME_FLOW_AGREEMENT", "REQUIRE_CANDLE_PATTERN_AGREEMENT",
     "REQUIRE_SECTOR_AGREEMENT", "REQUIRE_BREADTH_AGREEMENT", "BREADTH_THRESHOLD_PCT",
     "ATR_LENGTH", "ATR_STOP_MULTIPLIER", "ATR_TARGET_MULTIPLIER",
+    "ACCOUNT_CAPITAL", "RISK_PER_TRADE_PCT", "MAX_DAILY_RISK_PCT", "MAX_CONCURRENT_POSITIONS",
 ]
 
 
@@ -249,6 +250,29 @@ def _env_defaults():
         "ATR_LENGTH": int(os.getenv("ATR_LENGTH", 14)),
         "ATR_STOP_MULTIPLIER": float(os.getenv("ATR_STOP_MULTIPLIER", 1.5)),
         "ATR_TARGET_MULTIPLIER": float(os.getenv("ATR_TARGET_MULTIPLIER", 3.0)),
+        # Risk-management layer (NEXT_HORIZON_RESEARCH.md Finding 4 - "the
+        # research is unusually consistent that this matters more than
+        # signal sophistication"). ACCOUNT_CAPITAL is a number YOU tell
+        # this app, not something it reads from your real Zerodha
+        # account (this app never touches your funds or positions) -
+        # the default is a placeholder and should be changed on the
+        # Settings page to your actual trading capital for the position-
+        # size suggestion (indicators.compute_signal's position_qty) to
+        # mean anything real. RISK_PER_TRADE_PCT is the fixed-fractional
+        # risk per trade the research treats as close to baseline
+        # discipline (1-2% typical, tighter than cash equities because
+        # F&O's embedded leverage means a given price move is a bigger
+        # swing in effective exposure - Kelly-criterion sizing is
+        # explicitly NOT recommended by that same research until the
+        # journal has enough resolved trades to estimate win-rate/payoff
+        # honestly). MAX_DAILY_RISK_PCT and MAX_CONCURRENT_POSITIONS feed
+        # journal.get_risk_budget_state's dashboard banner - informational
+        # only, this app can't and doesn't block you from logging another
+        # trade past either limit.
+        "ACCOUNT_CAPITAL": float(os.getenv("ACCOUNT_CAPITAL", 100000.0)),
+        "RISK_PER_TRADE_PCT": float(os.getenv("RISK_PER_TRADE_PCT", 1.0)),
+        "MAX_DAILY_RISK_PCT": float(os.getenv("MAX_DAILY_RISK_PCT", 3.0)),
+        "MAX_CONCURRENT_POSITIONS": int(os.getenv("MAX_CONCURRENT_POSITIONS", 5)),
     }
 
 
@@ -430,6 +454,42 @@ class Settings:
                 clean["ATR_TARGET_MULTIPLIER"] = atm
             except (TypeError, ValueError):
                 errors.append("ATR target multiplier must be a positive number.")
+
+        if "ACCOUNT_CAPITAL" in kwargs:
+            try:
+                cap = float(kwargs["ACCOUNT_CAPITAL"])
+                if cap <= 0:
+                    raise ValueError
+                clean["ACCOUNT_CAPITAL"] = cap
+            except (TypeError, ValueError):
+                errors.append("Account capital must be a positive number.")
+
+        if "RISK_PER_TRADE_PCT" in kwargs:
+            try:
+                rpt = float(kwargs["RISK_PER_TRADE_PCT"])
+                if not (0 < rpt <= 100):
+                    raise ValueError
+                clean["RISK_PER_TRADE_PCT"] = rpt
+            except (TypeError, ValueError):
+                errors.append("Risk per trade % must be a number between 0 and 100.")
+
+        if "MAX_DAILY_RISK_PCT" in kwargs:
+            try:
+                mdr = float(kwargs["MAX_DAILY_RISK_PCT"])
+                if not (0 < mdr <= 100):
+                    raise ValueError
+                clean["MAX_DAILY_RISK_PCT"] = mdr
+            except (TypeError, ValueError):
+                errors.append("Max daily risk % must be a number between 0 and 100.")
+
+        if "MAX_CONCURRENT_POSITIONS" in kwargs:
+            try:
+                mcp = int(kwargs["MAX_CONCURRENT_POSITIONS"])
+                if mcp < 1:
+                    raise ValueError
+                clean["MAX_CONCURRENT_POSITIONS"] = mcp
+            except (TypeError, ValueError):
+                errors.append("Max concurrent positions must be a whole number of at least 1.")
 
         if errors:
             return errors

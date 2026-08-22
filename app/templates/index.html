@@ -310,6 +310,13 @@
         Breadth: <span class="bull">{{ breadth.bullish }}▲</span> / <span class="bear">{{ breadth.bearish }}▼</span> ({{ breadth.bullish_pct }}% bullish){% if require_breadth_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
       </span>
       {% endif %}
+      {% if risk_budget and risk_budget.trades_today %}
+      <span class="tb-status" title="Trades YOU logged in the Signal Journal today, converted to committed risk via your Risk-per-trade % setting - not a real broker P&#39;&amp;L feed, this app places no orders. Tune limits on the Settings page.">
+        Risk: <span style="{{ 'color:var(--red);font-weight:700;' if risk_budget.risk_budget_exceeded else '' }}">{{ risk_budget.committed_risk_pct }}%/{{ risk_budget.max_daily_risk_pct }}%</span>
+        · <span style="{{ 'color:var(--red);font-weight:700;' if risk_budget.position_limit_exceeded else '' }}">{{ risk_budget.open_positions }}/{{ risk_budget.max_concurrent_positions }} open</span>
+        {% if risk_budget.concentrated_sectors %}<span style="color:var(--amber);">· concentrated: {{ risk_budget.concentrated_sectors|join(', ') }}</span>{% endif %}
+      </span>
+      {% endif %}
       <details class="qs-popover">
         <summary>⚙ Settings</summary>
         <div class="qs-popover-body">
@@ -640,6 +647,11 @@
               <span class="bear">SL {{ r.stop }}</span><span class="dim-sep"> · </span><span class="bull">TGT {{ r.target }}</span>{% if r.risk_reward is not none %}<span class="dim-sep"> (1:{{ r.risk_reward }})</span>{% endif %}
             </div>
             {% endif %}
+            {% if r.position_qty is defined and r.position_qty is not none %}
+            <div class="atr-risk" title="Fixed-fractional sizing: risks ₹{{ r.position_risk_amount }} of your ₹{{ '{:,.0f}'.format(risk_budget.account_capital) }} account capital (Settings page) if the SL above is hit - a suggestion, not an order.">
+              Qty {{ r.position_qty }} <span class="dim-sep">(₹{{ r.position_risk_amount }} risk)</span>
+            </div>
+            {% endif %}
             {% if (r.vwap is defined and r.vwap is not none) or (r.avwap is defined and r.avwap is not none) %}
             <div class="atr-risk">
               {% if r.vwap is not none %}
@@ -793,7 +805,12 @@
     trades. <strong>VWAP</strong>/<strong>AVWAP</strong> under Close (when shown) are the session volume-weighted
     average price and an anchored version measured since this stock's current trend leg began - click any row's
     chart to see both plotted over time. Green/red shows whether price is currently above or below each one.
-    Signals are directional input, not investment advice.
+    <strong>Qty</strong> under Close is a fixed-fractional position-size suggestion (risk a set % of your Account
+    capital, set on the Settings page, if the SL is hit) - and the toolbar's <strong>Risk</strong> pill tracks
+    trades YOU logged in the <a href="/journal">Signal Journal</a> today against your own daily-risk/position/
+    sector-concentration limits. This app places no real orders and has no visibility into your broker account -
+    both are suggestions computed from numbers you configured, not live account data. Signals are directional
+    input, not investment advice.
   </div>
 </div>
 <script>

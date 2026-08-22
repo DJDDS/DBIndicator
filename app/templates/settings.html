@@ -160,6 +160,39 @@
     </div>
 
     <div class="card">
+      <h2>Risk management</h2>
+      <p style="margin-top:-4px;">
+        This app never touches your funds, positions, or orders - Account capital is a number YOU tell it, used
+        purely to turn the ATR stop above into a suggested share quantity (fixed-fractional position sizing: risk
+        exactly this % of capital if the stop is hit). Set it to your real trading capital for the Qty suggestion
+        on the Dashboard to mean anything. The daily/position limits below feed an informational banner on the
+        Dashboard, computed from trades YOU logged in the <a href="/journal">Signal Journal</a> today - nothing
+        here blocks you from logging another trade past a limit, it just tells you plainly when you have.
+      </p>
+      <div class="row2">
+        <div>
+          <label for="account_capital">Account capital (₹)</label>
+          <input type="number" id="account_capital" name="account_capital" min="1" step="1" value="{{ s.ACCOUNT_CAPITAL }}">
+        </div>
+        <div>
+          <label for="risk_per_trade_pct">Risk per trade (%)</label>
+          <input type="number" id="risk_per_trade_pct" name="risk_per_trade_pct" min="0.1" max="100" step="0.1" value="{{ s.RISK_PER_TRADE_PCT }}">
+          <div class="hint">Fixed-fractional sizing: 1-2% is the typical starting point for F&amp;O, tighter than cash equities.</div>
+        </div>
+        <div>
+          <label for="max_daily_risk_pct">Max daily risk (%)</label>
+          <input type="number" id="max_daily_risk_pct" name="max_daily_risk_pct" min="0.1" max="100" step="0.1" value="{{ s.MAX_DAILY_RISK_PCT }}">
+          <div class="hint">Commonly ~3x your per-trade risk. The Dashboard banner turns red once today's logged trades exceed this.</div>
+        </div>
+        <div>
+          <label for="max_concurrent_positions">Max concurrent positions</label>
+          <input type="number" id="max_concurrent_positions" name="max_concurrent_positions" min="1" step="1" value="{{ s.MAX_CONCURRENT_POSITIONS }}">
+          <div class="hint">A cap on simultaneously-open journal trades ("portfolio heat") - too many at once defeats per-trade sizing.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Risk layer (ATR stop/target)</h2>
       <p style="margin-top:-4px;">A suggested stop-loss and target shown next to each row's Close price, sized to that stock's own recent volatility (ATR) instead of a flat percentage. Display only — this app never places an order.</p>
       <div class="row2">

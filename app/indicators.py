@@ -749,6 +749,27 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
             target = round(entry - settings.ATR_TARGET_MULTIPLIER * atr_value, 2)
         risk_reward = round(settings.ATR_TARGET_MULTIPLIER / settings.ATR_STOP_MULTIPLIER, 2)
 
+    # Position-size suggestion (NEXT_HORIZON_RESEARCH.md Finding 4's
+    # fixed-fractional sizing): how many shares to risk exactly
+    # settings.RISK_PER_TRADE_PCT of settings.ACCOUNT_CAPITAL if the
+    # suggested ATR stop above is hit - risk_amount / per-share risk
+    # distance, floored to a whole share. None whenever `stop` itself is
+    # None (not enough ATR history yet) or the per-share risk distance
+    # rounds to zero (a stop multiplier/ATR so tiny the math is
+    # meaningless) - never divides by zero. This is a SUGGESTION for you
+    # to size a real order yourself; this app places no orders and has
+    # no visibility into your real account, hence ACCOUNT_CAPITAL being
+    # a number you tell it (see config.py), not one it reads anywhere.
+    position_qty = position_risk_amount = None
+    if stop is not None:
+        per_share_risk = abs(entry - stop)
+        if per_share_risk > 0:
+            risk_amount = settings.ACCOUNT_CAPITAL * settings.RISK_PER_TRADE_PCT / 100
+            qty = int(risk_amount // per_share_risk)
+            if qty > 0:
+                position_qty = qty
+                position_risk_amount = round(qty * per_share_risk, 2)
+
     return {
         "close": round(float(close.iloc[i]), 2),
         "rsi": round(float(rsi_line.iloc[i]), 1),
@@ -803,4 +824,6 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "stop": stop,
         "target": target,
         "risk_reward": risk_reward,
+        "position_qty": position_qty,
+        "position_risk_amount": position_risk_amount,
     }

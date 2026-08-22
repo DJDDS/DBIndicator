@@ -72,6 +72,11 @@ _SNAPSHOT_FIELDS = [
     # throughout this module) - never a crash, just "unknown/excluded"
     # for grouping purposes.
     "sector_agrees", "breadth_agrees", "candle_agrees", "vol_flow_agrees", "htf_agrees",
+    # Added for the risk-management layer's sector-concentration check
+    # (get_risk_budget_state below) - the sector index tradingsymbol
+    # itself (e.g. "NIFTY BANK"), not just whether it agreed, so trades
+    # logged today can be grouped by sector.
+    "sector",
 ]
 
 # Minimum RESOLVED trades a (direction, aligned) setup bucket or a
@@ -252,6 +257,70 @@ def get_setup_confidence(direction, aligned):
     stats = _stats(group)
     stats.update(direction=direction, aligned=aligned)
     return stats
+
+
+def get_risk_budget_state():
+    """Risk-management layer (NEXT_HORIZON_RESEARCH.md Finding 4 - "close
+    to non-negotiable baseline discipline", and the roadmap's own
+    suggested order: "cheap to build once the journal exists to feed it
+    real numbers"). This app places no real orders and has no visibility
+    into your actual broker P&L, so rather than pretend otherwise, this
+    tracks the same thing the journal already knows about honestly:
+    trades YOU logged today. Every logged trade is, by construction (see
+    indicators.compute_signal's position_qty), sized to risk exactly
+    settings.RISK_PER_TRADE_PCT of settings.ACCOUNT_CAPITAL if its stop
+    is hit - so "how many trades have I logged today" directly converts
+    into "how much of my capital is currently committed", without
+    needing a live broker P&L feed at all.
+
+    Returns a dict the dashboard renders as a small risk-budget banner:
+    trades_today/committed_risk_pct vs max_daily_risk_pct.
+    open_positions vs max_concurrent_positions (currently-open, i.e. not
+    yet resolved, trades - a rough proxy for "positions I haven't exited
+    yet", since this app doesn't know your real exit either).
+    concentrated_sectors - any sector with 2+ of today's trades, a cheap
+    reuse of the sector map already built for the sector-agreement
+    filter. Every threshold here is informational only - nothing in this
+    app blocks you from logging another trade once a limit is exceeded,
+    the banner just tells you plainly that you would be past your own
+    stated discipline if you do."""
+    today = now_ist().date()
+    with _lock:
+        trades = list(_state["trades"])
+
+    def _logged_today(t):
+        try:
+            return dt.datetime.fromisoformat(t["logged_at"]).date() == today
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    trades_today = [t for t in trades if _logged_today(t)]
+    open_positions = [t for t in trades if t["status"] == "open"]
+
+    risk_per_trade = settings.RISK_PER_TRADE_PCT
+    committed_risk_pct = round(len(trades_today) * risk_per_trade, 2)
+    max_daily_risk_pct = settings.MAX_DAILY_RISK_PCT
+    max_concurrent = settings.MAX_CONCURRENT_POSITIONS
+
+    sector_counts = {}
+    for t in trades_today:
+        sector = (t.get("snapshot") or {}).get("sector")
+        if sector:
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+    concentrated_sectors = sorted([s for s, c in sector_counts.items() if c >= 2])
+
+    return {
+        "trades_today": len(trades_today),
+        "committed_risk_pct": committed_risk_pct,
+        "max_daily_risk_pct": max_daily_risk_pct,
+        "risk_budget_exceeded": committed_risk_pct > max_daily_risk_pct,
+        "open_positions": len(open_positions),
+        "max_concurrent_positions": max_concurrent,
+        "position_limit_exceeded": len(open_positions) > max_concurrent,
+        "concentrated_sectors": concentrated_sectors,
+        "risk_per_trade_pct": risk_per_trade,
+        "account_capital": settings.ACCOUNT_CAPITAL,
+    }
 
 
 def log_paper_trade(row: dict, timeframe: str, horizon_bars: int = DEFAULT_HORIZON_BARS,
