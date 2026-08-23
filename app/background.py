@@ -186,6 +186,43 @@ def _apply_strong_close_filter(results):
             r["signal_confirmed"] = False
 
 
+def _apply_entry_location_filter(results):
+    """Mutates each result dict in place: when settings.
+    REQUIRE_ENTRY_LOCATION_AGREEMENT is on, a row that already has
+    entry_location_agrees=False (set by indicators.compute_signal - price
+    is already more than MAX_ENTRY_EXTENSION_ATR ATRs past its own VWAP
+    in this row's own direction, i.e. the move is being CHASED rather
+    than caught early) also loses its signal_confirmed status. Off by
+    default; entry_extension_atr/entry_is_extended/entry_reference/
+    entry_location_agrees are always attached by compute_signal either
+    way, purely for display."""
+    if not settings.REQUIRE_ENTRY_LOCATION_AGREEMENT:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("entry_location_agrees") is False:
+            r["signal_confirmed"] = False
+
+
+def _apply_atr_floor_filter(results):
+    """Mutates each result dict in place: when settings.REQUIRE_ATR_FLOOR
+    is on, a row that already has atr_floor_agrees=False (set by
+    indicators.compute_signal - this stock's ATR as a % of its own price
+    is below settings.MIN_ATR_PCT, i.e. it isn't currently moving enough
+    to plausibly deliver a big move regardless of how many parameters
+    agree) also loses its signal_confirmed status. Off by default;
+    atr_pct/atr_floor_agrees are always attached by compute_signal either
+    way, purely for display."""
+    if not settings.REQUIRE_ATR_FLOOR:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("atr_floor_agrees") is False:
+            r["signal_confirmed"] = False
+
+
 def _apply_delivery_filter(results):
     """Mutates each result dict in place, attaching delivery_pct/
     delivery_date/delivery_agrees from app/delivery.py's cache (see that
@@ -710,6 +747,8 @@ def _run_loop():
                         _apply_macd_hist_filter(results)
                         _apply_big_candle_filter(results)
                         _apply_strong_close_filter(results)
+                        _apply_entry_location_filter(results)
+                        _apply_atr_floor_filter(results)
                         _apply_delivery_filter(results)
                         _apply_sector_filter(results, sector_directions)
                         breadth = _compute_breadth(results)
@@ -918,6 +957,8 @@ def _scan_one_multi_tf(kite, tf):
     _apply_macd_hist_filter(results)
     _apply_big_candle_filter(results)
     _apply_strong_close_filter(results)
+    _apply_entry_location_filter(results)
+    _apply_atr_floor_filter(results)
     _apply_delivery_filter(results)  # cache lookup only - see that function's docstring, no network call here
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results

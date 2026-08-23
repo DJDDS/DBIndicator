@@ -154,6 +154,8 @@ _TUNABLE_FIELDS = [
     "BIG_CANDLE_ATR_MULTIPLIER", "STRONG_CLOSE_THRESHOLD_PCT",
     "REQUIRE_BIG_CANDLE_AGREEMENT", "REQUIRE_STRONG_CLOSE_AGREEMENT",
     "REQUIRE_DELIVERY_AGREEMENT", "DELIVERY_THRESHOLD_PCT",
+    "MAX_ENTRY_EXTENSION_ATR", "REQUIRE_ENTRY_LOCATION_AGREEMENT",
+    "MIN_ATR_PCT", "REQUIRE_ATR_FLOOR",
 ]
 
 
@@ -355,6 +357,31 @@ def _env_defaults():
         # other REQUIRE_* gate above.
         "REQUIRE_DELIVERY_AGREEMENT": os.getenv("REQUIRE_DELIVERY_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
         "DELIVERY_THRESHOLD_PCT": float(os.getenv("DELIVERY_THRESHOLD_PCT", 30.0)),
+        # Entry-location filter (PARAMETER_ANALYSIS_2.md Finding #4 -
+        # "nothing prices in WHERE a move already is"; see indicators.
+        # compute_signal's entry_extension_atr/entry_is_extended). How
+        # many ATRs past its own VWAP price may already be, in the row's
+        # own direction, before the entry counts as EXTENDED (chasing) -
+        # a signal firing 3 ATR into a move is a materially worse entry
+        # than the same signal firing as the move turns, and until now
+        # both carried an identical "Confirmed" mark. Default 2.0 ATR.
+        # When REQUIRE_ENTRY_LOCATION_AGREEMENT is on, an extended row
+        # loses its "Confirmed" status; off by default, same reasoning as
+        # every other REQUIRE_* gate above.
+        "MAX_ENTRY_EXTENSION_ATR": float(os.getenv("MAX_ENTRY_EXTENSION_ATR", 2.0)),
+        "REQUIRE_ENTRY_LOCATION_AGREEMENT": os.getenv("REQUIRE_ENTRY_LOCATION_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # Minimum-ATR volatility floor (PARAMETER_ANALYSIS_2.md Finding
+        # #5 - "no volatility floor, in either engine"; see indicators.
+        # compute_signal's atr_pct/atr_floor_agrees). Minimum ATR as a %
+        # of price for a stock to be considered to be moving enough to be
+        # worth trading at all - expressed as a percentage rather than a
+        # raw ATR so one threshold means the same thing across a Rs.150
+        # stock and a Rs.5000 one. Deliberately conservative by default
+        # (0.5%) so it only ever screens out genuinely dead names, not
+        # merely calm ones. When REQUIRE_ATR_FLOOR is on, a row below the
+        # floor loses its "Confirmed" status; off by default.
+        "MIN_ATR_PCT": float(os.getenv("MIN_ATR_PCT", 0.5)),
+        "REQUIRE_ATR_FLOOR": os.getenv("REQUIRE_ATR_FLOOR", "false").strip().lower() in ("1", "true", "on", "yes"),
     }
 
 
@@ -645,6 +672,38 @@ class Settings:
                 clean["DELIVERY_THRESHOLD_PCT"] = dtp
             except (TypeError, ValueError):
                 errors.append("Delivery threshold % must be a number between 0 and 100.")
+
+        if "MAX_ENTRY_EXTENSION_ATR" in kwargs:
+            try:
+                mee = float(kwargs["MAX_ENTRY_EXTENSION_ATR"])
+                if mee <= 0:
+                    raise ValueError
+                clean["MAX_ENTRY_EXTENSION_ATR"] = mee
+            except (TypeError, ValueError):
+                errors.append("Max entry extension (ATR) must be a positive number.")
+
+        if "MIN_ATR_PCT" in kwargs:
+            try:
+                map_ = float(kwargs["MIN_ATR_PCT"])
+                if not (0 <= map_ < 100):
+                    raise ValueError
+                clean["MIN_ATR_PCT"] = map_
+            except (TypeError, ValueError):
+                errors.append("Minimum ATR % must be a number between 0 and 100.")
+
+        if "REQUIRE_ENTRY_LOCATION_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_ENTRY_LOCATION_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_ENTRY_LOCATION_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_ENTRY_LOCATION_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_ATR_FLOOR" in kwargs:
+            val = kwargs["REQUIRE_ATR_FLOOR"]
+            if isinstance(val, str):
+                clean["REQUIRE_ATR_FLOOR"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_ATR_FLOOR"] = bool(val)
 
         if errors:
             return errors

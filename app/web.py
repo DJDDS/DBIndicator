@@ -106,6 +106,8 @@ def dashboard():
         risk_budget=journal.get_risk_budget_state(),
         multi_tf=background.get_multi_tf_state(),
         vol_contraction_lookback=settings.VOL_CONTRACTION_LOOKBACK,
+        max_entry_extension_atr=settings.MAX_ENTRY_EXTENSION_ATR,
+        min_atr_pct=settings.MIN_ATR_PCT,
     )
 
 
@@ -204,6 +206,10 @@ def settings_page():
             "REQUIRE_STRONG_CLOSE_AGREEMENT": form.get("require_strong_close_agreement") == "on",
             "REQUIRE_DELIVERY_AGREEMENT": form.get("require_delivery_agreement") == "on",
             "DELIVERY_THRESHOLD_PCT": form.get("delivery_threshold_pct", settings.DELIVERY_THRESHOLD_PCT),
+            "MAX_ENTRY_EXTENSION_ATR": form.get("max_entry_extension_atr", settings.MAX_ENTRY_EXTENSION_ATR),
+            "REQUIRE_ENTRY_LOCATION_AGREEMENT": form.get("require_entry_location_agreement") == "on",
+            "MIN_ATR_PCT": form.get("min_atr_pct", settings.MIN_ATR_PCT),
+            "REQUIRE_ATR_FLOOR": form.get("require_atr_floor") == "on",
         }
         errors = settings.update(**payload)
         saved = not errors
@@ -470,7 +476,7 @@ def api_backtest_start():
             "reason": f"required must be between 1 and {len(params)} (the number of parameters you selected)",
         }), 400
 
-    # The 3 optional live-parity gates (FILTER_DEFS) - same comma-separated
+    # The optional live-parity gates (FILTER_DEFS) - same comma-separated
     # convention as "params" above, sent as a "filters" field so a run that
     # opts into none of them (the default, every prior form submission)
     # behaves identically to before this was added.
@@ -485,6 +491,11 @@ def api_backtest_start():
         exclude_opening_window="exclude_opening_window" in filters,
         require_volume_flow="require_volume_flow" in filters,
         require_candle_pattern="require_candle_pattern" in filters,
+        require_macd_hist="require_macd_hist" in filters,
+        require_big_candle="require_big_candle" in filters,
+        require_strong_close="require_strong_close" in filters,
+        require_entry_location="require_entry_location" in filters,
+        require_atr_floor="require_atr_floor" in filters,
     )
     return jsonify(result)
 

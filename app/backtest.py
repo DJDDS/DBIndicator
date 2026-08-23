@@ -58,7 +58,7 @@ import pandas as pd
 
 from .config import settings, PARAM_WEIGHTS_FILE
 from .indicators import (
-    compute_series, RSI_OVERBOUGHT, RSI_OVERSOLD,
+    compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
     _compute_adx, _classify_regime, _in_opening_window, _in_4hour_warmup, _HTF_RESAMPLE,
 )
 from .scanner import _load_instrument_map, _load_index_token, now_ist
@@ -97,7 +97,6 @@ PARAM_DEFS = [
     {"id": "rsi_cross", "label": "RSI Cross (vs its smoothing line)"},
     {"id": "macd_cross", "label": "MACD Cross (vs signal line)"},
     {"id": "ema_bb_cross", "label": "EMA9 vs Bollinger Mid Cross"},
-    {"id": "rsi_threshold", "label": f"RSI > {RSI_OVERBOUGHT} (Bearish: RSI < {RSI_OVERSOLD})"},
     {"id": "rel_volume", "label": "Relative Volume above your configured threshold (20-bar avg, Settings page) - confirmation only, combine with a directional parameter"},
     {"id": "cmf_flow", "label": "Chaikin Money Flow sign (directional volume - Bullish if recent volume skewed toward up-closes, Bearish if down-closes; distinct from the magnitude-only Relative Volume above - see PARAMETER_ANALYSIS_2.md Finding #2)"},
     {"id": "candle_pattern", "label": "Candlestick pattern (Engulfing / Hammer-family / Morning-Evening Star - reads the raw shape of recent price action, not a smoothed derivative like the others above - see NEXT_HORIZON_RESEARCH.md)"},
@@ -141,7 +140,47 @@ FILTER_DEFS = [
                   "pattern must match your signal's direction, matches live's optional "
                   "REQUIRE_CANDLE_PATTERN_AGREEMENT gate)",
     },
+    {
+        "id": "require_macd_hist",
+        "label": "MACD histogram momentum agreement (histogram must be growing in your signal's direction - "
+                  "momentum accelerating, not fading - matches live's optional REQUIRE_MACD_HIST_AGREEMENT gate)",
+    },
+    {
+        "id": "require_big_candle",
+        "label": "Big-candle agreement (the most recent range-expansion big candle within the last 15 bars must "
+                  "match your signal's direction, matches live's optional REQUIRE_BIG_CANDLE_AGREEMENT gate)",
+    },
+    {
+        "id": "require_strong_close",
+        "label": "Strong-close agreement (the bar's close must land in the extreme top/bottom of its own range, "
+                  "in your signal's direction, matches live's optional REQUIRE_STRONG_CLOSE_AGREEMENT gate)",
+    },
+    {
+        "id": "require_entry_location",
+        "label": "Entry-location filter (skip bars where price is already more than your configured ATR multiple "
+                  "past its own VWAP - i.e. the move is being chased rather than caught early - matches live's "
+                  "optional REQUIRE_ENTRY_LOCATION_AGREEMENT gate)",
+    },
+    {
+        "id": "require_atr_floor",
+        "label": "Minimum-ATR volatility floor (skip bars where the stock's ATR as a % of price is below your "
+                  "configured floor - too quiet to plausibly deliver a big move - matches live's optional "
+                  "REQUIRE_ATR_FLOOR gate)",
+    },
 ]
+# NOTE on parity coverage: every LIVE gate is now replayable here EXCEPT
+# three, each for a structural reason rather than an oversight.
+# REQUIRE_INDEX_AGREEMENT and REQUIRE_SECTOR_AGREEMENT would each need a
+# second instrument's full history fetched and replayed per symbol (NIFTY
+# 50, or that symbol's own sectoral index) - doable, but it multiplies
+# every backtest's Kite API cost, so it's deliberately deferred rather
+# than silently approximated. REQUIRE_BREADTH_AGREEMENT is watchlist-
+# scoped and cross-sectional (it depends on what every OTHER symbol was
+# doing on that same bar), which this per-symbol replay architecture
+# can't express at all without restructuring the whole run. And
+# REQUIRE_DELIVERY_AGREEMENT can never be backtested: NSE publishes
+# delivery data only for recent sessions, with no historical archive
+# reachable from here, so there is no past value to replay.
 FILTER_IDS = [f["id"] for f in FILTER_DEFS]
 
 
@@ -175,7 +214,10 @@ def _progress_cb(done, total, symbol):
 def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT_HORIZONS,
                     params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                    require_volume_flow=False, require_candle_pattern=False) -> dict:
+                    require_volume_flow=False, require_candle_pattern=False,
+                    require_macd_hist=False, require_big_candle=False,
+                    require_strong_close=False, require_entry_location=False,
+                    require_atr_floor=False) -> dict:
     """Kicks off a backtest run in a background thread. Returns
     {"started": True} or {"started": False, "reason": ...} if one is
     already running - only one backtest runs at a time. The five
@@ -197,6 +239,11 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
             "require_htf": bool(require_htf), "require_regime_volume": bool(require_regime_volume),
             "exclude_opening_window": bool(exclude_opening_window), "require_volume_flow": bool(require_volume_flow),
             "require_candle_pattern": bool(require_candle_pattern),
+            "require_macd_hist": bool(require_macd_hist),
+            "require_big_candle": bool(require_big_candle),
+            "require_strong_close": bool(require_strong_close),
+            "require_entry_location": bool(require_entry_location),
+            "require_atr_floor": bool(require_atr_floor),
         }
         _bt_state["result"] = None
         _bt_state["error"] = None
@@ -207,7 +254,8 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
         target=_run_backtest_job,
         args=(kite, symbols, timeframe, days, horizons, params, required,
               require_htf, require_regime_volume, exclude_opening_window, require_volume_flow,
-              require_candle_pattern),
+              require_candle_pattern, require_macd_hist, require_big_candle,
+              require_strong_close, require_entry_location, require_atr_floor),
         daemon=True,
     )
     thread.start()
@@ -216,7 +264,10 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
 
 def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required,
                        require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                       require_volume_flow=False, require_candle_pattern=False):
+                       require_volume_flow=False, require_candle_pattern=False,
+                    require_macd_hist=False, require_big_candle=False,
+                    require_strong_close=False, require_entry_location=False,
+                    require_atr_floor=False):
     try:
         result = run_backtest(
             kite, symbols, timeframe=timeframe, days=days, horizons=horizons,
@@ -224,6 +275,10 @@ def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required
             require_htf=require_htf, require_regime_volume=require_regime_volume,
             exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
             require_candle_pattern=require_candle_pattern,
+            require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
+            require_strong_close=require_strong_close,
+            require_entry_location=require_entry_location,
+            require_atr_floor=require_atr_floor,
         )
         with _bt_lock:
             _bt_state["status"] = "done"
@@ -273,8 +328,9 @@ def _param_bull_bear(series: dict, param_id: str, rel_volume_hot: pd.Series = No
     """Returns (bullish_bool_series, bearish_bool_series) for one
     selectable parameter, aligned to series' index. The *_cross
     parameters are single-bar pulses (true only on the exact bar the
-    cross happens); rsi_threshold and rel_volume are states that can
-    stay true for a stretch of consecutive bars.
+    cross happens); rel_volume/cmf_flow/candle_pattern/big_candle_pattern/
+    strong_close are states that can stay true for a stretch of
+    consecutive bars.
 
     rel_volume_hot, when given (see _signal_series' require_regime_volume
     handling), REPLACES the plain flat-threshold "hot" read with the
@@ -290,9 +346,6 @@ def _param_bull_bear(series: dict, param_id: str, rel_volume_hot: pd.Series = No
         return series["macd_up"], series["macd_dn"]
     if param_id == "ema_bb_cross":
         return series["ema_up"], series["ema_dn"]
-    if param_id == "rsi_threshold":
-        rsi_line = series["rsi_line"]
-        return rsi_line > RSI_OVERBOUGHT, rsi_line < RSI_OVERSOLD
     if param_id == "rel_volume":
         if rel_volume_hot is not None:
             is_hot = rel_volume_hot
@@ -368,6 +421,86 @@ def _candle_pattern_agree_series(series: dict, direction: pd.Series) -> pd.Serie
     suppressed."""
     cd = series["candle_direction"]
     return cd.isna() | (cd == direction)
+
+
+def _macd_hist_agree_series(series: dict, direction: pd.Series) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's macd_hist_agrees -
+    is the MACD histogram GROWING in each bar's own chosen direction
+    (momentum accelerating) rather than shrinking against it? Reads the
+    histogram's own slope (this bar vs. the previous one), deliberately
+    NOT "hist > 0", which would be identical to the macd_line/signal_line
+    check already available as the macd_cross parameter. The first bar
+    (no previous bar to compare against) is treated as agreeing - same
+    "None means agree" convention used throughout."""
+    hist = series["macd_hist"]
+    rising = hist > hist.shift(1)
+    no_opinion = hist.isna() | hist.shift(1).isna()
+    agrees = pd.Series(np.where(direction == "Bullish", rising, ~rising), index=hist.index)
+    return agrees | no_opinion
+
+
+def _big_candle_agree_series(series: dict, direction: pd.Series) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's big_candle_agrees -
+    does the most recent qualifying range-expansion "big candle" within
+    BIG_CANDLE_LOOKBACK bars agree with each bar's own chosen direction?
+    Uses a forward-fill limited to that lookback window, which is exactly
+    the vectorized equivalent of compute_signal's own backward search over
+    the same window (and is no-lookahead by construction - ffill only ever
+    carries PAST values forward). A bar with no qualifying big candle
+    anywhere in its lookback reads as agreeing, same convention as every
+    other agree-series here."""
+    recent_dir = series["big_candle_direction"].ffill(limit=BIG_CANDLE_LOOKBACK)
+    return recent_dir.isna() | (recent_dir == direction)
+
+
+def _strong_close_agree_series(series: dict, direction: pd.Series) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's strong_close_agrees -
+    did each bar's own close land in the extreme top/bottom
+    settings.STRONG_CLOSE_THRESHOLD_PCT% of its own high-low range, in
+    that bar's chosen direction? A doji bar (high == low, close_position
+    NaN) is treated as agreeing rather than silently suppressed."""
+    close_position = series["close_position"]
+    hi_cut = settings.STRONG_CLOSE_THRESHOLD_PCT / 100.0
+    lo_cut = 1 - hi_cut
+    agrees = pd.Series(
+        np.where(direction == "Bullish", close_position >= hi_cut, close_position <= lo_cut),
+        index=close_position.index,
+    )
+    return agrees | close_position.isna()
+
+
+def _entry_location_agree_series(series: dict, direction: pd.Series, timeframe: str) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's
+    entry_location_agrees - is price already more than settings.
+    MAX_ENTRY_EXTENSION_ATR ATRs past its own VWAP, in each bar's own
+    chosen direction (i.e. the move is being chased rather than caught
+    early)? Mirrors live's VWAP-with-AVWAP-fallback: session VWAP where
+    the timeframe has one (intraday), the anchored VWAP otherwise, so
+    day/week backtests aren't silently ungated. Bars with no usable
+    VWAP/ATR yet read as agreeing."""
+    df = series["df"]
+    vwap_series = session_vwap_series(df, timeframe)
+    if vwap_series.isna().all():
+        vwap_series = compute_avwap_series(series)
+    atr = series["atr"]
+    usable = vwap_series.notna() & atr.notna() & (atr > 0)
+    raw_distance = (df["close"] - vwap_series) / atr.replace(0, np.nan)
+    signed = pd.Series(np.where(direction == "Bullish", raw_distance, -raw_distance), index=df.index)
+    extended = usable & (signed > settings.MAX_ENTRY_EXTENSION_ATR)
+    return ~extended
+
+
+def _atr_floor_agree_series(series: dict) -> pd.Series:
+    """Vectorized replay of indicators.compute_signal's atr_floor_agrees -
+    is this stock's ATR, as a % of its own price, at or above settings.
+    MIN_ATR_PCT on each bar (i.e. is it moving enough to plausibly deliver
+    a real move at all)? Directionless by nature, so unlike the other
+    agree-series here it takes no `direction` argument. Bars with no ATR
+    yet read as agreeing."""
+    df = series["df"]
+    atr = series["atr"]
+    atr_pct = atr / df["close"].replace(0, np.nan) * 100
+    return atr_pct.isna() | (atr_pct >= settings.MIN_ATR_PCT)
 
 
 def _regime_volume_hot_series(series: dict) -> pd.Series:
@@ -466,7 +599,9 @@ def _opening_window_mask(df: pd.DataFrame, timeframe: str) -> pd.Series:
 def _signal_series(series: dict, params, required: int, timeframe: str = None,
                     require_htf: bool = False, require_regime_volume: bool = False,
                     exclude_opening_window: bool = False, require_volume_flow: bool = False,
-                    require_candle_pattern: bool = False):
+                    require_candle_pattern: bool = False, require_macd_hist: bool = False,
+                    require_big_candle: bool = False, require_strong_close: bool = False,
+                    require_entry_location: bool = False, require_atr_floor: bool = False):
     """Combines the chosen parameters bar-by-bar: has_signal is true on
     any bar where at least `required` of them agree on the same
     direction at once. Deliberately NOT the continuous "aligned >=
@@ -475,8 +610,9 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     the original 3 crossover parameters selected that state is always
     >= 2 by construction (3 things can't split narrower than 2-1), which
     would make has_signal always true and silently produce zero trades.
-    Mixing in threshold-type parameters (rsi_threshold, rel_volume) is
-    safe here because those are genuine, sometimes-false conditions.
+    Mixing in state-type parameters (rel_volume, cmf_flow, candle_pattern,
+    big_candle_pattern, strong_close) is safe here because those are
+    genuine, sometimes-false conditions.
 
     require_htf/require_regime_volume/exclude_opening_window/require_
     volume_flow/require_candle_pattern (all default False) replay the
@@ -512,7 +648,8 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     # there. Requiring the OTHER side to stay below `required` means a
     # pure confirmation-only selection correctly produces zero trades
     # instead of mislabeled ones - combine it with at least one directional
-    # parameter (a *_cross or rsi_threshold) to get real entries.
+    # parameter (a *_cross, cmf_flow, candle_pattern, big_candle_pattern
+    # or strong_close) to get real entries.
     is_bull = (bull_count >= required) & (bear_count < required)
     is_bear = (bear_count >= required) & (bull_count < required)
     has_signal = is_bull | is_bear
@@ -538,6 +675,28 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     if require_candle_pattern:
         candle_agrees = _candle_pattern_agree_series(series, direction).reindex(index).fillna(True)
         has_signal = has_signal & candle_agrees
+
+    if require_macd_hist:
+        hist_agrees = _macd_hist_agree_series(series, direction).reindex(index).fillna(True)
+        has_signal = has_signal & hist_agrees
+
+    if require_big_candle:
+        bc_agrees = _big_candle_agree_series(series, direction).reindex(index).fillna(True)
+        has_signal = has_signal & bc_agrees
+
+    if require_strong_close:
+        sc_agrees = _strong_close_agree_series(series, direction).reindex(index).fillna(True)
+        has_signal = has_signal & sc_agrees
+
+    if require_entry_location:
+        if not timeframe:
+            raise ValueError("require_entry_location needs a timeframe")
+        el_agrees = _entry_location_agree_series(series, direction, timeframe).reindex(index).fillna(True)
+        has_signal = has_signal & el_agrees
+
+    if require_atr_floor:
+        floor_agrees = _atr_floor_agree_series(series).reindex(index).fillna(True)
+        has_signal = has_signal & floor_agrees
 
     return has_signal, direction
 
@@ -594,7 +753,10 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 
 def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required,
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                    require_volume_flow=False, require_candle_pattern=False):
+                    require_volume_flow=False, require_candle_pattern=False,
+                    require_macd_hist=False, require_big_candle=False,
+                    require_strong_close=False, require_entry_location=False,
+                    require_atr_floor=False):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -608,6 +770,10 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         require_htf=require_htf, require_regime_volume=require_regime_volume,
         exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
         require_candle_pattern=require_candle_pattern,
+            require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
+            require_strong_close=require_strong_close,
+            require_entry_location=require_entry_location,
+            require_atr_floor=require_atr_floor,
     )
     # shift(..., fill_value=False) instead of shift(1).fillna(False): a
     # plain shift(1) on a bool Series introduces a leading NaN, which
@@ -695,13 +861,21 @@ def _summarize(trades, horizons):
 def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
                   params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None,
                   require_htf=False, require_regime_volume=False, exclude_opening_window=False,
-                  require_volume_flow=False, require_candle_pattern=False) -> dict:
+                  require_volume_flow=False, require_candle_pattern=False,
+                    require_macd_hist=False, require_big_candle=False,
+                    require_strong_close=False, require_entry_location=False,
+                    require_atr_floor=False) -> dict:
     days = min(int(days or 30), MAX_BACKTEST_DAYS)
     require_htf = bool(require_htf)
     require_regime_volume = bool(require_regime_volume)
     exclude_opening_window = bool(exclude_opening_window)
     require_volume_flow = bool(require_volume_flow)
     require_candle_pattern = bool(require_candle_pattern)
+    require_macd_hist = bool(require_macd_hist)
+    require_big_candle = bool(require_big_candle)
+    require_strong_close = bool(require_strong_close)
+    require_entry_location = bool(require_entry_location)
+    require_atr_floor = bool(require_atr_floor)
     horizons = tuple(sorted({int(h) for h in horizons if int(h) > 0})) or DEFAULT_HORIZONS
 
     params = tuple(p for p in (params or ()) if p in PARAM_IDS) or DEFAULT_PARAMS
@@ -746,6 +920,10 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
                 require_htf=require_htf, require_regime_volume=require_regime_volume,
                 exclude_opening_window=exclude_opening_window, require_volume_flow=require_volume_flow,
                 require_candle_pattern=require_candle_pattern,
+            require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
+            require_strong_close=require_strong_close,
+            require_entry_location=require_entry_location,
+            require_atr_floor=require_atr_floor,
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("Backtest replay failed for %s", symbol)
@@ -779,6 +957,11 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "exclude_opening_window": exclude_opening_window,
         "require_volume_flow": require_volume_flow,
         "require_candle_pattern": require_candle_pattern,
+        "require_macd_hist": require_macd_hist,
+        "require_big_candle": require_big_candle,
+        "require_strong_close": require_strong_close,
+        "require_entry_location": require_entry_location,
+        "require_atr_floor": require_atr_floor,
         "window_start": window_start.isoformat(timespec="seconds"),
         "window_end": to_date.isoformat(timespec="seconds"),
         "symbols_scanned": len(symbols),

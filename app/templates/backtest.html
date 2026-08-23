@@ -256,6 +256,11 @@ const FILTER_LABELS = {
   exclude_opening_window: 'Opening-window excluded',
   require_volume_flow: 'Volume-flow agreement (CMF)',
   require_candle_pattern: 'Candlestick-pattern agreement',
+  require_macd_hist: 'MACD histogram momentum',
+  require_big_candle: 'Big-candle agreement',
+  require_strong_close: 'Strong-close agreement',
+  require_entry_location: 'Entry-location (not extended)',
+  require_atr_floor: 'Minimum-ATR floor',
 };
 
 function fmtPct(v) {
@@ -305,7 +310,7 @@ function renderResult(result) {
 
   const chosenParams = result.params || [];
   const chosenLabels = chosenParams.map(p => PARAM_LABELS[p] || p);
-  const activeFilters = ['require_htf', 'require_regime_volume', 'exclude_opening_window', 'require_volume_flow', 'require_candle_pattern']
+  const activeFilters = Object.keys(FILTER_LABELS)
     .filter(k => result[k]).map(k => FILTER_LABELS[k] || k);
   const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
   document.getElementById('bt-signal-desc').textContent =

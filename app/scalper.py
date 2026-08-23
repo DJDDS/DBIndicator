@@ -66,11 +66,17 @@ SCALP_TIMEFRAME = "3minute"
 FAST_EMA_LENGTH = 5
 SLOW_EMA_LENGTH = 13
 RSI_FAST_LENGTH = 7
-# Cross thresholds used only for a (currently unused-for-gating) momentum
-# pulse; the *state* vote below uses a plain 50 midline instead - see
-# compute_scalp_signal's docstring for why these are kept separate.
-RSI_MOMENTUM_BULL = 55
-RSI_MOMENTUM_BEAR = 45
+# NOTE: RSI_MOMENTUM_BULL/RSI_MOMENTUM_BEAR (55/45) and the rsi_up/rsi_dn
+# cross series they fed used to live here. They were computed on every
+# single scan but never read by anything - compute_scalp_signal's RSI vote
+# has always been a plain "above/below the 50 midline" state check by
+# deliberate design, and no template or test ever touched them either.
+# Removed as dead weight (flagged in both PARAMETER_ANALYSIS.md and
+# PARAMETER_ANALYSIS_2.md): unused parameters sitting in the code make it
+# genuinely unclear from the UI alone what counts toward a signal and what
+# doesn't. If a momentum pulse is ever wanted as a real 5th scalp vote,
+# it should be added deliberately and wired into MIN_REQUIRED_SCALP, not
+# resurrected as another silently-computed series.
 
 # Deliberately its own constant, not settings.REL_VOLUME_THRESHOLD - a
 # 3-minute bar's own 20-bar rolling average behaves very differently from
@@ -135,10 +141,6 @@ def compute_scalp_series(df: pd.DataFrame) -> dict:
     vwap_up, vwap_dn = _cross_up(close, vwap_series), _cross_down(close, vwap_series)
 
     rsi_line = rsi(close, RSI_FAST_LENGTH)
-    bull_level = pd.Series(RSI_MOMENTUM_BULL, index=df.index)
-    bear_level = pd.Series(RSI_MOMENTUM_BEAR, index=df.index)
-    rsi_up = _cross_up(rsi_line, bull_level)
-    rsi_dn = _cross_down(rsi_line, bear_level)
 
     vol_avg = df["volume"].rolling(20, min_periods=5).mean()
     atr = compute_atr(df, ATR_LENGTH)
@@ -148,7 +150,7 @@ def compute_scalp_series(df: pd.DataFrame) -> dict:
         "ema_fast": ema_fast, "ema_slow": ema_slow,
         "ema_up": ema_up, "ema_dn": ema_dn,
         "vwap_series": vwap_series, "vwap_up": vwap_up, "vwap_dn": vwap_dn,
-        "rsi_line": rsi_line, "rsi_up": rsi_up, "rsi_dn": rsi_dn,
+        "rsi_line": rsi_line,
         "vol_avg": vol_avg,
         "atr": atr,
     }

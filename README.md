@@ -183,6 +183,64 @@ Big-candle and strong-close are also now selectable parameters on the
 empirically check, on your own watchlist history, whether these two
 precede bigger moves than the confirmatory indicators do.
 
+## Entry quality: am I early, or am I chasing?
+
+Two additions that don't add a new *signal* so much as grade the one you
+already have — both flagged as gaps in `PARAMETER_ANALYSIS_2.md`
+(Findings #4 and #5) before this:
+
+**Ext N R** (under Close) is how far price already is past its own VWAP,
+measured in ATR units and signed by the row's own direction. Negative
+means price is still early or pulled back; a positive number beyond your
+configured threshold earns a ⚠ and means you'd be *chasing* a move that's
+already run rather than catching it as it turns. Until now those two
+situations carried an identical "Confirmed" mark, which for a
+catch-it-early strategy is exactly the distinction that matters. Uses
+session VWAP intraday and falls back to the anchored VWAP on daily/weekly
+bars, so it's never silently blank.
+
+**ATR N%** is the stock's ATR as a percentage of its own price — a
+volatility *floor*. A name whose own recent range is tiny structurally
+cannot deliver a big move no matter how many parameters line up, and
+screening those out is different from what the ADX regime check does
+(that reads trend *strength*, not movement *size*). Expressed as a
+percentage so one threshold behaves the same on a ₹150 stock and a ₹5,000
+one. Note this is deliberately *not* applied to the Coiling badge above —
+a coiled stock has low volatility precisely because it's about to expand,
+which is the opposite of dead.
+
+Both are display-only by default with opt-in gates on the Settings page,
+and both are replayable on the Backtest page so you can measure whether
+turning them on actually helps.
+
+## What was removed
+
+Two orphaned parameters were deleted rather than left half-alive, both
+long-flagged in the analysis docs:
+
+**`rsi_threshold`** (RSI > 65 / < 35) existed only as a Backtest-page
+checkbox with no live equivalent anywhere — so you could tune it, get a
+number, and never be able to deploy that combination. Any
+"Auto-Weight Parameters" run including it was measuring something
+unreachable.
+
+**`RSI_MOMENTUM_BULL`/`RSI_MOMENTUM_BEAR`** in the scalp screener (and the
+`rsi_up`/`rsi_dn` cross series they fed) were computed on every single
+scan and read by nothing — the scalp RSI vote has always been a plain
+above/below-50 state check by design. Dead weight that made it genuinely
+unclear from the UI which parameters actually count.
+
+Nothing else was removed. In particular **EMA9-vs-Bollinger-mid was kept
+despite being the weakest of the four core parameters** (it's really a
+slow moving-average cross, not a Bollinger signal — the genuine
+Bollinger-volatility read is now the Coiling badge instead): removing it
+would silently change the `aligned` score on every historical journal
+entry and invalidate past data. The right way to handle it is to lean on
+the **Score** column instead of raw Aligned, since Score already
+down-weights it based on measured win rate — and to re-run
+"Auto-Weight Parameters" across your full watchlist to get a trustworthy
+weight for it.
+
 ## Risk management (position sizing &amp; daily limits)
 
 Your own research notes (see `NEXT_HORIZON_RESEARCH.md`) flagged this as

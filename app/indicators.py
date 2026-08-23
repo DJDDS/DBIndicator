@@ -891,6 +891,63 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         else:
             strong_close_agrees = close_position_pct <= (100 - threshold)
 
+    # ATR resolved here (rather than down in the stop/target block below,
+    # where it used to live) because the two entry-quality reads that
+    # follow immediately need it too - see entry_extension_atr/atr_pct.
+    # Same series either way: computed once in compute_series.
+    atr_series = series["atr"]
+    atr_raw = atr_series.iloc[i]
+    atr_value = round(float(atr_raw), 2) if pd.notna(atr_raw) and atr_raw > 0 else None
+
+    # entry_extension_atr/entry_is_extended/entry_location_agrees: HOW FAR
+    # price already is from its own VWAP, measured in ATR units - the
+    # "am I early or am I chasing" read (PARAMETER_ANALYSIS_2.md Finding
+    # #4: "nothing prices in WHERE a move already is"). A signal that
+    # fires when price is already 3 ATR past VWAP is the same "Confirmed"
+    # today as one that fires right as the move turns, even though the
+    # first is a materially worse entry - this is what lets those two be
+    # told apart. Uses session VWAP where available (intraday), falling
+    # back to the anchored VWAP (meaningful on day/week bars too, where
+    # session VWAP is None by construction) so this isn't silently
+    # intraday-only. Signed relative to the row's own direction: a
+    # Bullish row extended ABOVE VWAP is "extended" (chasing), while a
+    # Bullish row still BELOW its VWAP reads negative (early / pulled
+    # back), and vice versa for Bearish - so the same threshold means the
+    # same thing in both directions. None whenever there's no usable VWAP
+    # or ATR yet; treated as agreeing, same "never block on missing data"
+    # convention as every other *_agrees field above.
+    entry_extension_atr = None
+    entry_is_extended = None
+    entry_reference = None
+    vwap_ref = vwap if vwap else avwap
+    if vwap_ref and atr_value:
+        entry_reference = "VWAP" if vwap else "AVWAP"
+        raw_distance = (float(close.iloc[i]) - vwap_ref) / atr_value
+        signed = raw_distance if direction == "Bullish" else -raw_distance
+        entry_extension_atr = round(float(signed), 2)
+        entry_is_extended = bool(entry_extension_atr > settings.MAX_ENTRY_EXTENSION_ATR)
+    entry_location_agrees = True if entry_is_extended is None else (not entry_is_extended)
+
+    # atr_pct/atr_floor_agrees: is this stock currently moving ENOUGH, in
+    # its own percentage terms, to be worth trading at all
+    # (PARAMETER_ANALYSIS_2.md Finding #5 - "no volatility floor, in
+    # either engine"). ATR as a % of price rather than raw ATR, so the
+    # threshold means the same thing on a Rs.150 stock and a Rs.5000 one.
+    # In genuinely dead/illiquid stretches any breakout is more likely to
+    # be a false start no matter how many parameters agree, simply
+    # because there isn't enough real movement backing it - and for a
+    # BIG-move hunt specifically, a stock whose own recent range is tiny
+    # structurally can't deliver one. Distinct from the ADX regime check
+    # (which reads trend STRENGTH, not movement SIZE) and from
+    # vol_contracting above (which is about a coiling stock about to
+    # expand - deliberately not gated for exactly that reason). None
+    # whenever ATR hasn't warmed up; treated as agreeing.
+    atr_pct = None
+    atr_floor_agrees = True
+    if atr_value and close.iloc[i]:
+        atr_pct = round(float(atr_value / float(close.iloc[i]) * 100), 3)
+        atr_floor_agrees = atr_pct >= settings.MIN_ATR_PCT
+
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of
     # them by construction, plus Relative Volume as an independent 4th).
@@ -915,9 +972,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     # `aligned`/signal_confirmed and this app never places an order.
     # None whenever there isn't enough history yet for ATR to have
     # warmed up (same convention as vwap/adx above).
-    atr_series = series["atr"]  # computed once in compute_series - see _compute_big_candle above
-    atr_raw = atr_series.iloc[i]
-    atr_value = round(float(atr_raw), 2) if pd.notna(atr_raw) and atr_raw > 0 else None
+    # atr_value already resolved above (moved up so the entry-location /
+    # ATR-floor reads could use it too) - this block just turns it into a
+    # suggested stop/target.
     stop = target = risk_reward = None
     if atr_value:
         entry = float(close.iloc[i])
@@ -997,6 +1054,12 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "big_candle_continuation": big_candle_continuation,
         "big_candle_agrees": big_candle_agrees,
         "strong_close_agrees": strong_close_agrees,
+        "entry_extension_atr": entry_extension_atr,
+        "entry_is_extended": entry_is_extended,
+        "entry_reference": entry_reference,
+        "entry_location_agrees": entry_location_agrees,
+        "atr_pct": atr_pct,
+        "atr_floor_agrees": atr_floor_agrees,
         "adx": adx_value,
         "regime": regime,
         "vol_threshold_effective": effective_vol_threshold,

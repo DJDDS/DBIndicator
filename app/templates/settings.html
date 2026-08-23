@@ -277,6 +277,32 @@
           <div class="hint">When on, a row whose delivery % reading is below the threshold above loses its "Confirmed" status. A symbol with no delivery data available is never blocked by this. Off by default.</div>
         </div>
       </div>
+      <div class="row2" style="margin-top:16px;">
+        <div>
+          <label for="max_entry_extension_atr">Max entry extension (&times; ATR past VWAP)</label>
+          <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.1" step="0.1" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
+          <div class="hint">How far past its own VWAP price may already be, in its own direction, before the entry counts as EXTENDED (chasing rather than catching early). Default 2.0.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_entry_location_agreement" name="require_entry_location_agreement" {% if s.REQUIRE_ENTRY_LOCATION_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require entry-location agreement
+          </label>
+          <div class="hint">When on, a row that's already extended past the threshold to the left loses its "Confirmed" status - filters out late/chasing entries specifically. Off by default.</div>
+        </div>
+        <div>
+          <label for="min_atr_pct">Minimum ATR (% of price)</label>
+          <input type="number" id="min_atr_pct" name="min_atr_pct" min="0" max="99" step="0.1" value="{{ s.MIN_ATR_PCT }}">
+          <div class="hint">A stock whose ATR is below this % of its own price isn't moving enough to plausibly deliver a big move. Expressed as a % so one threshold works across cheap and expensive stocks. Default 0.5%.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_atr_floor" name="require_atr_floor" {% if s.REQUIRE_ATR_FLOOR %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require minimum-ATR floor
+          </label>
+          <div class="hint">When on, a row below the ATR floor to the left loses its "Confirmed" status - screens out genuinely dead names regardless of how many parameters agree. Off by default.</div>
+        </div>
+      </div>
       <p class="hint" style="margin-top:14px;">
         NSE delivery data:
         {% if delivery_status.available %}

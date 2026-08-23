@@ -677,6 +677,22 @@
               {% if r.delivery_pct is defined and r.delivery_pct is not none %}<span title="NSE delivery %: {{ r.delivery_pct }} (as of {{ r.delivery_date }}) - most recently PUBLISHED reading, never a live intraday number{% if r.delivery_agrees is defined and r.delivery_agrees == false %} - below your configured threshold{% endif %}">Deliv {{ r.delivery_pct }}%</span>{% endif %}
             </div>
             {% endif %}
+            {% if (r.entry_extension_atr is defined and r.entry_extension_atr is not none) or (r.atr_pct is defined and r.atr_pct is not none) %}
+            <div class="atr-risk">
+              {% if r.entry_extension_atr is not none %}
+              <span style="margin-right:6px; {{ 'color:var(--amber);' if r.entry_is_extended else '' }}"
+                    title="Price is {{ r.entry_extension_atr }} ATR past its own {{ r.entry_reference }}, measured in this row's own direction (negative = still early / pulled back).{% if r.entry_is_extended %} Beyond your {{ max_entry_extension_atr }} ATR threshold - this entry is CHASING an already-extended move rather than catching it early.{% endif %}">
+                {{ '⚠ ' if r.entry_is_extended else '' }}Ext {{ r.entry_extension_atr }}R
+              </span>
+              {% endif %}
+              {% if r.atr_pct is not none %}
+              <span style="{{ 'color:var(--amber);' if r.atr_floor_agrees == false else '' }}"
+                    title="ATR is {{ r.atr_pct }}% of this stock's own price{% if r.atr_floor_agrees == false %} - below your {{ min_atr_pct }}% floor, i.e. too quiet right now to plausibly produce a big move{% endif %}">
+                ATR {{ r.atr_pct }}%
+              </span>
+              {% endif %}
+            </div>
+            {% endif %}
           </td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
           <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">
@@ -847,7 +863,13 @@
     on "Require strong-close agreement" to gate on it. <strong>Deliv N%</strong> is NSE's delivery percentage
     (real overnight conviction vs. intraday churn) as of its most recently PUBLISHED session - never a live
     number, and it may never appear at all if NSE is blocking this deployment's requests (see the Settings page
-    for status). Signals are directional input, not investment advice.
+    for status). <strong>Ext N R</strong> is how far price already is past its own VWAP in ATR units, measured in
+    this row's own direction - negative means still early / pulled back, and an
+    <span style="color:var(--amber);">⚠</span> means the move is already extended beyond your threshold (you'd be
+    chasing rather than catching it early). <strong>ATR N%</strong> is this stock's ATR as a percentage of its own
+    price - a stock below your configured floor is too quiet right now to plausibly produce a big move no matter
+    how many parameters agree. Both have opt-in gates on the Settings page. Signals are directional input, not
+    investment advice.
   </div>
 </div>
 <script>
