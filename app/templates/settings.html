@@ -222,6 +222,75 @@
     </div>
 
     <div class="card">
+      <h2>Anticipatory signals (catch the move before it happens)</h2>
+      <p style="margin-top:-4px;">
+        RSI/MACD/EMA-BB/CMF are all confirmatory - they tell you a move is already under way. These four are
+        the app's ANTICIPATORY reads instead, aimed at BTST/swing and catching a big move early: two are pure
+        display badges (no direction of their own, so they can't gate anything), two have real gates like every
+        other "Require ... agreement" checkbox above.
+      </p>
+      <div class="row2">
+        <div>
+          <label for="vol_contraction_lookback">Volatility-contraction lookback (bars)</label>
+          <input type="number" id="vol_contraction_lookback" name="vol_contraction_lookback" min="5" value="{{ s.VOL_CONTRACTION_LOOKBACK }}">
+          <div class="hint">How many recent bars to rank current Bollinger Band width against. Display only (the "Coiling" badge) - a coiled stock can break either direction, so this never gates Confirmed.</div>
+        </div>
+        <div>
+          <label for="vol_contraction_threshold_pct">Volatility-contraction threshold (percentile)</label>
+          <input type="number" id="vol_contraction_threshold_pct" name="vol_contraction_threshold_pct" min="1" max="99" step="1" value="{{ s.VOL_CONTRACTION_THRESHOLD_PCT }}">
+          <div class="hint">Current BB width must rank at or below this percentile of the lookback window to count as "coiling" (default 20 = tightest 20% of recent readings).</div>
+        </div>
+        <div>
+          <label for="big_candle_atr_multiplier">Big-candle ATR multiplier</label>
+          <input type="number" id="big_candle_atr_multiplier" name="big_candle_atr_multiplier" min="0.1" step="0.1" value="{{ s.BIG_CANDLE_ATR_MULTIPLIER }}">
+          <div class="hint">A bar's own true range must be at least this many times its own ATR to count as a range-expansion "big candle".</div>
+        </div>
+        <div>
+          <label for="strong_close_threshold_pct">Strong-close threshold (%)</label>
+          <input type="number" id="strong_close_threshold_pct" name="strong_close_threshold_pct" min="50" max="100" step="1" value="{{ s.STRONG_CLOSE_THRESHOLD_PCT }}">
+          <div class="hint">Shared by the big-candle read and the standalone BTST strong-close read below: close must land in the top/bottom (100 &minus; this)% of the bar's own range to count as extreme. Default 80 = top/bottom 20%.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_big_candle_agreement" name="require_big_candle_agreement" {% if s.REQUIRE_BIG_CANDLE_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require big-candle agreement
+          </label>
+          <div class="hint">When on, a row whose most recent qualifying big candle (within the last 15 bars) disagrees with this row's own direction loses its "Confirmed" status. Off by default.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_strong_close_agreement" name="require_strong_close_agreement" {% if s.REQUIRE_STRONG_CLOSE_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require strong-close agreement
+          </label>
+          <div class="hint">When on, a row whose own close did NOT land in the extreme top/bottom of its own range, in its own direction, loses its "Confirmed" status - a BTST "closed with conviction" gate. Off by default.</div>
+        </div>
+        <div>
+          <label for="delivery_threshold_pct">NSE delivery % threshold</label>
+          <input type="number" id="delivery_threshold_pct" name="delivery_threshold_pct" min="1" max="99" step="1" value="{{ s.DELIVERY_THRESHOLD_PCT }}">
+          <div class="hint">Minimum NSE delivery % (most recently published session, NOT live - see status below) to count as "agreeing". Absolute floor, not stock-relative - a known simplification.</div>
+        </div>
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_delivery_agreement" name="require_delivery_agreement" {% if s.REQUIRE_DELIVERY_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require delivery-% agreement
+          </label>
+          <div class="hint">When on, a row whose delivery % reading is below the threshold above loses its "Confirmed" status. A symbol with no delivery data available is never blocked by this. Off by default.</div>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:14px;">
+        NSE delivery data:
+        {% if delivery_status.available %}
+        <span style="color:var(--green); font-weight:600;">available</span> (as of {{ delivery_status.data_date }}, {{ delivery_status.symbol_count }} symbols)
+        {% else %}
+        <span style="color:var(--red); font-weight:600;">not available yet</span>{% if delivery_status.last_error %} — {{ delivery_status.last_error }}{% endif %}
+        {% endif %}
+        — this is end-of-day-only data (never live intraday), and NSE is known to block requests from some cloud
+        hosts; if this never turns green after a day or two of the app running, that's most likely why, not a bug
+        in the app itself.
+      </p>
+    </div>
+
+    <div class="card">
       <h2>MACD</h2>
       <label for="macd_preset">Preset</label>
       <select id="macd_preset" name="macd_preset">

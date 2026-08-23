@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, journal, kite_auth, news
+from . import alerts, delivery, journal, kite_auth, news
 from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
@@ -143,6 +143,80 @@ def _apply_macd_hist_filter(results):
         if r.get("error"):
             continue
         if r.get("signal_confirmed") and r.get("macd_hist_agrees") is False:
+            r["signal_confirmed"] = False
+
+
+def _apply_big_candle_filter(results):
+    """Mutates each result dict in place: when settings.
+    REQUIRE_BIG_CANDLE_AGREEMENT is on, a row that already has
+    big_candle_agrees=False (set by indicators.compute_signal - does the
+    most recent qualifying range-expansion "big candle" within
+    BIG_CANDLE_LOOKBACK bars agree with this row's own direction) also
+    loses its signal_confirmed status - same shape as _apply_volume_flow_
+    filter/_apply_candle_pattern_filter/_apply_macd_hist_filter above.
+    Off by default; big_candle/big_candle_direction/big_candle_level/
+    big_candle_recent_*/big_candle_continuation/big_candle_agrees are
+    always attached by compute_signal either way, purely for display."""
+    if not settings.REQUIRE_BIG_CANDLE_AGREEMENT:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("big_candle_agrees") is False:
+            r["signal_confirmed"] = False
+
+
+def _apply_strong_close_filter(results):
+    """Mutates each result dict in place: when settings.
+    REQUIRE_STRONG_CLOSE_AGREEMENT is on, a row that already has
+    strong_close_agrees=False (set by indicators.compute_signal - did
+    this bar's own close land in the extreme top/bottom
+    STRONG_CLOSE_THRESHOLD_PCT% of its own high-low range, in this row's
+    own direction) also loses its signal_confirmed status - a BTST-
+    oriented "closed with real conviction" gate, same shape as every
+    other filter here. Off by default; close_position_pct/strong_close_
+    agrees are always attached by compute_signal either way, purely for
+    display."""
+    if not settings.REQUIRE_STRONG_CLOSE_AGREEMENT:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("strong_close_agrees") is False:
+            r["signal_confirmed"] = False
+
+
+def _apply_delivery_filter(results):
+    """Mutates each result dict in place, attaching delivery_pct/
+    delivery_date/delivery_agrees from app/delivery.py's cache (see that
+    module's docstring for the timing/reliability caveats - this is
+    NEVER a same-day-live number, and the fetch can be blocked entirely
+    depending on where this app is hosted). None (no delivery data
+    available for this symbol yet) always reads delivery_agrees=True,
+    same "never block on missing data" convention as every other gate.
+
+    When settings.REQUIRE_DELIVERY_AGREEMENT is on, a row whose delivery
+    reading is below settings.DELIVERY_THRESHOLD_PCT also loses its
+    signal_confirmed status. Off by default; delivery_pct/delivery_date/
+    delivery_agrees are always attached either way, purely for display.
+    Does NOT call delivery.refresh_if_stale() itself - see _run_loop,
+    which triggers that at most once per cycle so the multi-tf loop's own
+    calls to this function (see _scan_one_multi_tf) never trigger a
+    second, redundant network attempt."""
+    require = settings.REQUIRE_DELIVERY_AGREEMENT
+    threshold = settings.DELIVERY_THRESHOLD_PCT
+    for r in results:
+        symbol = r.get("symbol")
+        if r.get("error") or not symbol:
+            r["delivery_pct"] = None
+            r["delivery_date"] = None
+            r["delivery_agrees"] = None
+            continue
+        pct, date = delivery.get_delivery_pct(symbol)
+        r["delivery_pct"] = pct
+        r["delivery_date"] = date
+        r["delivery_agrees"] = True if pct is None else (pct >= threshold)
+        if require and r.get("signal_confirmed") and not r["delivery_agrees"]:
             r["signal_confirmed"] = False
 
 
@@ -619,12 +693,24 @@ def _run_loop():
                                        if r.get("symbol") in SYMBOL_SECTOR_MAP}
                     sector_directions = fetch_sector_directions(kite, sectors_needed, settings.TIMEFRAME) \
                         if sectors_needed else {}
+                    # Once per cycle, not once per result - see delivery.
+                    # refresh_if_stale's own docstring for why this is
+                    # cheap to call unconditionally (it no-ops unless the
+                    # cache is genuinely stale AND enough time has passed
+                    # since the last attempt).
+                    try:
+                        delivery.refresh_if_stale(now_ist())
+                    except Exception:  # noqa: BLE001 - delivery refresh must never break scanning
+                        log.exception("Delivery data refresh failed")
                     with _state_lock:
                         _apply_param_tier(results)
                         _apply_index_filter(results, index_direction)
                         _apply_volume_flow_filter(results)
                         _apply_candle_pattern_filter(results)
                         _apply_macd_hist_filter(results)
+                        _apply_big_candle_filter(results)
+                        _apply_strong_close_filter(results)
+                        _apply_delivery_filter(results)
                         _apply_sector_filter(results, sector_directions)
                         breadth = _compute_breadth(results)
                         _apply_breadth_filter(results, breadth)
@@ -830,6 +916,9 @@ def _scan_one_multi_tf(kite, tf):
     _apply_volume_flow_filter(results)
     _apply_candle_pattern_filter(results)
     _apply_macd_hist_filter(results)
+    _apply_big_candle_filter(results)
+    _apply_strong_close_filter(results)
+    _apply_delivery_filter(results)  # cache lookup only - see that function's docstring, no network call here
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")

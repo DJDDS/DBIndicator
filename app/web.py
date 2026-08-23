@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, indicators, journal, kite_auth, scanner
+from . import alerts, backtest, background, config, delivery, indicators, journal, kite_auth, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -105,6 +105,7 @@ def dashboard():
         atr_target_multiplier=settings.ATR_TARGET_MULTIPLIER,
         risk_budget=journal.get_risk_budget_state(),
         multi_tf=background.get_multi_tf_state(),
+        vol_contraction_lookback=settings.VOL_CONTRACTION_LOOKBACK,
     )
 
 
@@ -195,6 +196,14 @@ def settings_page():
             "RISK_PER_TRADE_PCT": form.get("risk_per_trade_pct", settings.RISK_PER_TRADE_PCT),
             "MAX_DAILY_RISK_PCT": form.get("max_daily_risk_pct", settings.MAX_DAILY_RISK_PCT),
             "MAX_CONCURRENT_POSITIONS": form.get("max_concurrent_positions", settings.MAX_CONCURRENT_POSITIONS),
+            "VOL_CONTRACTION_LOOKBACK": form.get("vol_contraction_lookback", settings.VOL_CONTRACTION_LOOKBACK),
+            "VOL_CONTRACTION_THRESHOLD_PCT": form.get("vol_contraction_threshold_pct", settings.VOL_CONTRACTION_THRESHOLD_PCT),
+            "BIG_CANDLE_ATR_MULTIPLIER": form.get("big_candle_atr_multiplier", settings.BIG_CANDLE_ATR_MULTIPLIER),
+            "STRONG_CLOSE_THRESHOLD_PCT": form.get("strong_close_threshold_pct", settings.STRONG_CLOSE_THRESHOLD_PCT),
+            "REQUIRE_BIG_CANDLE_AGREEMENT": form.get("require_big_candle_agreement") == "on",
+            "REQUIRE_STRONG_CLOSE_AGREEMENT": form.get("require_strong_close_agreement") == "on",
+            "REQUIRE_DELIVERY_AGREEMENT": form.get("require_delivery_agreement") == "on",
+            "DELIVERY_THRESHOLD_PCT": form.get("delivery_threshold_pct", settings.DELIVERY_THRESHOLD_PCT),
         }
         errors = settings.update(**payload)
         saved = not errors
@@ -211,6 +220,7 @@ def settings_page():
         logged_in=kite_auth.is_logged_in_today(),
         telegram_enabled=alerts.telegram_enabled(),
         telegram_token_set=bool(config.TELEGRAM_BOT_TOKEN),
+        delivery_status=delivery.get_status(),
     )
 
 

@@ -109,6 +109,12 @@ CMF_LENGTH = 20
 # an uptrend - same candle shape, opposite meaning depending on context.
 CANDLE_TREND_LOOKBACK = 5
 
+# How many bars back to look for the most recent qualifying "big candle"
+# (range-expansion bar, see _compute_big_candle below) when deciding
+# big_candle_recent_*/big_candle_continuation in compute_signal - a fixed
+# constant, not user-tunable, same reasoning as CANDLE_TREND_LOOKBACK above.
+BIG_CANDLE_LOOKBACK = 15
+
 OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9:15 IST open
                               # are excluded from signal_confirmed/in_opening_window below -
                               # these candles are usually the most gap-driven and noisy of the day
@@ -390,6 +396,49 @@ def _compute_candle_pattern(df: pd.DataFrame):
     return direction, name
 
 
+def _compute_big_candle(df: pd.DataFrame, atr_series: pd.Series, atr_multiplier: float, strong_close_threshold_pct: float):
+    """Vectorized "range expansion" / big-candle read - alongside
+    _compute_candle_pattern above, this is one of the app's genuinely
+    ANTICIPATORY reads rather than a confirmatory one: RSI/MACD/EMA-BB/
+    CMF are all smoothed derivatives that tell you a move is already
+    under way. A bar counts as a "big candle" when its own true range is
+    at least atr_multiplier x that bar's OWN ATR (a real range EXPANSION,
+    not just an average day) AND its close sits in the extreme top or
+    bottom strong_close_threshold_pct% of its own high-low range (real
+    directional conviction, not just a wide, indecisive bar with no clear
+    winner - that combination gets no opinion at all, see below).
+
+    Returns (direction, level, close_position) - three Series aligned to
+    df's index:
+      - direction: "Bullish"/"Bearish"/None per bar (None for a normal
+        bar, OR a wide-but-indecisive one that closed mid-range).
+      - level: that bar's own high (Bullish) or low (Bearish), NaN
+        otherwise - the price a LATER bar would need to clear to count as
+        continuation (see compute_signal's big_candle_recent_*/
+        big_candle_continuation, which look this series up over a short
+        trailing window rather than just the latest bar).
+      - close_position: 0-1 for EVERY bar regardless of whether it was a
+        big candle (0 = closed at the low, 1 = closed at the high; NaN
+        for a doji where high == low) - reused by compute_signal's
+        strong_close_agrees, a separate BTST-oriented "closed strong in
+        its own direction" read that doesn't require range expansion at
+        all, just an extreme close."""
+    high, low, close = df["high"], df["low"], df["close"]
+    rng = high - low
+    close_position = (close - low) / rng.replace(0, np.nan)
+    range_expansion = atr_series.notna() & (atr_series > 0) & (rng >= atr_multiplier * atr_series)
+    hi_cut = strong_close_threshold_pct / 100.0
+    lo_cut = 1 - hi_cut
+    bullish = range_expansion & close_position.notna() & (close_position >= hi_cut)
+    bearish = range_expansion & close_position.notna() & (close_position <= lo_cut)
+    direction = pd.Series(
+        np.where(bullish, "Bullish", np.where(bearish, "Bearish", None)),
+        index=df.index, dtype=object,
+    )
+    level = pd.Series(np.where(bullish, high, np.where(bearish, low, np.nan)), index=df.index)
+    return direction, level, close_position
+
+
 def session_vwap(df: pd.DataFrame, timeframe: str):
     """Volume-weighted average price for just today's candles (resets
     every session, like a broker terminal's VWAP) - not meaningful on
@@ -538,6 +587,15 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     cmf = _compute_cmf(df, CMF_LENGTH)
     candle_direction, candle_pattern_name = _compute_candle_pattern(df)
 
+    # ATR computed once here (rather than separately inside compute_signal,
+    # which used to recompute it locally) so _compute_big_candle below and
+    # compute_signal's own stop/target/position-size block always read the
+    # exact same series - see "atr" in the returned dict.
+    atr_series = compute_atr(df, settings.ATR_LENGTH)
+    big_candle_direction, big_candle_level, close_position = _compute_big_candle(
+        df, atr_series, settings.BIG_CANDLE_ATR_MULTIPLIER, settings.STRONG_CLOSE_THRESHOLD_PCT
+    )
+
     rsi_up, rsi_dn = _cross_up(rsi_line, rsi_smooth), _cross_down(rsi_line, rsi_smooth)
     macd_up, macd_dn = _cross_up(macd_line, signal_line), _cross_down(macd_line, signal_line)
     ema_up, ema_dn = _cross_up(ema9, bb_mid), _cross_down(ema9, bb_mid)
@@ -557,6 +615,10 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
         "cmf": cmf,
         "candle_direction": candle_direction,
         "candle_pattern_name": candle_pattern_name,
+        "atr": atr_series,
+        "big_candle_direction": big_candle_direction,
+        "big_candle_level": big_candle_level,
+        "close_position": close_position,
         "rsi_up": rsi_up, "rsi_dn": rsi_dn,
         "macd_up": macd_up, "macd_dn": macd_dn,
         "ema_up": ema_up, "ema_dn": ema_dn,
@@ -739,6 +801,96 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         macd_hist_rising if direction == "Bullish" else not macd_hist_rising
     )
 
+    # close_position/nr7/bb_width_percentile/vol_contracting/big_candle*:
+    # the app's ANTICIPATORY reads (see _compute_big_candle above) -
+    # genuinely different in kind from RSI/MACD/EMA-BB/CMF (all
+    # confirmatory - they tell you a move already started) and even from
+    # candle_agrees (a multi-bar SHAPE read, still after-the-fact). Three
+    # independent ideas, grouped here since they all reuse the same
+    # close_position/atr series from compute_series:
+    #
+    #   - vol_contracting/bb_width_percentile/nr7: is this stock currently
+    #     COILING - Bollinger Band width near a multi-week low relative to
+    #     its own recent history (settings.VOL_CONTRACTION_LOOKBACK bars,
+    #     VOL_CONTRACTION_THRESHOLD_PCT percentile), or today's range the
+    #     narrowest of the last 7 bars (classic NR7). Tight consolidation
+    #     has historically preceded outsized breakouts more often than an
+    #     already-wide range does (Minervini's Volatility Contraction
+    #     Pattern). No inherent direction of its own (a coiled stock can
+    #     break either way), so it never feeds `aligned`/signal_confirmed -
+    #     shown as a "worth watching" badge only.
+    #   - big_candle/big_candle_direction/big_candle_level (THIS bar) and
+    #     big_candle_recent_*/big_candle_continuation (the most recent
+    #     qualifying range-expansion bar within BIG_CANDLE_LOOKBACK bars,
+    #     which may be this bar itself at bars_ago=0): big_candle_
+    #     continuation is only meaningful for a PRIOR bar (bars_ago > 0) -
+    #     has price since gone on to actually clear that bar's own
+    #     high/low in its own direction, the "does yesterday's big candle
+    #     level hold up" read that matters for a BTST/swing continuation
+    #     decision. big_candle_agrees follows the same "None means agree"
+    #     convention as every other *_agrees field above - opt-in only,
+    #     via settings.REQUIRE_BIG_CANDLE_AGREEMENT in background.py's
+    #     _apply_big_candle_filter.
+    #   - strong_close_agrees: a simpler, BTST-oriented read - did THIS
+    #     bar's own close land in the extreme top/bottom
+    #     settings.STRONG_CLOSE_THRESHOLD_PCT% of its own high-low range,
+    #     in this row's own direction - real buyer/seller conviction into
+    #     the close, independent of range expansion (doesn't require an
+    #     unusually wide bar, just a decisive close). Opt-in, via
+    #     settings.REQUIRE_STRONG_CLOSE_AGREEMENT in background.py's
+    #     _apply_strong_close_filter.
+    close_position_raw = series["close_position"].iloc[i]
+    close_position_pct = round(float(close_position_raw) * 100, 1) if pd.notna(close_position_raw) else None
+
+    bb_width_series = (bb_upper - bb_lower) / bb_mid.replace(0, np.nan)
+    bw_now = bb_width_series.iloc[i]
+    bb_width_percentile = None
+    vol_contracting = False
+    if pd.notna(bw_now):
+        window = settings.VOL_CONTRACTION_LOOKBACK
+        recent = bb_width_series.iloc[max(0, i - window + 1): i + 1].dropna()
+        if len(recent) >= 5:
+            bb_width_percentile = round(float((recent <= bw_now).mean() * 100), 1)
+            vol_contracting = bb_width_percentile <= settings.VOL_CONTRACTION_THRESHOLD_PCT
+
+    range_series = series["df"]["high"] - series["df"]["low"]
+    nr7 = bool(i >= 6 and range_series.iloc[i] == range_series.iloc[i - 6: i + 1].min())
+
+    big_candle_dir_series = series["big_candle_direction"]
+    big_candle_level_series = series["big_candle_level"]
+    big_candle_direction_val = big_candle_dir_series.iloc[i]
+    big_candle = big_candle_direction_val is not None
+    big_candle_level = round(float(big_candle_level_series.iloc[i]), 2) if big_candle else None
+
+    big_candle_recent_direction = None
+    big_candle_recent_level = None
+    big_candle_recent_bars_ago = None
+    start = max(0, i - BIG_CANDLE_LOOKBACK)
+    dir_slice = big_candle_dir_series.iloc[start:i + 1]
+    qualifying = dir_slice[dir_slice.notna()]
+    if len(qualifying):
+        j = df.index.get_loc(qualifying.index[-1])
+        big_candle_recent_direction = qualifying.iloc[-1]
+        big_candle_recent_level = round(float(big_candle_level_series.iloc[j]), 2)
+        big_candle_recent_bars_ago = i - j
+
+    big_candle_continuation = None
+    if big_candle_recent_direction is not None and big_candle_recent_bars_ago:
+        if big_candle_recent_direction == "Bullish":
+            big_candle_continuation = bool(close.iloc[i] > big_candle_recent_level)
+        else:
+            big_candle_continuation = bool(close.iloc[i] < big_candle_recent_level)
+
+    big_candle_agrees = True if big_candle_recent_direction is None else (big_candle_recent_direction == direction)
+
+    strong_close_agrees = True
+    if close_position_pct is not None:
+        threshold = settings.STRONG_CLOSE_THRESHOLD_PCT
+        if direction == "Bullish":
+            strong_close_agrees = close_position_pct >= threshold
+        else:
+            strong_close_agrees = close_position_pct <= (100 - threshold)
+
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of
     # them by construction, plus Relative Volume as an independent 4th).
@@ -763,7 +915,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     # `aligned`/signal_confirmed and this app never places an order.
     # None whenever there isn't enough history yet for ATR to have
     # warmed up (same convention as vwap/adx above).
-    atr_series = compute_atr(df, settings.ATR_LENGTH)
+    atr_series = series["atr"]  # computed once in compute_series - see _compute_big_candle above
     atr_raw = atr_series.iloc[i]
     atr_value = round(float(atr_raw), 2) if pd.notna(atr_raw) and atr_raw > 0 else None
     stop = target = risk_reward = None
@@ -832,6 +984,19 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "macd_hist": macd_hist_value,
         "macd_hist_rising": macd_hist_rising,
         "macd_hist_agrees": macd_hist_agrees,
+        "close_position_pct": close_position_pct,
+        "nr7": nr7,
+        "bb_width_percentile": bb_width_percentile,
+        "vol_contracting": vol_contracting,
+        "big_candle": big_candle,
+        "big_candle_direction": big_candle_direction_val,
+        "big_candle_level": big_candle_level,
+        "big_candle_recent_direction": big_candle_recent_direction,
+        "big_candle_recent_level": big_candle_recent_level,
+        "big_candle_recent_bars_ago": big_candle_recent_bars_ago,
+        "big_candle_continuation": big_candle_continuation,
+        "big_candle_agrees": big_candle_agrees,
+        "strong_close_agrees": strong_close_agrees,
         "adx": adx_value,
         "regime": regime,
         "vol_threshold_effective": effective_vol_threshold,

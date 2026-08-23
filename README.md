@@ -140,6 +140,49 @@ than a restatement. Off by default; turn on "Require MACD histogram
 momentum agreement" on the Settings page to have a row whose momentum is
 fading against its own direction lose its Confirmed status.
 
+## Anticipatory signals (catch a big move before it happens)
+
+RSI/MACD/EMA-BB/CMF are all confirmatory — smoothed derivatives of price
+that tell you a move is already under way. These four are genuinely
+ANTICIPATORY instead, aimed at BTST/swing trades and catching a big move
+early rather than after the fact:
+
+- **🎯 Coiling / NR7** (under Close, display only) — is this stock's
+  Bollinger Band width currently near a multi-week low relative to its
+  own recent history (the classic Minervini Volatility Contraction
+  Pattern), or is today's range the narrowest of the last 7 bars? Tight
+  consolidation has historically preceded outsized breakouts more often
+  than an already-wide range — but a coiled stock can break either
+  direction, so this is a "worth watching" badge, not a directional gate.
+- **💥 Big candle / range expansion** — a bar whose own true range is a
+  real multiple of its ATR AND whose close lands in the extreme top/bottom
+  of its own high-low range (a real range expansion with real conviction,
+  not just a wide indecisive bar). The badge shows the level that bar set
+  and whether price has since continued through it (✓) — the "does
+  yesterday's big candle hold up" read that matters for a BTST/swing
+  continuation decision. Turn on "Require big-candle agreement" on the
+  Settings page to gate Confirmed status on it.
+- **Close@N%** — where today's close landed within its own high-low range
+  (100% = closed at the high), independent of range size — the classic
+  BTST "closed with conviction" checklist item. Turn on "Require
+  strong-close agreement" to gate on it.
+- **Deliv N%** — NSE's delivery percentage (real overnight conviction vs.
+  intraday churn), pulled from NSE's own public bhavcopy archives (Kite
+  Connect has no delivery data at all). **Read this carefully**: it is
+  never a same-day-live number — NSE only publishes a session's own
+  figure after that session's close, so it's always the most recently
+  PUBLISHED reading, shown with its own date. It may also never appear at
+  all: NSE is known to block requests from some cloud/datacenter hosts,
+  and this app degrades gracefully (delivery data just reads "unavailable"
+  everywhere) rather than breaking anything if that happens. Check the
+  Settings page for a live status line showing whether it's actually
+  getting through from wherever this is deployed.
+
+Big-candle and strong-close are also now selectable parameters on the
+[Backtest](#) page (alongside RSI/MACD/EMA-BB/etc.) — the actual way to
+empirically check, on your own watchlist history, whether these two
+precede bigger moves than the confirmatory indicators do.
+
 ## Risk management (position sizing &amp; daily limits)
 
 Your own research notes (see `NEXT_HORIZON_RESEARCH.md`) flagged this as

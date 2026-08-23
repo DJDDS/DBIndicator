@@ -663,6 +663,20 @@
               {% endif %}
             </div>
             {% endif %}
+            {% if r.vol_contracting or r.nr7 or (r.big_candle_recent_direction is defined and r.big_candle_recent_direction) or (r.close_position_pct is defined and r.close_position_pct is not none) or (r.delivery_pct is defined and r.delivery_pct is not none) %}
+            <div class="atr-risk">
+              {% if r.vol_contracting %}<span style="color:var(--accent); margin-right:6px;" title="Bollinger Band width is at the {{ r.bb_width_percentile }}th percentile of its own last {{ vol_contraction_lookback }} bars - a tight, coiled range that has historically preceded bigger breakouts more often than an already-wide one (Volatility Contraction Pattern)">🎯 Coiling</span>{% endif %}
+              {% if r.nr7 %}<span style="margin-right:6px;" title="Today's high-low range is the narrowest of the last 7 bars">NR7</span>{% endif %}
+              {% if r.big_candle_recent_direction is defined and r.big_candle_recent_direction %}
+              <span class="{{ 'bull' if r.big_candle_recent_direction == 'Bullish' else 'bear' }}" style="margin-right:6px;"
+                    title="{% if r.big_candle_recent_bars_ago == 0 %}This bar is a range-expansion big candle{% else %}Big candle {{ r.big_candle_recent_bars_ago }} bar(s) ago{% endif %}, level {{ r.big_candle_recent_level }}.{% if r.big_candle_continuation is not none %} {{ 'Price has continued through it.' if r.big_candle_continuation else 'Not yet cleared.' }}{% endif %}{% if r.big_candle_agrees is defined and r.big_candle_agrees == false %} Disagrees with this row's own direction.{% endif %}">
+                💥{{ '▲' if r.big_candle_recent_direction == 'Bullish' else '▼' }} {{ r.big_candle_recent_level }}{% if r.big_candle_continuation %} ✓{% endif %}
+              </span>
+              {% endif %}
+              {% if r.close_position_pct is defined and r.close_position_pct is not none %}<span style="margin-right:6px;" title="Close landed at {{ r.close_position_pct }}% of today's own high-low range (100% = closed at the high){% if r.strong_close_agrees is defined and r.strong_close_agrees == false %} - not extreme enough to agree with this row's own direction{% endif %}">Close@{{ r.close_position_pct }}%</span>{% endif %}
+              {% if r.delivery_pct is defined and r.delivery_pct is not none %}<span title="NSE delivery %: {{ r.delivery_pct }} (as of {{ r.delivery_date }}) - most recently PUBLISHED reading, never a live intraday number{% if r.delivery_agrees is defined and r.delivery_agrees == false %} - below your configured threshold{% endif %}">Deliv {{ r.delivery_pct }}%</span>{% endif %}
+            </div>
+            {% endif %}
           </td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
           <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">
@@ -821,8 +835,19 @@
     <span class="bull">▲</span>/<span class="bear">▼</span> badge next to MACD shows whether the histogram itself
     is rising or falling vs. the previous bar - momentum accelerating or fading, genuinely different from
     macd_line vs. signal_line (which just says which side of zero it's on); turn on "Require MACD histogram
-    momentum agreement" on the Settings page to have a fading-momentum row lose Confirmed status. Signals are
-    directional input, not investment advice.
+    momentum agreement" on the Settings page to have a fading-momentum row lose Confirmed status. Under Close, a
+    <span style="color:var(--accent);">🎯 Coiling</span> badge means this stock's Bollinger Band width is near a
+    multi-week low relative to its own history (NR7 = today's range is the narrowest of the last 7 bars) - tight,
+    ANTICIPATORY reads (unlike RSI/MACD/EMA-BB/CMF, which are all confirmatory) that have historically preceded
+    bigger breakouts more often than an already-wide range. A <span class="bull">💥▲</span>/<span class="bear">💥▼</span>
+    badge is a "big candle" - a bar whose own range was a real multiple of its ATR AND closed near its own
+    high/low - with the level it set and whether price has since continued through it (✓); turn on "Require
+    big-candle agreement" on the Settings page to gate on it. <strong>Close@N%</strong> shows where the close
+    landed within today's own high-low range (100% = at the high) - the BTST "closed with conviction" read; turn
+    on "Require strong-close agreement" to gate on it. <strong>Deliv N%</strong> is NSE's delivery percentage
+    (real overnight conviction vs. intraday churn) as of its most recently PUBLISHED session - never a live
+    number, and it may never appear at all if NSE is blocking this deployment's requests (see the Settings page
+    for status). Signals are directional input, not investment advice.
   </div>
 </div>
 <script>

@@ -101,6 +101,8 @@ PARAM_DEFS = [
     {"id": "rel_volume", "label": "Relative Volume above your configured threshold (20-bar avg, Settings page) - confirmation only, combine with a directional parameter"},
     {"id": "cmf_flow", "label": "Chaikin Money Flow sign (directional volume - Bullish if recent volume skewed toward up-closes, Bearish if down-closes; distinct from the magnitude-only Relative Volume above - see PARAMETER_ANALYSIS_2.md Finding #2)"},
     {"id": "candle_pattern", "label": "Candlestick pattern (Engulfing / Hammer-family / Morning-Evening Star - reads the raw shape of recent price action, not a smoothed derivative like the others above - see NEXT_HORIZON_RESEARCH.md)"},
+    {"id": "big_candle_pattern", "label": "Big candle / range expansion (a bar whose own range is a real multiple of its ATR AND closes near its own high/low - an ANTICIPATORY read, not a smoothed derivative like RSI/MACD/EMA-BB above - see indicators._compute_big_candle)"},
+    {"id": "strong_close", "label": "Strong close in range (close in the extreme top/bottom % of the bar's own high-low range, regardless of range size - the BTST 'closed with conviction' read)"},
 ]
 PARAM_IDS = [p["id"] for p in PARAM_DEFS]
 DEFAULT_PARAMS = ("rsi_cross", "macd_cross", "ema_bb_cross")  # the original 3-indicator rule
@@ -316,6 +318,28 @@ def _param_bull_bear(series: dict, param_id: str, rel_volume_hot: pd.Series = No
         # parameter in this function.
         cd = series["candle_direction"]
         return cd == "Bullish", cd == "Bearish"
+    if param_id == "big_candle_pattern":
+        # Directional, like candle_pattern above - reused straight from
+        # compute_series' own "big_candle_direction" column (see
+        # indicators._compute_big_candle) rather than recomputed here,
+        # same "reuse compute_series" convention as every other
+        # parameter in this function. Genuinely different information
+        # from candle_pattern: this is a SINGLE-bar range-expansion +
+        # extreme-close read (ATR-relative), not a multi-bar shape.
+        bcd = series["big_candle_direction"]
+        return bcd == "Bullish", bcd == "Bearish"
+    if param_id == "strong_close":
+        # Directional, like big_candle_pattern above - reused from
+        # compute_series' own "close_position" column (0-1, see
+        # indicators._compute_big_candle), tested against the SAME
+        # settings.STRONG_CLOSE_THRESHOLD_PCT the live dashboard's
+        # strong_close_agrees field uses - but WITHOUT big_candle_
+        # pattern's range-expansion requirement, so this fires on any
+        # extreme close, wide bar or not.
+        close_position = series["close_position"]
+        hi_cut = settings.STRONG_CLOSE_THRESHOLD_PCT / 100.0
+        lo_cut = 1 - hi_cut
+        return close_position >= hi_cut, close_position <= lo_cut
     raise ValueError(f"unknown backtest parameter: {param_id}")
 
 

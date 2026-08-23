@@ -66,6 +66,13 @@ SCALP_RESULTS_FILE = os.getenv("SCALP_RESULTS_FILE", "scalp_results.json")
 # own state/persistence file rather than sharing SCAN_RESULTS_FILE.
 MULTI_TF_RESULTS_FILE = os.getenv("MULTI_TF_RESULTS_FILE", "multi_tf_results.json")
 
+# Where the NSE delivery-percentage cache is persisted (also gitignored) -
+# see app/delivery.py. Refreshed at most once per trading day (the
+# underlying NSE bhavcopy file itself is only published once, after that
+# day's own close), so a redeploy shouldn't have to re-fetch it from
+# scratch if the day's data was already pulled successfully.
+DELIVERY_DATA_FILE = os.getenv("DELIVERY_DATA_FILE", "delivery_data.json")
+
 # Where the forward-testing signal journal's logged paper trades are
 # persisted (also gitignored) - same restart-resilience reasoning as
 # SCAN_RESULTS_FILE above, kept in its own file since journal.py owns an
@@ -143,6 +150,10 @@ _TUNABLE_FIELDS = [
     "REQUIRE_MACD_HIST_AGREEMENT",
     "ATR_LENGTH", "ATR_STOP_MULTIPLIER", "ATR_TARGET_MULTIPLIER",
     "ACCOUNT_CAPITAL", "RISK_PER_TRADE_PCT", "MAX_DAILY_RISK_PCT", "MAX_CONCURRENT_POSITIONS",
+    "VOL_CONTRACTION_LOOKBACK", "VOL_CONTRACTION_THRESHOLD_PCT",
+    "BIG_CANDLE_ATR_MULTIPLIER", "STRONG_CLOSE_THRESHOLD_PCT",
+    "REQUIRE_BIG_CANDLE_AGREEMENT", "REQUIRE_STRONG_CLOSE_AGREEMENT",
+    "REQUIRE_DELIVERY_AGREEMENT", "DELIVERY_THRESHOLD_PCT",
 ]
 
 
@@ -285,6 +296,65 @@ def _env_defaults():
         "RISK_PER_TRADE_PCT": float(os.getenv("RISK_PER_TRADE_PCT", 1.0)),
         "MAX_DAILY_RISK_PCT": float(os.getenv("MAX_DAILY_RISK_PCT", 3.0)),
         "MAX_CONCURRENT_POSITIONS": int(os.getenv("MAX_CONCURRENT_POSITIONS", 5)),
+        # Volatility-contraction ("coiling") read (see indicators.
+        # compute_signal's vol_contracting/bb_width_percentile/nr7) -
+        # genuinely ANTICIPATORY rather than confirmatory: is this
+        # stock's Bollinger Band width currently near a multi-week LOW
+        # relative to its own recent history, the classic Minervini
+        # Volatility Contraction Pattern / NR7 setup that has
+        # historically preceded outsized breakouts more often than an
+        # already-wide range does. VOL_CONTRACTION_LOOKBACK is how many
+        # bars of recent history to rank the current width against;
+        # VOL_CONTRACTION_THRESHOLD_PCT is how low a percentile counts as
+        # "contracting" (default 20 = bottom 20% of the lookback window).
+        # Display/badge only - no inherent direction of its own, so it
+        # never gates signal_confirmed.
+        "VOL_CONTRACTION_LOOKBACK": int(os.getenv("VOL_CONTRACTION_LOOKBACK", 50)),
+        "VOL_CONTRACTION_THRESHOLD_PCT": float(os.getenv("VOL_CONTRACTION_THRESHOLD_PCT", 20.0)),
+        # Range-expansion "big candle" read (see indicators.
+        # compute_signal's big_candle/big_candle_direction/big_candle_
+        # level/big_candle_recent_*/big_candle_continuation, and
+        # _compute_big_candle) - the other ANTICIPATORY read, the mirror
+        # image of volatility contraction above: a bar whose own true
+        # range is at least BIG_CANDLE_ATR_MULTIPLIER x its own ATR AND
+        # whose close lands in the extreme top/bottom
+        # STRONG_CLOSE_THRESHOLD_PCT% of its own high-low range - real
+        # range expansion with real directional conviction, not just a
+        # wide indecisive bar. STRONG_CLOSE_THRESHOLD_PCT is shared with
+        # the simpler strong_close_agrees read below (same "extreme
+        # close" definition, just without requiring range expansion).
+        "BIG_CANDLE_ATR_MULTIPLIER": float(os.getenv("BIG_CANDLE_ATR_MULTIPLIER", 1.6)),
+        "STRONG_CLOSE_THRESHOLD_PCT": float(os.getenv("STRONG_CLOSE_THRESHOLD_PCT", 80.0)),
+        # When on, a row whose most recent qualifying big candle (within
+        # BIG_CANDLE_LOOKBACK bars) disagrees with this row's own
+        # direction loses its "Confirmed" status (see background.py's
+        # _apply_big_candle_filter). Off by default, same reasoning as
+        # every other REQUIRE_* gate above.
+        "REQUIRE_BIG_CANDLE_AGREEMENT": os.getenv("REQUIRE_BIG_CANDLE_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # When on, a row whose own close did NOT land in the extreme
+        # top/bottom STRONG_CLOSE_THRESHOLD_PCT% of its own range, in its
+        # own direction, loses its "Confirmed" status (see background.py's
+        # _apply_strong_close_filter) - a BTST-oriented "closed with real
+        # conviction" gate. Off by default, same reasoning as every other
+        # REQUIRE_* gate above.
+        "REQUIRE_STRONG_CLOSE_AGREEMENT": os.getenv("REQUIRE_STRONG_CLOSE_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        # NSE delivery-percentage read (see app/delivery.py and
+        # background.py's _apply_delivery_filter) - what % of a symbol's
+        # traded volume actually resulted in delivery (real overnight
+        # conviction) rather than intraday squaring-off, as of the most
+        # RECENTLY PUBLISHED NSE bhavcopy (see delivery.py's own
+        # docstring for the timing/reliability caveats - this is never a
+        # same-day-live number, and NSE is known to block requests from
+        # some cloud hosts). DELIVERY_THRESHOLD_PCT is the minimum
+        # reading (an absolute floor, not stock-relative - a known
+        # simplification) to count as "agreeing". When
+        # REQUIRE_DELIVERY_AGREEMENT is on, a row with a delivery reading
+        # below threshold loses its "Confirmed" status; a symbol with no
+        # delivery data available (fetch blocked/not published yet) is
+        # never blocked by this. Off by default, same reasoning as every
+        # other REQUIRE_* gate above.
+        "REQUIRE_DELIVERY_AGREEMENT": os.getenv("REQUIRE_DELIVERY_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        "DELIVERY_THRESHOLD_PCT": float(os.getenv("DELIVERY_THRESHOLD_PCT", 30.0)),
     }
 
 
@@ -509,6 +579,72 @@ class Settings:
                 clean["MAX_CONCURRENT_POSITIONS"] = mcp
             except (TypeError, ValueError):
                 errors.append("Max concurrent positions must be a whole number of at least 1.")
+
+        if "VOL_CONTRACTION_LOOKBACK" in kwargs:
+            try:
+                vcl = int(kwargs["VOL_CONTRACTION_LOOKBACK"])
+                if vcl < 5:
+                    raise ValueError
+                clean["VOL_CONTRACTION_LOOKBACK"] = vcl
+            except (TypeError, ValueError):
+                errors.append("Volatility-contraction lookback must be a whole number of at least 5.")
+
+        if "VOL_CONTRACTION_THRESHOLD_PCT" in kwargs:
+            try:
+                vct = float(kwargs["VOL_CONTRACTION_THRESHOLD_PCT"])
+                if not (0 < vct < 100):
+                    raise ValueError
+                clean["VOL_CONTRACTION_THRESHOLD_PCT"] = vct
+            except (TypeError, ValueError):
+                errors.append("Volatility-contraction threshold % must be a number between 0 and 100.")
+
+        if "BIG_CANDLE_ATR_MULTIPLIER" in kwargs:
+            try:
+                bcm = float(kwargs["BIG_CANDLE_ATR_MULTIPLIER"])
+                if bcm <= 0:
+                    raise ValueError
+                clean["BIG_CANDLE_ATR_MULTIPLIER"] = bcm
+            except (TypeError, ValueError):
+                errors.append("Big-candle ATR multiplier must be a positive number.")
+
+        if "STRONG_CLOSE_THRESHOLD_PCT" in kwargs:
+            try:
+                sct = float(kwargs["STRONG_CLOSE_THRESHOLD_PCT"])
+                if not (50 <= sct <= 100):
+                    raise ValueError
+                clean["STRONG_CLOSE_THRESHOLD_PCT"] = sct
+            except (TypeError, ValueError):
+                errors.append("Strong-close threshold % must be a number between 50 and 100.")
+
+        if "REQUIRE_BIG_CANDLE_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_BIG_CANDLE_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_BIG_CANDLE_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_BIG_CANDLE_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_STRONG_CLOSE_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_STRONG_CLOSE_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_STRONG_CLOSE_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_STRONG_CLOSE_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_DELIVERY_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_DELIVERY_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_DELIVERY_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_DELIVERY_AGREEMENT"] = bool(val)
+
+        if "DELIVERY_THRESHOLD_PCT" in kwargs:
+            try:
+                dtp = float(kwargs["DELIVERY_THRESHOLD_PCT"])
+                if not (0 < dtp < 100):
+                    raise ValueError
+                clean["DELIVERY_THRESHOLD_PCT"] = dtp
+            except (TypeError, ValueError):
+                errors.append("Delivery threshold % must be a number between 0 and 100.")
 
         if errors:
             return errors
