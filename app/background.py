@@ -127,6 +127,25 @@ def _apply_candle_pattern_filter(results):
             r["signal_confirmed"] = False
 
 
+def _apply_macd_hist_filter(results):
+    """Mutates each result dict in place: when settings.
+    REQUIRE_MACD_HIST_AGREEMENT is on, a row that already has
+    macd_hist_agrees=False (set by indicators.compute_signal - is the
+    MACD histogram growing in this row's own direction, i.e. momentum
+    accelerating rather than fading) also loses its signal_confirmed
+    status - same shape as _apply_volume_flow_filter/_apply_candle_
+    pattern_filter above. Off by default; macd_hist/macd_hist_rising/
+    macd_hist_agrees are always attached by compute_signal either way,
+    purely for display."""
+    if not settings.REQUIRE_MACD_HIST_AGREEMENT:
+        return
+    for r in results:
+        if r.get("error"):
+            continue
+        if r.get("signal_confirmed") and r.get("macd_hist_agrees") is False:
+            r["signal_confirmed"] = False
+
+
 def _apply_sector_filter(results, sector_directions):
     """Mutates each result dict in place, attaching sector (the NSE
     sectoral index this symbol maps to, or None if it isn't in
@@ -605,6 +624,7 @@ def _run_loop():
                         _apply_index_filter(results, index_direction)
                         _apply_volume_flow_filter(results)
                         _apply_candle_pattern_filter(results)
+                        _apply_macd_hist_filter(results)
                         _apply_sector_filter(results, sector_directions)
                         breadth = _compute_breadth(results)
                         _apply_breadth_filter(results, breadth)
@@ -809,6 +829,7 @@ def _scan_one_multi_tf(kite, tf):
     _apply_index_filter(results, index_direction)
     _apply_volume_flow_filter(results)
     _apply_candle_pattern_filter(results)
+    _apply_macd_hist_filter(results)
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")

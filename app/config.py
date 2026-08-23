@@ -140,6 +140,7 @@ _TUNABLE_FIELDS = [
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
     "REQUIRE_VOLUME_FLOW_AGREEMENT", "REQUIRE_CANDLE_PATTERN_AGREEMENT",
     "REQUIRE_SECTOR_AGREEMENT", "REQUIRE_BREADTH_AGREEMENT", "BREADTH_THRESHOLD_PCT",
+    "REQUIRE_MACD_HIST_AGREEMENT",
     "ATR_LENGTH", "ATR_STOP_MULTIPLIER", "ATR_TARGET_MULTIPLIER",
     "ACCOUNT_CAPITAL", "RISK_PER_TRADE_PCT", "MAX_DAILY_RISK_PCT", "MAX_CONCURRENT_POSITIONS",
 ]
@@ -236,6 +237,17 @@ def _env_defaults():
         # way (shown as a small badge, matching every other gate's
         # always-attached-for-display convention).
         "BREADTH_THRESHOLD_PCT": float(os.getenv("BREADTH_THRESHOLD_PCT", 30.0)),
+        # MACD histogram momentum filter (see indicators.compute_signal's
+        # macd_hist_rising/macd_hist_agrees): when on, a row whose MACD
+        # histogram is shrinking against its own direction (bullish but
+        # momentum fading, or bearish but momentum fading) loses its
+        # "Confirmed" status. Deliberately NOT "histogram > 0" - that's
+        # identical to the existing macd_line > signal_line check, so it
+        # would add zero new information; this reads the histogram's own
+        # slope (is the crossover accelerating or already running out of
+        # steam) instead. Off by default, same reasoning as every other
+        # REQUIRE_* gate above.
+        "REQUIRE_MACD_HIST_AGREEMENT": os.getenv("REQUIRE_MACD_HIST_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
         # ATR-based risk layer (see indicators.compute_signal's atr/stop/
         # target/risk_reward, and compute_atr - Wilder's Average True
         # Range, already used by scalper.py's own fixed-constant version
@@ -418,6 +430,13 @@ class Settings:
                 clean["REQUIRE_BREADTH_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_BREADTH_AGREEMENT"] = bool(val)
+
+        if "REQUIRE_MACD_HIST_AGREEMENT" in kwargs:
+            val = kwargs["REQUIRE_MACD_HIST_AGREEMENT"]
+            if isinstance(val, str):
+                clean["REQUIRE_MACD_HIST_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["REQUIRE_MACD_HIST_AGREEMENT"] = bool(val)
 
         if "BREADTH_THRESHOLD_PCT" in kwargs:
             try:

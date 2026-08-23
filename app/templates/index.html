@@ -665,7 +665,15 @@
             {% endif %}
           </td>
           <td data-sort="{{ r.rsi }}" class="{{ 'bull' if r.rsi_state == 'Bullish' else 'bear' }}">{{ r.rsi }} ({{ r.rsi_state }})</td>
-          <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">{{ r.macd_params }} ({{ r.macd_state }})</td>
+          <td data-sort="{{ r.macd_state }}" class="{{ 'bull' if r.macd_state == 'Bullish' else 'bear' }}">
+            {{ r.macd_params }} ({{ r.macd_state }})
+            {% if r.macd_hist_rising is defined and r.macd_hist_rising is not none %}
+            <span class="{{ 'bull' if r.macd_hist_rising else 'bear' }}" style="font-size:11px; margin-left:3px;"
+                  title="MACD histogram: {{ r.macd_hist }}, {{ 'rising' if r.macd_hist_rising else 'falling' }} vs the previous bar - momentum is {{ 'accelerating' if r.macd_hist_agrees else 'fading' }}{% if r.macd_hist_agrees is defined and r.macd_hist_agrees == false %} (disagrees with this row's own direction){% endif %}">
+              {{ '▲' if r.macd_hist_rising else '▼' }}
+            </span>
+            {% endif %}
+          </td>
           <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
           <td data-sort="{{ r.oi if r.oi is defined and r.oi is not none else '' }}" class="oi-cell-num">
             {% if r.oi is defined and r.oi is not none %}
@@ -809,8 +817,12 @@
     capital, set on the Settings page, if the SL is hit) - and the toolbar's <strong>Risk</strong> pill tracks
     trades YOU logged in the <a href="/journal">Signal Journal</a> today against your own daily-risk/position/
     sector-concentration limits. This app places no real orders and has no visibility into your broker account -
-    both are suggestions computed from numbers you configured, not live account data. Signals are directional
-    input, not investment advice.
+    both are suggestions computed from numbers you configured, not live account data. The small
+    <span class="bull">▲</span>/<span class="bear">▼</span> badge next to MACD shows whether the histogram itself
+    is rising or falling vs. the previous bar - momentum accelerating or fading, genuinely different from
+    macd_line vs. signal_line (which just says which side of zero it's on); turn on "Require MACD histogram
+    momentum agreement" on the Settings page to have a fading-momentum row lose Confirmed status. Signals are
+    directional input, not investment advice.
   </div>
 </div>
 <script>

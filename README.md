@@ -128,6 +128,18 @@ flow/higher-timeframe) — a real, walk-forward answer to "does turning
 this filter on actually help", from your own trading, not a generic
 claim.
 
+## MACD histogram momentum
+
+The MACD column now carries a small ▲/▼ badge showing whether the
+histogram itself is **rising or falling** vs. the previous bar — is the
+crossover's momentum accelerating or already fading. This is genuinely
+different from the existing macd_line-vs-signal-line check (which just
+says which side of zero the histogram is on — mathematically the same
+thing as "is the histogram positive"), so it's a new, second read rather
+than a restatement. Off by default; turn on "Require MACD histogram
+momentum agreement" on the Settings page to have a row whose momentum is
+fading against its own direction lose its Confirmed status.
+
 ## Risk management (position sizing &amp; daily limits)
 
 Your own research notes (see `NEXT_HORIZON_RESEARCH.md`) flagged this as

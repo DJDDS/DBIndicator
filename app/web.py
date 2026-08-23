@@ -184,6 +184,7 @@ def settings_page():
             "REQUIRE_INDEX_AGREEMENT": form.get("require_index_agreement") == "on",
             "REQUIRE_VOLUME_FLOW_AGREEMENT": form.get("require_volume_flow_agreement") == "on",
             "REQUIRE_CANDLE_PATTERN_AGREEMENT": form.get("require_candle_pattern_agreement") == "on",
+            "REQUIRE_MACD_HIST_AGREEMENT": form.get("require_macd_hist_agreement") == "on",
             "REQUIRE_SECTOR_AGREEMENT": form.get("require_sector_agreement") == "on",
             "REQUIRE_BREADTH_AGREEMENT": form.get("require_breadth_agreement") == "on",
             "BREADTH_THRESHOLD_PCT": form.get("breadth_threshold_pct", settings.BREADTH_THRESHOLD_PCT),

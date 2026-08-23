@@ -152,6 +152,13 @@
           <div class="hint">When on, a row whose direction is decisively against the watchlist's own current advance/decline split (below the threshold % to the right) loses its "Confirmed" status. This reads breadth from your WATCHLIST, not the full NSE market - Kite has no cheap full-market breadth feed. Off by default.</div>
         </div>
         <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="require_macd_hist_agreement" name="require_macd_hist_agreement" {% if s.REQUIRE_MACD_HIST_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            Require MACD histogram momentum agreement
+          </label>
+          <div class="hint">When on, a row whose MACD histogram is shrinking against its own direction (momentum fading rather than accelerating - not just which side of zero it's on, which macd_line/signal_line already covers) loses its "Confirmed" status. Off by default.</div>
+        </div>
+        <div>
           <label for="breadth_threshold_pct">Breadth threshold %</label>
           <input type="number" id="breadth_threshold_pct" name="breadth_threshold_pct" min="0" max="100" step="1" value="{{ s.BREADTH_THRESHOLD_PCT }}">
           <div class="hint">Minimum % of the watchlist's resolved rows that must share a row's own direction for breadth to "agree" with it. Only changes anything if Require breadth agreement (above) is on.</div>

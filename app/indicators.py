@@ -711,6 +711,34 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     candle_pattern_val = series["candle_pattern_name"].iloc[i]
     candle_agrees = True if candle_direction_val is None else (candle_direction_val == direction)
 
+    # macd_hist_rising/macd_hist_agrees: is the MACD histogram GROWING in
+    # the crossover's direction (momentum strengthening), not just which
+    # side of zero it's on. Deliberately NOT "hist > 0" - that's
+    # mathematically identical to macd_state's own macd_line > signal_line
+    # check (hist = macd_line - signal_line by construction, see
+    # compute_series), so it would carry zero new information. This is
+    # the histogram's own slope instead: for a Bullish row, today's bar
+    # taller than yesterday's means the bullish push is accelerating, not
+    # just barely holding above the signal line; for Bearish, the mirror
+    # (falling histogram = accelerating bearish push). None only when
+    # there's no previous bar to compare against (first bar of the
+    # fetched window) - treated as agreeing, same "never silently block
+    # on missing data" convention as every other *_agrees field above.
+    # Same NOT-folded-into-`aligned`-below reasoning as vol_flow_agrees
+    # above (PARAMETER_ANALYSIS_2.md Finding #2) - opt-in only, via
+    # settings.REQUIRE_MACD_HIST_AGREEMENT applied a layer up in
+    # background.py's _apply_macd_hist_filter.
+    macd_hist_series = series["macd_hist"]
+    hist_now = macd_hist_series.iloc[i]
+    hist_prev = macd_hist_series.iloc[i - 1] if i > 0 else None
+    macd_hist_value = round(float(hist_now), 3) if pd.notna(hist_now) else None
+    macd_hist_rising = None
+    if hist_prev is not None and pd.notna(hist_now) and pd.notna(hist_prev):
+        macd_hist_rising = bool(hist_now > hist_prev)
+    macd_hist_agrees = True if macd_hist_rising is None else (
+        macd_hist_rising if direction == "Bullish" else not macd_hist_rising
+    )
+
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of
     # them by construction, plus Relative Volume as an independent 4th).
@@ -801,6 +829,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "candle_pattern": candle_pattern_val,
         "candle_direction": candle_direction_val,
         "candle_agrees": candle_agrees,
+        "macd_hist": macd_hist_value,
+        "macd_hist_rising": macd_hist_rising,
+        "macd_hist_agrees": macd_hist_agrees,
         "adx": adx_value,
         "regime": regime,
         "vol_threshold_effective": effective_vol_threshold,
