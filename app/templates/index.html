@@ -76,7 +76,7 @@
   .qs-apply-btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 5px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
   .qs-note { margin: 10px 0 0; font-size: 11px; color: var(--dim); }
 
-  /* Signals row: High Conviction + Matching Now, side by side, compact */
+  /* Signals row: BTST/STBT + Matching Now, side by side, compact */
   .signals-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 14px; margin-bottom: 14px; align-items: start; }
   @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
   .hc-card { border-color: #3a2f0f; }
@@ -84,6 +84,26 @@
   /* Best Entries panel - ranks already-confirmed rows by entry quality */
   .eq-card { border-color: #1e3a5f; margin-bottom: 14px; }
   .eq-card h2 { color: var(--accent); }
+  .btst-list { display: flex; flex-direction: column; gap: 10px; }
+  .btst-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel2); }
+  .btst-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .btst-sym { text-decoration: none; font-size: 13px; font-weight: 700; }
+  .btst-sym:hover { text-decoration: underline; }
+  .btst-tag { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; padding: 1px 6px;
+              border-radius: 3px; margin-right: 6px; }
+  .btst-tag.bull { background: var(--green-bg); color: var(--green); }
+  .btst-tag.bear { background: var(--red-bg); color: var(--red); }
+  .btst-close { font-size: 11px; color: var(--muted); font-weight: 500; }
+  .btst-count { font-size: 10.5px; color: var(--dim); white-space: nowrap; }
+  .btst-why { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  .btst-why li { font-size: 11px; line-height: 1.45; color: var(--muted); display: flex; gap: 7px; }
+  .why-mark { flex: 0 0 10px; font-weight: 700; }
+  .why-ok .why-mark { color: var(--green); }
+  .why-no { color: var(--dim); }
+  .why-no .why-mark { color: var(--red); }
+  .why-unknown .why-mark { color: var(--dim); }
+  .btst-note { margin: 12px 0 0; font-size: 11px; color: var(--dim); line-height: 1.6; }
+  .btst-note strong { color: var(--amber); }
   .eq-list { display: flex; flex-direction: column; gap: 2px; }
   .eq-row { display: grid; grid-template-columns: 42px minmax(120px, 1.1fr) 96px minmax(0, 1.4fr) 54px;
             gap: 12px; align-items: center; padding: 8px 10px; border-radius: 6px;
@@ -609,24 +629,42 @@
 
   <div class="signals-grid">
     <div class="card hc-card">
-      <h2>🎯 High Conviction <span class="sub">every signal agrees</span></h2>
-      <div id="hc-body">
-        <div class="match-chips">
-          {% set ns2 = namespace(count=0) %}
-          {% for r in results %}
-            {% if not r.error and r.high_conviction %}
-              {% set ns2.count = ns2.count + 1 %}
-              <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-                <span class="mc-top">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span></span>
-                {{ chip_stats(r) }}
+      <h2>🌙 BTST / STBT <span class="sub">worth holding overnight — and why</span></h2>
+      <div id="btst-body">
+        {% set btst_rows = results | selectattr('btst_side', 'defined') | selectattr('btst_side')
+                                   | sort(attribute='btst_score', reverse=true) %}
+        {% if btst_rows %}
+        <div class="btst-list">
+          {% for r in btst_rows[:6] %}
+          <div class="btst-item">
+            <div class="btst-head">
+              <a class="btst-sym {{ 'bull' if r.btst_side == 'BTST' else 'bear' }}" href="/chart/{{ r.symbol }}">
+                <span class="btst-tag {{ 'bull' if r.btst_side == 'BTST' else 'bear' }}">{{ r.btst_side }}</span>
+                {{ r.symbol }} <span class="btst-close">{{ r.close }}</span>
               </a>
-            {% endif %}
+              <span class="btst-count">{{ r.btst_score }} of {{ r.btst_reasons | length }} checks</span>
+            </div>
+            <ul class="btst-why">
+              {% for w in r.btst_reasons %}
+              <li class="{{ 'why-ok' if w.ok else ('why-no' if w.ok == false else 'why-unknown') }}">
+                <span class="why-mark">{{ '✓' if w.ok else ('✗' if w.ok == false else '·') }}</span>{{ w.text }}
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
           {% endfor %}
         </div>
-        {% if ns2.count == 0 %}
-        <p class="hc-empty">Nothing meets every condition right now - that's expected, not a bug.</p>
+        {% else %}
+        <p class="hc-empty">No overnight candidates. A row only qualifies if it's Confirmed <em>and</em> closed
+        strong in its own direction — holding something overnight that closed weak is the opposite of the setup.</p>
         {% endif %}
       </div>
+      <p class="btst-note">
+        Read this <strong>late in the session</strong>. The daily bar is still forming until 15:30, so
+        "closed strong" is provisional before then — a name here at noon can fail the test by the bell.
+        Overnight positions also carry gap risk that intraday ones don't, which is what most of these
+        checks are really about.
+      </p>
     </div>
 
     <div class="card">
@@ -1290,7 +1328,7 @@
   // 'eq-body' (Best Entries) is synced like every other live block - without
   // it the panel would silently freeze at whatever the last full page load
   // showed, which is worse than useless for a ranking meant to be read live.
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'eq-body', 'news-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'eq-body', 'btst-body', 'news-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

@@ -411,6 +411,8 @@ def backtest_page():
         filter_defs=backtest.FILTER_DEFS,
         state=backtest.get_backtest_state(),
         weights_state=backtest.get_weights_state(),
+        ablation_state=backtest.get_ablation_state(),
+        ablation_gate_count=len(backtest.ABLATION_GATES),
         index_symbols=backtest.INDEX_SYMBOLS,
         watchlist_count=len(settings.WATCHLIST),
     )
@@ -620,6 +622,43 @@ def api_weights_start():
 @require_dashboard_password
 def api_weights_status():
     return jsonify(backtest.get_weights_state())
+
+
+@app.route("/api/ablation/start", methods=["POST"])
+@require_dashboard_password
+def api_ablation_start():
+    """Kicks off the gate-ablation sweep: one baseline backtest with every
+    optional gate off, then one run per gate with only that gate on, so
+    each gate's real contribution is measurable instead of assumed."""
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+
+    form = request.form
+    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
+    if timeframe not in config.VALID_TIMEFRAMES:
+        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
+    try:
+        days = int(form.get("days", 30))
+    except ValueError:
+        return jsonify({"started": False, "reason": "days must be a number"}), 400
+    try:
+        ref_horizon = int(form.get("ref_horizon", 10))
+    except ValueError:
+        return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
+    if ref_horizon <= 0:
+        return jsonify({"started": False, "reason": "ref_horizon must be positive"}), 400
+
+    return jsonify(backtest.start_gate_ablation(
+        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe,
+        days=days, ref_horizon=ref_horizon,
+    ))
+
+
+@app.route("/api/ablation/status")
+@require_dashboard_password
+def api_ablation_status():
+    return jsonify(backtest.get_ablation_state())
 
 
 def create_app():

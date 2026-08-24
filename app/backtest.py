@@ -1277,3 +1277,190 @@ def _load_persisted_weights_state():
 
 
 _load_persisted_weights_state()
+
+
+# --------------------------------------------------------------------------
+# Gate ablation - "which of these layers actually earns its place?"
+#
+# The screener has accumulated a lot of optional gates. Each was added for a
+# reason that sounded good, and NONE of them has ever been measured against
+# real outcomes. That is the single largest gap in this project: the app has
+# far more machinery than evidence about any of it, which is exactly what
+# NEXT_HORIZON_RESEARCH.md warns produces confident-looking, unvalidated
+# systems.
+#
+# Answering "does gate X help?" by hand means running the backtest twice and
+# eyeballing two numbers. For the gates below that is 2^N combinations, so
+# in practice nobody ever finds out. This automates the honest, cheap
+# version of the question: run a BASELINE with every gate off, then one run
+# per gate with ONLY that gate on, and report each gate's delta against the
+# shared baseline.
+#
+# Deliberate limits, stated rather than hidden:
+#   - This measures each gate IN ISOLATION. It cannot see interactions (two
+#     gates that only help together, or that overlap and double-count). A
+#     full interaction study is 2^N runs; this is N+1.
+#   - Fewer trades is not automatically worse. A gate that removes 60% of
+#     trades and lifts win rate 3 points may or may not be worth it - that
+#     depends on how many opportunities you can actually take. Both numbers
+#     are reported side by side rather than collapsed into one score.
+#   - Small trade counts make win-rate deltas noisy. trade_count is included
+#     on every row precisely so a seductive delta on 11 trades is visible as
+#     such rather than read as fact.
+# --------------------------------------------------------------------------
+
+ABLATION_GATES = [
+    ("require_htf", "Higher-timeframe trend agreement"),
+    ("require_regime_volume", "Regime-adaptive volume threshold"),
+    ("exclude_opening_window", "Exclude opening window / 4h warm-up"),
+    ("require_candle_pattern", "Candlestick-pattern agreement"),
+    ("require_macd_hist", "MACD histogram momentum"),
+    ("require_big_candle", "Big-candle (range expansion) agreement"),
+    ("require_strong_close", "Strong close in range"),
+    ("require_entry_location", "Entry location (not chasing)"),
+    ("require_atr_floor", "Minimum-ATR floor"),
+]
+
+
+def _ablation_row(label, gate_id, summary, baseline, ref_horizon):
+    """One row of the ablation table: this gate's stats at ref_horizon and
+    its deltas vs the shared baseline. Deltas are None when either side
+    produced no trades at that horizon - a missing number is reported as
+    missing rather than silently rendered as 0.0, which would read as
+    'this gate changed nothing'."""
+    stats = (summary or {}).get("all", {}).get(str(ref_horizon), {}) or {}
+    base = (baseline or {}).get("all", {}).get(str(ref_horizon), {}) or {}
+    wr, base_wr = stats.get("win_rate_pct"), base.get("win_rate_pct")
+    ar, base_ar = stats.get("avg_return_pct"), base.get("avg_return_pct")
+    n, base_n = stats.get("trade_count", 0), base.get("trade_count", 0)
+    return {
+        "gate": gate_id,
+        "label": label,
+        "win_rate_pct": wr,
+        "avg_return_pct": ar,
+        "trade_count": n,
+        "win_rate_delta": round(wr - base_wr, 1) if wr is not None and base_wr is not None else None,
+        "avg_return_delta": round(ar - base_ar, 3) if ar is not None and base_ar is not None else None,
+        "trades_removed": (base_n - n) if base_n and n is not None else None,
+        "trades_removed_pct": round((base_n - n) / base_n * 100, 1) if base_n else None,
+    }
+
+
+def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=10,
+                       params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
+                       cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
+                       progress_cb=None):
+    """Baseline + one run per gate. Returns a table sorted by win-rate
+    delta, best first. Costs are applied to every run (including the
+    baseline) so the comparison is like-for-like and net of what trading
+    actually costs."""
+    symbols = list(symbols or settings.WATCHLIST)
+    timeframe = timeframe or WATCHLIST_TIMEFRAME
+    ref_horizon = int(ref_horizon)
+    horizons = tuple(sorted({5, 10, 20, ref_horizon}))
+    total_phases = len(ABLATION_GATES) + 1
+
+    def _sub(idx, label):
+        def _cb(done, total, symbol):
+            if progress_cb:
+                progress_cb(idx, total_phases, label, done, total, symbol)
+        return _cb
+
+    common = dict(timeframe=timeframe, days=days, horizons=horizons,
+                  params=params, required=required,
+                  cost_pct=cost_pct, slippage_pct=slippage_pct)
+
+    baseline_result = run_backtest(kite, symbols, progress_cb=_sub(0, "Baseline (all gates off)"), **common)
+    baseline = baseline_result["summary"]
+
+    rows = []
+    for i, (gate_id, label) in enumerate(ABLATION_GATES, start=1):
+        res = run_backtest(kite, symbols, progress_cb=_sub(i, label), **{**common, gate_id: True})
+        rows.append(_ablation_row(label, gate_id, res["summary"], baseline, ref_horizon))
+
+    # Best first, but rows with no measurable delta sink to the bottom
+    # rather than sorting as if they were zero.
+    rows.sort(key=lambda r: (r["win_rate_delta"] is None, -(r["win_rate_delta"] or 0)))
+
+    base_stats = baseline.get("all", {}).get(str(ref_horizon), {}) or {}
+    return {
+        "baseline": {
+            "win_rate_pct": base_stats.get("win_rate_pct"),
+            "avg_return_pct": base_stats.get("avg_return_pct"),
+            "trade_count": base_stats.get("trade_count", 0),
+        },
+        "rows": rows,
+        "timeframe": timeframe,
+        "days": days,
+        "ref_horizon": ref_horizon,
+        "cost_pct": float(cost_pct),
+        "slippage_pct": float(slippage_pct),
+        "symbols_count": len(symbols),
+        "computed_at": now_ist().isoformat(timespec="seconds"),
+    }
+
+
+_ab_lock = threading.Lock()
+_ab_state = {
+    "status": "idle",
+    "progress": {"phase_index": 0, "phase_total": len(ABLATION_GATES) + 1,
+                  "phase_label": None, "done": 0, "total": 0, "symbol": None},
+    "params": None, "result": None, "error": None,
+    "started_at": None, "finished_at": None,
+}
+
+
+def get_ablation_state() -> dict:
+    with _ab_lock:
+        return dict(_ab_state, progress=dict(_ab_state["progress"]))
+
+
+def _ablation_progress_cb(phase_index, phase_total, phase_label, done, total, symbol):
+    with _ab_lock:
+        _ab_state["progress"] = {"phase_index": phase_index, "phase_total": phase_total,
+                                  "phase_label": phase_label, "done": done, "total": total, "symbol": symbol}
+
+
+def start_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=10) -> dict:
+    """Same one-at-a-time discipline as start_weight_computation: this runs
+    N+1 full backtests back to back, so letting it overlap with another run
+    would just make both crawl against Kite's shared rate limit."""
+    with _ab_lock, _bt_lock, _wt_lock:
+        if _ab_state["status"] == "running":
+            return {"started": False, "reason": "A gate ablation is already running."}
+        if _bt_state["status"] == "running":
+            return {"started": False, "reason": "A backtest is already running - wait for it to finish (both share Kite's rate limit)."}
+        if _wt_state["status"] == "running":
+            return {"started": False, "reason": "A weight computation is already running - wait for it to finish."}
+        symbols = list(symbols or settings.WATCHLIST)
+        timeframe = timeframe or WATCHLIST_TIMEFRAME
+        _ab_state["status"] = "running"
+        _ab_state["progress"] = {"phase_index": 0, "phase_total": len(ABLATION_GATES) + 1,
+                                  "phase_label": None, "done": 0, "total": len(symbols), "symbol": None}
+        _ab_state["params"] = {"timeframe": timeframe, "days": days, "ref_horizon": ref_horizon}
+        _ab_state["result"] = None
+        _ab_state["error"] = None
+        _ab_state["started_at"] = now_ist().isoformat(timespec="seconds")
+        _ab_state["finished_at"] = None
+
+    thread = threading.Thread(target=_run_ablation_job,
+                               args=(kite, symbols, timeframe, days, ref_horizon), daemon=True)
+    thread.start()
+    return {"started": True}
+
+
+def _run_ablation_job(kite, symbols, timeframe, days, ref_horizon):
+    try:
+        result = run_gate_ablation(kite, symbols, timeframe=timeframe, days=days,
+                                    ref_horizon=ref_horizon, progress_cb=_ablation_progress_cb)
+        with _ab_lock:
+            _ab_state["status"] = "done"
+            _ab_state["result"] = result
+    except Exception as exc:  # noqa: BLE001 - a failed sweep must never crash the app
+        log.exception("Gate ablation failed")
+        with _ab_lock:
+            _ab_state["status"] = "error"
+            _ab_state["error"] = str(exc)
+    finally:
+        with _ab_lock:
+            _ab_state["finished_at"] = now_ist().isoformat(timespec="seconds")

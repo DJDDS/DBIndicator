@@ -163,7 +163,7 @@
     <h2>Auto-Weight Parameters</h2>
     <p>
       Backtests each of the live screener's 4 parameters over your watchlist to measure which
-      have actually been predictive lately - RSI Cross, MACD Cross, and EMA/BB Cross each solo
+      have actually been predictive lately - RSI Cross, MACD Cross and Chaikin Money Flow each solo
       (required=1), and Relative Volume as a confirmation LIFT (win rate of the 2-of-3 baseline's
       trades where volume was also hot at entry, vs where it wasn't) since volume has no direction
       of its own to test solo. Converts the result into weights for the dashboard's
@@ -218,6 +218,64 @@
       </table>
     </div>
   </div>
+
+  <div class="card">
+    <h2>Which gates actually earn their place?</h2>
+    <p>
+      The screener has accumulated a lot of optional gates, and until now not one of them had ever
+      been measured against real outcomes. This runs a <strong>baseline backtest with every gate
+      off</strong>, then <strong>one run per gate with only that gate on</strong>, and reports what
+      each one actually did to your win rate — net of costs, on your own watchlist.
+    </p>
+    <p class="hint">
+      Read it honestly: each gate is measured <strong>in isolation</strong>, so this can't see two
+      gates that only help together or that overlap and double-count. Fewer trades isn't automatically
+      worse — a gate that cuts 60% of trades for +3 points of win rate may or may not suit you, so both
+      numbers are shown side by side rather than collapsed into a score. And a big delta on a handful
+      of trades is noise, which is why <em>Trades</em> is on every row. Takes a while: this is
+      {{ ablation_gate_count }} + 1 full backtest passes.
+    </p>
+    <form id="ab-form">
+      <label>Backtest universe</label>
+      <div class="horizons" id="ab-universe">
+        <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
+        <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
+        <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
+      </div>
+      <div class="row2" style="margin-top:14px;">
+        <div>
+          <label for="ab-days">Days back</label>
+          <input type="number" id="ab-days" name="days" value="30" min="5" max="90">
+        </div>
+        <div>
+          <label for="ab-horizon">Reference horizon (bars held)</label>
+          <input type="number" id="ab-horizon" name="ref_horizon" value="10" min="1" max="60">
+        </div>
+      </div>
+      <div style="margin-top:18px;">
+        <button type="submit" class="btn" id="ab-run-btn" {{ 'disabled' if not logged_in else '' }}>Run gate sweep</button>
+        <span class="hint" id="ab-form-hint" style="margin-left:10px;"></span>
+      </div>
+    </form>
+
+    <div class="progress-wrap" id="ab-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="ab-progress-fill"></div></div>
+      <div class="progress-label" id="ab-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="ab-error" style="display:none; margin-top:16px;"></div>
+
+    <div id="ab-results" style="display:none; margin-top:18px;">
+      <p class="hint" id="ab-meta"></p>
+      <table>
+        <thead><tr>
+          <th>Gate</th><th>Win rate</th><th>&Delta; win rate</th>
+          <th>Avg return</th><th>&Delta; avg</th><th>Trades</th><th>Trades cut</th>
+        </tr></thead>
+        <tbody id="ab-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
 
   <div class="card" id="bt-results">
     <h2>Results</h2>
@@ -474,7 +532,7 @@ if (initialState.status === 'running') {
 
 // --- Auto-Weight Parameters -------------------------------------------
 const PARAM_LABELS_WT = {
-  rsi_cross: 'RSI Cross', macd_cross: 'MACD Cross', ema_bb_cross: 'EMA/BB Cross', rel_volume: 'Relative Volume',
+  rsi_cross: 'RSI Cross', macd_cross: 'MACD Cross', cmf_flow: 'Chaikin Money Flow', rel_volume: 'Relative Volume',
 };
 
 function renderWeights(result) {
@@ -575,6 +633,93 @@ if (initialWeightsState.status === 'running') {
 } else if (initialWeightsState.status === 'done' && initialWeightsState.result) {
   renderWeights(initialWeightsState.result);
 }
+
+// --- Gate ablation sweep -----------------------------------------------
+function renderAblation(result) {
+  const wrap = document.getElementById('ab-results');
+  wrap.style.display = 'block';
+  const b = result.baseline || {};
+  const pct = v => (v === null || v === undefined) ? '\u2014' : v + '%';
+  const signed = (v, suf) => (v === null || v === undefined) ? '\u2014' : (v > 0 ? '+' : '') + v + (suf || '');
+  document.getElementById('ab-meta').textContent =
+    `Baseline, all gates off: ${pct(b.win_rate_pct)} win rate \u00b7 ${pct(b.avg_return_pct)} avg \u00b7 ` +
+    `${b.trade_count || 0} trades \u2014 ${result.timeframe}, ${result.days} days, ${result.symbols_count} symbols, ` +
+    `${result.ref_horizon}-bar horizon, net of ${result.cost_pct}% costs + ${result.slippage_pct}% slippage/side`;
+  const body = document.getElementById('ab-table-body');
+  body.innerHTML = '';
+  (result.rows || []).forEach(r => {
+    const d = r.win_rate_delta;
+    const colour = (d === null || d === undefined) ? '' :
+      (d > 0 ? 'color:var(--green);font-weight:600;' : (d < 0 ? 'color:var(--red);' : ''));
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.label}</td>
+      <td>${pct(r.win_rate_pct)}</td>
+      <td style="${colour}">${signed(r.win_rate_delta, ' pp')}</td>
+      <td>${pct(r.avg_return_pct)}</td>
+      <td>${signed(r.avg_return_delta, '%')}</td>
+      <td>${r.trade_count ?? 0}</td>
+      <td>${r.trades_removed_pct === null || r.trades_removed_pct === undefined ? '\u2014' : r.trades_removed_pct + '%'}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function pollAblation() {
+  fetch('/api/ablation/status').then(r => r.json()).then(state => {
+    updateAblationUI(state);
+    if (state.status === 'running') setTimeout(pollAblation, 2500);
+  }).catch(() => setTimeout(pollAblation, 5000));
+}
+
+function updateAblationUI(state) {
+  const progress = document.getElementById('ab-progress');
+  const errorBox = document.getElementById('ab-error');
+  const runBtn = document.getElementById('ab-run-btn');
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const p = state.progress || {};
+    const phaseTotal = p.phase_total || 10;
+    const phaseIndex = p.phase_index || 0;
+    const withinPct = p.total ? (p.done / p.total) * (100 / phaseTotal) : 0;
+    const pctDone = Math.min(100, Math.round((phaseIndex / phaseTotal) * 100 + withinPct));
+    document.getElementById('ab-progress-fill').style.width = pctDone + '%';
+    document.getElementById('ab-progress-label').textContent =
+      `${p.phase_label || 'Starting'} (${phaseIndex + 1}/${phaseTotal}) - ${p.symbol ? p.symbol + ' ' : ''}${p.done ?? 0}/${p.total ?? 0}\u2026`;
+  } else {
+    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+    progress.style.display = 'none';
+  }
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Gate sweep failed: ' + (state.error || 'unknown error');
+  }
+  if (state.status === 'done' && state.result) renderAblation(state.result);
+}
+
+document.getElementById('ab-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  const form = new FormData(this);
+  const body = new URLSearchParams();
+  body.set('universe', form.get('universe') || 'watchlist');
+  body.set('days', form.get('days'));
+  body.set('ref_horizon', form.get('ref_horizon'));
+  document.getElementById('ab-form-hint').textContent = '';
+  fetch('/api/ablation/start', { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.started) document.getElementById('ab-form-hint').textContent = res.reason || 'Could not start.';
+      else pollAblation();
+    });
+});
+
+const initialAblationState = {{ ablation_state | tojson }};
+updateAblationUI(initialAblationState);
+if (initialAblationState.status === 'running') pollAblation();
+else if (initialAblationState.status === 'done' && initialAblationState.result) renderAblation(initialAblationState.result);
+
 </script>
 </body>
 </html>

@@ -205,6 +205,63 @@ freely against the earlier portion, then look at the holdout **once** and
 accept what it says. A holdout you re-check after every tweak has quietly
 become training data.
 
+## BTST / STBT panel
+
+Replaces the old "High Conviction" card, which stacked several conditions
+that move together in practice (a 4-of-4 row is already likely to be above
+VWAP and volume-heavy), so it looked far more selective than it was — and
+its own docstring admitted none of it had been backtested. It also answered
+a question nobody asked: *which row has the most things lit up?*
+
+The replacement answers the question you're actually trading: **is this
+worth holding overnight?** That's a different bar, because an overnight
+position carries gap risk an intraday one doesn't.
+
+**One hard requirement: a strong close in the row's own direction.**
+Holding something overnight that closed weak into the bell is the opposite
+of the setup, no matter how many indicators agree. Everything else is
+supporting evidence — counted, shown, never silently decisive.
+
+And every candidate **argues its own case**. Instead of one opaque flag you
+get each check in plain words, marked met (✓), not met (✗), or unknown (·):
+
+```
+BTST  RELIANCE  1412.65                        7 of 9 checks
+  ✓ Closed at 94% of the day's range - buyers held it into the bell
+  ✓ Not extended - you're not carrying an already-stretched move overnight
+  ✓ Moves enough to be worth the gap risk (ATR 2.4%)
+  ✗ Against the weekly trend - a gap against you is more likely
+  · No delivery data (NSE publishes after the close)
+```
+
+Missing data reads as *unknown*, never as a failure — same convention as
+every gate in the app.
+
+**Read it late in the session.** The daily bar is still forming until 15:30,
+so "closed strong" is provisional before then; a name here at noon can fail
+the test by the bell. The panel says so itself.
+
+## Which gates actually earn their place?
+
+On the Backtest page. Until now, none of the optional gates had ever been
+measured — the app had far more machinery than evidence about any of it.
+
+It runs a **baseline backtest with every gate off**, then **one run per gate
+with only that gate on**, and reports what each did to your win rate, net of
+costs, on your own watchlist. One click instead of hand-running the backtest
+twice per gate.
+
+Read it honestly, and the panel says all of this on screen:
+
+- Each gate is measured **in isolation**, so it can't see two gates that
+  only help together, or that overlap and double-count. A full interaction
+  study is 2^N runs; this is N+1.
+- **Fewer trades isn't automatically worse.** A gate that cuts 60% of trades
+  for +3 points of win rate may or may not suit you, so both numbers sit
+  side by side rather than collapsed into one score.
+- A big delta on a handful of trades is noise, which is why the trade count
+  is on every row.
+
 ## Best Entries panel
 
 The screener answers "does this stock have a signal?" The **⚡ Best

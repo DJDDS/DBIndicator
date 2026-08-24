@@ -531,6 +531,125 @@ def _entry_quality_score(r):
     return sum(p["points"] for p in parts), parts
 
 
+
+# --------------------------------------------------------------------------
+# BTST / STBT candidates - replaces the old "High Conviction" panel.
+#
+# High Conviction stacked several conditions that move together in practice
+# (a 4-of-4 row is already likely to be above VWAP and volume-heavy), so it
+# looked far more selective than it actually was, and its own docstring
+# admitted nothing about it had been backtested. Worse, it answered a
+# question nobody asked: "which row has the most things lit up?"
+#
+# This answers the question actually being traded instead: "which of these
+# is worth HOLDING OVERNIGHT?" - which is a genuinely different bar, because
+# an overnight position carries gap risk that an intraday one does not. And
+# rather than emitting one opaque flag, every candidate carries its own
+# reasoning: each check is shown as met or not met, in plain words, so the
+# panel argues its case instead of asserting it.
+#
+# The one non-negotiable is a STRONG CLOSE in the row's own direction. That
+# is the defining BTST/STBT condition - holding something overnight that
+# closed weak into the bell is the opposite of the setup, no matter how many
+# indicators agree. Everything else is supporting evidence, counted and
+# shown, never silently required.
+#
+# TIMING CAVEAT, surfaced in the panel itself: the daily bar is still FORMING
+# during the session, so "closed strong" only becomes final near 15:30. Read
+# this panel late in the day; earlier it is a provisional read on a bar that
+# has not closed.
+# --------------------------------------------------------------------------
+
+def _btst_reasons(r, direction):
+    """Each entry is {ok, text}: ok=True met, False not met, None unknown
+    (missing data, which is never counted against a row - same convention
+    every gate in this module uses)."""
+    out = []
+
+    cp = r.get("close_position_pct")
+    if cp is not None:
+        pos = cp if direction == "Bullish" else 100 - cp
+        out.append({"ok": True, "text": f"Closed at {cp}% of the day's range - buyers held it into the bell"
+                                        if direction == "Bullish" else
+                                        f"Closed at {cp}% of the day's range - sellers held it into the bell",
+                    "_pos": pos})
+
+    out.append({"ok": r.get("entry_location_agrees") is not False,
+                "text": ("Not extended - you're not carrying an already-stretched move overnight"
+                         if r.get("entry_location_agrees") is not False else
+                         f"Already {r.get('entry_extension_atr')} ATR past VWAP - carrying an extended move overnight is where gaps hurt")})
+
+    out.append({"ok": r.get("atr_floor_agrees") is not False,
+                "text": (f"Moves enough to be worth the gap risk (ATR {r.get('atr_pct')}%)"
+                         if r.get("atr_floor_agrees") is not False else
+                         f"Too quiet (ATR {r.get('atr_pct')}%) - little upside to offset overnight gap risk")})
+
+    out.append({"ok": bool(r.get("htf_agrees")),
+                "text": ("Weekly trend agrees" if r.get("htf_agrees")
+                         else "Against the weekly trend - a gap against you is more likely")})
+
+    out.append({"ok": bool(r.get("vol_confirmed")),
+                "text": (f"Real participation today ({r.get('vol_multiple')}x average volume)"
+                         if r.get("vol_confirmed") else
+                         f"Thin participation ({r.get('vol_multiple')}x average) - the move lacks backing")})
+
+    flow = r.get("vol_flow_direction")
+    out.append({"ok": None if flow is None else (flow == direction),
+                "text": ("No clear money-flow read" if flow is None else
+                         ("Money flow agrees - volume skewed the same way" if flow == direction
+                          else "Money flow disagrees - today's volume leaned the other way"))})
+
+    dp = r.get("delivery_pct")
+    out.append({"ok": None if dp is None else bool(r.get("delivery_agrees")),
+                "text": ("No delivery data (NSE publishes after the close)" if dp is None else
+                         (f"{dp}% delivery - real positional buying, not intraday churn"
+                          if r.get("delivery_agrees") else
+                          f"Only {dp}% delivery - mostly intraday churn, weak overnight conviction"))})
+
+    if r.get("big_candle_recent_direction") == direction:
+        out.append({"ok": bool(r.get("big_candle_continuation")),
+                    "text": (f"Cleared its range-expansion level ({r.get('big_candle_recent_level')})"
+                             if r.get("big_candle_continuation") else
+                             f"Range-expansion level {r.get('big_candle_recent_level')} not cleared yet")})
+
+    out.append({"ok": r.get("index_agrees") is not False,
+                "text": ("NIFTY agrees - overnight gaps are largely market-driven"
+                         if r.get("index_agrees") is not False else
+                         "Counter to NIFTY - overnight gaps are largely market-driven")})
+
+    for o in out:
+        o.pop("_pos", None)
+    return out
+
+
+def _apply_btst_candidates(results):
+    """Attaches btst_side ("BTST"/"STBT"/None), btst_reasons and btst_score.
+
+    Only Confirmed rows that ALSO closed strong in their own direction
+    qualify - see the module note above on why the strong close is the one
+    hard requirement. Everything else is counted, shown, and never silently
+    decisive. Must run after every gate that can revoke signal_confirmed and
+    after the index/delivery filters, so the reasoning reflects final state."""
+    threshold = settings.STRONG_CLOSE_THRESHOLD_PCT
+    for r in results:
+        r["btst_side"] = None
+        r["btst_reasons"] = None
+        r["btst_score"] = None
+        if r.get("error") or not r.get("signal_confirmed"):
+            continue
+        direction = r.get("direction")
+        cp = r.get("close_position_pct")
+        if direction not in ("Bullish", "Bearish") or cp is None:
+            continue
+        closed_strong = cp >= threshold if direction == "Bullish" else cp <= (100 - threshold)
+        if not closed_strong:
+            continue
+        reasons = _btst_reasons(r, direction)
+        r["btst_side"] = "BTST" if direction == "Bullish" else "STBT"
+        r["btst_reasons"] = reasons
+        r["btst_score"] = sum(1 for x in reasons if x["ok"] is True)
+
+
 def _apply_entry_quality(results):
     """Mutates each result dict in place, attaching entry_quality (0-100)
     and entry_quality_parts (the per-component breakdown behind it).
@@ -733,36 +852,6 @@ def _apply_oi_screener_fields(results):
             aligned >= settings.MIN_REQUIRED and structure_agrees and not r.get("in_opening_window") and index_ok
         )
 
-        # High Conviction: a deliberately narrow filter meant to surface
-        # only a handful of stocks, by stacking EVERY signal this app
-        # tracks and requiring all of them to point the same way at
-        # once - strict 4-of-4 confluence (RSI, MACD, EMA/BB, and
-        # Relative Volume all agreeing - not just your Required
-        # setting), OI structure, an actively accelerating OI break
-        # signal, an even higher volume bar (>=1.5x average, stricter
-        # than the 4-of-4's own Relative Volume threshold), and price on
-        # the right side of VWAP. This is a stricter superset of
-        # "Positional Qualified" above, not a separate independent
-        # check.
-        #
-        # IMPORTANT - read before trading off this: stacking filters
-        # like this narrows the list, but it does NOT by itself imply
-        # any particular win rate. Nobody has backtested this exact
-        # rule combination against real historical outcomes yet - so
-        # treat "High Conviction" as "everything currently agrees",
-        # not as a validated or guaranteed-odds signal.
-        vs_vwap_agrees = (
-            (direction == "Bullish" and r.get("vs_vwap") == "Above")
-            or (direction == "Bearish" and r.get("vs_vwap") == "Below")
-        )
-        break_agrees = (
-            (direction == "Bullish" and oi_break_signal == "Break Up")
-            or (direction == "Bearish" and oi_break_signal == "Break Down")
-        )
-        vol_confirmed = (r.get("vol_multiple") or 0) >= 1.5
-        r["high_conviction"] = bool(
-            r["positional_qualified"] and aligned == 4 and break_agrees and vol_confirmed and vs_vwap_agrees
-        )
 
 
 _ACCELERATING_LABELS = ("Strong acceleration", "Moderate acceleration")
@@ -901,6 +990,7 @@ def _run_loop():
                         # ranks only rows that are still signal_confirmed
                         # once all of them have had their say.
                         _apply_entry_quality(results)
+                        _apply_btst_candidates(results)
                         _apply_weighted_score(results)
                         _apply_journal_confidence(results)
                         _apply_oi_trend(results)
@@ -999,7 +1089,7 @@ def start_background_scanner():
 # what a different timeframe was saying - this keeps all three visible on
 # the dashboard at once instead, with the existing single-timeframe
 # pipeline (and everything downstream of it - OI Screener, Alerts,
-# Backtest, positional_qualified/high_conviction) completely untouched.
+# Backtest, positional_qualified) completely untouched.
 #
 # Deliberately its own state/lock/persistence file rather than folding
 # into _state above - this runs 3 independent scan_watchlist() calls on 3
