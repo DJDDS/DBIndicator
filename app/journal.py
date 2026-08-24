@@ -365,6 +365,13 @@ def log_paper_trade(row: dict, timeframe: str, horizon_bars: int = DEFAULT_HORIZ
         "signal_time": signal_time,
         "logged_at": now_ist().isoformat(timespec="seconds"),
         "logged_close": row.get("close"),
+        # The stop and target this row was showing when you logged it. Stored
+        # so resolution can exit on them (see _resolve_one): before this, a
+        # logged trade had no stop at all and was resolved purely on a bar
+        # count, which measured a trade nobody would actually take.
+        "stop_price": row.get("stop"),
+        "target_price": row.get("target"),
+        "exit_reason": None,
         "status": "open",
         "entry_time": None,
         "entry_price": None,
@@ -434,21 +441,42 @@ def _resolve_one(kite, trade, instruments):
         post_entry = df[df.index >= entry_ts]
         h = trade["horizon_bars"]
         if len(post_entry) > h:  # index 0 is the entry bar itself, so need h+1 rows
-            hold_slice = post_entry.iloc[: h + 1]
             sign = 1 if trade["direction"] == "Bullish" else -1
             entry_price = trade["entry_price"]
-            if trade["direction"] == "Bullish":
-                mae_pct = min(0.0, float((hold_slice["low"].min() - entry_price) / entry_price * 100))
-            else:
-                mae_pct = min(0.0, float((entry_price - hold_slice["high"].max()) / entry_price * 100))
-            exit_row = post_entry.iloc[h]
-            exit_price = float(exit_row["close"])
+            # Stop/target first, horizon only as the fallback - the same
+            # correction made in backtest._compute_trade, and for the same
+            # reason: you would not sit through a stop being hit just because
+            # the horizon hadn't elapsed. Same pessimistic tie-break too: if
+            # one bar spans both levels, assume the STOP filled.
+            stop_price, target_price = trade.get("stop_price"), trade.get("target_price")
+            exit_idx, exit_price, exit_reason = h, float(post_entry.iloc[h]["close"]), "horizon"
+            if stop_price and target_price:
+                for k in range(1, h + 1):
+                    bar = post_entry.iloc[k]
+                    if trade["direction"] == "Bullish":
+                        hit_stop, hit_target = bar["low"] <= stop_price, bar["high"] >= target_price
+                    else:
+                        hit_stop, hit_target = bar["high"] >= stop_price, bar["low"] <= target_price
+                    if hit_stop:
+                        exit_idx, exit_price, exit_reason = k, float(stop_price), "stop"
+                        break
+                    if hit_target:
+                        exit_idx, exit_price, exit_reason = k, float(target_price), "target"
+                        break
             raw_return_pct = sign * (exit_price - entry_price) / entry_price * 100
             total_cost_pct = trade["cost_pct"] + 2 * trade["slippage_pct"]
 
-            trade["exit_time"] = post_entry.index[h].isoformat()
+            trade["exit_reason"] = exit_reason
+            trade["exit_time"] = post_entry.index[exit_idx].isoformat()
             trade["exit_price"] = round(exit_price, 2)
             trade["return_pct"] = round(raw_return_pct - total_cost_pct, 3)
+            # Drawdown over the bars actually HELD (up to the real exit), not
+            # over a horizon you were no longer in the trade for.
+            held = post_entry.iloc[: exit_idx + 1]
+            if trade["direction"] == "Bullish":
+                mae_pct = min(0.0, float((held["low"].min() - entry_price) / entry_price * 100))
+            else:
+                mae_pct = min(0.0, float((entry_price - held["high"].max()) / entry_price * 100))
             trade["mae_pct"] = round(mae_pct, 3)
             trade["outcome"] = "win" if trade["return_pct"] > 0 else "loss"
             trade["status"] = "resolved"

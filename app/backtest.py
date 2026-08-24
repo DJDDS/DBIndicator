@@ -722,7 +722,8 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
 
 
 def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str, horizons,
-                    cost_pct: float = 0.0, slippage_pct: float = 0.0):
+                    cost_pct: float = 0.0, slippage_pct: float = 0.0,
+                    stop_price: float = None, target_price: float = None):
     """Entry is executed at the NEXT bar's open after the signal bar
     (never the signal bar's own close, to avoid lookahead bias).
     Returns are computed at each requested horizon (in bars), plus the
@@ -761,7 +762,51 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
     # kill a whole run.
     total_drag = max(0.0, float(cost_pct)) + 2 * max(0.0, float(slippage_pct))
 
-    max_h = max(horizons)
+    # ---- stop / target exits -------------------------------------------
+    # The app computes an ATR stop and target for every row, shows them on the
+    # dashboard, and sizes the suggested position off the stop - but until this
+    # existed neither the backtest nor the journal ever EXITED on them. Every
+    # win rate measured "enter, then hold N bars regardless", which is not the
+    # trade the app tells you to take: in reality the stop takes you out first.
+    # Measuring the wrong strategy is a deeper error than measuring the right
+    # one imprecisely, so this runs ahead of the horizon logic below.
+    # stop_price/target_price are passed IN rather than derived here, and are
+    # computed off the SIGNAL BAR'S CLOSE (see _replay_symbol) - the same basis
+    # indicators.compute_signal uses for the levels shown on the dashboard and
+    # stored by the journal. Deriving them from entry_price instead (the next
+    # bar's open) silently produced different levels in the backtest than the
+    # ones you were actually shown, so the two systems disagreed about whether
+    # the same trade stopped out. One basis, one answer.
+    exit_bar = exit_price_hit = None
+    exit_reason = "horizon"
+    if stop_price is not None:
+        for k in range(1, max(horizons) + 1):
+            pos = entry_pos + 1 + k
+            if pos >= len(df):
+                break
+            bar = df.iloc[pos]
+            if direction == "Bullish":
+                hit_stop = bar["low"] <= stop_price
+                hit_target = bar["high"] >= target_price
+            else:
+                hit_stop = bar["high"] >= stop_price
+                hit_target = bar["low"] <= target_price
+            # Both inside one bar: assume the STOP filled first. Intrabar
+            # order is unknowable from OHLC, and assuming the favourable one
+            # would flatter every result - the pessimistic read is the honest
+            # default here.
+            if hit_stop:
+                exit_bar, exit_price_hit, exit_reason = k, stop_price, "stop"
+                break
+            if hit_target:
+                exit_bar, exit_price_hit, exit_reason = k, target_price, "target"
+                break
+
+    # Drawdown spans only the bars actually HELD. If the stop took you out on
+    # bar 2, whatever the price did on bars 3-20 is not your drawdown - you
+    # were flat. journal._resolve_one applies the identical rule, so the two
+    # systems report the same MAE for the same trade.
+    max_h = exit_bar if exit_bar is not None else max(horizons)
     hold_end = min(entry_pos + 1 + max_h, len(df) - 1)
     hold_slice = df.iloc[entry_pos + 1: hold_end + 1]
     if hold_slice.empty:
@@ -779,8 +824,13 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
         exit_pos = entry_pos + 1 + h
         if exit_pos >= len(df):
             continue
-        exit_price = float(df["close"].iloc[exit_pos])
-        gross = sign * (exit_price - entry_price) / entry_price * 100
+        if exit_bar is not None and exit_bar <= h:
+            # Already stopped out (or took target) before this horizon - you
+            # were flat, so every longer horizon reports that same realised
+            # exit rather than pretending you rode the position on.
+            gross = sign * (exit_price_hit - entry_price) / entry_price * 100
+        else:
+            gross = sign * (float(df["close"].iloc[exit_pos]) - entry_price) / entry_price * 100
         returns[h] = round(gross - total_drag, 3)
     if not returns:
         return None
@@ -794,6 +844,10 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
         "returns_pct": returns,
         "mae_pct": round(mae_pct, 3),
         "cost_drag_pct": round(total_drag, 4),
+        "exit_reason": exit_reason,
+        "exit_bar": exit_bar,
+        "stop_price": round(stop_price, 2) if stop_price is not None else None,
+        "target_price": round(target_price, 2) if target_price is not None else None,
     }
 
 
@@ -844,8 +898,27 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         ts = df.index[pos]
         if ts.to_pydatetime().replace(tzinfo=None) < window_start:
             continue  # inside the warm-up buffer, not the requested window
+        # Reproduce exactly the stop/target indicators.compute_signal would
+        # have displayed on this bar: signal-bar close +/- multiplier x ATR,
+        # rounded the same way, so a replayed trade exits on the same levels a
+        # live one would.
+        stop_price = target_price = None
+        atr_series = series.get("atr")
+        if atr_series is not None:
+            atr_v = atr_series.iloc[pos]
+            if pd.notna(atr_v) and atr_v > 0:
+                ref_close = float(df["close"].iloc[pos])
+                d = direction.iloc[pos]
+                atr_v = round(float(atr_v), 2)
+                if d == "Bullish":
+                    stop_price = round(ref_close - settings.ATR_STOP_MULTIPLIER * atr_v, 2)
+                    target_price = round(ref_close + settings.ATR_TARGET_MULTIPLIER * atr_v, 2)
+                else:
+                    stop_price = round(ref_close + settings.ATR_STOP_MULTIPLIER * atr_v, 2)
+                    target_price = round(ref_close - settings.ATR_TARGET_MULTIPLIER * atr_v, 2)
         trade = _compute_trade(df, pos, direction.iloc[pos], symbol, horizons,
-                                cost_pct=cost_pct, slippage_pct=slippage_pct)
+                                cost_pct=cost_pct, slippage_pct=slippage_pct,
+                                stop_price=stop_price, target_price=target_price)
         if trade:
             trade["vol_confirmed_at_entry"] = bool(vol_hot.iloc[pos])
             trades.append(trade)
@@ -875,6 +948,12 @@ def _summarize_group(trades, horizons):
             "worst_return_pct": round(min(rets), 3),
         }
     maes = [t["mae_pct"] for t in trades]
+    reasons = [t.get("exit_reason") for t in trades]
+    out["exits"] = {
+        "stop": reasons.count("stop"),
+        "target": reasons.count("target"),
+        "horizon": reasons.count("horizon"),
+    }
     out["overall"] = {
         "total_trades": len(trades),
         "avg_drawdown_pct": round(sum(maes) / len(maes), 3) if maes else None,
