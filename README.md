@@ -71,11 +71,19 @@ while it stays the most recent signal.
 
 ## News (optional)
 
-Attaches recent headlines to any **Confirmed** row (a small 📰 badge —
-hover for the headline, click through to read it) and fires the same
+Attaches recent headlines to any **Confirmed** row and fires the same
 Telegram/in-page alert as a fresh signal the moment a genuinely new
 article shows up for one of those symbols. Off entirely unless you set
 it up — no news source is built in by default.
+
+Headlines get their own **News column** in the results table: the latest
+headline for that symbol, its source, and *+N* when there are more.
+Click through to read the article (the link won't hijack the row's own
+chart link), sort the column to bring the most-covered names to the top,
+or use the **Has news / No news** filter to show only symbols with
+something behind the move. Because headlines are only fetched for
+Confirmed rows, a dash on an unconfirmed row means nothing was looked up
+for it — not that there's no news.
 
 1. Sign up free at [marketaux.com](https://www.marketaux.com) (no card
    needed) and grab your API key from the dashboard.
@@ -139,6 +147,41 @@ thing as "is the histogram positive"), so it's a new, second read rather
 than a restatement. Off by default; turn on "Require MACD histogram
 momentum agreement" on the Settings page to have a row whose momentum is
 fading against its own direction lose its Confirmed status.
+
+## Best Entries panel
+
+The screener answers "does this stock have a signal?" The **⚡ Best
+Entries** card at the top of the dashboard answers the second question you
+were otherwise left doing by eye: *given several rows that all currently
+qualify, which are the better entries right now?*
+
+It takes only rows that already earned a Confirmed ✓ — it can never
+promote something the screener didn't surface — and re-orders them by a
+0-100 score built from six reads already sitting on each row:
+
+| Component | Max | What earns it |
+|---|---|---|
+| Entry location | 30 | Price still near/behind VWAP rather than ATRs past it |
+| Big candle | 25 | A range-expansion bar in this row's direction, level cleared |
+| Volatility | 15 | ATR comfortably above your floor — the stock actually moves |
+| Coiling | 15 | Band width tight / NR7 — a squeeze that hasn't released yet |
+| Strong close | 10 | Closed decisively in this row's own direction |
+| Delivery | 5 | NSE delivery % above your mark |
+
+Entry location carries the most weight deliberately: it's the one
+component that separates catching a move from chasing one. A component
+with no reading scores a neutral middle value rather than zero, so a
+missing number never ranks a stock below one that actively looks bad.
+
+Hover any row for the full per-component breakdown — the score is never a
+black box.
+
+**These weights are reasoned, not backtested.** They encode a specific
+opinion (entry location matters most; a stock too quiet to move is a poor
+entry however many indicators agree), but nobody has measured this exact
+combination against historical outcomes. Treat it as a sensible way to
+order your shortlist, not as a validated edge — the same caveat that
+applies to "High Conviction."
 
 ## Anticipatory signals (catch a big move before it happens)
 

@@ -81,6 +81,48 @@
   @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
   .hc-card { border-color: #3a2f0f; }
   .hc-card h2 { color: var(--amber); }
+  /* Best Entries panel - ranks already-confirmed rows by entry quality */
+  .eq-card { border-color: #1e3a5f; margin-bottom: 14px; }
+  .eq-card h2 { color: var(--accent); }
+  .eq-list { display: flex; flex-direction: column; gap: 2px; }
+  .eq-row { display: grid; grid-template-columns: 42px minmax(120px, 1.1fr) 96px minmax(0, 1.4fr);
+            gap: 12px; align-items: center; padding: 8px 10px; border-radius: 6px;
+            text-decoration: none; color: inherit; border: 1px solid transparent; }
+  .eq-row:hover { background: var(--panel2); border-color: var(--border); }
+  .eq-score { font-size: 17px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+  .eq-row.bull .eq-score { color: var(--green); }
+  .eq-row.bear .eq-score { color: var(--red); }
+  .eq-sym { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .eq-name { font-size: 13px; font-weight: 600; }
+  .eq-row.bull .eq-name { color: var(--green); }
+  .eq-row.bear .eq-name { color: var(--red); }
+  .eq-close { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .eq-bars { display: flex; gap: 3px; align-items: flex-end; height: 20px; }
+  .eq-bar { width: 100%; min-width: 8px; height: 100%; background: #1a2029; border-radius: 2px;
+            position: relative; overflow: hidden; }
+  .eq-bar::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: var(--fill);
+                   background: var(--accent); opacity: 0.75; }
+  .eq-tags { display: flex; gap: 8px; flex-wrap: wrap; font-size: 10.5px; align-items: center; }
+  .eq-tags > span { white-space: nowrap; }
+  .eq-good { color: var(--green); }
+  .eq-warn { color: var(--amber); }
+  .eq-dim { color: var(--dim); }
+  .eq-coil { color: var(--accent); }
+  /* News column - headline clamped to 2 lines so a long title can't stretch the row */
+  .news-cell { max-width: 230px; }
+  .news-link { text-decoration: none; color: inherit; display: block; }
+  .news-link:hover .news-head { color: var(--accent); text-decoration: underline; }
+  .news-head { font-size: 11px; line-height: 1.35; color: var(--text);
+               display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+               overflow: hidden; word-break: break-word; }
+  .news-meta { display: block; font-size: 10px; color: var(--dim); margin-top: 2px; }
+  .news-none { color: var(--dim); }
+  .eq-note { margin: 12px 0 0; font-size: 11px; color: var(--dim); line-height: 1.6; }
+  .eq-note strong { color: var(--muted); }
+  @media (max-width: 720px) {
+    .eq-row { grid-template-columns: 38px minmax(0, 1fr); }
+    .eq-bars, .eq-tags { grid-column: 2; }
+  }
   .match-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 6px; max-height: 260px; overflow-y: auto; }
   .match-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 5px 9px; border-radius: 6px; text-decoration: none; }
   .match-chip.bull { background: var(--green-bg); }
@@ -473,6 +515,45 @@
     {{ mtf_block("4-Hour", multi_tf["4hour"]) }}
   </div>
 
+  <div class="card eq-card">
+    <h2>⚡ Best Entries <span class="sub">confirmed signals, ranked by how good the ENTRY looks right now - not by how strong the signal is</span></h2>
+    {% set eq_rows = results | selectattr('entry_quality', 'defined') | selectattr('entry_quality', 'ne', None)
+                              | sort(attribute='entry_quality', reverse=true) %}
+    {% if eq_rows %}
+    <div class="eq-list">
+      {% for r in eq_rows[:entry_quality_top_n] %}
+      <a class="eq-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+        <span class="eq-score" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">{{ r.entry_quality }}</span>
+        <span class="eq-sym">
+          <span class="eq-name">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</span>
+          <span class="eq-close">{{ r.close }}</span>
+        </span>
+        <span class="eq-bars" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">
+          {% for p in r.entry_quality_parts %}
+          <span class="eq-bar" style="--fill: {{ (p.points / p.max * 100) | round }}%;"></span>
+          {% endfor %}
+        </span>
+        <span class="eq-tags">
+          {% if r.entry_extension_atr is not none %}<span class="{{ 'eq-warn' if r.entry_is_extended else 'eq-good' }}">Ext {{ r.entry_extension_atr }}R</span>{% endif %}
+          {% if r.vol_contracting %}<span class="eq-coil">🎯</span>{% endif %}
+          {% if r.big_candle_recent_direction and r.big_candle_recent_direction == r.direction %}<span class="{{ 'bull' if r.direction == 'Bullish' else 'bear' }}">💥{% if r.big_candle_continuation %}✓{% endif %}</span>{% endif %}
+          {% if r.atr_pct is not none %}<span class="{{ 'eq-warn' if r.atr_floor_agrees == false else 'eq-dim' }}">ATR {{ r.atr_pct }}%</span>{% endif %}
+        </span>
+      </a>
+      {% endfor %}
+    </div>
+    <p class="eq-note">
+      Score is a transparent 0-100 sum of six reads already on each row - entry location (30), big candle (25),
+      volatility (15), coiling (15), strong close (10), delivery (5). Hover any row for the full breakdown.
+      These weights are <strong>reasoned, not backtested</strong>: they encode the view that entry location matters
+      most and that a stock too quiet to move is a poor entry however many indicators agree. Use it to order your
+      shortlist, not as a measured edge.
+    </p>
+    {% else %}
+    <p class="mn-empty">No confirmed signals to rank right now - this panel only ever re-orders rows that already earned a ✓.</p>
+    {% endif %}
+  </div>
+
   <div class="signals-grid">
     <div class="card hc-card">
       <h2>🎯 High Conviction <span class="sub">every signal agrees</span></h2>
@@ -576,6 +657,7 @@
           <th class="sortable" data-col="9">Signal <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="10">Regime <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="11">Score <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="12" title="Recent headlines for this symbol (app/news.py, via Marketaux). Only fetched for CONFIRMED rows - a blank here on an unconfirmed row means news was never looked up for it, not that there is none. Sorts by article count.">News <span class="sort-arrow"></span></th>
           <th></th>
         </tr>
         <tr class="filter-row">
@@ -618,6 +700,9 @@
             <select id="f-regime" onchange="applyFilters()"><option value="">All</option><option>Trending</option><option>Ranging</option><option>Transitional</option></select>
           </th>
           <th></th>
+          <th>
+            <select id="f-news" onchange="applyFilters()"><option value="">All</option><option value="yes">Has news</option><option value="no">No news</option></select>
+          </th>
           <th></th>
         </tr>
       </thead>
@@ -635,10 +720,11 @@
             data-aligned="{{ r.aligned if r.aligned is not none else '' }}"
             data-signal="{{ signal_dir }}"
             data-regime="{{ r.regime or '' }}"
+            data-news="{{ 'yes' if r.news else 'no' }}"
             onclick="window.location='/chart/{{ r.symbol }}'">
           <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
           {% if r.error %}
-          <td class="error-cell" colspan="12">{{ r.error }}</td>
+          <td class="error-cell" colspan="13">{{ r.error }}</td>
           {% else %}
           <td data-sort="{{ r.close }}">
             {{ r.close }}
@@ -765,12 +851,6 @@
             {% if r.breadth_agrees is defined and r.breadth_agrees == false %}
             <span title="Against the watchlist's own current advance/decline breadth" style="color:var(--amber);">⚖</span>
             {% endif %}
-            {% if r.news %}
-            <a href="{{ r.news[0].url }}" target="_blank" rel="noopener" style="font-size:11px; margin-left:3px; text-decoration:none;"
-               title="{{ r.news[0].title }} ({{ r.news[0].source }}){% if r.news|length > 1 %} +{{ r.news|length - 1 }} more{% endif %}">
-              📰
-            </a>
-            {% endif %}
             {% if r.journal_confidence %}
             <span class="{{ 'bull' if r.journal_confidence.win_rate_pct >= 50 else 'bear' }}" style="font-size:11px; margin-left:3px;"
                   title="Your own Signal Journal: {{ r.direction }} + {{ r.aligned }}/4 aligned has resolved {{ r.journal_confidence.count }} paper trades at a {{ r.journal_confidence.win_rate_pct }}% win rate ({{ '{:+.2f}'.format(r.journal_confidence.avg_return_pct) }}% avg return) so far - realized history, not a guarantee. See /journal for the full breakdown.">
@@ -786,6 +866,15 @@
           <td data-sort="{{ r.weighted_score if r.weighted_score is not none else '' }}">
             {{ r.weighted_score if r.weighted_score is not none else '—' }}{% if r.weighted_score is not none %}%{% endif %}
           </td>
+          <td data-sort="{{ r.news|length if r.news else 0 }}" class="news-cell">
+            {% if r.news %}
+            <a class="news-link" href="{{ r.news[0].url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
+               title="{{ r.news[0].title }}&#10;{{ r.news[0].source }}{% if r.news[0].published_at %} &middot; {{ r.news[0].published_at[:16].replace('T', ' ') }}{% endif %}{% if r.news|length > 1 %}&#10;&#10;{{ r.news|length - 1 }} more headline(s) - open the symbol's chart page for the full list{% endif %}">
+              <span class="news-head">{{ r.news[0].title }}</span>
+              <span class="news-meta">{{ r.news[0].source }}{% if r.news|length > 1 %} &middot; +{{ r.news|length - 1 }}{% endif %}</span>
+            </a>
+            {% else %}<span class="news-none">—</span>{% endif %}
+          </td>
           <td>
             <a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a>
             {% if r.direction in ('Bullish', 'Bearish') %}
@@ -797,7 +886,7 @@
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="13">No scan results yet - first scan runs shortly after login.</td></tr>
+        <tr><td colspan="14">No scan results yet - first scan runs shortly after login.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -868,8 +957,15 @@
     <span style="color:var(--amber);">⚠</span> means the move is already extended beyond your threshold (you'd be
     chasing rather than catching it early). <strong>ATR N%</strong> is this stock's ATR as a percentage of its own
     price - a stock below your configured floor is too quiet right now to plausibly produce a big move no matter
-    how many parameters agree. Both have opt-in gates on the Settings page. Signals are directional input, not
-    investment advice.
+    how many parameters agree. Both have opt-in gates on the Settings page. <strong>News</strong> is its own
+    column now (it used to be a 📰 icon tucked beside Signal): the latest headline for that symbol with its
+    source, and <em>+N</em> when there are more - click through to the article, or use the "Has news" filter to
+    show only symbols with something behind the move. Headlines are only fetched for <em>Confirmed</em> rows, to
+    stay inside the free news-API budget, so a dash there on an unconfirmed row means nothing was looked up
+    rather than that there's no news. The <strong>⚡ Best Entries</strong> card at the top ranks those same
+    confirmed rows by how good the ENTRY looks (entry location, big candle, volatility, coiling, strong close,
+    delivery) rather than by how strong the signal is - hover any row there for the full score breakdown.
+    Signals are directional input, not investment advice.
   </div>
 </div>
 <script>
@@ -1148,6 +1244,11 @@
     var alignedQ = document.getElementById('f-aligned').value;
     var signalQ = document.getElementById('f-signal').value;
     var regimeQ = document.getElementById('f-regime').value;
+    // Guarded rather than assumed-present like the selects above: this one
+    // was added later, so a cached/older page fragment could still be in
+    // the DOM during a live refresh without it.
+    var newsEl = document.getElementById('f-news');
+    var newsQ = newsEl ? newsEl.value : '';
 
     table.tBodies[0].querySelectorAll('tr.data-row').forEach(function (row) {
       var ok = true;
@@ -1166,6 +1267,7 @@
       if (ok && alignedQ && row.getAttribute('data-aligned') !== alignedQ) ok = false;
       if (ok && signalQ && row.getAttribute('data-signal') !== signalQ) ok = false;
       if (ok && regimeQ && row.getAttribute('data-regime') !== regimeQ) ok = false;
+      if (ok && newsQ && row.getAttribute('data-news') !== newsQ) ok = false;
       row.classList.toggle('filtered-out', !ok);
     });
   }

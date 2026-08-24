@@ -408,6 +408,163 @@ def _apply_weighted_score(results):
         r["weighted_score"] = round(score * 100, 1)
 
 
+# --------------------------------------------------------------------------
+# Entry-quality ranking - the "Best Entries" dashboard panel.
+#
+# This does NOT decide whether a row has a signal (aligned/signal_confirmed
+# already did that, and this never changes either). It answers the SECOND
+# question, the one you're left doing by eye otherwise: given several rows
+# that all currently qualify, which are the better ENTRIES right now - early
+# rather than chasing, in a stock that actually moves, with the anticipatory
+# reads pointing the same way.
+#
+# IMPORTANT, and stated the same way _apply_oi_screener_fields states it for
+# "High Conviction": the weights below are REASONED, not backtested. They
+# encode a specific opinion - that entry location matters most, that a stock
+# too quiet to move is a bad entry regardless of how many indicators agree,
+# and that the range-expansion/contraction reads carry real information -
+# but nobody has measured this exact combination against historical outcomes.
+# Treat the ordering as "a sensible way to read the shortlist," not as a
+# validated edge. Every component's own contribution is shown in the panel's
+# tooltip precisely so this stays a transparent ranking rather than a black
+# box, and so a component you disagree with is visible rather than buried.
+#
+# All six components read fields compute_signal already attached - no extra
+# Kite call, no new state, safe to recompute every scan cycle.
+# --------------------------------------------------------------------------
+
+ENTRY_QUALITY_TOP_N = 8  # how many rows the panel shows - a shortlist, not another full table
+
+
+def _entry_quality_score(r):
+    """Returns (score 0-100, parts) for one already-confirmed row. `parts`
+    is a list of {label, points, max, note} dicts driving the panel's
+    tooltip breakdown. A component with no reading scores a middling
+    "neutral" value rather than zero - missing data should never rank a
+    row below one that actively looks bad (same "None never blocks"
+    convention every gate in this module already follows)."""
+    parts = []
+    direction = r.get("direction")
+
+    # 1. Entry location (0-30, the heaviest single component) - how far
+    # price has already run past VWAP in ATR units, in this row's own
+    # direction. Weighted highest because it's the one component that
+    # directly separates "catching a move" from "chasing one."
+    ext = r.get("entry_extension_atr")
+    max_ext = settings.MAX_ENTRY_EXTENSION_ATR
+    if ext is None:
+        pts, note = 15, "no VWAP reading on this timeframe"
+    elif ext <= 0:
+        pts, note = 30, f"{ext}R - at or behind VWAP, not chasing"
+    elif ext <= max_ext / 2:
+        pts, note = 24, f"{ext}R - still early in the move"
+    elif ext <= max_ext:
+        pts, note = 14, f"{ext}R - move already underway"
+    else:
+        pts, note = 0, f"{ext}R - extended past your {max_ext}R limit"
+    parts.append({"label": "Entry location", "points": pts, "max": 30, "note": note})
+
+    # 2. Big candle (0-25) - has a real range-expansion bar fired in this
+    # row's direction, and has price actually followed through on the
+    # level it set? A cleared level is the strongest read here; one that's
+    # been set but not yet taken out is weaker but still constructive.
+    bc_dir = r.get("big_candle_recent_direction")
+    if bc_dir is None:
+        pts, note = 8, "no recent range-expansion bar"
+    elif bc_dir != direction:
+        pts, note = 0, f"last big candle was {bc_dir} - against this row"
+    elif r.get("big_candle_continuation") is True:
+        pts, note = 25, f"level {r.get('big_candle_recent_level')} cleared"
+    elif r.get("big_candle_recent_bars_ago") == 0:
+        pts, note = 20, "this bar IS the range expansion"
+    else:
+        pts, note = 15, f"level {r.get('big_candle_recent_level')} set, not yet cleared"
+    parts.append({"label": "Big candle", "points": pts, "max": 25, "note": note})
+
+    # 3. Volatility floor (0-15) - is there enough daily range here to
+    # produce a move worth taking? A stock below the floor scores zero
+    # outright rather than merely losing points: no amount of indicator
+    # agreement makes a dead stock a good entry.
+    atr_pct = r.get("atr_pct")
+    floor = settings.MIN_ATR_PCT
+    if atr_pct is None:
+        pts, note = 7, "no ATR reading"
+    elif atr_pct >= floor * 2:
+        pts, note = 15, f"ATR {atr_pct}% - moves plenty"
+    elif atr_pct >= floor:
+        pts, note = 12, f"ATR {atr_pct}% - clears your {floor}% floor"
+    else:
+        pts, note = 0, f"ATR {atr_pct}% - below your {floor}% floor, too quiet"
+    parts.append({"label": "Volatility", "points": pts, "max": 15, "note": note})
+
+    # 4. Coiling (0-15) - the anticipatory read. Deliberately scored as a
+    # BONUS with a non-zero floor rather than a penalty: a stock that
+    # isn't currently coiled hasn't done anything wrong, it just doesn't
+    # get the extra credit a squeezed one does.
+    coil, nr7 = bool(r.get("vol_contracting")), bool(r.get("nr7"))
+    if coil and nr7:
+        pts, note = 15, "band width tight AND narrowest range of 7"
+    elif coil:
+        pts, note = 12, f"band width in the tightest {settings.VOL_CONTRACTION_THRESHOLD_PCT}%"
+    elif nr7:
+        pts, note = 8, "narrowest range of the last 7 bars"
+    else:
+        pts, note = 5, "range is normal, not coiled"
+    parts.append({"label": "Coiling", "points": pts, "max": 15, "note": note})
+
+    # 5. Strong close (0-10) - did the bar close decisively in this row's
+    # own direction? Partial credit for the right half of the range even
+    # when it isn't extreme enough to count as decisive.
+    cp = r.get("close_position_pct")
+    thr = settings.STRONG_CLOSE_THRESHOLD_PCT
+    if cp is None:
+        pts, note = 4, "no close-position reading"
+    elif (direction == "Bullish" and cp >= thr) or (direction == "Bearish" and cp <= 100 - thr):
+        pts, note = 10, f"closed at {cp}% of range - decisive"
+    elif (direction == "Bullish" and cp >= 50) or (direction == "Bearish" and cp <= 50):
+        pts, note = 6, f"closed at {cp}% of range - right side, not decisive"
+    else:
+        pts, note = 0, f"closed at {cp}% of range - wrong side for a {direction} row"
+    parts.append({"label": "Strong close", "points": pts, "max": 10, "note": note})
+
+    # 6. Delivery (0-5, deliberately the lightest) - real overnight
+    # conviction, but it's never a live number and is frequently
+    # unavailable entirely (see delivery.py), so it can nudge a ranking
+    # rather than drive one.
+    dp = r.get("delivery_pct")
+    if dp is None:
+        pts, note = 3, "no delivery data available"
+    elif dp >= settings.DELIVERY_THRESHOLD_PCT:
+        pts, note = 5, f"{dp}% delivered ({r.get('delivery_date')})"
+    else:
+        pts, note = 0, f"{dp}% delivered - below your {settings.DELIVERY_THRESHOLD_PCT}% mark"
+    parts.append({"label": "Delivery", "points": pts, "max": 5, "note": note})
+
+    return sum(p["points"] for p in parts), parts
+
+
+def _apply_entry_quality(results):
+    """Mutates each result dict in place, attaching entry_quality (0-100)
+    and entry_quality_parts (the per-component breakdown behind it).
+    Only scored for rows that are currently signal_confirmed - this ranks
+    among VALID signals, it never promotes a row that didn't qualify in
+    the first place, so the panel can only ever be a re-ordering of what
+    the screener already surfaced. Everything else gets None and is
+    simply absent from the panel.
+
+    Must run AFTER every gate that can revoke signal_confirmed (the
+    REQUIRE_* filters above, including breadth) so it never ranks a row
+    that a later filter would have thrown out."""
+    for r in results:
+        if r.get("error") or not r.get("signal_confirmed") or not r.get("direction"):
+            r["entry_quality"] = None
+            r["entry_quality_parts"] = None
+            continue
+        score, parts = _entry_quality_score(r)
+        r["entry_quality"] = score
+        r["entry_quality_parts"] = parts
+
+
 def _apply_journal_confidence(results):
     """Mutates each result dict in place, attaching journal_confidence -
     a REALIZED win rate/avg return/count from YOUR OWN Signal Journal
@@ -753,6 +910,10 @@ def _run_loop():
                         _apply_sector_filter(results, sector_directions)
                         breadth = _compute_breadth(results)
                         _apply_breadth_filter(results, breadth)
+                        # Must come after every REQUIRE_* gate above - it
+                        # ranks only rows that are still signal_confirmed
+                        # once all of them have had their say.
+                        _apply_entry_quality(results)
                         _apply_weighted_score(results)
                         _apply_journal_confidence(results)
                         _apply_oi_trend(results)
