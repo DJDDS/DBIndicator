@@ -113,13 +113,20 @@
   .eq-dim { color: var(--dim); }
   .eq-coil { color: var(--accent); }
   /* News column - headline clamped to 2 lines so a long title can't stretch the row */
-  .news-cell { max-width: 230px; }
-  .news-link { text-decoration: none; color: inherit; display: block; }
-  .news-link:hover .news-head { color: var(--accent); text-decoration: underline; }
-  .news-head { font-size: 11px; line-height: 1.35; color: var(--text);
-               display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-               overflow: hidden; word-break: break-word; }
-  .news-meta { display: block; font-size: 10px; color: var(--dim); margin-top: 2px; }
+  /* News card - headlines for currently-Confirmed symbols, in one place
+     rather than a per-row column that mostly rendered an em-dash. */
+  .news-card .sub { font-weight: 400; }
+  .news-list { display: flex; flex-direction: column; gap: 1px; }
+  .news-item { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px;
+               align-items: baseline; padding: 8px 10px; border-radius: 6px;
+               text-decoration: none; color: inherit; border: 1px solid transparent; }
+  .news-item:hover { background: var(--panel2); border-color: var(--border); }
+  .news-sym { font-size: 12px; font-weight: 700; }
+  .news-sym.bull { color: var(--green); }
+  .news-sym.bear { color: var(--red); }
+  .news-head { font-size: 12.5px; line-height: 1.4; color: var(--text); }
+  .news-item:hover .news-head { color: var(--accent); }
+  .news-meta { font-size: 10.5px; color: var(--dim); margin-top: 2px; }
   .news-none { color: var(--dim); }
   /* Timeframe-meaning advisory + the badges it applies to (config.BTST_TIMEFRAMES) */
   .tf-advisory { background: rgba(240,185,11,0.07); border: 1px solid rgba(240,185,11,0.28);
@@ -265,7 +272,7 @@
 <header>
   <div class="brand">
     <h1>Scanner Dashboard</h1>
-    <span class="tagline">RSI + MACD + EMA/BB + Rel Volume &middot; {{ timeframe }} &middot; {{ min_required }}-of-4</span>
+    <span class="tagline">RSI + MACD + CMF + Rel Volume &middot; daily watchlist &middot; {{ min_required }}-of-4</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -337,13 +344,10 @@
 
   <div class="toolbar">
     <div class="toolbar-row">
+      <span class="tb-status" title="The watchlist is pinned to DAILY candles - that is the bar a BTST or swing decision is actually made on, and the only one where Close@/NR7/Delivery carry their intended meaning. The intraday panel above is separate and always runs 15-minute against the 4-hour trend.">
+        Watchlist: <strong>daily</strong>
+      </span>
       <form method="POST" action="/quick-settings" class="tb-timeframe-form" id="tf-form">
-        <label for="tb-timeframe">Timeframe</label>
-        <select id="tb-timeframe" name="timeframe" onchange="document.getElementById('tf-form').submit()">
-          {% for tf in valid_timeframes %}
-          <option value="{{ tf }}" {% if tf == timeframe %}selected{% endif %}>{{ tf }}</option>
-          {% endfor %}
-        </select>
         <!-- carry the rest of Quick Settings' current values along so switching
              timeframe here doesn't reset them to server defaults -->
         <input type="hidden" name="min_required" value="{{ min_required }}">
@@ -520,9 +524,8 @@
   {% endmacro %}
 
   <div class="card" id="multi-tf-panel">
-    <h2>⏱ Multi-Timeframe Signals <span class="sub">15-min / 60-min / 4-hour, always on - independent of the Timeframe selector above</span></h2>
+    <h2>⏱ Intraday Panel <span class="sub">15-minute entries cross-checked against the 4-hour trend - separate from the daily watchlist below</span></h2>
     {{ mtf_block("15-Minute", multi_tf["15minute"]) }}
-    {{ mtf_block("60-Minute", multi_tf["60minute"]) }}
     {{ mtf_block("4-Hour", multi_tf["4hour"]) }}
   </div>
 
@@ -577,6 +580,30 @@
     {% else %}
     <p class="mn-empty">No confirmed signals to rank right now - this panel only ever re-orders rows that already earned a ✓.</p>
     {% endif %}
+    </div>
+  </div>
+
+  <div class="card news-card">
+    <h2>📰 News <span class="sub">headlines for symbols currently Confirmed - the only ones queried, to stay inside the free news-API budget</span></h2>
+    <div id="news-body">
+      {% set news_rows = results | selectattr('news', 'defined') | selectattr('news') | list %}
+      {% if news_rows %}
+      <div class="news-list">
+        {% for r in news_rows %}
+          {% for a in r.news %}
+          <a class="news-item" href="{{ a.url }}" target="_blank" rel="noopener">
+            <span class="news-sym {{ 'bull' if r.direction == 'Bullish' else 'bear' }}">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</span>
+            <span>
+              <span class="news-head">{{ a.title }}</span>
+              <span class="news-meta">{{ a.source }}{% if a.published_at %} &middot; {{ a.published_at[:16].replace('T', ' ') }}{% endif %}</span>
+            </span>
+          </a>
+          {% endfor %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="mn-empty">No headlines right now. News is only fetched for Confirmed rows, so this stays empty when nothing is confirmed - or if MARKETAUX_API_TOKEN isn't set.</p>
+      {% endif %}
     </div>
   </div>
 
@@ -675,15 +702,13 @@
           <th class="sortable" data-col="1">Close <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="2">RSI <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="3">MACD <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="4">EMA/BB <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="5">OI <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="6">OI Accel <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="7" title="Relative Volume magnitude, plus a small &#9650;/&#9660; Chaikin Money Flow badge showing whether recent volume actually skewed toward buying or selling">Vol <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="8">Aligned <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="9">Signal <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="10">Regime <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="11">Score <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="12" title="Recent headlines for this symbol (app/news.py, via Marketaux). Only fetched for CONFIRMED rows - a blank here on an unconfirmed row means news was never looked up for it, not that there is none. Sorts by article count.">News <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="4">OI <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="5">OI Accel <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="6" title="Relative Volume magnitude, plus a small &#9650;/&#9660; Chaikin Money Flow badge - CMF is now one of the four voting parameters, not just a display badge">Vol <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="7">Aligned <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="8">Signal <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="9">Regime <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="10">Score <span class="sort-arrow"></span></th>
           <th></th>
         </tr>
         <tr class="filter-row">
@@ -694,9 +719,6 @@
           </th>
           <th>
             <select id="f-macd" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option></select>
-          </th>
-          <th>
-            <select id="f-emabb" onchange="applyFilters()"><option value="">All</option><option>Bullish</option><option>Bearish</option></select>
           </th>
           <th>
             <select id="f-structure" onchange="applyFilters()">
@@ -726,9 +748,6 @@
             <select id="f-regime" onchange="applyFilters()"><option value="">All</option><option>Trending</option><option>Ranging</option><option>Transitional</option></select>
           </th>
           <th></th>
-          <th>
-            <select id="f-news" onchange="applyFilters()"><option value="">All</option><option value="yes">Has news</option><option value="no">No news</option></select>
-          </th>
           <th></th>
         </tr>
       </thead>
@@ -739,18 +758,16 @@
             data-symbol="{{ r.symbol }}"
             data-rsi="{{ r.rsi_state or '' }}"
             data-macd="{{ r.macd_state or '' }}"
-            data-emabb="{{ r.ema_bb_state or '' }}"
             data-structure="{{ r.oi_structure or '' }}"
             data-oitrend="{{ r.oi_trend_label or '' }}"
             data-break="{{ 'BreakUp' if r.oi_break_signal == 'Break Up' else ('BreakDown' if r.oi_break_signal == 'Break Down' else '') }}"
             data-aligned="{{ r.aligned if r.aligned is not none else '' }}"
             data-signal="{{ signal_dir }}"
             data-regime="{{ r.regime or '' }}"
-            data-news="{{ 'yes' if r.news else 'no' }}"
             onclick="window.location='/chart/{{ r.symbol }}'">
           <td data-sort="{{ r.symbol }}">{{ r.symbol }}</td>
           {% if r.error %}
-          <td class="error-cell" colspan="13">{{ r.error }}</td>
+          <td class="error-cell" colspan="11">{{ r.error }}</td>
           {% else %}
           <td data-sort="{{ r.close }}">
             {{ r.close }}
@@ -762,17 +779,6 @@
             {% if r.position_qty is defined and r.position_qty is not none %}
             <div class="atr-risk" title="Fixed-fractional sizing: risks ₹{{ r.position_risk_amount }} of your ₹{{ '{:,.0f}'.format(risk_budget.account_capital) }} account capital (Settings page) if the SL above is hit - a suggestion, not an order.">
               Qty {{ r.position_qty }} <span class="dim-sep">(₹{{ r.position_risk_amount }} risk)</span>
-            </div>
-            {% endif %}
-            {% if (r.vwap is defined and r.vwap is not none) or (r.avwap is defined and r.avwap is not none) %}
-            <div class="atr-risk">
-              {% if r.vwap is not none %}
-              <span class="{{ 'bull' if r.vs_vwap == 'Above' else 'bear' }}" title="Session VWAP: {{ r.vwap }} — today's volume-weighted average price, resets every session">VWAP {{ r.vwap }}</span>
-              {% endif %}
-              {% if r.vwap is not none and r.avwap is not none %}<span class="dim-sep"> · </span>{% endif %}
-              {% if r.avwap is not none %}
-              <span class="{{ 'bull' if r.vs_avwap == 'Above' else 'bear' }}" title="Anchored VWAP: {{ r.avwap }} — average price paid since this stock's current {{ r.direction }} confluence trend began ({{ r.avwap_anchor_time[:16].replace('T', ' ') if r.avwap_anchor_time else '' }}), doesn't reset daily">AVWAP {{ r.avwap }}</span>
-              {% endif %}
             </div>
             {% endif %}
             {% if r.vol_contracting or r.nr7 or (r.big_candle_recent_direction is defined and r.big_candle_recent_direction) or (r.close_position_pct is defined and r.close_position_pct is not none) or (r.delivery_pct is defined and r.delivery_pct is not none) %}
@@ -816,7 +822,6 @@
             </span>
             {% endif %}
           </td>
-          <td data-sort="{{ r.ema_bb_state }}" class="{{ 'bull' if r.ema_bb_state == 'Bullish' else 'bear' }}">{{ r.ema_bb_state }}</td>
           <td data-sort="{{ r.oi if r.oi is defined and r.oi is not none else '' }}" class="oi-cell-num">
             {% if r.oi is defined and r.oi is not none %}
             <div>{{ '{:,}'.format(r.oi) }}</div>
@@ -844,7 +849,7 @@
             </span>
             {% if r.vol_flow_direction is defined and r.vol_flow_direction %}
             <span class="{{ 'bull' if r.vol_flow_direction == 'Bullish' else 'bear' }}" style="font-size:11px; margin-left:3px;"
-                  title="Chaikin Money Flow: {{ r.cmf }} - recent volume has skewed toward {{ 'up-closes (buying pressure)' if r.vol_flow_direction == 'Bullish' else 'down-closes (distribution)' }}{% if r.vol_flow_agrees is defined and r.vol_flow_agrees == false %} - disagrees with this row's own direction{% endif %}">
+                  title="Chaikin Money Flow: {{ r.cmf }} - recent volume has skewed toward {{ 'up-closes (buying pressure)' if r.vol_flow_direction == 'Bullish' else 'down-closes (distribution)' }} - this is one of the four voting parameters">
               {{ '▲' if r.vol_flow_direction == 'Bullish' else '▼' }}
             </span>
             {% endif %}
@@ -892,15 +897,6 @@
           <td data-sort="{{ r.weighted_score if r.weighted_score is not none else '' }}">
             {{ r.weighted_score if r.weighted_score is not none else '—' }}{% if r.weighted_score is not none %}%{% endif %}
           </td>
-          <td data-sort="{{ r.news|length if r.news else 0 }}" class="news-cell">
-            {% if r.news %}
-            <a class="news-link" href="{{ r.news[0].url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
-               title="{{ r.news[0].title }}&#10;{{ r.news[0].source }}{% if r.news[0].published_at %} &middot; {{ r.news[0].published_at[:16].replace('T', ' ') }}{% endif %}{% if r.news|length > 1 %}&#10;&#10;{{ r.news|length - 1 }} more headline(s) - open the symbol's chart page for the full list{% endif %}">
-              <span class="news-head">{{ r.news[0].title }}</span>
-              <span class="news-meta">{{ r.news[0].source }}{% if r.news|length > 1 %} &middot; +{{ r.news|length - 1 }}{% endif %}</span>
-            </a>
-            {% else %}<span class="news-none">—</span>{% endif %}
-          </td>
           <td>
             <a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a>
             {% if r.direction in ('Bullish', 'Bearish') %}
@@ -912,7 +908,7 @@
           {% endif %}
         </tr>
         {% else %}
-        <tr><td colspan="14">No scan results yet - first scan runs shortly after login.</td></tr>
+        <tr><td colspan="12">No scan results yet - first scan runs shortly after login.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -931,9 +927,10 @@
     with that acceleration too. See the <a href="/oi-screener">OI Screener</a> for the full
     breakdown (15/30/60-min windows, Day OI Change vs yesterday's close). <strong>Vol</strong> =
     latest candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red
-    above 3&times;). <strong>Aligned</strong> is out of 4 parameters - RSI, MACD, EMA/BB, and
-    Relative Volume (threshold set on the Settings page, default 1.2&times;) - each counted
-    equally; "Match required" in the Settings popover sets how many of the 4 must agree for a
+    above 3&times;). <strong>Aligned</strong> is out of 4 parameters - RSI, MACD, Chaikin Money Flow
+    (directional volume) and Relative Volume (magnitude) - each counted equally. CMF replaced the old
+    EMA9-vs-Bollinger-mid vote, which was a third transform of the same close series; the vote is now
+    2 price reads + 2 volume reads, which is genuinely more independent evidence. "Match required" in the Settings popover sets how many of the 4 must agree for a
     row to count as Bullish/Bearish. A <span class="confirm-badge">✓</span> = "Confirmed": Aligned
     meets your Match required setting and (15-min scans) the 4-hour trend agrees too - Telegram
     alerts only fire for confirmed signals. <strong>Regime</strong> is an ADX-based read of
@@ -955,9 +952,8 @@
     <span style="font-size:11px;">📓</span> badge next to Signal shows the REALIZED win rate from your own
     <a href="/journal">Signal Journal</a> for rows sharing this exact (direction, aligned) setup - only appears
     once at least 5 of your own resolved paper trades share it, so it's never a misleading number from 1-2
-    trades. <strong>VWAP</strong>/<strong>AVWAP</strong> under Close (when shown) are the session volume-weighted
-    average price and an anchored version measured since this stock's current trend leg began - click any row's
-    chart to see both plotted over time. Green/red shows whether price is currently above or below each one.
+    trades. VWAP and anchored VWAP moved off this table to the chart page - <strong>Ext</strong> below already
+    carries the actionable version of that distance.
     <strong>Qty</strong> under Close is a fixed-fractional position-size suggestion (risk a set % of your Account
     capital, set on the Settings page, if the SL is hit) - and the toolbar's <strong>Risk</strong> pill tracks
     trades YOU logged in the <a href="/journal">Signal Journal</a> today against your own daily-risk/position/
@@ -975,10 +971,9 @@
     high/low - with the level it set and whether price has since continued through it (✓); turn on "Require
     big-candle agreement" on the Settings page to gate on it. <strong>Close@N%</strong> shows where the close
     landed within today's own high-low range (100% = at the high) - the BTST "closed with conviction" read; turn
-    on "Require strong-close agreement" to gate on it. <strong>Close@ and NR7 are measured on whichever bar you're
-    scanning</strong> - on a 15-minute scan they describe the last 15 minutes, not the trading day, so they're
-    dimmed and labelled as such until you switch Timeframe to <strong>day</strong>, where they carry their intended
-    BTST meaning. <strong>Deliv N%</strong> is NSE's delivery percentage
+    on "Require strong-close agreement" to gate on it. <strong>Close@ and NR7 are measured on the daily bar</strong>, which is where they carry
+    their intended BTST meaning - the watchlist is pinned to daily precisely so these never silently describe
+    something else. <strong>Deliv N%</strong> is NSE's delivery percentage
     (real overnight conviction vs. intraday churn) as of its most recently PUBLISHED session - never a live
     number, and it may never appear at all if NSE is blocking this deployment's requests (see the Settings page
     for status). <strong>Ext N R</strong> is how far price already is past its own VWAP in ATR units, measured in
@@ -986,12 +981,8 @@
     <span style="color:var(--amber);">⚠</span> means the move is already extended beyond your threshold (you'd be
     chasing rather than catching it early). <strong>ATR N%</strong> is this stock's ATR as a percentage of its own
     price - a stock below your configured floor is too quiet right now to plausibly produce a big move no matter
-    how many parameters agree. Both have opt-in gates on the Settings page. <strong>News</strong> is its own
-    column now (it used to be a 📰 icon tucked beside Signal): the latest headline for that symbol with its
-    source, and <em>+N</em> when there are more - click through to the article, or use the "Has news" filter to
-    show only symbols with something behind the move. Headlines are only fetched for <em>Confirmed</em> rows, to
-    stay inside the free news-API budget, so a dash there on an unconfirmed row means nothing was looked up
-    rather than that there's no news. The <strong>⚡ Best Entries</strong> card at the top ranks those same
+    how many parameters agree. Both have opt-in gates on the Settings page. <strong>News</strong> now has its own card near the top of the page rather than a table column that
+    mostly rendered an em-dash. The <strong>⚡ Best Entries</strong> card at the top ranks those same
     confirmed rows by how good the ENTRY looks (entry location, big candle, volatility, coiling, strong close,
     delivery) rather than by how strong the signal is - hover any row there for the full score breakdown.
     Signals are directional input, not investment advice.
@@ -1267,24 +1258,17 @@
     var symbolQ = (document.getElementById('f-symbol').value || '').trim().toUpperCase();
     var rsiQ = document.getElementById('f-rsi').value;
     var macdQ = document.getElementById('f-macd').value;
-    var emabbQ = document.getElementById('f-emabb').value;
     var structureQ = document.getElementById('f-structure').value;
     var oitrendQ = document.getElementById('f-oitrend').value;
     var alignedQ = document.getElementById('f-aligned').value;
     var signalQ = document.getElementById('f-signal').value;
     var regimeQ = document.getElementById('f-regime').value;
-    // Guarded rather than assumed-present like the selects above: this one
-    // was added later, so a cached/older page fragment could still be in
-    // the DOM during a live refresh without it.
-    var newsEl = document.getElementById('f-news');
-    var newsQ = newsEl ? newsEl.value : '';
 
     table.tBodies[0].querySelectorAll('tr.data-row').forEach(function (row) {
       var ok = true;
       if (symbolQ && (row.getAttribute('data-symbol') || '').toUpperCase().indexOf(symbolQ) === -1) ok = false;
       if (ok && rsiQ && row.getAttribute('data-rsi') !== rsiQ) ok = false;
       if (ok && macdQ && row.getAttribute('data-macd') !== macdQ) ok = false;
-      if (ok && emabbQ && row.getAttribute('data-emabb') !== emabbQ) ok = false;
       if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
       if (ok && oitrendQ) {
         if (oitrendQ === 'BreakUp' || oitrendQ === 'BreakDown') {
@@ -1296,7 +1280,6 @@
       if (ok && alignedQ && row.getAttribute('data-aligned') !== alignedQ) ok = false;
       if (ok && signalQ && row.getAttribute('data-signal') !== signalQ) ok = false;
       if (ok && regimeQ && row.getAttribute('data-regime') !== regimeQ) ok = false;
-      if (ok && newsQ && row.getAttribute('data-news') !== newsQ) ok = false;
       row.classList.toggle('filtered-out', !ok);
     });
   }
@@ -1307,7 +1290,7 @@
   // 'eq-body' (Best Entries) is synced like every other live block - without
   // it the panel would silently freeze at whatever the last full page load
   // showed, which is worse than useless for a ranking meant to be read live.
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'eq-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'eq-body', 'news-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

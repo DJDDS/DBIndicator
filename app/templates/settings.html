@@ -70,17 +70,8 @@
     </div>
 
     <div class="card">
-      <h2>Timeframe &amp; signal rule</h2>
+      <h2>Signal rule</h2>
       <div class="row3">
-        <div>
-          <label for="timeframe">Timeframe</label>
-          <select id="timeframe" name="timeframe">
-            {% for tf in valid_timeframes %}
-            <option value="{{ tf }}" {% if tf == s.TIMEFRAME %}selected{% endif %}>{{ tf }}</option>
-            {% endfor %}
-          </select>
-          <div class="hint">Week is resampled from daily Kite candles.</div>
-        </div>
         <div>
           <label for="min_required">Signal rule</label>
           <select id="min_required" name="min_required">
@@ -88,7 +79,7 @@
             <option value="3" {% if s.MIN_REQUIRED == 3 %}selected{% endif %}>3-of-4</option>
             <option value="4" {% if s.MIN_REQUIRED == 4 %}selected{% endif %}>4-of-4 (strict)</option>
           </select>
-          <div class="hint">Out of RSI, MACD, EMA/BB, and Relative Volume - how many must agree.</div>
+          <div class="hint">Out of RSI, MACD, Chaikin Money Flow and Relative Volume - how many must agree. Default is 4-of-4: fewer, higher-conviction candidates. Note the watchlist scans DAILY candles now; the intraday panel on the dashboard is separate and always 15-min + 4-hour.</div>
         </div>
         <div>
           <label for="scan_interval">Scan interval (seconds)</label>
@@ -125,17 +116,10 @@
         </div>
         <div>
           <label style="margin-top:0;">
-            <input type="checkbox" id="require_volume_flow_agreement" name="require_volume_flow_agreement" {% if s.REQUIRE_VOLUME_FLOW_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require volume-flow agreement
-          </label>
-          <div class="hint">When on, a row whose direction disagrees with its own recent Chaikin Money Flow reading (the small &#9650;/&#9660; badge next to Volume - is recent volume actually buying or selling pressure, not just magnitude) loses its "Confirmed" status. Off by default.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
             <input type="checkbox" id="require_candle_pattern_agreement" name="require_candle_pattern_agreement" {% if s.REQUIRE_CANDLE_PATTERN_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
             Require candlestick-pattern agreement
           </label>
-          <div class="hint">When on, a row whose direction disagrees with its own most recent candlestick pattern (the small candle badge next to Signal - Engulfing/Hammer-family/Morning-Evening Star, a read of price SHAPE rather than a smoothed derivative like RSI/MACD/EMA-BB) loses its "Confirmed" status. Off by default.</div>
+          <div class="hint">When on, a row whose direction disagrees with its own most recent candlestick pattern (the small candle badge next to Signal - Engulfing/Hammer-family/Morning-Evening Star, a read of price SHAPE rather than a smoothed derivative like RSI/MACD) loses its "Confirmed" status. Off by default.</div>
         </div>
         <div>
           <label style="margin-top:0;">

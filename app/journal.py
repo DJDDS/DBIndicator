@@ -54,7 +54,7 @@ DEFAULT_HORIZON_BARS = 10
 # "did HTF-agreeing trades outperform", etc., without needing to have
 # separately recorded any of this yourself.
 _SNAPSHOT_FIELDS = [
-    "rsi", "rsi_state", "macd_state", "ema_bb_state", "aligned",
+    "rsi", "rsi_state", "macd_state", "vol_flow_direction", "aligned",
     "vol_multiple", "vol_confirmed", "cmf", "vol_flow_direction",
     "candle_pattern", "candle_direction", "htf_direction", "adx", "regime",
     "signal_confirmed", "weighted_score", "in_opening_window",
@@ -71,7 +71,7 @@ _SNAPSHOT_FIELDS = [
     # existed simply has it come back None on read (see .get() usage
     # throughout this module) - never a crash, just "unknown/excluded"
     # for grouping purposes.
-    "sector_agrees", "breadth_agrees", "candle_agrees", "vol_flow_agrees", "htf_agrees",
+    "sector_agrees", "breadth_agrees", "candle_agrees", "htf_agrees",
     # Added for the risk-management layer's sector-concentration check
     # (get_risk_budget_state below) - the sector index tradingsymbol
     # itself (e.g. "NIFTY BANK"), not just whether it agreed, so trades
@@ -99,7 +99,6 @@ _CONFIDENCE_FACTORS = [
     ("sector_agrees", "Sector agrees"),
     ("breadth_agrees", "Breadth agrees"),
     ("candle_agrees", "Candle pattern agrees"),
-    ("vol_flow_agrees", "Volume-flow agrees"),
     ("htf_agrees", "Higher-timeframe agrees"),
 ]
 

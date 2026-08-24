@@ -184,6 +184,13 @@ _HTF_RESAMPLE = {
     "15minute": {"rule": "4h", "kwargs": {"origin": "start_day", "offset": "9h15min"}, "label": "4hour"},
     "60minute": {"rule": "1D", "kwargs": {}, "label": "day"},
     "4hour": {"rule": "1D", "kwargs": {}, "label": "day"},
+    # Daily's own higher timeframe is weekly. Without this entry a daily
+    # scan had NO higher-timeframe check at all - htf_direction came back
+    # None, htf_agrees was always True, and the gate silently did nothing
+    # on the very timeframe the watchlist now runs on. scanner._lookback_days
+    # pulls 400 calendar days for "day", which resamples to ~57 weekly bars -
+    # comfortably past compute_series' ~37-bar warm-up requirement.
+    "day": {"rule": "1W", "kwargs": {}, "label": "week"},
 }
 
 
@@ -205,10 +212,16 @@ def _higher_timeframe_direction(df: pd.DataFrame, timeframe: str):
     if "error" in htf_series:
         return None
     i = len(htf_df) - 1
+    # Same three directional votes the main signal uses - RSI, MACD and
+    # Chaikin Money Flow. CMF replaced the old EMA9-vs-Bollinger-mid vote
+    # (see compute_signal): that was a third transform of the same close
+    # series, so it added little independent information, while CMF is
+    # derived from volume and genuinely is a separate read.
+    htf_cmf = htf_series["cmf"].iloc[i]
     align_count = (
         int(htf_series["rsi_line"].iloc[i] > htf_series["rsi_smooth"].iloc[i])
         + int(htf_series["macd_line"].iloc[i] > htf_series["signal_line"].iloc[i])
-        + int(htf_series["ema9"].iloc[i] > htf_series["bb_mid"].iloc[i])
+        + int(pd.notna(htf_cmf) and htf_cmf > 0)
     )
     return "Bullish" if align_count >= 2 else "Bearish"
 
@@ -536,12 +549,12 @@ def _full_align_count_series(series: dict) -> pd.Series:
     valid_row = (
         series["rsi_line"].notna() & series["rsi_smooth"].notna()
         & series["macd_line"].notna() & series["signal_line"].notna()
-        & series["ema9"].notna() & series["bb_mid"].notna()
+        & series["cmf"].notna()
     )
     raw_count = (
         (series["rsi_line"] > series["rsi_smooth"]).astype(int)
         + (series["macd_line"] > series["signal_line"]).astype(int)
-        + (series["ema9"] > series["bb_mid"]).astype(int)
+        + (series["cmf"] > 0).astype(int)
     )
     return raw_count.where(valid_row)
 
@@ -667,10 +680,25 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     elif bear_count >= fresh_required:
         fresh_signal = "Bearish"
 
+    # The three DIRECTIONAL votes. Chaikin Money Flow replaced the old
+    # EMA9-vs-Bollinger-mid vote here: that was a plain moving-average
+    # crossover wearing a Bollinger label (nothing about it read the BANDS
+    # at all), and being a third transform of the same close series it
+    # carried little information RSI and MACD didn't already have - see
+    # NEXT_HORIZON_RESEARCH.md Finding 1 on correlated votes, and
+    # PARAMETER_ANALYSIS_2.md Finding #3. CMF is derived from volume
+    # instead, so the vote is now 2 price reads + 2 volume reads (CMF
+    # directional, Relative Volume magnitude) rather than 3 price + 1
+    # volume - genuinely more independent evidence for the same count.
+    #
+    # Bollinger itself did NOT leave the app: the bands still drive the
+    # breakout/breakdown state and the band-WIDTH coiling read, which is
+    # what Bollinger Bands are actually built to measure.
+    cmf_now = series["cmf"].iloc[i]
     align_count = (
         int(rsi_line.iloc[i] > rsi_smooth.iloc[i])
         + int(macd_line.iloc[i] > signal_line.iloc[i])
-        + int(ema9.iloc[i] > bb_mid.iloc[i])
+        + int(pd.notna(cmf_now) and cmf_now > 0)
     )
 
     vwap = session_vwap(df, timeframe)
@@ -756,7 +784,6 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     vol_flow_direction = None
     if cmf_value:  # None or exactly 0.0 both mean "no opinion"
         vol_flow_direction = "Bullish" if cmf_value > 0 else "Bearish"
-    vol_flow_agrees = True if vol_flow_direction is None else (vol_flow_direction == direction)
 
     # candle_pattern/candle_direction/candle_agrees: the multi-bar SHAPE
     # of recent price action (see _compute_candle_pattern/
@@ -1013,7 +1040,6 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "rsi_state": "Bullish" if rsi_line.iloc[i] > rsi_smooth.iloc[i] else "Bearish",
         "macd_params": f"{fast},{slow},{sig}",
         "macd_state": "Bullish" if macd_line.iloc[i] > signal_line.iloc[i] else "Bearish",
-        "ema_bb_state": "Bullish" if ema9.iloc[i] > bb_mid.iloc[i] else "Bearish",
         "aligned": aligned,
         # Which way the *majority* of the 3 indicators currently point,
         # regardless of whether today's candle is the exact one where
@@ -1034,7 +1060,6 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "vol_confirmed": vol_confirmed,
         "cmf": cmf_value,
         "vol_flow_direction": vol_flow_direction,
-        "vol_flow_agrees": vol_flow_agrees,
         "candle_pattern": candle_pattern_val,
         "candle_direction": candle_direction_val,
         "candle_agrees": candle_agrees,

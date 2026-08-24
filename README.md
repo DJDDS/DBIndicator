@@ -1,6 +1,6 @@
 # Scanner — Kite-connected web dashboard
 
-This runs your RSI + MACD + EMA/Bollinger confluence Scanner against live
+This runs your RSI + MACD + CMF + Relative Volume confluence Scanner against live
 Zerodha data for NSE F&O stocks and shows current signals, live charts,
 and an AI-generated summary on a simple web page you can open any time.
 It needs to run continuously on a server (not your own laptop that goes
@@ -15,18 +15,18 @@ runs on its own for the rest of the day.
 
 ## What's in this version
 
-- **Timeframes**: 15-min, 30-min, 60-min, **4-hour** (synthesized by
-  resampling 60-min candles — Kite has no native 4H interval), Daily,
-  Weekly.
+- **Timeframes are pinned per surface**, not chosen from a dropdown — the
+  watchlist runs on **daily**, the intraday panel on **15-min against the
+  4-hour trend**. See "How the timeframes work" below.
 - **F&O-only watchlist**: on the Settings page, "Load current F&O list
   from Kite" pulls the *exact, live* list of NSE stocks currently
   eligible for futures & options trading straight from Kite's own
   instrument list — not a hardcoded list that can go stale as NSE
   periodically revises F&O eligibility.
-- **Everything tunable from the browser**: watchlist, timeframe, MACD
-  preset/custom values, RSI/EMA/Bollinger lengths, 2-of-3 vs 3-of-3, and
-  scan frequency all live-update from the **Settings** page — no editing
-  `.env` or restarting the server.
+- **Everything tunable from the browser**: watchlist, MACD preset/custom
+  values, RSI/EMA/Bollinger lengths, how many of the 4 parameters must
+  agree, and scan frequency all live-update from the **Settings** page —
+  no editing `.env` or restarting the server.
 - **Real charts**: click any row (or "Chart →") to open a candlestick
   chart with the 9 EMA and Bollinger mid-band overlaid, plus separate
   RSI and MACD panes, all synced and zoomable (TradingView's open-source
@@ -76,14 +76,11 @@ Telegram/in-page alert as a fresh signal the moment a genuinely new
 article shows up for one of those symbols. Off entirely unless you set
 it up — no news source is built in by default.
 
-Headlines get their own **News column** in the results table: the latest
-headline for that symbol, its source, and *+N* when there are more.
-Click through to read the article (the link won't hijack the row's own
-chart link), sort the column to bring the most-covered names to the top,
-or use the **Has news / No news** filter to show only symbols with
-something behind the move. Because headlines are only fetched for
-Confirmed rows, a dash on an unconfirmed row means nothing was looked up
-for it — not that there's no news.
+Headlines get their own **News card** on the dashboard, listing every
+recent headline across your currently-Confirmed symbols with its source
+and time. It started as a per-row table column, but since headlines are
+only fetched for Confirmed rows that column mostly rendered an em-dash —
+one card in a fixed place reads far better than a mostly-empty column.
 
 1. Sign up free at [marketaux.com](https://www.marketaux.com) (no card
    needed) and grab your API key from the dashboard.
@@ -108,18 +105,14 @@ side — nothing in this app needs to change.
 
 ---
 
-## VWAP &amp; Anchored VWAP
+## VWAP & Anchored VWAP
 
-Every row now shows a **VWAP** line under Close too (when available): the
-session's volume-weighted average price (resets every day, intraday
-timeframes only), alongside an **AVWAP** — volume-weighted average price
-since this stock's *current* confluence trend leg began, which doesn't
-reset daily and works on every timeframe including Day/Week. Both were
-already computed under the hood for other purposes (VWAP quietly fed the
-existing "High Conviction" classification) but never shown — now they
-are, green/red for above/below. Open any row's **Chart** to see both
-plotted as overlays (teal = VWAP, dashed magenta = AVWAP) alongside the
-existing EMA/Bollinger lines.
+Both are plotted on the **Chart** page (teal = session VWAP, dashed
+magenta = anchored VWAP, measured since the current trend leg began).
+They used to also appear as text under Close in the watchlist table; that
+was removed when the table was de-cluttered, because **Ext** already
+carries the actionable version of the same information — how far past
+VWAP price has run, in ATR units, in the row's own direction.
 
 ## Journal-based confidence score
 
@@ -131,8 +124,7 @@ Bullish/3-of-4 trades have won 67% of the time so far. It only appears
 once at least 5 of your own resolved trades share that setup, so it's
 never a misleading number from 1-2 trades. The **/journal** page itself
 now also has two breakdown tables: win rate by setup, and win rate by
-each optional agreement filter (sector/breadth/candle-pattern/volume-
-flow/higher-timeframe) — a real, walk-forward answer to "does turning
+each optional agreement filter (sector/breadth/candle-pattern/higher-timeframe) — a real, walk-forward answer to "does turning
 this filter on actually help", from your own trading, not a generic
 claim.
 
@@ -147,6 +139,71 @@ thing as "is the histogram positive"), so it's a new, second read rather
 than a restatement. Off by default; turn on "Require MACD histogram
 momentum agreement" on the Settings page to have a row whose momentum is
 fading against its own direction lose its Confirmed status.
+
+## How the timeframes work (read this first)
+
+Every surface is **pinned** to the timeframe that matches its job. There is
+no global timeframe dropdown any more — that one knob was the biggest
+source of confusion in this app, because the same badge meant different
+things depending on a setting you'd changed days earlier.
+
+| Surface | Timeframe | Why |
+|---|---|---|
+| Watchlist table, OI Screener, Best Entries, alerts, journal | **daily** | The bar a BTST/swing decision is actually made on, and the only one where Close@, NR7 and Delivery mean what their names say |
+| Intraday panel | **15-minute, cross-checked against 4-hour** | Entry timing, with the 4-hour trend as the confluence check |
+| Chart & Backtest pages | your choice | Research surfaces, where switching timeframe is the point |
+
+60-minute was dropped: it sat between the two timeframes that actually do
+a job, adding scan load and screen clutter without answering a question
+the other two didn't already answer.
+
+Daily also finally has a **weekly** higher-timeframe check. Before this it
+had none at all, which meant the HTF gate silently did nothing on exactly
+the timeframe the watchlist now runs on.
+
+## The four parameters
+
+**RSI · MACD · Chaikin Money Flow · Relative Volume.**
+
+CMF replaced the old *EMA9 vs Bollinger mid* vote. That one was a plain
+moving-average crossover wearing a Bollinger label — nothing in it read
+the bands at all — and being a third transform of the same closing-price
+series it added little that RSI and MACD didn't already say. Your own
+Auto-Weight run scored it 0.0%, though on only 4 trades, so treat that as
+suggestive rather than evidence; the structural argument is the real one
+(see `NEXT_HORIZON_RESEARCH.md` Finding 1 on correlated votes).
+
+The vote is now **2 price reads + 2 volume reads** instead of 3 price + 1
+volume — genuinely more independent evidence behind the same count.
+Bollinger itself didn't leave: the bands still drive the breakout state
+and the band-width coiling read, which is what Bollinger Bands are
+actually built to measure.
+
+Defaults are now **4-of-4**, with the entry-location and ATR-floor gates
+**on** — fewer candidates, each of which is early rather than chasing and
+in a stock that actually moves. Loosen on the Settings page if that's too
+tight for you.
+
+## Backtest costs and holdout (research Finding 2)
+
+Backtest returns are now **net of costs by default**. Every horizon's
+return has a round-trip drag subtracted: `cost_pct` (0.08% default, from
+Zerodha's published stock-futures charges) plus `slippage_pct` twice
+(0.05% per side, because you cross the spread entering and exiting).
+
+This matters more than it sounds. A trade showing +0.05% gross is
+**−0.13% net** — the sign flips. Options are far worse than futures here,
+because STT and exchange charges are levied on premium rather than
+underlying notional; test an options strategy with a much higher figure.
+
+Drawdown (`mae_pct`) is deliberately left **gross** — it describes raw
+adverse price action, which is a property of the market rather than of
+your cost structure.
+
+`holdout_pct` adds the overfitting discipline: split the window, tune
+freely against the earlier portion, then look at the holdout **once** and
+accept what it says. A holdout you re-check after every tweak has quietly
+become training data.
 
 ## Best Entries panel
 

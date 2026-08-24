@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from .config import settings
+from .config import WATCHLIST_TIMEFRAME
 from .indicators import compute_signal
 
 log = logging.getLogger(__name__)
@@ -454,7 +455,7 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
     stock if that symbol's data couldn't be fetched (e.g. bad symbol,
     rate limit) - one bad symbol never aborts the whole scan.
 
-    timeframe defaults to the configured settings.TIMEFRAME, but can be
+    timeframe defaults to config.WATCHLIST_TIMEFRAME (daily), but can be
     overridden - e.g. the background scanner also runs a dedicated
     4-hour pass regardless of what timeframe the dashboard is set to.
 
@@ -462,7 +463,7 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
     (from its near-month futures contract) via one batched quote() call
     for the whole watchlist, so it costs a single extra request per
     scan rather than one per stock."""
-    timeframe = timeframe or settings.TIMEFRAME
+    timeframe = timeframe or WATCHLIST_TIMEFRAME
     instruments = _load_instrument_map(kite)
     oi_map = fetch_oi_map(kite, settings.WATCHLIST) if with_oi else {}
     results = []

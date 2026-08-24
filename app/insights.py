@@ -41,7 +41,7 @@ def _format_rows(results):
             continue
         lines.append(
             f"- {r['symbol']}: close={r['close']}, RSI={r['rsi']} ({r['rsi_state']}), "
-            f"MACD {r['macd_params']} ({r['macd_state']}), EMA9-vs-BBmid ({r['ema_bb_state']}), "
+            f"MACD {r['macd_params']} ({r['macd_state']}), CMF ({r.get('vol_flow_direction') or '-'}), "
             f"aligned={r['aligned']}/3, fresh_signal={r.get('fresh_signal') or 'none'}"
             f"{_format_oi(r)}"
         )

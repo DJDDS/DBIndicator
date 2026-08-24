@@ -71,7 +71,7 @@ def dashboard():
         total_scanned=len(all_results),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
-        timeframe=settings.TIMEFRAME,
+        timeframe=config.WATCHLIST_TIMEFRAME,
         min_required=settings.MIN_REQUIRED,
         macd_preset=settings.MACD_PRESET,
         rsi_length=settings.RSI_LENGTH,
@@ -94,7 +94,6 @@ def dashboard():
         index_close=state.get("index_close"),
         index_chg_pct=state.get("index_chg_pct"),
         require_index_agreement=settings.REQUIRE_INDEX_AGREEMENT,
-        require_volume_flow_agreement=settings.REQUIRE_VOLUME_FLOW_AGREEMENT,
         require_candle_pattern_agreement=settings.REQUIRE_CANDLE_PATTERN_AGREEMENT,
         require_sector_agreement=settings.REQUIRE_SECTOR_AGREEMENT,
         require_breadth_agreement=settings.REQUIRE_BREADTH_AGREEMENT,
@@ -112,23 +111,21 @@ def dashboard():
         # Drives the BTST-meaning honesty layer on the dashboard - see
         # config.BTST_TIMEFRAMES for why a Close@/NR7 reading taken on a
         # 15-minute bar must not be presented as the daily one.
-        timeframe_label=config.TIMEFRAME_LABELS.get(settings.TIMEFRAME, settings.TIMEFRAME),
-        is_btst_timeframe=settings.TIMEFRAME in config.BTST_TIMEFRAMES,
+        timeframe_label=config.TIMEFRAME_LABELS.get(config.WATCHLIST_TIMEFRAME, config.WATCHLIST_TIMEFRAME),
+        is_btst_timeframe=config.WATCHLIST_TIMEFRAME in config.BTST_TIMEFRAMES,
     )
 
 
 @app.route("/quick-settings", methods=["POST"])
 @require_dashboard_password
 def quick_settings():
-    """A compact settings panel lives on the dashboard itself (timeframe,
-    MACD preset, RSI/EMA/BB lengths, min-required) so the common tweaks
+    """A compact settings panel lives on the dashboard itself (MACD preset, RSI/EMA/BB lengths, min-required) so the common tweaks
     don't need a trip to /settings. Only forwards fields that were
     actually submitted - unlike the /settings page's form, this never
     touches WATCHLIST/scan interval/MACD custom values, so there's no
     risk of accidentally wiping those from a partial submission."""
     form = request.form
     field_map = {
-        "timeframe": "TIMEFRAME",
         "macd_preset": "MACD_PRESET",
         "rsi_length": "RSI_LENGTH",
         "rsi_smooth_length": "RSI_SMOOTH_LENGTH",
@@ -171,7 +168,6 @@ def settings_page():
         form = request.form
         payload = {
             "WATCHLIST": form.get("watchlist", ""),
-            "TIMEFRAME": form.get("timeframe", settings.TIMEFRAME),
             "MACD_PRESET": form.get("macd_preset", settings.MACD_PRESET),
             "MACD_CUSTOM_FAST": form.get("macd_fast", settings.MACD_CUSTOM_FAST),
             "MACD_CUSTOM_SLOW": form.get("macd_slow", settings.MACD_CUSTOM_SLOW),
@@ -191,7 +187,6 @@ def settings_page():
             # OLD value forever, making it impossible to ever uncheck) -
             # "on" only when Flask actually received the field.
             "REQUIRE_INDEX_AGREEMENT": form.get("require_index_agreement") == "on",
-            "REQUIRE_VOLUME_FLOW_AGREEMENT": form.get("require_volume_flow_agreement") == "on",
             "REQUIRE_CANDLE_PATTERN_AGREEMENT": form.get("require_candle_pattern_agreement") == "on",
             "REQUIRE_MACD_HIST_AGREEMENT": form.get("require_macd_hist_agreement") == "on",
             "REQUIRE_SECTOR_AGREEMENT": form.get("require_sector_agreement") == "on",
@@ -258,7 +253,7 @@ def chart_page(symbol):
     return render_template(
         "chart.html",
         symbol=symbol.upper(),
-        timeframe=settings.TIMEFRAME,
+        timeframe=config.WATCHLIST_TIMEFRAME,
         valid_timeframes=config.VALID_TIMEFRAMES,
     )
 
@@ -270,7 +265,7 @@ def chart_data(symbol):
     if kite is None:
         return jsonify({"error": "Not logged in to Kite today."}), 400
 
-    timeframe = request.args.get("timeframe", settings.TIMEFRAME)
+    timeframe = request.args.get("timeframe", config.WATCHLIST_TIMEFRAME)
     if timeframe not in config.VALID_TIMEFRAMES:
         return jsonify({"error": "invalid timeframe"}), 400
 
@@ -342,7 +337,7 @@ def _candles(df):
 def api_insights():
     state = get_state()
     result = generate_insights(
-        state["results"], settings.TIMEFRAME, settings.MIN_REQUIRED, state["last_scan"],
+        state["results"], config.WATCHLIST_TIMEFRAME, settings.MIN_REQUIRED, state["last_scan"],
     )
     return jsonify(result)
 
@@ -371,7 +366,7 @@ def oi_screener_page():
     return render_template(
         "oi_screener.html",
         logged_in=kite_auth.is_logged_in_today(),
-        timeframe=settings.TIMEFRAME,
+        timeframe=config.WATCHLIST_TIMEFRAME,
         min_required=settings.MIN_REQUIRED,
     )
 
@@ -409,7 +404,7 @@ def backtest_page():
         "backtest.html",
         logged_in=kite_auth.is_logged_in_today(),
         valid_timeframes=config.VALID_TIMEFRAMES,
-        default_timeframe=settings.TIMEFRAME,
+        default_timeframe=config.WATCHLIST_TIMEFRAME,
         param_defs=backtest.PARAM_DEFS,
         default_params=list(backtest.DEFAULT_PARAMS),
         default_required=backtest.DEFAULT_REQUIRED,
@@ -452,7 +447,7 @@ def api_backtest_start():
         return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
 
     form = request.form
-    timeframe = form.get("timeframe", settings.TIMEFRAME)
+    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
     if timeframe not in config.VALID_TIMEFRAMES:
         return jsonify({"started": False, "reason": "invalid timeframe"}), 400
     try:
@@ -553,7 +548,7 @@ def api_journal_log():
 
     try:
         trade = journal.log_paper_trade(
-            row, timeframe=settings.TIMEFRAME, horizon_bars=horizon_bars,
+            row, timeframe=config.WATCHLIST_TIMEFRAME, horizon_bars=horizon_bars,
             cost_pct=cost_pct, slippage_pct=slippage_pct,
         )
     except ValueError as exc:
@@ -601,7 +596,7 @@ def api_weights_start():
         return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
 
     form = request.form
-    timeframe = form.get("timeframe", settings.TIMEFRAME)
+    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
     if timeframe not in config.VALID_TIMEFRAMES:
         return jsonify({"started": False, "reason": "invalid timeframe"}), 400
     try:

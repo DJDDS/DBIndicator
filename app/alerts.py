@@ -96,7 +96,7 @@ def _format_message(r, timeframe):
     return (
         f"{arrow} {r['symbol']} - {r['fresh_signal']} confluence on {timeframe} (confirmed: {vol_note}{htf_note})\n"
         f"Close: {r['close']} | RSI {r['rsi']} ({r['rsi_state']}) | "
-        f"MACD {r['macd_params']} ({r['macd_state']}) | EMA/BB ({r['ema_bb_state']}) | "
+        f"MACD {r['macd_params']} ({r['macd_state']}) | CMF ({r.get('vol_flow_direction') or '-'}) | "
         f"Aligned {r['aligned']}/3"
     )
 

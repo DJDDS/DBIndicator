@@ -138,6 +138,28 @@ DEFAULT_WATCHLIST = [
 # not 4-hour itself. "week" is synthesized by resampling daily candles.
 VALID_TIMEFRAMES = ["15minute", "60minute", "4hour", "day", "week"]
 
+# --------------------------------------------------------------------------
+# Each SURFACE is pinned to the timeframe that matches its job, rather than
+# one global "current timeframe" knob driving everything at once. That knob
+# was the single biggest source of confusion in this app: the same badge
+# meant different things depending on a dropdown you'd set days ago, and
+# BTST reads like Close@/NR7/Delivery only carry their intended meaning on a
+# daily bar (see BTST_TIMEFRAMES below).
+#
+#   WATCHLIST_TIMEFRAME  - the main watchlist table, OI Screener, Best
+#                          Entries, High Conviction, Matching Now, alerts
+#                          and the signal journal. Daily, because that is
+#                          the bar a BTST/swing decision is actually made
+#                          on and the bar every BTST read is defined for.
+#   MULTI_TF_TIMEFRAMES  - the always-on intraday panel (background.py).
+#                          15-minute for timing, cross-checked against the
+#                          4-hour trend (see indicators._HTF_RESAMPLE).
+#
+# VALID_TIMEFRAMES above is still the menu for the Chart and Backtest pages,
+# which are research surfaces where switching timeframe IS the point.
+# --------------------------------------------------------------------------
+WATCHLIST_TIMEFRAME = "day"
+
 # Human-readable names for each timeframe, used wherever a badge or tooltip
 # has to state WHICH bar a reading was computed on - see BTST_TIMEFRAMES
 # directly below for why that matters.
@@ -165,12 +187,12 @@ BTST_TIMEFRAMES = ("day", "week")
 VALID_MACD_PRESETS = ["auto", "15min", "30min", "custom"]
 
 _TUNABLE_FIELDS = [
-    "WATCHLIST", "TIMEFRAME", "MACD_PRESET", "MACD_CUSTOM_FAST",
+    "WATCHLIST", "MACD_PRESET", "MACD_CUSTOM_FAST",
     "MACD_CUSTOM_SLOW", "MACD_CUSTOM_SIGNAL", "RSI_LENGTH",
     "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
     "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
-    "REQUIRE_VOLUME_FLOW_AGREEMENT", "REQUIRE_CANDLE_PATTERN_AGREEMENT",
+    "REQUIRE_CANDLE_PATTERN_AGREEMENT",
     "REQUIRE_SECTOR_AGREEMENT", "REQUIRE_BREADTH_AGREEMENT", "BREADTH_THRESHOLD_PCT",
     "REQUIRE_MACD_HIST_AGREEMENT",
     "ATR_LENGTH", "ATR_STOP_MULTIPLIER", "ATR_TARGET_MULTIPLIER",
@@ -193,7 +215,6 @@ def _env_watchlist():
 def _env_defaults():
     return {
         "WATCHLIST": _env_watchlist(),
-        "TIMEFRAME": os.getenv("TIMEFRAME", "15minute"),
         "MACD_PRESET": os.getenv("MACD_PRESET", "auto"),
         "MACD_CUSTOM_FAST": int(os.getenv("MACD_CUSTOM_FAST", 12)),
         "MACD_CUSTOM_SLOW": int(os.getenv("MACD_CUSTOM_SLOW", 26)),
@@ -208,7 +229,7 @@ def _env_defaults():
         # must currently agree for a "confirmed" signal (was 2/3-of-3
         # before Relative Volume joined the count as a real, equally-
         # weighted 4th parameter instead of an always-mandatory add-on).
-        "MIN_REQUIRED": int(os.getenv("MIN_REQUIRED", 2)),
+        "MIN_REQUIRED": int(os.getenv("MIN_REQUIRED", 4)),
         "REL_VOLUME_THRESHOLD": float(os.getenv("REL_VOLUME_THRESHOLD", 1.2)),
         "SCAN_INTERVAL_SECONDS": int(os.getenv("SCAN_INTERVAL_SECONDS", 180)),
         # Regime-adaptive volume bar (see indicators.compute_signal): ADX
@@ -227,15 +248,6 @@ def _env_defaults():
         # Off by default so existing behaviour doesn't change until you
         # opt in.
         "REQUIRE_INDEX_AGREEMENT": os.getenv("REQUIRE_INDEX_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
-        # Volume-flow filter (see background._apply_volume_flow_filter and
-        # indicators.compute_signal's vol_flow_direction/vol_flow_agrees,
-        # via Chaikin Money Flow - PARAMETER_ANALYSIS_2.md Finding #2):
-        # when on, a row whose direction disagrees with its own recent CMF
-        # sign (i.e. the volume backing the move looks like distribution,
-        # not buying, for a Bullish row - or vice versa) loses its
-        # "Confirmed" status. Off by default, same reasoning as
-        # REQUIRE_INDEX_AGREEMENT above.
-        "REQUIRE_VOLUME_FLOW_AGREEMENT": os.getenv("REQUIRE_VOLUME_FLOW_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
         # Candlestick-pattern filter (see background._apply_candle_pattern_
         # filter and indicators.compute_signal's candle_pattern/
         # candle_direction/candle_agrees, via _compute_candle_pattern -
@@ -394,7 +406,7 @@ def _env_defaults():
         # loses its "Confirmed" status; off by default, same reasoning as
         # every other REQUIRE_* gate above.
         "MAX_ENTRY_EXTENSION_ATR": float(os.getenv("MAX_ENTRY_EXTENSION_ATR", 2.0)),
-        "REQUIRE_ENTRY_LOCATION_AGREEMENT": os.getenv("REQUIRE_ENTRY_LOCATION_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
+        "REQUIRE_ENTRY_LOCATION_AGREEMENT": os.getenv("REQUIRE_ENTRY_LOCATION_AGREEMENT", "true").strip().lower() in ("1", "true", "on", "yes"),
         # Minimum-ATR volatility floor (PARAMETER_ANALYSIS_2.md Finding
         # #5 - "no volatility floor, in either engine"; see indicators.
         # compute_signal's atr_pct/atr_floor_agrees). Minimum ATR as a %
@@ -405,8 +417,8 @@ def _env_defaults():
         # (0.5%) so it only ever screens out genuinely dead names, not
         # merely calm ones. When REQUIRE_ATR_FLOOR is on, a row below the
         # floor loses its "Confirmed" status; off by default.
-        "MIN_ATR_PCT": float(os.getenv("MIN_ATR_PCT", 0.5)),
-        "REQUIRE_ATR_FLOOR": os.getenv("REQUIRE_ATR_FLOOR", "false").strip().lower() in ("1", "true", "on", "yes"),
+        "MIN_ATR_PCT": float(os.getenv("MIN_ATR_PCT", 1.2)),
+        "REQUIRE_ATR_FLOOR": os.getenv("REQUIRE_ATR_FLOOR", "true").strip().lower() in ("1", "true", "on", "yes"),
     }
 
 
@@ -427,14 +439,6 @@ class Settings:
                         data[k] = v
             except (json.JSONDecodeError, OSError):
                 pass
-        # A persisted TIMEFRAME from before VALID_TIMEFRAMES was trimmed
-        # (e.g. "30minute", "60minute", "4hour") would otherwise silently
-        # keep scanning on a now-unselectable value forever - fall back
-        # to the default instead so removing an option can't strand a
-        # running deployment on it.
-        if data.get("TIMEFRAME") not in VALID_TIMEFRAMES:
-            data["TIMEFRAME"] = "15minute"
-
         for k, v in data.items():
             setattr(self, k, v)
 
@@ -455,13 +459,6 @@ class Settings:
                 errors.append("Watchlist can't be empty.")
             else:
                 clean["WATCHLIST"] = wl
-
-        if "TIMEFRAME" in kwargs:
-            tf = kwargs["TIMEFRAME"]
-            if tf not in VALID_TIMEFRAMES:
-                errors.append(f"Timeframe must be one of {VALID_TIMEFRAMES}.")
-            else:
-                clean["TIMEFRAME"] = tf
 
         if "MACD_PRESET" in kwargs:
             mp = kwargs["MACD_PRESET"]
@@ -524,13 +521,6 @@ class Settings:
                 clean["REQUIRE_INDEX_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_INDEX_AGREEMENT"] = bool(val)
-
-        if "REQUIRE_VOLUME_FLOW_AGREEMENT" in kwargs:
-            val = kwargs["REQUIRE_VOLUME_FLOW_AGREEMENT"]
-            if isinstance(val, str):
-                clean["REQUIRE_VOLUME_FLOW_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
-            else:
-                clean["REQUIRE_VOLUME_FLOW_AGREEMENT"] = bool(val)
 
         if "REQUIRE_CANDLE_PATTERN_AGREEMENT" in kwargs:
             val = kwargs["REQUIRE_CANDLE_PATTERN_AGREEMENT"]

@@ -13,7 +13,7 @@ import time
 from . import alerts, delivery, journal, kite_auth, news
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE,
-    TIMEFRAME_LABELS,
+    TIMEFRAME_LABELS, WATCHLIST_TIMEFRAME,
 )
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
@@ -47,7 +47,7 @@ OI_HISTORY_MAX_MINUTES = 150
 SCREEN_PARAM_DEFS = [
     {"id": "rsi_state", "label": "RSI (vs its smoothing line)"},
     {"id": "macd_state", "label": "MACD (vs signal line)"},
-    {"id": "ema_bb_state", "label": "EMA9 vs Bollinger Mid"},
+    {"id": "cmf", "label": "Chaikin Money Flow (directional volume)"},
     {"id": "rel_volume", "label": "Relative Volume (vs 20-bar avg, threshold on Settings page)"},
 ]
 
@@ -90,25 +90,6 @@ def _apply_index_filter(results, index_direction):
             continue
         r["index_agrees"] = True if index_direction is None else (r["direction"] == index_direction)
         if require and r.get("signal_confirmed") and not r["index_agrees"]:
-            r["signal_confirmed"] = False
-
-
-def _apply_volume_flow_filter(results):
-    """Mutates each result dict in place: when settings.
-    REQUIRE_VOLUME_FLOW_AGREEMENT is on, a row that already has
-    vol_flow_agrees=False (set by indicators.compute_signal via Chaikin
-    Money Flow - see PARAMETER_ANALYSIS_2.md Finding #2) also loses its
-    signal_confirmed status - same shape as _apply_index_filter just
-    above, just reading a field compute_signal already attached instead
-    of a separately-fetched index reading. Off by default; vol_flow_
-    direction/vol_flow_agrees are always attached by compute_signal
-    either way, purely for display (the small ▲/▼ badge next to Volume)."""
-    if not settings.REQUIRE_VOLUME_FLOW_AGREEMENT:
-        return
-    for r in results:
-        if r.get("error"):
-            continue
-        if r.get("signal_confirmed") and r.get("vol_flow_agrees") is False:
             r["signal_confirmed"] = False
 
 
@@ -352,7 +333,7 @@ def _apply_breadth_filter(results, breadth):
 # "Auto-Weight Parameters" on the Backtest page at least once - matches
 # the plain aligned/4 count in spirit (every parameter counts the same).
 _DEFAULT_PARAM_WEIGHTS = {
-    "rsi_cross": 0.25, "macd_cross": 0.25, "ema_bb_cross": 0.25, "rel_volume": 0.25,
+    "rsi_cross": 0.25, "macd_cross": 0.25, "cmf_flow": 0.25, "rel_volume": 0.25,
 }
 _param_weights_cache = {"mtime": None, "weights": None}
 
@@ -382,7 +363,7 @@ def _load_param_weights():
 def _apply_weighted_score(results):
     """Mutates each result dict in place, attaching weighted_score (0-100) -
     a backtest-informed alternative to the plain aligned/4 count. Rather
-    than treating RSI/MACD/EMA-BB/Relative Volume as equally weighted,
+    than treating RSI/MACD/CMF/Relative Volume as equally weighted,
     this multiplies each one's current agreement with the row's
     direction by that parameter's own recent historical win rate (see
     backtest.compute_param_weights, run manually from the Backtest
@@ -404,8 +385,8 @@ def _apply_weighted_score(results):
             score += weights.get("rsi_cross", 0)
         if r.get("macd_state") == direction:
             score += weights.get("macd_cross", 0)
-        if r.get("ema_bb_state") == direction:
-            score += weights.get("ema_bb_cross", 0)
+        if r.get("vol_flow_direction") == direction:
+            score += weights.get("cmf_flow", 0)
         if r.get("vol_confirmed"):
             score += weights.get("rel_volume", 0)
         r["weighted_score"] = round(score * 100, 1)
@@ -523,7 +504,7 @@ def _entry_quality_score(r):
     # Name the bar explicitly (see config.BTST_TIMEFRAMES): on a 15-minute
     # scan this component is scoring the last 15 minutes, NOT the day, and
     # the tooltip should never let that pass unnoticed.
-    tf_label = TIMEFRAME_LABELS.get(settings.TIMEFRAME, settings.TIMEFRAME)
+    tf_label = TIMEFRAME_LABELS.get(WATCHLIST_TIMEFRAME, WATCHLIST_TIMEFRAME)
     if cp is None:
         pts, note = 4, "no close-position reading"
     elif (direction == "Bullish" and cp >= thr) or (direction == "Bearish" and cp <= 100 - thr):
@@ -883,7 +864,7 @@ def _run_loop():
                     # own exceptions and returns (None, None, None) on
                     # any failure, so a bad index fetch can never cost
                     # this cycle's actual stock results.
-                    index_direction, index_close, index_chg_pct = fetch_index_direction(kite, settings.TIMEFRAME)
+                    index_direction, index_close, index_chg_pct = fetch_index_direction(kite, WATCHLIST_TIMEFRAME)
                     # One more Kite call PER DISTINCT SECTOR actually
                     # present in this cycle's results (typically well
                     # under a dozen, not one per watchlist symbol) for
@@ -892,7 +873,7 @@ def _run_loop():
                     # failures contract as the index fetch above.
                     sectors_needed = {SYMBOL_SECTOR_MAP[r["symbol"]] for r in results
                                        if r.get("symbol") in SYMBOL_SECTOR_MAP}
-                    sector_directions = fetch_sector_directions(kite, sectors_needed, settings.TIMEFRAME) \
+                    sector_directions = fetch_sector_directions(kite, sectors_needed, WATCHLIST_TIMEFRAME) \
                         if sectors_needed else {}
                     # Once per cycle, not once per result - see delivery.
                     # refresh_if_stale's own docstring for why this is
@@ -906,7 +887,6 @@ def _run_loop():
                     with _state_lock:
                         _apply_param_tier(results)
                         _apply_index_filter(results, index_direction)
-                        _apply_volume_flow_filter(results)
                         _apply_candle_pattern_filter(results)
                         _apply_macd_hist_filter(results)
                         _apply_big_candle_filter(results)
@@ -934,12 +914,12 @@ def _run_loop():
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None
                     try:
-                        alerts.process_scan_results(results, settings.TIMEFRAME)
+                        alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
                     except Exception:  # noqa: BLE001 - alerting must never break scanning
                         log.exception("Alert processing failed")
                     if oi_events:
                         try:
-                            alerts.process_oi_events(oi_events, settings.TIMEFRAME)
+                            alerts.process_oi_events(oi_events, WATCHLIST_TIMEFRAME)
                         except Exception:  # noqa: BLE001 - alerting must never break scanning
                             log.exception("OI acceleration alert processing failed")
                     # Forward-testing signal journal (NEXT_HORIZON_RESEARCH.md
@@ -972,7 +952,7 @@ def _run_loop():
                                     r["news"] = news_by_symbol[r["symbol"]][:3]
                             new_articles = news.detect_new_articles(news_by_symbol, confirmed_symbols)
                             if new_articles:
-                                alerts.process_news_articles(new_articles, settings.TIMEFRAME)
+                                alerts.process_news_articles(new_articles, WATCHLIST_TIMEFRAME)
                     except Exception:  # noqa: BLE001 - news must never break scanning
                         log.exception("News fetch/alert failed")
                 except Exception as exc:  # noqa: BLE001
@@ -1027,7 +1007,13 @@ def start_background_scanner():
 # the single always-in-sync _state the rest of this module manages.
 # --------------------------------------------------------------------------
 
-MULTI_TF_TIMEFRAMES = ("15minute", "60minute", "4hour")
+# 60-minute was dropped: it sat between the two timeframes that
+# actually do a job here - 15-minute for entry timing, 4-hour as the
+# trend it's cross-checked against (indicators._HTF_RESAMPLE maps
+# 15minute -> 4hour), so a third panel in the middle added scanning
+# load and screen clutter without answering a question the other two
+# didn't already answer.
+MULTI_TF_TIMEFRAMES = ("15minute", "4hour")
 
 # Seconds between re-scans, PER timeframe - not how often the dashboard
 # page refreshes (that's still the usual 20s client-side poll industry-
@@ -1039,7 +1025,6 @@ MULTI_TF_TIMEFRAMES = ("15minute", "60minute", "4hour")
 # extra Kite API load) in scanning them as fast as the 15-minute one.
 MULTI_TF_SCAN_INTERVAL_SECONDS = {
     "15minute": 180,   # 3 min
-    "60minute": 600,   # 10 min - candle only closes hourly
     "4hour": 900,      # 15 min - candle only closes every 4 hours
 }
 
@@ -1120,7 +1105,6 @@ def _scan_one_multi_tf(kite, tf):
     index_direction, index_close, index_chg_pct = fetch_index_direction(kite, tf)
     _apply_param_tier(results)
     _apply_index_filter(results, index_direction)
-    _apply_volume_flow_filter(results)
     _apply_candle_pattern_filter(results)
     _apply_macd_hist_filter(results)
     _apply_big_candle_filter(results)
