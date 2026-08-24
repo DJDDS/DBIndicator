@@ -560,12 +560,15 @@ def _htf_direction_series(df: pd.DataFrame, timeframe: str) -> pd.Series:
     # mislabeled "Bearish" by construction instead of "no opinion yet".
     warm = (
         htf_series["rsi_smooth"].notna() & htf_series["macd_line"].notna()
-        & htf_series["signal_line"].notna() & htf_series["ema9"].notna() & htf_series["bb_mid"].notna()
+        & htf_series["signal_line"].notna() & htf_series["cmf"].notna()
     )
+    # CMF, not EMA9-vs-Bollinger-mid: must match indicators.
+    # _higher_timeframe_direction, or a backtest with require_htf on would
+    # replay a DIFFERENT higher-timeframe rule than the live screener uses.
     align_count = (
         (htf_series["rsi_line"] > htf_series["rsi_smooth"]).astype(int)
         + (htf_series["macd_line"] > htf_series["signal_line"]).astype(int)
-        + (htf_series["ema9"] > htf_series["bb_mid"]).astype(int)
+        + (htf_series["cmf"] > 0).astype(int)
     )
     bucket_direction = pd.Series(np.where(align_count >= 2, "Bullish", "Bearish"), index=htf_df.index, dtype=object)
     bucket_direction = bucket_direction.where(warm, other=None)

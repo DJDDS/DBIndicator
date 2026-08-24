@@ -377,7 +377,6 @@
         <input type="hidden" name="macd_fast" value="{{ macd_fast }}">
         <input type="hidden" name="macd_slow" value="{{ macd_slow }}">
         <input type="hidden" name="macd_signal" value="{{ macd_signal }}">
-        <input type="hidden" name="ema_length" value="{{ ema_length }}">
         <input type="hidden" name="bb_length" value="{{ bb_length }}">
         <input type="hidden" name="rel_volume_threshold" value="{{ rel_volume_threshold }}">
       </form>
@@ -438,10 +437,6 @@
             <div class="qs-field">
               <label for="qs-macd-signal">MACD signal</label>
               <input id="qs-macd-signal" type="number" name="macd_signal" value="{{ macd_signal }}" min="1">
-            </div>
-            <div class="qs-field">
-              <label for="qs-ema">EMA len</label>
-              <input id="qs-ema" type="number" name="ema_length" value="{{ ema_length }}" min="1">
             </div>
             <div class="qs-field">
               <label for="qs-bb">BB len</label>

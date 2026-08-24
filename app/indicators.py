@@ -585,7 +585,11 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     macd_line, signal_line = macd(close, fast, slow, sig)
     macd_hist = macd_line - signal_line
 
-    ema9 = close.ewm(span=settings.EMA_LENGTH, adjust=False).mean()
+    # EMA9 is now a CHART OVERLAY ONLY - it stopped being a screener vote
+    # when CMF replaced the EMA9-vs-Bollinger-mid cross, so its length is no
+    # longer a tunable setting. 9 is the conventional value and the one the
+    # chart has always drawn.
+    ema9 = close.ewm(span=9, adjust=False).mean()
     bb_mid = close.rolling(settings.BB_LENGTH).mean()
     # Same BB_LENGTH you already tune in Quick Settings, extended with a
     # standard 2-std-dev envelope - used only for the OI Screener's
@@ -611,7 +615,6 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
 
     rsi_up, rsi_dn = _cross_up(rsi_line, rsi_smooth), _cross_down(rsi_line, rsi_smooth)
     macd_up, macd_dn = _cross_up(macd_line, signal_line), _cross_down(macd_line, signal_line)
-    ema_up, ema_dn = _cross_up(ema9, bb_mid), _cross_down(ema9, bb_mid)
 
     return {
         "df": df,
@@ -634,7 +637,6 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
         "close_position": close_position,
         "rsi_up": rsi_up, "rsi_dn": rsi_dn,
         "macd_up": macd_up, "macd_dn": macd_dn,
-        "ema_up": ema_up, "ema_dn": ema_dn,
         "macd_params": (fast, slow, sig),
     }
 
@@ -657,15 +659,23 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     close = series["df"]["close"]
     rsi_line, rsi_smooth = series["rsi_line"], series["rsi_smooth"]
     macd_line, signal_line = series["macd_line"], series["signal_line"]
-    ema9, bb_mid = series["ema9"], series["bb_mid"]
     fast, slow, sig = series["macd_params"]
 
     i = len(df) - 1  # last closed candle
-    bull_count = int(series["rsi_up"].iloc[i]) + int(series["macd_up"].iloc[i]) + int(series["ema_up"].iloc[i])
-    bear_count = int(series["rsi_dn"].iloc[i]) + int(series["macd_dn"].iloc[i]) + int(series["ema_dn"].iloc[i])
+    # The third crossover is CMF crossing its own zero line, matching the
+    # three DIRECTIONAL votes below. This used to be the EMA9-vs-Bollinger
+    # -mid cross; when CMF replaced that as a vote, leaving this on EMA/BB
+    # would have meant Telegram alerts firing on a rule the screener no
+    # longer uses - a silent divergence between what alerts you and what
+    # the dashboard calls a signal.
+    cmf_series = series["cmf"]
+    cmf_up = _cross_up(cmf_series, pd.Series(0.0, index=cmf_series.index))
+    cmf_dn = _cross_down(cmf_series, pd.Series(0.0, index=cmf_series.index))
+    bull_count = int(series["rsi_up"].iloc[i]) + int(series["macd_up"].iloc[i]) + int(bool(cmf_up.iloc[i]))
+    bear_count = int(series["rsi_dn"].iloc[i]) + int(series["macd_dn"].iloc[i]) + int(bool(cmf_dn.iloc[i]))
 
     # fresh_signal only tracks the 3 CROSSOVER-capable indicators (RSI,
-    # MACD, EMA/BB) - Relative Volume is a continuous magnitude state,
+    # MACD, CMF-vs-zero) - Relative Volume is a continuous magnitude state,
     # not something that "crosses" a line, so it can't itself form a
     # fresh signal the way these 3 can. bull_count/bear_count therefore
     # max out at 3 even though settings.MIN_REQUIRED can now go up to
@@ -723,6 +733,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         vs_avwap = "Above" if close.iloc[i] > avwap else "Below"
         avwap_anchor_time = df.index[avwap_anchor_pos].isoformat()
 
+    bb_mid = series["bb_mid"]  # still used by the band-width coiling read below
     bb_upper, bb_lower = series["bb_upper"], series["bb_lower"]
     breakout_state = None
     if pd.notna(bb_upper.iloc[i]) and close.iloc[i] > bb_upper.iloc[i]:

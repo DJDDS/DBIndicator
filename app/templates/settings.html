@@ -34,10 +34,25 @@
   .msg-err { background: #fbe7e7; border: 1px solid #f0b7b7; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
   .msg-err ul { margin: 4px 0 0; padding-left: 18px; }
   fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-top: 6px; }
+  details.card > summary { cursor: pointer; font-size: 15px; color: var(--navy); list-style: none; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: "\25B8 "; color: var(--muted); }
+  details.card[open] > summary::before { content: "\25BE "; }
+  details.card > summary:hover { color: var(--accent); }
   legend { font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 6px; }
 </style>
 </head>
 <body>
+{% macro gate(field, checked, label, hint) %}
+        <div>
+          <label style="margin-top:0;">
+            <input type="checkbox" id="{{ field }}" name="{{ field }}" {% if checked %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
+            {{ label }}
+          </label>
+          <div class="hint">{{ hint }}</div>
+        </div>
+{% endmacro %}
+
 <header>
   <h1>Scanner Settings</h1>
   <nav><a href="/">← Dashboard</a></nav>
@@ -60,18 +75,20 @@
       <h2>Watchlist</h2>
       <label for="watchlist">NSE trading symbols (comma or newline separated)</label>
       <textarea id="watchlist" name="watchlist">{{ s.WATCHLIST | join(', ') }}</textarea>
-      <div class="hint">{{ s.WATCHLIST | length }} symbols currently.</div>
+      <div class="hint">{{ s.WATCHLIST | length }} symbols currently. Scanned on <strong>daily</strong> candles.</div>
       <div class="actions">
         <button class="btn secondary" type="submit" formaction="/settings/load-fno-list" {% if not logged_in %}disabled title="Log in to Kite first"{% endif %}>
           Load current F&amp;O list from Kite
         </button>
-        <span class="hint">Replaces the list above with the exact, live set of NSE stocks currently eligible for F&amp;O trading, pulled straight from Kite's own instrument list (not a hardcoded list that can go stale).</span>
+        <span class="hint">Replaces the list above with the exact, live set of NSE stocks currently eligible for F&amp;O trading, straight from Kite's own instrument list.</span>
       </div>
     </div>
 
     <div class="card">
-      <h2>Signal rule</h2>
-      <div class="row3">
+      <h2>The screen</h2>
+      <p style="margin-top:-4px;">The five dials that actually change which stocks appear. Everything else on this page is
+      either a filter you switch on and off, or an internal you can leave alone.</p>
+      <div class="row2">
         <div>
           <label for="min_required">Signal rule</label>
           <select id="min_required" name="min_required">
@@ -79,212 +96,54 @@
             <option value="3" {% if s.MIN_REQUIRED == 3 %}selected{% endif %}>3-of-4</option>
             <option value="4" {% if s.MIN_REQUIRED == 4 %}selected{% endif %}>4-of-4 (strict)</option>
           </select>
-          <div class="hint">Out of RSI, MACD, Chaikin Money Flow and Relative Volume - how many must agree. Default is 4-of-4: fewer, higher-conviction candidates. Note the watchlist scans DAILY candles now; the intraday panel on the dashboard is separate and always 15-min + 4-hour.</div>
-        </div>
-        <div>
-          <label for="scan_interval">Scan interval (seconds)</label>
-          <input type="number" id="scan_interval" name="scan_interval" min="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
+          <div class="hint">Out of RSI, MACD, Chaikin Money Flow and Relative Volume. <strong>Loosen this first</strong> if the screen is too empty.</div>
         </div>
         <div>
           <label for="rel_volume_threshold">Relative Volume threshold</label>
           <input type="number" id="rel_volume_threshold" name="rel_volume_threshold" min="0.1" step="0.1" value="{{ s.REL_VOLUME_THRESHOLD }}">
-          <div class="hint">Multiple of the 20-bar average volume needed to count as a match.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Regime &amp; market filter</h2>
-      <p style="margin-top:-4px;">Two ways to adapt the screener to current conditions instead of using one fixed rule all the time - both are additive, nothing here changes what "Aligned" itself counts.</p>
-      <div class="row2">
-        <div>
-          <label for="adx_length">ADX length</label>
-          <input type="number" id="adx_length" name="adx_length" min="2" value="{{ s.ADX_LENGTH }}">
-          <div class="hint">Used to classify each stock as Trending/Ranging/Transitional (shown in the Regime column).</div>
+          <div class="hint">Multiple of the 20-bar average volume needed to count as real participation.</div>
         </div>
         <div>
-          <label for="ranging_vol_multiplier">Ranging-regime volume multiplier</label>
-          <input type="number" id="ranging_vol_multiplier" name="ranging_vol_multiplier" min="1" step="0.1" value="{{ s.RANGING_VOL_MULTIPLIER }}">
-          <div class="hint">In a Ranging regime, Relative Volume must clear threshold &times; this multiplier instead of the plain threshold - stricter confirmation for choppier conditions.</div>
+          <label for="min_atr_pct">Minimum ATR (% of price)</label>
+          <input type="number" id="min_atr_pct" name="min_atr_pct" min="0.05" max="20" step="0.05" value="{{ s.MIN_ATR_PCT }}">
+          <div class="hint">Below this a stock is too quiet to be worth the risk. <strong>Watch the ATR column for a few days and set this near the bottom quartile of what you actually see</strong> - the default is a guess, not a measurement.</div>
         </div>
         <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_index_agreement" name="require_index_agreement" {% if s.REQUIRE_INDEX_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require index/market agreement
-          </label>
-          <div class="hint">When on, a row whose direction disagrees with NIFTY 50's own current direction loses its "Confirmed" status (and Positional Qualified / High Conviction) - counter-trend trades have historically had a lower win rate. Off by default.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_candle_pattern_agreement" name="require_candle_pattern_agreement" {% if s.REQUIRE_CANDLE_PATTERN_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require candlestick-pattern agreement
-          </label>
-          <div class="hint">When on, a row whose direction disagrees with its own most recent candlestick pattern (the small candle badge next to Signal - Engulfing/Hammer-family/Morning-Evening Star, a read of price SHAPE rather than a smoothed derivative like RSI/MACD) loses its "Confirmed" status. Off by default.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_sector_agreement" name="require_sector_agreement" {% if s.REQUIRE_SECTOR_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require sector agreement
-          </label>
-          <div class="hint">When on, a row whose direction disagrees with its own NSE sectoral index's current direction (e.g. a Bullish HDFCBANK row while NIFTY BANK itself reads Bearish) loses its "Confirmed" status. A symbol without a known sector mapping is never blocked by this. Off by default.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_breadth_agreement" name="require_breadth_agreement" {% if s.REQUIRE_BREADTH_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require breadth agreement
-          </label>
-          <div class="hint">When on, a row whose direction is decisively against the watchlist's own current advance/decline split (below the threshold % to the right) loses its "Confirmed" status. This reads breadth from your WATCHLIST, not the full NSE market - Kite has no cheap full-market breadth feed. Off by default.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_macd_hist_agreement" name="require_macd_hist_agreement" {% if s.REQUIRE_MACD_HIST_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require MACD histogram momentum agreement
-          </label>
-          <div class="hint">When on, a row whose MACD histogram is shrinking against its own direction (momentum fading rather than accelerating - not just which side of zero it's on, which macd_line/signal_line already covers) loses its "Confirmed" status. Off by default.</div>
-        </div>
-        <div>
-          <label for="breadth_threshold_pct">Breadth threshold %</label>
-          <input type="number" id="breadth_threshold_pct" name="breadth_threshold_pct" min="0" max="100" step="1" value="{{ s.BREADTH_THRESHOLD_PCT }}">
-          <div class="hint">Minimum % of the watchlist's resolved rows that must share a row's own direction for breadth to "agree" with it. Only changes anything if Require breadth agreement (above) is on.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Risk management</h2>
-      <p style="margin-top:-4px;">
-        This app never touches your funds, positions, or orders - Account capital is a number YOU tell it, used
-        purely to turn the ATR stop above into a suggested share quantity (fixed-fractional position sizing: risk
-        exactly this % of capital if the stop is hit). Set it to your real trading capital for the Qty suggestion
-        on the Dashboard to mean anything. The daily/position limits below feed an informational banner on the
-        Dashboard, computed from trades YOU logged in the <a href="/journal">Signal Journal</a> today - nothing
-        here blocks you from logging another trade past a limit, it just tells you plainly when you have.
-      </p>
-      <div class="row2">
-        <div>
-          <label for="account_capital">Account capital (₹)</label>
-          <input type="number" id="account_capital" name="account_capital" min="1" step="1" value="{{ s.ACCOUNT_CAPITAL }}">
-        </div>
-        <div>
-          <label for="risk_per_trade_pct">Risk per trade (%)</label>
-          <input type="number" id="risk_per_trade_pct" name="risk_per_trade_pct" min="0.1" max="100" step="0.1" value="{{ s.RISK_PER_TRADE_PCT }}">
-          <div class="hint">Fixed-fractional sizing: 1-2% is the typical starting point for F&amp;O, tighter than cash equities.</div>
-        </div>
-        <div>
-          <label for="max_daily_risk_pct">Max daily risk (%)</label>
-          <input type="number" id="max_daily_risk_pct" name="max_daily_risk_pct" min="0.1" max="100" step="0.1" value="{{ s.MAX_DAILY_RISK_PCT }}">
-          <div class="hint">Commonly ~3x your per-trade risk. The Dashboard banner turns red once today's logged trades exceed this.</div>
-        </div>
-        <div>
-          <label for="max_concurrent_positions">Max concurrent positions</label>
-          <input type="number" id="max_concurrent_positions" name="max_concurrent_positions" min="1" step="1" value="{{ s.MAX_CONCURRENT_POSITIONS }}">
-          <div class="hint">A cap on simultaneously-open journal trades ("portfolio heat") - too many at once defeats per-trade sizing.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Risk layer (ATR stop/target)</h2>
-      <p style="margin-top:-4px;">A suggested stop-loss and target shown next to each row's Close price, sized to that stock's own recent volatility (ATR) instead of a flat percentage. Display only — this app never places an order.</p>
-      <div class="row2">
-        <div>
-          <label for="atr_length">ATR length</label>
-          <input type="number" id="atr_length" name="atr_length" min="2" value="{{ s.ATR_LENGTH }}">
-          <div class="hint">Lookback (in bars) for the Average True Range calculation.</div>
-        </div>
-        <div>
-          <label for="atr_stop_multiplier">Stop distance (&times; ATR)</label>
-          <input type="number" id="atr_stop_multiplier" name="atr_stop_multiplier" min="0.1" step="0.1" value="{{ s.ATR_STOP_MULTIPLIER }}">
-          <div class="hint">Suggested stop = entry &minus;/+ this &times; ATR (against direction).</div>
-        </div>
-        <div>
-          <label for="atr_target_multiplier">Target distance (&times; ATR)</label>
-          <input type="number" id="atr_target_multiplier" name="atr_target_multiplier" min="0.1" step="0.1" value="{{ s.ATR_TARGET_MULTIPLIER }}">
-          <div class="hint">Suggested target = entry +/&minus; this &times; ATR (with direction). Default 1.5/3.0 = 1:2 risk-reward.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Anticipatory signals (catch the move before it happens)</h2>
-      <p style="margin-top:-4px;">
-        RSI/MACD/EMA-BB/CMF are all confirmatory - they tell you a move is already under way. These four are
-        the app's ANTICIPATORY reads instead, aimed at BTST/swing and catching a big move early: two are pure
-        display badges (no direction of their own, so they can't gate anything), two have real gates like every
-        other "Require ... agreement" checkbox above.
-      </p>
-      <div class="row2">
-        <div>
-          <label for="vol_contraction_lookback">Volatility-contraction lookback (bars)</label>
-          <input type="number" id="vol_contraction_lookback" name="vol_contraction_lookback" min="5" value="{{ s.VOL_CONTRACTION_LOOKBACK }}">
-          <div class="hint">How many recent bars to rank current Bollinger Band width against. Display only (the "Coiling" badge) - a coiled stock can break either direction, so this never gates Confirmed.</div>
-        </div>
-        <div>
-          <label for="vol_contraction_threshold_pct">Volatility-contraction threshold (percentile)</label>
-          <input type="number" id="vol_contraction_threshold_pct" name="vol_contraction_threshold_pct" min="1" max="99" step="1" value="{{ s.VOL_CONTRACTION_THRESHOLD_PCT }}">
-          <div class="hint">Current BB width must rank at or below this percentile of the lookback window to count as "coiling" (default 20 = tightest 20% of recent readings).</div>
-        </div>
-        <div>
-          <label for="big_candle_atr_multiplier">Big-candle ATR multiplier</label>
-          <input type="number" id="big_candle_atr_multiplier" name="big_candle_atr_multiplier" min="0.1" step="0.1" value="{{ s.BIG_CANDLE_ATR_MULTIPLIER }}">
-          <div class="hint">A bar's own true range must be at least this many times its own ATR to count as a range-expansion "big candle".</div>
+          <label for="max_entry_extension_atr">Max entry extension (ATR past VWAP)</label>
+          <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.1" max="20" step="0.1" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
+          <div class="hint">Past this you'd be chasing a move that already happened.</div>
         </div>
         <div>
           <label for="strong_close_threshold_pct">Strong-close threshold (%)</label>
           <input type="number" id="strong_close_threshold_pct" name="strong_close_threshold_pct" min="50" max="100" step="1" value="{{ s.STRONG_CLOSE_THRESHOLD_PCT }}">
-          <div class="hint">Shared by the big-candle read and the standalone BTST strong-close read below: close must land in the top/bottom (100 &minus; this)% of the bar's own range to count as extreme. Default 80 = top/bottom 20%.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_big_candle_agreement" name="require_big_candle_agreement" {% if s.REQUIRE_BIG_CANDLE_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require big-candle agreement
-          </label>
-          <div class="hint">When on, a row whose most recent qualifying big candle (within the last 15 bars) disagrees with this row's own direction loses its "Confirmed" status. Off by default.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_strong_close_agreement" name="require_strong_close_agreement" {% if s.REQUIRE_STRONG_CLOSE_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require strong-close agreement
-          </label>
-          <div class="hint">When on, a row whose own close did NOT land in the extreme top/bottom of its own range, in its own direction, loses its "Confirmed" status - a BTST "closed with conviction" gate. Off by default.</div>
-        </div>
-        <div>
-          <label for="delivery_threshold_pct">NSE delivery % threshold</label>
-          <input type="number" id="delivery_threshold_pct" name="delivery_threshold_pct" min="1" max="99" step="1" value="{{ s.DELIVERY_THRESHOLD_PCT }}">
-          <div class="hint">Minimum NSE delivery % (most recently published session, NOT live - see status below) to count as "agreeing". Absolute floor, not stock-relative - a known simplification.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_delivery_agreement" name="require_delivery_agreement" {% if s.REQUIRE_DELIVERY_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require delivery-% agreement
-          </label>
-          <div class="hint">When on, a row whose delivery % reading is below the threshold above loses its "Confirmed" status. A symbol with no delivery data available is never blocked by this. Off by default.</div>
+          <div class="hint">How near the day's high/low a close must be to count as decisive. Also the hard gate for the BTST/STBT panel.</div>
         </div>
       </div>
-      <div class="row2" style="margin-top:16px;">
+    </div>
+
+    <details class="card">
+      <summary><strong>Filters</strong> &mdash; switch checks on to make "Confirmed" stricter</summary>
+      <p class="hint" style="margin-top:10px;">Each one can only ever <em>remove</em> rows, never add them. Two are on by default.
+      Rather than guessing which help, run <strong>"Which gates actually earn their place?"</strong> on the
+      <a href="/backtest">Backtest</a> page &mdash; it measures each one against real outcomes on your own watchlist.</p>
+      <div class="row2" style="margin-top:12px;">
+        {{ gate('require_entry_location_agreement', s.REQUIRE_ENTRY_LOCATION_AGREEMENT, 'Require entry location', "Drops rows already extended past the limit above - stops you chasing. ON by default.") }}
+        {{ gate('require_atr_floor', s.REQUIRE_ATR_FLOOR, 'Require minimum ATR', "Drops stocks too quiet to move. ON by default.") }}
+        {{ gate('require_index_agreement', s.REQUIRE_INDEX_AGREEMENT, 'Require index agreement', "Row must agree with NIFTY 50's own direction.") }}
+        {{ gate('require_sector_agreement', s.REQUIRE_SECTOR_AGREEMENT, 'Require sector agreement', "Row must agree with its own NSE sectoral index. Overlaps heavily with index and breadth - on a down day all three usually fire together.") }}
+        {{ gate('require_breadth_agreement', s.REQUIRE_BREADTH_AGREEMENT, 'Require breadth agreement', "Row must agree with your watchlist's advance/decline split. Also overlaps with the two above.") }}
+        {{ gate('require_strong_close_agreement', s.REQUIRE_STRONG_CLOSE_AGREEMENT, 'Require strong close', "Row must close decisively in its own direction.") }}
+        {{ gate('require_big_candle_agreement', s.REQUIRE_BIG_CANDLE_AGREEMENT, 'Require big-candle agreement', "The most recent range-expansion bar must point the row's way.") }}
+        {{ gate('require_macd_hist_agreement', s.REQUIRE_MACD_HIST_AGREEMENT, 'Require MACD histogram momentum', "Momentum must be accelerating, not fading.") }}
+        {{ gate('require_candle_pattern_agreement', s.REQUIRE_CANDLE_PATTERN_AGREEMENT, 'Require candlestick pattern', "The latest candle pattern must agree.") }}
+        {{ gate('require_delivery_agreement', s.REQUIRE_DELIVERY_AGREEMENT, 'Require delivery %', "NSE delivery must clear the threshold below. Never blocks a symbol with no delivery data.") }}
         <div>
-          <label for="max_entry_extension_atr">Max entry extension (&times; ATR past VWAP)</label>
-          <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.1" step="0.1" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
-          <div class="hint">How far past its own VWAP price may already be, in its own direction, before the entry counts as EXTENDED (chasing rather than catching early). Default 2.0.</div>
+          <label for="delivery_threshold_pct">Delivery % threshold</label>
+          <input type="number" id="delivery_threshold_pct" name="delivery_threshold_pct" min="1" max="99" step="1" value="{{ s.DELIVERY_THRESHOLD_PCT }}">
         </div>
         <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_entry_location_agreement" name="require_entry_location_agreement" {% if s.REQUIRE_ENTRY_LOCATION_AGREEMENT %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require entry-location agreement
-          </label>
-          <div class="hint">When on, a row that's already extended past the threshold to the left loses its "Confirmed" status - filters out late/chasing entries specifically. Off by default.</div>
-        </div>
-        <div>
-          <label for="min_atr_pct">Minimum ATR (% of price)</label>
-          <input type="number" id="min_atr_pct" name="min_atr_pct" min="0" max="99" step="0.1" value="{{ s.MIN_ATR_PCT }}">
-          <div class="hint">A stock whose ATR is below this % of its own price isn't moving enough to plausibly deliver a big move. Expressed as a % so one threshold works across cheap and expensive stocks. Default 0.5%.</div>
-        </div>
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="require_atr_floor" name="require_atr_floor" {% if s.REQUIRE_ATR_FLOOR %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            Require minimum-ATR floor
-          </label>
-          <div class="hint">When on, a row below the ATR floor to the left loses its "Confirmed" status - screens out genuinely dead names regardless of how many parameters agree. Off by default.</div>
+          <label for="breadth_threshold_pct">Breadth threshold %</label>
+          <input type="number" id="breadth_threshold_pct" name="breadth_threshold_pct" min="1" max="99" step="1" value="{{ s.BREADTH_THRESHOLD_PCT }}">
         </div>
       </div>
       <p class="hint" style="margin-top:14px;">
@@ -292,42 +151,99 @@
         {% if delivery_status.available %}
         <span style="color:var(--green); font-weight:600;">available</span> (as of {{ delivery_status.data_date }}, {{ delivery_status.symbol_count }} symbols)
         {% else %}
-        <span style="color:var(--red); font-weight:600;">not available yet</span>{% if delivery_status.last_error %} — {{ delivery_status.last_error }}{% endif %}
+        <span style="color:var(--red); font-weight:600;">not available yet</span>{% if delivery_status.last_error %} &mdash; {{ delivery_status.last_error }}{% endif %}
         {% endif %}
-        — this is end-of-day-only data (never live intraday), and NSE is known to block requests from some cloud
-        hosts; if this never turns green after a day or two of the app running, that's most likely why, not a bug
-        in the app itself.
+        &mdash; end-of-day only, never live intraday, and NSE blocks some cloud hosts. If this never turns green
+        after a day or two, that's why, not a bug in the app.
       </p>
-    </div>
+    </details>
 
-    <div class="card">
-      <h2>MACD</h2>
-      <label for="macd_preset">Preset</label>
-      <select id="macd_preset" name="macd_preset">
-        {% for p in valid_presets %}
-        <option value="{{ p }}" {% if p == s.MACD_PRESET %}selected{% endif %}>{{ p }}</option>
-        {% endfor %}
-      </select>
-      <div class="hint">"auto" uses 3,8,9 on 15-min and 8,16,9 on 30-min charts (matching the original Pine/GoCharting scripts), and the custom values below for every other timeframe.</div>
-      <fieldset>
-        <legend>Custom fast / slow / signal (used when preset = custom, or as the fallback for auto)</legend>
-        <div class="row2">
-          <div><label for="macd_fast">Fast</label><input type="number" id="macd_fast" name="macd_fast" min="1" value="{{ s.MACD_CUSTOM_FAST }}"></div>
-          <div><label for="macd_slow">Slow</label><input type="number" id="macd_slow" name="macd_slow" min="1" value="{{ s.MACD_CUSTOM_SLOW }}"></div>
-          <div><label for="macd_signal">Signal</label><input type="number" id="macd_signal" name="macd_signal" min="1" value="{{ s.MACD_CUSTOM_SIGNAL }}"></div>
+    <details class="card">
+      <summary><strong>Risk &amp; position sizing</strong> &mdash; does not affect which stocks appear</summary>
+      <p class="hint" style="margin-top:10px;">This app never touches your funds, positions or orders. Account capital is a
+      number <em>you</em> tell it, used to turn the ATR stop into a suggested quantity. The daily limits feed an
+      informational banner computed from trades you logged in the <a href="/journal">Signal Journal</a> - nothing here
+      blocks you from logging another trade past a limit.</p>
+      <div class="row2" style="margin-top:12px;">
+        <div>
+          <label for="account_capital">Account capital (₹)</label>
+          <input type="number" id="account_capital" name="account_capital" min="1" step="1" value="{{ s.ACCOUNT_CAPITAL }}">
         </div>
-      </fieldset>
-    </div>
+        <div>
+          <label for="risk_per_trade_pct">Risk per trade (%)</label>
+          <input type="number" id="risk_per_trade_pct" name="risk_per_trade_pct" min="0.1" max="100" step="0.1" value="{{ s.RISK_PER_TRADE_PCT }}">
+          <div class="hint">1-2% is the typical F&amp;O starting point.</div>
+        </div>
+        <div>
+          <label for="max_daily_risk_pct">Max daily risk (%)</label>
+          <input type="number" id="max_daily_risk_pct" name="max_daily_risk_pct" min="0.1" max="100" step="0.1" value="{{ s.MAX_DAILY_RISK_PCT }}">
+        </div>
+        <div>
+          <label for="max_concurrent_positions">Max concurrent positions</label>
+          <input type="number" id="max_concurrent_positions" name="max_concurrent_positions" min="1" step="1" value="{{ s.MAX_CONCURRENT_POSITIONS }}">
+        </div>
+        <div>
+          <label for="atr_length">ATR length</label>
+          <input type="number" id="atr_length" name="atr_length" min="2" value="{{ s.ATR_LENGTH }}">
+        </div>
+        <div>
+          <label for="atr_stop_multiplier">Stop distance (&times; ATR)</label>
+          <input type="number" id="atr_stop_multiplier" name="atr_stop_multiplier" min="0.1" step="0.1" value="{{ s.ATR_STOP_MULTIPLIER }}">
+        </div>
+        <div>
+          <label for="atr_target_multiplier">Target distance (&times; ATR)</label>
+          <input type="number" id="atr_target_multiplier" name="atr_target_multiplier" min="0.1" step="0.1" value="{{ s.ATR_TARGET_MULTIPLIER }}">
+          <div class="hint">Default 1.5 / 3.0 = a 1:2 risk-reward.</div>
+        </div>
+      </div>
+    </details>
 
-    <div class="card">
-      <h2>RSI, EMA &amp; Bollinger Band</h2>
-      <div class="row2">
+    <details class="card">
+      <summary><strong>Indicator internals</strong> &mdash; safe to leave alone</summary>
+      <p class="hint" style="margin-top:10px;">Changing these re-tunes the indicators themselves. Tempting, but it's also
+      the fastest way to overfit to one recent window &mdash; the defaults are the conventional values.</p>
+      <div class="row2" style="margin-top:12px;">
+        <div>
+          <label for="macd_preset">MACD preset</label>
+          <select id="macd_preset" name="macd_preset">
+            {% for p in valid_presets %}<option value="{{ p }}" {% if p == s.MACD_PRESET %}selected{% endif %}>{{ p }}</option>{% endfor %}
+          </select>
+          <div class="hint">On daily candles "auto" resolves to the custom values below; the preset only differs on the 15-min intraday panel.</div>
+        </div>
+        <div><label for="macd_fast">MACD fast</label><input type="number" id="macd_fast" name="macd_fast" min="1" value="{{ s.MACD_CUSTOM_FAST }}"></div>
+        <div><label for="macd_slow">MACD slow</label><input type="number" id="macd_slow" name="macd_slow" min="1" value="{{ s.MACD_CUSTOM_SLOW }}"></div>
+        <div><label for="macd_signal">MACD signal</label><input type="number" id="macd_signal" name="macd_signal" min="1" value="{{ s.MACD_CUSTOM_SIGNAL }}"></div>
         <div><label for="rsi_length">RSI length</label><input type="number" id="rsi_length" name="rsi_length" min="1" value="{{ s.RSI_LENGTH }}"></div>
         <div><label for="rsi_smooth">RSI smoothing length</label><input type="number" id="rsi_smooth" name="rsi_smooth" min="1" value="{{ s.RSI_SMOOTH_LENGTH }}"></div>
-        <div><label for="ema_length">EMA length</label><input type="number" id="ema_length" name="ema_length" min="1" value="{{ s.EMA_LENGTH }}"></div>
         <div><label for="bb_length">Bollinger Band length</label><input type="number" id="bb_length" name="bb_length" min="1" value="{{ s.BB_LENGTH }}"></div>
+        <div>
+          <label for="adx_length">ADX length</label>
+          <input type="number" id="adx_length" name="adx_length" min="2" value="{{ s.ADX_LENGTH }}">
+          <div class="hint">Drives the Regime column only.</div>
+        </div>
+        <div>
+          <label for="ranging_vol_multiplier">Ranging-regime volume multiplier</label>
+          <input type="number" id="ranging_vol_multiplier" name="ranging_vol_multiplier" min="1" step="0.1" value="{{ s.RANGING_VOL_MULTIPLIER }}">
+        </div>
+        <div>
+          <label for="big_candle_atr_multiplier">Big-candle ATR multiplier</label>
+          <input type="number" id="big_candle_atr_multiplier" name="big_candle_atr_multiplier" min="0.1" step="0.1" value="{{ s.BIG_CANDLE_ATR_MULTIPLIER }}">
+        </div>
+        <div>
+          <label for="vol_contraction_lookback">Coiling lookback (bars)</label>
+          <input type="number" id="vol_contraction_lookback" name="vol_contraction_lookback" min="5" value="{{ s.VOL_CONTRACTION_LOOKBACK }}">
+        </div>
+        <div>
+          <label for="vol_contraction_threshold_pct">Coiling percentile</label>
+          <input type="number" id="vol_contraction_threshold_pct" name="vol_contraction_threshold_pct" min="1" max="99" step="1" value="{{ s.VOL_CONTRACTION_THRESHOLD_PCT }}">
+          <div class="hint">Badge only - coiling has no direction, so it never gates anything.</div>
+        </div>
+        <div>
+          <label for="scan_interval">Scan interval (seconds)</label>
+          <input type="number" id="scan_interval" name="scan_interval" min="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
+        </div>
       </div>
-    </div>
+    </details>
 
     <div class="actions">
       <button class="btn" type="submit">Save settings</button>

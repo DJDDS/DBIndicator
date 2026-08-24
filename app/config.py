@@ -189,7 +189,7 @@ VALID_MACD_PRESETS = ["auto", "15min", "30min", "custom"]
 _TUNABLE_FIELDS = [
     "WATCHLIST", "MACD_PRESET", "MACD_CUSTOM_FAST",
     "MACD_CUSTOM_SLOW", "MACD_CUSTOM_SIGNAL", "RSI_LENGTH",
-    "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
+    "RSI_SMOOTH_LENGTH", "BB_LENGTH", "MIN_REQUIRED",
     "REL_VOLUME_THRESHOLD", "SCAN_INTERVAL_SECONDS",
     "ADX_LENGTH", "RANGING_VOL_MULTIPLIER", "REQUIRE_INDEX_AGREEMENT",
     "REQUIRE_CANDLE_PATTERN_AGREEMENT",
@@ -221,7 +221,6 @@ def _env_defaults():
         "MACD_CUSTOM_SIGNAL": int(os.getenv("MACD_CUSTOM_SIGNAL", 9)),
         "RSI_LENGTH": int(os.getenv("RSI_LENGTH", 9)),
         "RSI_SMOOTH_LENGTH": int(os.getenv("RSI_SMOOTH_LENGTH", 9)),
-        "EMA_LENGTH": int(os.getenv("EMA_LENGTH", 9)),
         "BB_LENGTH": int(os.getenv("BB_LENGTH", 20)),
         # 4-parameter confluence: RSI (vs its smoothing line), MACD (vs
         # signal line), EMA9 (vs Bollinger mid), and Relative Volume (vs
@@ -468,7 +467,7 @@ class Settings:
                 clean["MACD_PRESET"] = mp
 
         for field in ("MACD_CUSTOM_FAST", "MACD_CUSTOM_SLOW", "MACD_CUSTOM_SIGNAL",
-                      "RSI_LENGTH", "RSI_SMOOTH_LENGTH", "EMA_LENGTH", "BB_LENGTH",
+                      "RSI_LENGTH", "RSI_SMOOTH_LENGTH", "BB_LENGTH",
                       "SCAN_INTERVAL_SECONDS"):
             if field in kwargs:
                 try:
