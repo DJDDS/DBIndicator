@@ -87,51 +87,112 @@
   </div>
 
   <div class="card">
-    <h2>Run a backtest</h2>
-    <form id="bt-form">
-      <label>Backtest universe</label>
-      <div class="horizons" id="bt-universe">
-        <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
-        <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
-        <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
-      </div>
-      <div class="hint" style="margin-bottom:14px;">Pick exactly one - your F&amp;O watchlist, or a single index on its own (kept separate rather than mixed in, so an index's own result isn't diluted into a 100+-stock trade list). Indices have no real traded volume (Kite reports 0), so the Relative Volume parameter never fires for a NIFTY 50/SENSEX run - that's expected.</div>
-      <div class="row">
-        <div>
-          <label for="bt-timeframe">Timeframe</label>
-          <select id="bt-timeframe" name="timeframe">
-            {% for tf in valid_timeframes %}
-            <option value="{{ tf }}" {{ 'selected' if tf == default_timeframe else '' }}>{{ tf }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="bt-days">Days back</label>
-          <input type="number" id="bt-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
-          <div class="hint">Calendar days. On daily candles you need at least {{ bt_days_min }} for the indicators to warm up.</div>
-        </div>
-        <div>
-          <label>Return horizons (bars held)</label>
-          <div class="horizons">
-            <label class="chk"><input type="checkbox" name="horizon" value="2" checked> 2</label>
-            <label class="chk"><input type="checkbox" name="horizon" value="3" checked> 3</label>
-            <label class="chk"><input type="checkbox" name="horizon" value="4" checked> 4</label>
-            <label class="chk"><input type="checkbox" name="horizon" value="5" checked> 5</label>
-          </div>
-        </div>
-      </div>
-      <div style="margin-top:16px;">
-        <label>Parameters (pick your own combination)</label>
-        <div class="horizons" id="bt-params">
-          {% for p in param_defs %}
-          <label class="chk" style="display:flex; margin-bottom:6px;">
-            <input type="checkbox" name="param" value="{{ p.id }}" {{ 'checked' if p.id in default_params else '' }}> {{ p.label }}
-          </label>
+    <h2>Scope</h2>
+    <p style="margin-top:-4px;">Applies to all three tools below, so you set it once instead of three times.</p>
+    <label>Universe</label>
+    <div class="horizons" id="scope-universe">
+      <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
+      <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
+      <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
+    </div>
+    <div class="hint" style="margin-bottom:14px;">Your watchlist, or a single index on its own (kept separate so an index's result isn't diluted into a 100+-stock trade list). Indices have no traded volume in Kite, so the Relative Volume parameter never fires for them &mdash; expected, not a fault.</div>
+    <div class="row">
+      <div>
+        <label for="scope-timeframe">Timeframe</label>
+        <select id="scope-timeframe" name="timeframe">
+          {% for tf in valid_timeframes %}
+          <option value="{{ tf }}" {{ 'selected' if tf == default_timeframe else '' }}>{{ tf }}</option>
           {% endfor %}
+        </select>
+        <div class="hint">Your live watchlist runs <strong>{{ default_timeframe }}</strong>.</div>
+      </div>
+      <div>
+        <label for="scope-days">Days back</label>
+        <input type="number" id="scope-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
+        <div class="hint">Calendar days. Daily candles need at least {{ bt_days_min }} for the indicators to warm up.</div>
+      </div>
+      <div>
+        <label>Return horizons (bars held)</label>
+        <div class="horizons">
+          <label class="chk"><input type="checkbox" name="horizon" value="2" checked> 2</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="3" checked> 3</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="5" checked> 5</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="10" checked> 10</label>
         </div>
+        <div class="hint">Also the reference horizon for the two tools below (the largest is used).</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>1 &middot; Which gates earn their place?</h2>
+    <p style="margin-top:-4px;">Runs a baseline with every gate off, then one pass per gate with only that gate on, and
+    reports what each did to your win rate &mdash; net of costs, on your own watchlist. <strong>Start here:</strong> it's
+    the only tool that measures the filters you're actually running.</p>
+    <p class="hint">Measured <strong>in isolation</strong>, so it can't see two gates that only help together. Fewer trades
+    isn't automatically worse, which is why trade count sits beside every win rate &mdash; a big delta on a handful of
+    trades is noise. Gates that <em>cannot</em> apply to your scope are skipped and listed rather than reported as
+    "no change", since never-tested and tested-and-useless are different findings.</p>
+    <div style="margin-top:14px;">
+      <button type="button" class="btn" id="ab-run-btn" {{ 'disabled' if not logged_in else '' }}>Run gate sweep</button>
+      <span class="hint" id="ab-form-hint" style="margin-left:10px;"></span>
+    </div>
+    <div class="progress-wrap" id="ab-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="ab-progress-fill"></div></div>
+      <div class="progress-label" id="ab-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="ab-error" style="display:none; margin-top:16px;"></div>
+    <div id="ab-results" style="display:none; margin-top:18px;">
+      <p class="hint" id="ab-meta"></p>
+      <table>
+        <thead><tr>
+          <th>Gate</th><th>Win rate</th><th>&Delta; win rate</th>
+          <th>Avg return</th><th>&Delta; avg</th><th>Trades</th><th>Trades cut</th>
+        </tr></thead>
+        <tbody id="ab-table-body"></tbody>
+      </table>
+      <div id="ab-skipped" class="hint" style="margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 &middot; Auto-weight the four parameters</h2>
+    <p style="margin-top:-4px;">Backtests RSI, MACD and Chaikin Money Flow solo, plus Relative Volume as a confirmation
+    lift, and turns the result into the weights behind the dashboard's <strong>Score</strong> column. Measures one recent
+    window on your watchlist &mdash; re-run it periodically rather than treating one result as settled.</p>
+    <div style="margin-top:14px;">
+      <button type="button" class="btn" id="wt-run-btn" {{ 'disabled' if not logged_in else '' }}>Compute weights</button>
+      <span class="hint" id="wt-form-hint" style="margin-left:10px;"></span>
+    </div>
+    <div class="progress-wrap" id="wt-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="wt-progress-fill"></div></div>
+      <div class="progress-label" id="wt-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="wt-error" style="display:none; margin-top:16px;"></div>
+    <div id="wt-results" style="display:none; margin-top:18px;">
+      <p class="hint" id="wt-meta"></p>
+      <table>
+        <thead><tr><th>Parameter</th><th>Weight</th><th>Win rate</th><th>Trades</th><th>Notes</th></tr></thead>
+        <tbody id="wt-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <details class="card">
+    <summary><strong>3 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
+    <p class="hint" style="margin-top:10px;">Exploratory. The two tools above answer specific questions; this one lets you
+    ask your own. Worth knowing it's also the easiest way to overfit &mdash; tune here, then confirm on a holdout.</p>
+    <form id="bt-form" style="margin-top:14px;">
+      <label>Parameters</label>
+      <div class="horizons" id="bt-params">
+        {% for p in param_defs %}
+        <label class="chk" style="display:flex; margin-bottom:6px;">
+          <input type="checkbox" name="param" value="{{ p.id }}" {{ 'checked' if p.id in default_params else '' }}> {{ p.label }}
+        </label>
+        {% endfor %}
       </div>
       <div style="margin-top:16px;">
-        <label>Live-parity filters (optional - all off by default, matches the live dashboard's gates on top of the vote above)</label>
+        <label>Live-parity filters (all off by default)</label>
         <div class="horizons" id="bt-filters">
           {% for f in filter_defs %}
           <label class="chk" style="display:flex; margin-bottom:6px;">
@@ -148,137 +209,16 @@
         </div>
       </div>
       <div style="margin-top:18px;">
-        <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Backtest</button>
+        <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run backtest</button>
         <span class="hint" id="bt-form-hint" style="margin-left:10px;"></span>
       </div>
     </form>
-
     <div class="progress-wrap" id="bt-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="bt-progress-fill"></div></div>
       <div class="progress-label" id="bt-progress-label">Starting…</div>
     </div>
     <div class="msg-err" id="bt-error" style="display:none; margin-top:16px;"></div>
-  </div>
-
-  <div class="card">
-    <h2>Auto-Weight Parameters</h2>
-    <p>
-      Backtests each of the live screener's 4 parameters over your watchlist to measure which
-      have actually been predictive lately - RSI Cross, MACD Cross and Chaikin Money Flow each solo
-      (required=1), and Relative Volume as a confirmation LIFT (win rate of the 2-of-3 baseline's
-      trades where volume was also hot at entry, vs where it wasn't) since volume has no direction
-      of its own to test solo. Converts the result into weights for the dashboard's
-      <strong>Score</strong> column - a backtest-informed alternative to the plain Aligned/4
-      equal-weight count. Takes a few minutes (4 full backtest passes over your watchlist).
-      This measures one recent window on your specific watchlist, not a permanent verdict on an
-      indicator - re-run periodically rather than treating a single result as final.
-    </p>
-    <form id="wt-form">
-      <label>Backtest universe</label>
-      <div class="horizons" id="wt-universe">
-        <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
-        <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
-        <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
-      </div>
-      <div class="hint" style="margin-bottom:14px;">Pick exactly one. A NIFTY 50/SENSEX run measures how RSI/MACD/EMA-BB have predicted moves on the index itself - Relative Volume's weight will read low/neutral for these since indices report 0 volume on Kite.</div>
-      <div class="row" style="grid-template-columns: 1fr 1fr 1fr;">
-        <div>
-          <label for="wt-timeframe">Timeframe</label>
-          <select id="wt-timeframe" name="timeframe">
-            {% for tf in valid_timeframes %}
-            <option value="{{ tf }}" {{ 'selected' if tf == default_timeframe else '' }}>{{ tf }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="wt-days">Days back</label>
-          <input type="number" id="wt-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
-          <div class="hint">Calendar days. On daily candles you need at least {{ bt_days_min }} for the indicators to warm up.</div>
-        </div>
-        <div>
-          <label for="wt-horizon">Reference horizon (bars held)</label>
-          <input type="number" id="wt-horizon" name="ref_horizon" value="10" min="1" max="60">
-        </div>
-      </div>
-      <div style="margin-top:18px;">
-        <button type="submit" class="btn" id="wt-run-btn" {{ 'disabled' if not logged_in else '' }}>Compute Weights</button>
-        <span class="hint" id="wt-form-hint" style="margin-left:10px;"></span>
-      </div>
-    </form>
-
-    <div class="progress-wrap" id="wt-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="wt-progress-fill"></div></div>
-      <div class="progress-label" id="wt-progress-label">Starting…</div>
-    </div>
-    <div class="msg-err" id="wt-error" style="display:none; margin-top:16px;"></div>
-
-    <div id="wt-results" style="display:none; margin-top:18px;">
-      <p class="hint" id="wt-meta"></p>
-      <table>
-        <thead><tr><th>Parameter</th><th>Weight</th><th>Win rate</th><th>Trades</th><th>Notes</th></tr></thead>
-        <tbody id="wt-table-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Which gates actually earn their place?</h2>
-    <p>
-      The screener has accumulated a lot of optional gates, and until now not one of them had ever
-      been measured against real outcomes. This runs a <strong>baseline backtest with every gate
-      off</strong>, then <strong>one run per gate with only that gate on</strong>, and reports what
-      each one actually did to your win rate — net of costs, on your own watchlist.
-    </p>
-    <p class="hint">
-      Read it honestly: each gate is measured <strong>in isolation</strong>, so this can't see two
-      gates that only help together or that overlap and double-count. Fewer trades isn't automatically
-      worse — a gate that cuts 60% of trades for +3 points of win rate may or may not suit you, so both
-      numbers are shown side by side rather than collapsed into a score. And a big delta on a handful
-      of trades is noise, which is why <em>Trades</em> is on every row. Takes a while: this is
-      {{ ablation_gate_count }} + 1 full backtest passes.
-    </p>
-    <form id="ab-form">
-      <label>Backtest universe</label>
-      <div class="horizons" id="ab-universe">
-        <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
-        <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
-        <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
-      </div>
-      <div class="row2" style="margin-top:14px;">
-        <div>
-          <label for="ab-days">Days back</label>
-          <input type="number" id="ab-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
-          <div class="hint">Calendar days. On daily candles you need at least {{ bt_days_min }} for the indicators to warm up.</div>
-        </div>
-        <div>
-          <label for="ab-horizon">Reference horizon (bars held)</label>
-          <input type="number" id="ab-horizon" name="ref_horizon" value="10" min="1" max="60">
-        </div>
-      </div>
-      <div style="margin-top:18px;">
-        <button type="submit" class="btn" id="ab-run-btn" {{ 'disabled' if not logged_in else '' }}>Run gate sweep</button>
-        <span class="hint" id="ab-form-hint" style="margin-left:10px;"></span>
-      </div>
-    </form>
-
-    <div class="progress-wrap" id="ab-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="ab-progress-fill"></div></div>
-      <div class="progress-label" id="ab-progress-label">Starting…</div>
-    </div>
-    <div class="msg-err" id="ab-error" style="display:none; margin-top:16px;"></div>
-
-    <div id="ab-results" style="display:none; margin-top:18px;">
-      <p class="hint" id="ab-meta"></p>
-      <table>
-        <thead><tr>
-          <th>Gate</th><th>Win rate</th><th>&Delta; win rate</th>
-          <th>Avg return</th><th>&Delta; avg</th><th>Trades</th><th>Trades cut</th>
-        </tr></thead>
-        <tbody id="ab-table-body"></tbody>
-      </table>
-    </div>
-  </div>
-
+  </details>
 
   <div class="card" id="bt-results">
     <h2>Results</h2>
@@ -307,6 +247,39 @@
 </div>
 
 <script>
+
+// --- shared scope --------------------------------------------------------
+// One source of truth for universe / timeframe / days / horizons, read by all
+// three tools. Previously each form carried its own copy of these inputs,
+// which meant three chances to run a tool against a scope you didn't mean.
+function readScope() {
+  const picked = document.querySelector('#scope-universe input[name=universe]:checked');
+  const horizons = Array.from(document.querySelectorAll('input[name=horizon]:checked')).map(el => el.value);
+  return {
+    universe: picked ? picked.value : 'watchlist',
+    timeframe: document.getElementById('scope-timeframe').value,
+    days: document.getElementById('scope-days').value,
+    horizons: horizons,
+    refHorizon: horizons.length ? Math.max.apply(null, horizons.map(Number)) : 10,
+  };
+}
+
+function startJob(url, scope, extra, hintId, onStarted) {
+  const body = new URLSearchParams();
+  body.set('universe', scope.universe);
+  body.set('timeframe', scope.timeframe);
+  body.set('days', scope.days);
+  Object.keys(extra || {}).forEach(k => body.set(k, extra[k]));
+  document.getElementById(hintId).textContent = '';
+  fetch(url, { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.started) document.getElementById(hintId).textContent = res.reason || 'Could not start.';
+      else onStarted();
+    })
+    .catch(() => { document.getElementById(hintId).textContent = 'Could not reach the server.'; });
+}
+
 const initialState = {{ state | tojson }};
 const PARAM_LABELS = {};
 {% for p in param_defs %}PARAM_LABELS['{{ p.id }}'] = {{ p.label | tojson }};
@@ -487,10 +460,9 @@ syncRequiredMax();
 
 document.getElementById('bt-form').addEventListener('submit', function (e) {
   e.preventDefault();
-  const form = new FormData(this);
-  const horizons = Array.from(document.querySelectorAll('input[name=horizon]:checked')).map(el => el.value);
-  if (!horizons.length) {
-    document.getElementById('bt-form-hint').textContent = 'Pick at least one horizon.';
+  const scope = readScope();
+  if (!scope.horizons.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one horizon in Scope above.';
     return;
   }
   const params = selectedParamCheckboxes().filter(el => el.checked).map(el => el.value);
@@ -505,24 +477,12 @@ document.getElementById('bt-form').addEventListener('submit', function (e) {
     return;
   }
   const filters = Array.from(document.querySelectorAll('input[name=filter]:checked')).map(el => el.value);
-  const body = new URLSearchParams();
-  body.set('universe', form.get('universe') || 'watchlist');
-  body.set('timeframe', form.get('timeframe'));
-  body.set('days', form.get('days'));
-  body.set('horizons', horizons.join(','));
-  body.set('params', params.join(','));
-  body.set('required', String(required));
-  body.set('filters', filters.join(','));
-  document.getElementById('bt-form-hint').textContent = '';
-  fetch('/api/backtest/start', { method: 'POST', body: body })
-    .then(r => r.json())
-    .then(res => {
-      if (!res.started) {
-        document.getElementById('bt-form-hint').textContent = res.reason || 'Could not start.';
-      } else {
-        poll();
-      }
-    });
+  startJob('/api/backtest/start', scope, {
+    horizons: scope.horizons.join(','),
+    params: params.join(','),
+    required: String(required),
+    filters: filters.join(','),
+  }, 'bt-form-hint', poll);
 });
 
 updateUI(initialState);
@@ -608,24 +568,9 @@ function updateWeightsUI(state) {
   }
 }
 
-document.getElementById('wt-form').addEventListener('submit', function (e) {
-  e.preventDefault();
-  const form = new FormData(this);
-  const body = new URLSearchParams();
-  body.set('universe', form.get('universe') || 'watchlist');
-  body.set('timeframe', form.get('timeframe'));
-  body.set('days', form.get('days'));
-  body.set('ref_horizon', form.get('ref_horizon'));
-  document.getElementById('wt-form-hint').textContent = '';
-  fetch('/api/weights/start', { method: 'POST', body: body })
-    .then(r => r.json())
-    .then(res => {
-      if (!res.started) {
-        document.getElementById('wt-form-hint').textContent = res.reason || 'Could not start.';
-      } else {
-        pollWeights();
-      }
-    });
+document.getElementById('wt-run-btn').addEventListener('click', function () {
+  const scope = readScope();
+  startJob('/api/weights/start', scope, { ref_horizon: String(scope.refHorizon) }, 'wt-form-hint', pollWeights);
 });
 
 const initialWeightsState = {{ weights_state | tojson }};
@@ -647,6 +592,12 @@ function renderAblation(result) {
     `Baseline, all gates off: ${pct(b.win_rate_pct)} win rate \u00b7 ${pct(b.avg_return_pct)} avg \u00b7 ` +
     `${b.trade_count || 0} trades \u2014 ${result.timeframe}, ${result.days} days, ${result.symbols_count} symbols, ` +
     `${result.ref_horizon}-bar horizon, net of ${result.cost_pct}% costs + ${result.slippage_pct}% slippage/side`;
+  const skipWrap = document.getElementById('ab-skipped');
+  const skipped = result.skipped || [];
+  skipWrap.innerHTML = skipped.length
+    ? '<strong>Not tested (' + skipped.length + '):</strong> ' +
+      skipped.map(sk => sk.label + ' \u2014 ' + sk.reason).join('<br>')
+    : '';
   const body = document.getElementById('ab-table-body');
   body.innerHTML = '';
   (result.rows || []).forEach(r => {
@@ -701,20 +652,9 @@ function updateAblationUI(state) {
   if (state.status === 'done' && state.result) renderAblation(state.result);
 }
 
-document.getElementById('ab-form').addEventListener('submit', function (e) {
-  e.preventDefault();
-  const form = new FormData(this);
-  const body = new URLSearchParams();
-  body.set('universe', form.get('universe') || 'watchlist');
-  body.set('days', form.get('days'));
-  body.set('ref_horizon', form.get('ref_horizon'));
-  document.getElementById('ab-form-hint').textContent = '';
-  fetch('/api/ablation/start', { method: 'POST', body: body })
-    .then(r => r.json())
-    .then(res => {
-      if (!res.started) document.getElementById('ab-form-hint').textContent = res.reason || 'Could not start.';
-      else pollAblation();
-    });
+document.getElementById('ab-run-btn').addEventListener('click', function () {
+  const scope = readScope();
+  startJob('/api/ablation/start', scope, { ref_horizon: String(scope.refHorizon) }, 'ab-form-hint', pollAblation);
 });
 
 const initialAblationState = {{ ablation_state | tojson }};

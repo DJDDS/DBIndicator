@@ -59,6 +59,7 @@ import pandas as pd
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
+    _OPENING_WINDOW_TIMEFRAMES,
     _compute_adx, _classify_regime, _in_opening_window, _in_4hour_warmup, _HTF_RESAMPLE,
 )
 from .scanner import _load_instrument_map, _load_index_token, now_ist
@@ -1427,6 +1428,25 @@ _load_persisted_weights_state()
 #     such rather than read as fact.
 # --------------------------------------------------------------------------
 
+def _gate_applicability(gate_id, timeframe, params):
+    """Why a gate cannot possibly change anything for this run - or None if
+    it can.
+
+    Two of the gates are structurally inert under certain configurations, and
+    running them anyway is worse than useless: each burns a full backtest pass
+    and then reports a delta of exactly zero, which reads as "this gate does
+    not help" when the truth is "this gate was never tested". Saying so
+    plainly is the difference between a measurement and a misleading blank."""
+    if gate_id == "exclude_opening_window" and timeframe not in _OPENING_WINDOW_TIMEFRAMES:
+        return (f"not applicable on {timeframe} candles - the opening-window rule only "
+                f"suppresses bars on {'/'.join(_OPENING_WINDOW_TIMEFRAMES)}, so there is "
+                f"nothing here for it to exclude")
+    if gate_id == "require_regime_volume" and "rel_volume" not in params:
+        return ("not applicable - this only rescales the Relative Volume threshold, and "
+                "Relative Volume is not one of the parameters being tested in this run")
+    return None
+
+
 ABLATION_GATES = [
     ("require_htf", "Higher-timeframe trend agreement"),
     ("require_regime_volume", "Regime-adaptive volume threshold"),
@@ -1476,7 +1496,8 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
     timeframe = timeframe or WATCHLIST_TIMEFRAME
     ref_horizon = int(ref_horizon)
     horizons = tuple(sorted({5, 10, 20, ref_horizon}))
-    total_phases = len(ABLATION_GATES) + 1
+    _runnable = [g for g, _ in ABLATION_GATES if not _gate_applicability(g, timeframe, params)]
+    total_phases = len(_runnable) + 1
 
     def _sub(idx, label):
         def _cb(done, total, symbol):
@@ -1491,8 +1512,12 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
     baseline_result = run_backtest(kite, symbols, progress_cb=_sub(0, "Baseline (all gates off)"), **common)
     baseline = baseline_result["summary"]
 
-    rows = []
+    rows, skipped = [], []
     for i, (gate_id, label) in enumerate(ABLATION_GATES, start=1):
+        reason = _gate_applicability(gate_id, timeframe, params)
+        if reason:
+            skipped.append({"gate": gate_id, "label": label, "reason": reason})
+            continue
         res = run_backtest(kite, symbols, progress_cb=_sub(i, label), **{**common, gate_id: True})
         rows.append(_ablation_row(label, gate_id, res["summary"], baseline, ref_horizon))
 
@@ -1508,6 +1533,9 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
             "trade_count": base_stats.get("trade_count", 0),
         },
         "rows": rows,
+        # Reported, never silently dropped - a gate that could not be tested is
+        # a different thing from a gate that was tested and did nothing.
+        "skipped": skipped,
         "timeframe": timeframe,
         "days": days,
         "ref_horizon": ref_horizon,
