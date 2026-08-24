@@ -397,6 +397,7 @@ def api_alerts_discover_chat_id():
 @app.route("/backtest")
 @require_dashboard_password
 def backtest_page():
+    _bt_bounds = backtest.backtest_day_bounds(config.WATCHLIST_TIMEFRAME)
     return render_template(
         "backtest.html",
         logged_in=kite_auth.is_logged_in_today(),
@@ -407,6 +408,7 @@ def backtest_page():
         default_required=backtest.DEFAULT_REQUIRED,
         filter_defs=backtest.FILTER_DEFS,
         state=backtest.get_backtest_state(),
+        bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         weights_state=backtest.get_weights_state(),
         ablation_state=backtest.get_ablation_state(),
         ablation_gate_count=len(backtest.ABLATION_GATES),
@@ -483,13 +485,19 @@ def api_backtest_start():
     filters_raw = form.get("filters", "")
     filters = {f.strip() for f in filters_raw.split(",") if f.strip() and f.strip() in backtest.FILTER_IDS}
 
+    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
+    if days < lo:
+        return jsonify({"started": False, "reason":
+            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
+            f"so every symbol would be skipped. Use at least {lo} days."}), 400
+    days = min(days, hi)
+
     result = backtest.start_backtest(
         kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, horizons=horizons,
         params=params, required=required,
         require_htf="require_htf" in filters,
         require_regime_volume="require_regime_volume" in filters,
         exclude_opening_window="exclude_opening_window" in filters,
-        require_volume_flow="require_volume_flow" in filters,
         require_candle_pattern="require_candle_pattern" in filters,
         require_macd_hist="require_macd_hist" in filters,
         require_big_candle="require_big_candle" in filters,
@@ -609,6 +617,13 @@ def api_weights_start():
     if ref_horizon <= 0:
         return jsonify({"started": False, "reason": "ref_horizon must be positive"}), 400
 
+    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
+    if days < lo:
+        return jsonify({"started": False, "reason":
+            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
+            f"so every symbol would be skipped. Use at least {lo} days."}), 400
+    days = min(days, hi)
+
     result = backtest.start_weight_computation(
         kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, ref_horizon=ref_horizon,
     )
@@ -645,6 +660,13 @@ def api_ablation_start():
         return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
     if ref_horizon <= 0:
         return jsonify({"started": False, "reason": "ref_horizon must be positive"}), 400
+
+    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
+    if days < lo:
+        return jsonify({"started": False, "reason":
+            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
+            f"so every symbol would be skipped. Use at least {lo} days."}), 400
+    days = min(days, hi)
 
     return jsonify(backtest.start_gate_ablation(
         kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe,

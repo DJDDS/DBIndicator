@@ -80,11 +80,37 @@ DEFAULT_HORIZONS = (5, 10, 20)
 WARMUP_DAYS = 20          # extra calendar days fetched before the requested
                            # window purely so indicators are warmed up -
                            # trades are never counted in this stretch.
-MAX_BACKTEST_DAYS = 90    # sane upper bound - Kite's own historical-data API
-                           # limits how many days you can pull in one request
-                           # for intraday intervals anyway (a too-long window
-                           # just shows up as a per-symbol fetch error below,
-                           # it won't crash the run).
+# "Days" means CALENDAR days, so the same number buys wildly different
+# amounts of DATA depending on the timeframe: 30 days is ~750 bars of
+# 15-minute candles but only ~21 trading bars of daily ones - well under the
+# ~40 the indicators need to warm up. That mismatch silently skipped every
+# symbol ("not enough historical candles returned") and made the whole
+# backtest look broken while reporting no error at all.
+#
+# So the bounds are per-timeframe. The upper bounds respect what Kite will
+# serve (intraday history is limited; daily/weekly goes back years, and
+# _fetch_historical_chunked splits any range into safe per-request chunks).
+# The lower bounds are the point below which a run cannot produce a single
+# valid bar, and are ENFORCED with a clear error rather than a silent zero.
+MAX_BACKTEST_DAYS_BY_TF = {
+    "15minute": 90, "60minute": 180, "4hour": 365, "day": 1095, "week": 1825,
+}
+MIN_BACKTEST_DAYS_BY_TF = {
+    "15minute": 5, "60minute": 10, "4hour": 30, "day": 120, "week": 540,
+}
+DEFAULT_BACKTEST_DAYS_BY_TF = {
+    "15minute": 30, "60minute": 60, "4hour": 120, "day": 365, "week": 900,
+}
+MAX_BACKTEST_DAYS = 1095  # absolute ceiling; the per-timeframe cap above is what actually applies
+
+
+def backtest_day_bounds(timeframe):
+    """(min, max, default) calendar days for a timeframe - drives both the
+    server-side clamp and the form's own min/max/value attributes, so the
+    page can never offer a number the engine will reject."""
+    return (MIN_BACKTEST_DAYS_BY_TF.get(timeframe, 5),
+            MAX_BACKTEST_DAYS_BY_TF.get(timeframe, 90),
+            DEFAULT_BACKTEST_DAYS_BY_TF.get(timeframe, 30))
 _RATE_LIMIT_PAUSE = 0.35  # ~3 req/sec, matching Kite's historical-data rate limit
 MAX_TRADES_RETURNED = 500  # cap on the trade-by-trade list sent to the browser
                             # (see run_backtest) - summary stats always use every trade
@@ -918,7 +944,17 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
                     require_atr_floor=False,
                     cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                     holdout_pct=0.0) -> dict:
-    days = min(int(days or 30), MAX_BACKTEST_DAYS)
+    lo, hi, _default = backtest_day_bounds(timeframe)
+    days = int(days or _default)
+    if days < lo:
+        # Loud, not silent: below this the fetch cannot return enough bars for
+        # the indicators to warm up, so every symbol would be skipped and the
+        # run would report zero trades with no visible reason.
+        raise ValueError(
+            f"{days} days is too short for {timeframe} candles - that's fewer bars than the "
+            f"indicators need to warm up, so every symbol would be skipped. Use at least {lo} days."
+        )
+    days = min(days, hi)
     # Clamp at the entry point too, not just inside _compute_trade, so the
     # values ECHOED back in the result (and shown on the Backtest page) are
     # the ones actually applied - reporting cost_pct=-5 while silently

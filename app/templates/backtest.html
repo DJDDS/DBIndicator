@@ -107,7 +107,8 @@
         </div>
         <div>
           <label for="bt-days">Days back</label>
-          <input type="number" id="bt-days" name="days" value="30" min="5" max="90">
+          <input type="number" id="bt-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
+          <div class="hint">Calendar days. On daily candles you need at least {{ bt_days_min }} for the indicators to warm up.</div>
         </div>
         <div>
           <label>Return horizons (bars held)</label>
@@ -191,7 +192,8 @@
         </div>
         <div>
           <label for="wt-days">Days back</label>
-          <input type="number" id="wt-days" name="days" value="30" min="5" max="90">
+          <input type="number" id="wt-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
+          <div class="hint">Calendar days. On daily candles you need at least {{ bt_days_min }} for the indicators to warm up.</div>
         </div>
         <div>
           <label for="wt-horizon">Reference horizon (bars held)</label>
@@ -245,7 +247,8 @@
       <div class="row2" style="margin-top:14px;">
         <div>
           <label for="ab-days">Days back</label>
-          <input type="number" id="ab-days" name="days" value="30" min="5" max="90">
+          <input type="number" id="ab-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
+          <div class="hint">Calendar days. On daily candles you need at least {{ bt_days_min }} for the indicators to warm up.</div>
         </div>
         <div>
           <label for="ab-horizon">Reference horizon (bars held)</label>
@@ -312,7 +315,6 @@ const FILTER_LABELS = {
   require_htf: 'HTF agreement',
   require_regime_volume: 'Regime-adaptive volume',
   exclude_opening_window: 'Opening-window excluded',
-  require_volume_flow: 'Volume-flow agreement (CMF)',
   require_candle_pattern: 'Candlestick-pattern agreement',
   require_macd_hist: 'MACD histogram momentum',
   require_big_candle: 'Big-candle agreement',
