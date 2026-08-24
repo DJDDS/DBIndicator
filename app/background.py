@@ -11,7 +11,10 @@ import threading
 import time
 
 from . import alerts, delivery, journal, kite_auth, news
-from .config import settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE
+from .config import (
+    settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, MULTI_TF_RESULTS_FILE,
+    TIMEFRAME_LABELS,
+)
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
     classify_oi_structure, fetch_index_direction, fetch_sector_directions,
@@ -517,14 +520,18 @@ def _entry_quality_score(r):
     # when it isn't extreme enough to count as decisive.
     cp = r.get("close_position_pct")
     thr = settings.STRONG_CLOSE_THRESHOLD_PCT
+    # Name the bar explicitly (see config.BTST_TIMEFRAMES): on a 15-minute
+    # scan this component is scoring the last 15 minutes, NOT the day, and
+    # the tooltip should never let that pass unnoticed.
+    tf_label = TIMEFRAME_LABELS.get(settings.TIMEFRAME, settings.TIMEFRAME)
     if cp is None:
         pts, note = 4, "no close-position reading"
     elif (direction == "Bullish" and cp >= thr) or (direction == "Bearish" and cp <= 100 - thr):
-        pts, note = 10, f"closed at {cp}% of range - decisive"
+        pts, note = 10, f"closed at {cp}% of its {tf_label} range - decisive"
     elif (direction == "Bullish" and cp >= 50) or (direction == "Bearish" and cp <= 50):
-        pts, note = 6, f"closed at {cp}% of range - right side, not decisive"
+        pts, note = 6, f"closed at {cp}% of its {tf_label} range - right side, not decisive"
     else:
-        pts, note = 0, f"closed at {cp}% of range - wrong side for a {direction} row"
+        pts, note = 0, f"closed at {cp}% of its {tf_label} range - wrong side for a {direction} row"
     parts.append({"label": "Strong close", "points": pts, "max": 10, "note": note})
 
     # 6. Delivery (0-5, deliberately the lightest) - real overnight

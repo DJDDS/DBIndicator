@@ -137,6 +137,31 @@ DEFAULT_WATCHLIST = [
 # old parallel pass feeding "positional_qualified") that was removed,
 # not 4-hour itself. "week" is synthesized by resampling daily candles.
 VALID_TIMEFRAMES = ["15minute", "60minute", "4hour", "day", "week"]
+
+# Human-readable names for each timeframe, used wherever a badge or tooltip
+# has to state WHICH bar a reading was computed on - see BTST_TIMEFRAMES
+# directly below for why that matters.
+TIMEFRAME_LABELS = {
+    "15minute": "15-min", "60minute": "60-min", "4hour": "4-hour",
+    "day": "daily", "week": "weekly",
+}
+
+# The timeframes on which the BTST-oriented reads actually mean what their
+# names say. This is a real, easily-missed trap rather than a cosmetic
+# distinction: "close in the top 10% of the range" is the classic
+# buy-today-sell-tomorrow conviction signal ONLY when the bar in question
+# is a full trading DAY. Computed on a 15-minute bar the identical formula
+# instead answers "did price close strong in the last 15 minutes", which is
+# intraday micro-structure - a different question, and not the one the
+# signal was added to answer. Same for NR7 (narrowest of 7 DAYS vs
+# narrowest of the last 105 minutes).
+#
+# Nothing here changes the maths - both readings are computed correctly for
+# whatever bar they're given. This list only drives the honesty layer in
+# the UI: on an intraday timeframe those badges are dimmed and their
+# tooltips say plainly which bar they're measuring, so a 15-minute reading
+# is never silently mistaken for the daily one.
+BTST_TIMEFRAMES = ("day", "week")
 VALID_MACD_PRESETS = ["auto", "15min", "30min", "custom"]
 
 _TUNABLE_FIELDS = [

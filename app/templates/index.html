@@ -85,15 +85,19 @@
   .eq-card { border-color: #1e3a5f; margin-bottom: 14px; }
   .eq-card h2 { color: var(--accent); }
   .eq-list { display: flex; flex-direction: column; gap: 2px; }
-  .eq-row { display: grid; grid-template-columns: 42px minmax(120px, 1.1fr) 96px minmax(0, 1.4fr);
+  .eq-row { display: grid; grid-template-columns: 42px minmax(120px, 1.1fr) 96px minmax(0, 1.4fr) 54px;
             gap: 12px; align-items: center; padding: 8px 10px; border-radius: 6px;
-            text-decoration: none; color: inherit; border: 1px solid transparent; }
+            color: inherit; border: 1px solid transparent; cursor: pointer; }
   .eq-row:hover { background: var(--panel2); border-color: var(--border); }
   .eq-score { font-size: 17px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
   .eq-row.bull .eq-score { color: var(--green); }
   .eq-row.bear .eq-score { color: var(--red); }
   .eq-sym { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-  .eq-name { font-size: 13px; font-weight: 600; }
+  .eq-name { font-size: 13px; font-weight: 600; text-decoration: none; }
+  .eq-name:hover { text-decoration: underline; }
+  .eq-log { font-size: 11px; color: var(--accent); text-decoration: none; text-align: right;
+            padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; white-space: nowrap; }
+  .eq-log:hover { background: var(--accent-bg); border-color: var(--accent); }
   .eq-row.bull .eq-name { color: var(--green); }
   .eq-row.bear .eq-name { color: var(--red); }
   .eq-close { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -117,10 +121,17 @@
                overflow: hidden; word-break: break-word; }
   .news-meta { display: block; font-size: 10px; color: var(--dim); margin-top: 2px; }
   .news-none { color: var(--dim); }
+  /* Timeframe-meaning advisory + the badges it applies to (config.BTST_TIMEFRAMES) */
+  .tf-advisory { background: rgba(240,185,11,0.07); border: 1px solid rgba(240,185,11,0.28);
+                 border-radius: 6px; padding: 9px 12px; margin-bottom: 12px;
+                 font-size: 11.5px; line-height: 1.65; color: var(--muted); }
+  .tf-advisory strong { color: var(--amber); }
+  .tf-advisory em { color: var(--text); font-style: normal; font-weight: 600; }
+  .tf-offmeaning { opacity: 0.45; text-decoration: underline dotted var(--dim); text-underline-offset: 2px; }
   .eq-note { margin: 12px 0 0; font-size: 11px; color: var(--dim); line-height: 1.6; }
   .eq-note strong { color: var(--muted); }
   @media (max-width: 720px) {
-    .eq-row { grid-template-columns: 38px minmax(0, 1fr); }
+    .eq-row { grid-template-columns: 38px minmax(0, 1fr) 54px; }
     .eq-bars, .eq-tags { grid-column: 2; }
   }
   .match-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 6px; max-height: 260px; overflow-y: auto; }
@@ -517,15 +528,26 @@
 
   <div class="card eq-card">
     <h2>⚡ Best Entries <span class="sub">confirmed signals, ranked by how good the ENTRY looks right now - not by how strong the signal is</span></h2>
+    {% if not is_btst_timeframe %}
+    <div class="tf-advisory">
+      <strong>Scanning {{ timeframe_label }} bars.</strong> The BTST reads below measure that bar, not the trading day &mdash;
+      <em>Close@</em> is "closed strong in the last {{ timeframe_label }} bar" and <em>NR7</em> is "narrowest of the last 7
+      {{ timeframe_label }} bars", which is intraday micro-structure rather than the buy-today-sell-tomorrow conviction
+      those signals were added for. The maths is right either way; only the meaning shifts. Switch
+      <strong>Timeframe</strong> to <strong>day</strong> for the BTST reading. (Ext / ATR / 🎯 / 💥 are timeframe-relative
+      by construction and stay valid here; Deliv is always a daily NSE figure regardless.)
+    </div>
+    {% endif %}
+    <div id="eq-body">
     {% set eq_rows = results | selectattr('entry_quality', 'defined') | selectattr('entry_quality', 'ne', None)
                               | sort(attribute='entry_quality', reverse=true) %}
     {% if eq_rows %}
     <div class="eq-list">
       {% for r in eq_rows[:entry_quality_top_n] %}
-      <a class="eq-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
+      <div class="eq-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" onclick="window.location='/chart/{{ r.symbol }}'">
         <span class="eq-score" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">{{ r.entry_quality }}</span>
         <span class="eq-sym">
-          <span class="eq-name">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</span>
+          <a class="eq-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</a>
           <span class="eq-close">{{ r.close }}</span>
         </span>
         <span class="eq-bars" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">
@@ -539,7 +561,10 @@
           {% if r.big_candle_recent_direction and r.big_candle_recent_direction == r.direction %}<span class="{{ 'bull' if r.direction == 'Bullish' else 'bear' }}">💥{% if r.big_candle_continuation %}✓{% endif %}</span>{% endif %}
           {% if r.atr_pct is not none %}<span class="{{ 'eq-warn' if r.atr_floor_agrees == false else 'eq-dim' }}">ATR {{ r.atr_pct }}%</span>{% endif %}
         </span>
-      </a>
+        <a class="eq-log journal-log-link" href="#" data-symbol="{{ r.symbol }}"
+           onclick="event.stopPropagation(); logPaperTrade(this); return false;"
+           title="Log {{ r.symbol }} as a {{ r.direction }} paper trade in the Signal Journal - entry, stop and target are taken from this row server-side, and the outcome resolves automatically as new candles close. This is what eventually tells you whether these rankings mean anything.">Log</a>
+      </div>
       {% endfor %}
     </div>
     <p class="eq-note">
@@ -552,6 +577,7 @@
     {% else %}
     <p class="mn-empty">No confirmed signals to rank right now - this panel only ever re-orders rows that already earned a ✓.</p>
     {% endif %}
+    </div>
   </div>
 
   <div class="signals-grid">
@@ -752,15 +778,15 @@
             {% if r.vol_contracting or r.nr7 or (r.big_candle_recent_direction is defined and r.big_candle_recent_direction) or (r.close_position_pct is defined and r.close_position_pct is not none) or (r.delivery_pct is defined and r.delivery_pct is not none) %}
             <div class="atr-risk">
               {% if r.vol_contracting %}<span style="color:var(--accent); margin-right:6px;" title="Bollinger Band width is at the {{ r.bb_width_percentile }}th percentile of its own last {{ vol_contraction_lookback }} bars - a tight, coiled range that has historically preceded bigger breakouts more often than an already-wide one (Volatility Contraction Pattern)">🎯 Coiling</span>{% endif %}
-              {% if r.nr7 %}<span style="margin-right:6px;" title="Today's high-low range is the narrowest of the last 7 bars">NR7</span>{% endif %}
+              {% if r.nr7 %}<span class="{{ '' if is_btst_timeframe else 'tf-offmeaning' }}" style="margin-right:6px;" title="{% if is_btst_timeframe %}Narrowest {{ timeframe_label }} range of the last 7 bars - the classic NR7 squeeze{% else %}Narrowest of the last 7 {{ timeframe_label }} bars. NOT the classic daily NR7 - on this timeframe it reads intraday compression, not a day-scale squeeze. Switch Timeframe to day for the BTST meaning.{% endif %}">NR7</span>{% endif %}
               {% if r.big_candle_recent_direction is defined and r.big_candle_recent_direction %}
               <span class="{{ 'bull' if r.big_candle_recent_direction == 'Bullish' else 'bear' }}" style="margin-right:6px;"
                     title="{% if r.big_candle_recent_bars_ago == 0 %}This bar is a range-expansion big candle{% else %}Big candle {{ r.big_candle_recent_bars_ago }} bar(s) ago{% endif %}, level {{ r.big_candle_recent_level }}.{% if r.big_candle_continuation is not none %} {{ 'Price has continued through it.' if r.big_candle_continuation else 'Not yet cleared.' }}{% endif %}{% if r.big_candle_agrees is defined and r.big_candle_agrees == false %} Disagrees with this row's own direction.{% endif %}">
                 💥{{ '▲' if r.big_candle_recent_direction == 'Bullish' else '▼' }} {{ r.big_candle_recent_level }}{% if r.big_candle_continuation %} ✓{% endif %}
               </span>
               {% endif %}
-              {% if r.close_position_pct is defined and r.close_position_pct is not none %}<span style="margin-right:6px;" title="Close landed at {{ r.close_position_pct }}% of today's own high-low range (100% = closed at the high){% if r.strong_close_agrees is defined and r.strong_close_agrees == false %} - not extreme enough to agree with this row's own direction{% endif %}">Close@{{ r.close_position_pct }}%</span>{% endif %}
-              {% if r.delivery_pct is defined and r.delivery_pct is not none %}<span title="NSE delivery %: {{ r.delivery_pct }} (as of {{ r.delivery_date }}) - most recently PUBLISHED reading, never a live intraday number{% if r.delivery_agrees is defined and r.delivery_agrees == false %} - below your configured threshold{% endif %}">Deliv {{ r.delivery_pct }}%</span>{% endif %}
+              {% if r.close_position_pct is defined and r.close_position_pct is not none %}<span class="{{ '' if is_btst_timeframe else 'tf-offmeaning' }}" style="margin-right:6px;" title="Close landed at {{ r.close_position_pct }}% of this {{ timeframe_label }} bar's own high-low range (100% = closed at the high).{% if not is_btst_timeframe %} On this timeframe that means the last {{ timeframe_label }} bar, NOT the trading day - it is not the BTST 'closed strong on the day' read. Switch Timeframe to day for that.{% endif %}{% if r.strong_close_agrees is defined and r.strong_close_agrees == false %} Not extreme enough to agree with this row's own direction.{% endif %}">Close@{{ r.close_position_pct }}%</span>{% endif %}
+              {% if r.delivery_pct is defined and r.delivery_pct is not none %}<span title="NSE delivery %: {{ r.delivery_pct }} (as of {{ r.delivery_date }}) - always a DAILY figure from NSE's own bhavcopy, unaffected by your scan timeframe, and never a live intraday number{% if r.delivery_agrees is defined and r.delivery_agrees == false %} - below your configured threshold{% endif %}">Deliv {{ r.delivery_pct }}%</span>{% endif %}
             </div>
             {% endif %}
             {% if (r.entry_extension_atr is defined and r.entry_extension_atr is not none) or (r.atr_pct is defined and r.atr_pct is not none) %}
@@ -949,7 +975,10 @@
     high/low - with the level it set and whether price has since continued through it (✓); turn on "Require
     big-candle agreement" on the Settings page to gate on it. <strong>Close@N%</strong> shows where the close
     landed within today's own high-low range (100% = at the high) - the BTST "closed with conviction" read; turn
-    on "Require strong-close agreement" to gate on it. <strong>Deliv N%</strong> is NSE's delivery percentage
+    on "Require strong-close agreement" to gate on it. <strong>Close@ and NR7 are measured on whichever bar you're
+    scanning</strong> - on a 15-minute scan they describe the last 15 minutes, not the trading day, so they're
+    dimmed and labelled as such until you switch Timeframe to <strong>day</strong>, where they carry their intended
+    BTST meaning. <strong>Deliv N%</strong> is NSE's delivery percentage
     (real overnight conviction vs. intraday churn) as of its most recently PUBLISHED session - never a live
     number, and it may never appear at all if NSE is blocking this deployment's requests (see the Settings page
     for status). <strong>Ext N R</strong> is how far price already is past its own VWAP in ATR units, measured in
@@ -1275,7 +1304,10 @@
   makeSortable();
 
   var DASHBOARD_REFRESH_MS = 20000;
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
+  // 'eq-body' (Best Entries) is synced like every other live block - without
+  // it the panel would silently freeze at whatever the last full page load
+  // showed, which is worse than useless for a ranking meant to be read live.
+  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'eq-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

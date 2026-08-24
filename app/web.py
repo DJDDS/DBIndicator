@@ -109,6 +109,11 @@ def dashboard():
         max_entry_extension_atr=settings.MAX_ENTRY_EXTENSION_ATR,
         min_atr_pct=settings.MIN_ATR_PCT,
         entry_quality_top_n=background.ENTRY_QUALITY_TOP_N,
+        # Drives the BTST-meaning honesty layer on the dashboard - see
+        # config.BTST_TIMEFRAMES for why a Close@/NR7 reading taken on a
+        # 15-minute bar must not be presented as the daily one.
+        timeframe_label=config.TIMEFRAME_LABELS.get(settings.TIMEFRAME, settings.TIMEFRAME),
+        is_btst_timeframe=settings.TIMEFRAME in config.BTST_TIMEFRAMES,
     )
 
 
