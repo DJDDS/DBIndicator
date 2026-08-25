@@ -134,6 +134,20 @@ def _pct_changes(series, max_obs=BASELINE_DAYS, intraday=False):
     return changes.dropna().tail(max_obs)
 
 
+def _is_stale(series, changes):
+    """Does the newest retained change belong to the newest bar?
+
+    Only meaningful for timestamped series; without an index we cannot tell,
+    so we do not claim staleness we have not established."""
+    try:
+        idx = pd.Series(series).dropna().index
+        if not isinstance(idx, pd.DatetimeIndex) or not isinstance(changes.index, pd.DatetimeIndex):
+            return False
+        return bool(len(idx) and len(changes) and changes.index[-1] != idx[-1])
+    except Exception:  # noqa: BLE001 - a shape we cannot check is not a shape we reject
+        return False
+
+
 def oi_zscore(oi_history, intraday=False):
     """How unusual is the latest OI change FOR THIS SYMBOL?
 
@@ -148,6 +162,23 @@ def oi_zscore(oi_history, intraday=False):
     exactly the large moves we are trying to detect."""
     changes = _pct_changes(oi_history, max_obs=_max_obs(intraday), intraday=intraday)
     if changes is None or len(changes) < MIN_BASELINE_OBS:
+        return None, None, None
+
+    # The retained changes may not include the CURRENT bar's.
+    #
+    # At a session's first bar the only available change spans the overnight
+    # gap, and the intraday filter drops it - correctly, because it is not a
+    # within-session move. But then `changes.iloc[-1]` is whatever the last
+    # within-session change was, which can be from a previous day entirely.
+    # Scoring that as "the latest reading" reports a stale number with full
+    # confidence: every morning the OI gate would fire on a change that
+    # happened yesterday.
+    #
+    # So verify the newest retained change actually belongs to the newest
+    # bar. When it does not, there is no current intraday reading yet, and
+    # None is the honest answer - the row simply goes unscored on OI until
+    # the session's second bar closes.
+    if _is_stale(oi_history, changes):
         return None, None, None
 
     latest = float(changes.iloc[-1])
@@ -174,6 +205,8 @@ def oi_acceleration_ratio(oi_history, intraday=False):
     mean would be near zero and the ratio would explode)."""
     changes = _pct_changes(oi_history, max_obs=_max_obs(intraday), intraday=intraday)
     if changes is None or len(changes) < MIN_BASELINE_OBS:
+        return None
+    if _is_stale(oi_history, changes):
         return None
     latest = float(changes.iloc[-1])
     typical = float(changes.iloc[:-1].abs().mean())

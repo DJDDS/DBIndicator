@@ -1396,7 +1396,7 @@ MULTI_TF_SCAN_INTERVAL_SECONDS = {
 _multi_tf_lock = threading.Lock()
 _multi_tf_state = {
     tf: {
-        "results": [], "last_scan": None, "last_error": None,
+        "results": [], "last_scan": None, "last_error": None, "oi_baseline": None,
         "index_direction": None, "index_close": None, "index_chg_pct": None,
     }
     for tf in MULTI_TF_TIMEFRAMES
@@ -1503,7 +1503,19 @@ def _scan_one_multi_tf(kite, tf):
     _apply_atr_floor_filter(results)
     _apply_delivery_filter(results)  # cache lookup only - see that function's docstring, no network call here
     _apply_shortlist(results)
+    # Diagnostics, so an empty panel can say WHY it is empty. "No OI
+    # baseline for any symbol yet" and "baselines are in, nothing qualified"
+    # look identical on screen otherwise, and they call for opposite
+    # reactions - wait, versus accept that today is quiet.
+    scanned = [r for r in results if not r.get("error")]
+    oi_baseline = {
+        "with_oi": sum(1 for r in scanned if r.get("oi_z") is not None),
+        "scanned": len(scanned),
+        "unusual": sum(1 for r in scanned if r.get("oi_structure_early")),
+        "confirmed": sum(1 for r in scanned if r.get("signal_confirmed")),
+    }
     with _multi_tf_lock:
+        _multi_tf_state[tf]["oi_baseline"] = oi_baseline
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")
         _multi_tf_state[tf]["last_error"] = None

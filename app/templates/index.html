@@ -95,6 +95,10 @@
   .mtf-sl-chip.bear { color: var(--red); }
   .mtf-sl-score { font-family: var(--mono); font-weight: 700; font-size: 12.5px; }
   .mtf-sl-oi { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .mtf-sl-none { font-size: 11.5px; line-height: 1.6; color: var(--muted); margin: 10px 0 4px;
+                 padding: 8px 10px; border-radius: 8px; background: var(--panel2);
+                 border: 1px dashed var(--border); }
+  .mtf-sl-none strong { color: var(--text); }
   /* Shortlist - the headline panel. Deliberately allowed to be empty. */
   .sl-card { border-color: var(--accent); }
   .sl-list { display: flex; flex-direction: column; gap: 6px; }
@@ -513,6 +517,24 @@
         </a>
         {% endfor %}
       </div>
+      {% elif entry.oi_baseline %}
+      {% set ob = entry.oi_baseline %}
+      <p class="mtf-sl-none">
+        {% if ob.with_oi == 0 %}
+        <strong>OI baseline still building for {{ label }}.</strong> None of {{ ob.scanned }} scanned symbols has
+        one yet, so nothing can reach this shortlist regardless of how the price read looks. It fetches once per
+        trading day and is shared with the other timeframes, so give it a few minutes after a restart.
+        {% elif ob.unusual == 0 %}
+        <strong>Baselines are in ({{ ob.with_oi }} of {{ ob.scanned }}), and no {{ label }} OI move is unusual
+        right now.</strong> That is a real reading, not a gap: positioning is behaving normally across the board
+        on this timeframe, so nothing has an independent witness to back a price signal.
+        {% else %}
+        <strong>{{ ob.unusual }} symbol{{ 's' if ob.unusual != 1 }} showing unusual {{ label }} OI, but none
+        cleared the bar.</strong> Either the OI pointed against the price read, or the overall score fell short
+        of {{ min_early_score | round | int }}. {{ ob.confirmed }} row{{ 's' if ob.confirmed != 1 }} still
+        confirmed on price alone below.
+        {% endif %}
+      </p>
       {% endif %}
       {% if entry.last_error %}
       <p class="mn-empty" style="color:var(--red);">Last scan hit an error: {{ entry.last_error }}</p>
