@@ -96,6 +96,61 @@ OI_Z_THRESHOLD = 1.5
 # scored optimistically.
 MIN_COVERAGE = 0.60
 
+#: How to read a score.
+#:
+#: THREE bands, not five, and they describe EVIDENCE rather than issue trade
+#: verdicts. Three deliberate departures from the obvious five-band version:
+#:
+#: 1. Five bands across a 65-100 range means 7-point buckets, and this score
+#:    cannot support that resolution. It is `earned / available` over
+#:    hand-chosen weights with nothing measured behind them, so the gap
+#:    between 74 and 76 is noise dressed as a distinction. Wide bands are
+#:    the honest width.
+#:
+#: 2. No band claims rarity. Calling 85+ "rare" asserts a distribution
+#:    nobody has measured - it may turn out to be common, or never to occur
+#:    at all. That is precisely the unearned confidence this engine exists
+#:    to remove.
+#:
+#: 3. The labels avoid "tradable", "A-grade" and similar. The score measures
+#:    how much independent evidence agrees, NOT expected return; those are
+#:    different quantities and only a backtest can connect them. Phrasing
+#:    agreement as a recommendation invites reading a number as a
+#:    probability. An 82 does not mean 82% of anything.
+#:
+#: COVERAGE QUALIFIES ALL OF IT. An 82 built on 60% of the evidence is a
+#: weaker claim than a 74 built on all of it, because the first is a
+#: confident reading of a smaller thing. score_band takes coverage for
+#: exactly that reason.
+#:
+#: These get replaced by measured outcome rates - "setups in this band
+#: reached +1 ATR before -0.75 ATR in N% of M cases" - once the engine has
+#: been backtested. Until then they are a reading aid, nothing more.
+SCORE_BANDS = (
+    (85, "broad", "Most axes agree, and strongly"),
+    (75, "clear", "Several independent axes agree"),
+    (65, "narrow", "Only just clears the floor - little margin"),
+)
+
+
+def score_band(score, coverage=None):
+    """(label, note) for a score, or None below the lowest band.
+
+    A partial-evidence row is labelled as such rather than being allowed to
+    borrow the authority of a full reading."""
+    if score is None:
+        return None
+    for threshold, label, note in SCORE_BANDS:
+        if score >= threshold:
+            if coverage is not None and coverage < 1.0:
+                return label, f"{note}. Partial evidence ({coverage * 100:.0f}% measurable) - a high score on less evidence is a smaller claim, not a stronger one."
+            return label, note
+    return None
+    for threshold, label, note in SCORE_BANDS:
+        if score >= threshold:
+            return label, note
+    return None
+
 
 #: Baseline size for an intraday series. Larger than the daily one because
 #: intraday OI is noisier per observation, but still short enough to reflect
@@ -148,7 +203,33 @@ def _is_stale(series, changes):
         return False
 
 
-def oi_zscore(oi_history, intraday=False):
+def _with_live(oi_history, latest_oi):
+    """Splice the live OI reading onto the historical series.
+
+    The history is fetched once per trading day (it is one API call per
+    symbol, far too expensive per scan) which means its final bar is frozen
+    at whatever the morning sweep captured. Scoring that directly gives the
+    SAME z-score on every scan from the open to the close - a live-looking
+    number computed from a stale snapshot. Intraday, that is fatal: the
+    whole point is how positioning is changing during the session.
+
+    fetch_oi_map already pulls current OI for the entire watchlist in one
+    batched quote() call every scan, so the live number is free. History
+    supplies the baseline distribution; the live quote supplies the current
+    observation. The final bar is REPLACED rather than appended because
+    Kite's last bar is the still-forming one - appending would invent an
+    extra bar and halve the apparent change."""
+    if latest_oi is None or not (latest_oi > 0):
+        return oi_history
+    s = pd.Series(oi_history).dropna()
+    if s.empty:
+        return oi_history
+    s = s.copy()
+    s.iloc[-1] = float(latest_oi)
+    return s
+
+
+def oi_zscore(oi_history, intraday=False, latest_oi=None):
     """How unusual is the latest OI change FOR THIS SYMBOL?
 
     Returns (z, latest_pct_change, sigma) or (None, None, None) when there
@@ -160,6 +241,7 @@ def oi_zscore(oi_history, intraday=False):
     today's change contributes to the mean and sigma it is being measured
     against, which shrinks every z-score toward zero and does so most for
     exactly the large moves we are trying to detect."""
+    oi_history = _with_live(oi_history, latest_oi)
     changes = _pct_changes(oi_history, max_obs=_max_obs(intraday), intraday=intraday)
     if changes is None or len(changes) < MIN_BASELINE_OBS:
         return None, None, None
@@ -195,7 +277,7 @@ def oi_zscore(oi_history, intraday=False):
     return round((latest - mu) / sigma, 2), round(latest, 2), round(sigma, 3)
 
 
-def oi_acceleration_ratio(oi_history, intraday=False):
+def oi_acceleration_ratio(oi_history, intraday=False, latest_oi=None):
     """Latest OI change as a multiple of this symbol's own typical move.
 
     A companion to the z-score that is easier to read at a glance: 3.0
@@ -203,6 +285,7 @@ def oi_acceleration_ratio(oi_history, intraday=False):
     stock". Uses mean ABSOLUTE change, so a symbol whose OI drifts up and
     down in equal measure still gets a sensible denominator (its plain
     mean would be near zero and the ratio would explode)."""
+    oi_history = _with_live(oi_history, latest_oi)
     changes = _pct_changes(oi_history, max_obs=_max_obs(intraday), intraday=intraday)
     if changes is None or len(changes) < MIN_BASELINE_OBS:
         return None

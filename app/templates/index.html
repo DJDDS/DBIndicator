@@ -98,7 +98,16 @@
   .mtf-sl-none { font-size: 11.5px; line-height: 1.6; color: var(--muted); margin: 10px 0 4px;
                  padding: 8px 10px; border-radius: 8px; background: var(--panel2);
                  border: 1px dashed var(--border); }
-  .mtf-sl-none strong { color: var(--text); }
+  .mtf-sl-oi { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  /* The wide confluence lists are collapsed by default. They are the OLD
+     screen's output - every row confirmed on price alone - and on a busy
+     day that is 60-70 chips, which buries the handful of names that also
+     have OI behind them. Available on demand, not the default view. */
+  .mn-all { margin-top: 10px; }
+  .mn-all > summary { cursor: pointer; font-size: 11.5px; font-weight: 700; color: var(--muted);
+                      padding: 6px 2px; list-style: revert; }
+  .mn-all > summary:hover { color: var(--text); }
+  .mn-all-hint { font-weight: 400; color: var(--dim); }
   /* Shortlist - the headline panel. Deliberately allowed to be empty. */
   .sl-card { border-color: var(--accent); }
   .sl-list { display: flex; flex-direction: column; gap: 6px; }
@@ -114,6 +123,13 @@
   .sl-name { font-weight: 700; font-size: 14px; text-decoration: none; color: inherit; }
   .sl-name:hover { color: var(--accent); }
   .sl-close { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .sl-band { font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+             padding: 1px 5px; border-radius: 3px; align-self: flex-start; margin-bottom: 1px;
+             background: var(--panel); color: var(--muted); }
+  .sl-band-exceptional { background: #4a2f0f; color: var(--amber); }
+  .sl-band-very-strong { background: #123021; color: var(--green); }
+  .sl-band-strong      { background: #12262f; color: var(--accent); }
+  .sl-band-good        { color: var(--text); }
   .sl-why { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11.5px; }
   .sl-oi { font-weight: 700; }
   .sl-oi.bull { color: var(--green); }
@@ -510,7 +526,7 @@
         <span class="mtf-sl-label">Shortlist</span>
         {% for r in mtf_sl %}
         <a class="mtf-sl-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}"
-           title="{{ r.early_score }}/100 &middot; {{ r.oi_structure_early }}{% if r.oi_z is not none %} ({{ '%.1f'|format(r.oi_z|abs) }}&sigma; on {{ label }} OI){% endif %}&#10;{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">
+           title="{{ r.early_score }}/100{% if r.early_band %} ({{ r.early_band }} - {{ r.early_band_note }}){% endif %} &middot; {{ r.oi_structure_early }}{% if r.oi_z is not none %} ({{ '%.1f'|format(r.oi_z|abs) }}&sigma; on {{ label }} OI){% endif %}&#10;{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">
           <span class="mtf-sl-score">{{ r.early_score }}</span>
           {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}
           {% if r.oi_z is not none %}<span class="mtf-sl-oi">{{ '%.1f'|format(r.oi_z|abs) }}&sigma;</span>{% endif %}
@@ -541,6 +557,10 @@
       {% elif ns3.bull == 0 and ns3.bear == 0 %}
       <p class="mn-empty">Nothing matching right now.</p>
       {% else %}
+      <details class="mn-all">
+        <summary>Everything confirmed on price alone &mdash; {{ ns3.bull + ns3.bear }} name{{ 's' if (ns3.bull + ns3.bear) != 1 }}
+          <span class="mn-all-hint">(the Shortlist above is the subset that also has OI backing it)</span>
+        </summary>
       <div class="mn-columns">
         <div>
           <h4 class="mn-col-title bull">▲ Bullish ({{ ns3.bull }})</h4>
@@ -569,6 +589,7 @@
           </div>
         </div>
       </div>
+      </details>
       {% endif %}
     </div>
   {% endmacro %}
@@ -592,6 +613,8 @@
         <span class="sl-score {{ 'bull' if r.direction == 'Bullish' else 'bear' }}"
               title="{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">{{ r.early_score }}</span>
         <span class="sl-sym">
+          {% if r.early_band %}<span class="sl-band sl-band-{{ r.early_band | replace(' ', '-') }}"
+                title="{{ r.early_band_note }}. These are interpretation bands, not calibrated probabilities - an 82 does not mean an 82% chance of anything. They exist so the gap between 'just cleared the floor' and 'rare' is visible at a glance.">{{ r.early_band }}</span>{% endif %}
           <a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</a>
           <span class="sl-close">{{ r.close }}</span>
         </span>

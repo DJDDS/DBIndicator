@@ -89,6 +89,8 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
         r["rs_pct"] = None
         r["rs_improving"] = None
         r["early_score"] = None
+        r["early_band"] = None
+        r["early_band_note"] = None
         r["early_parts"] = None
         r["early_coverage"] = None
         r["early_eligible"] = False
@@ -97,10 +99,16 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
 
         direction = r.get("direction")
         hist = (oi_history or {}).get(r.get("symbol"))
-        oi_z, oi_chg, _sigma = early_signal.oi_zscore(hist, intraday=intraday)
+        # r["oi"] is the LIVE reading from this scan's batched quote() call
+        # (see scanner.fetch_oi_map). The history is a once-a-day fetch, so
+        # without splicing the live value in, every scan would re-score the
+        # morning's frozen snapshot - see early_signal._with_live.
+        live_oi = r.get("oi")
+        oi_z, oi_chg, _sigma = early_signal.oi_zscore(hist, intraday=intraday, latest_oi=live_oi)
         r["oi_z"] = oi_z
         r["oi_chg_pct_daily"] = oi_chg
-        r["oi_accel_ratio"] = early_signal.oi_acceleration_ratio(hist, intraday=intraday)
+        r["oi_accel_ratio"] = early_signal.oi_acceleration_ratio(
+            hist, intraday=intraday, latest_oi=live_oi)
 
         # Price change for the quadrant is close-vs-previous-close on the
         # SAME daily bar the OI figure belongs to - not an intraday
@@ -139,6 +147,9 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
             rs_pct=r.get("rs_pct"), rs_improving=r.get("rs_improving"),
         )
         r["early_score"] = scored["score"]
+        band = early_signal.score_band(scored["score"], scored.get("coverage"))
+        r["early_band"] = band[0] if band else None
+        r["early_band_note"] = band[1] if band else None
         r["early_parts"] = scored["parts"]
         r["early_coverage"] = scored["coverage"]
         r["early_eligible"] = scored["eligible"]
@@ -199,6 +210,13 @@ def _apply_shortlist(results):
         if r.get("oi_z") is None:
             continue
         if r["early_score"] < floor:
+            continue
+        # Coverage is a SEPARATE bar from score, deliberately. The two fail
+        # differently: a low score means the evidence disagrees, while low
+        # coverage means there was not much evidence to disagree. A row can
+        # score 82 on 60% coverage - confident about a smaller thing - and
+        # the score alone cannot catch that.
+        if (r.get("early_coverage") or 0) < settings.MIN_SHORTLIST_COVERAGE:
             continue
         eligible.append(r)
 

@@ -122,10 +122,25 @@
           <label for="min_early_score">Shortlist score floor (0-100)</label>
           <input type="number" id="min_early_score" name="min_early_score" min="0" max="100" step="1" value="{{ s.MIN_EARLY_SCORE | round | int }}">
           <div class="hint">
-            The main dial for how short the shortlist is. A name must score at least this much on the
-            evidence that was actually measurable for it. Raise it for fewer, higher-conviction names;
-            lower it to see more. Scores are out of what could be measured, not out of a wished-for 100 &mdash;
-            a row with no OI baseline never reaches this list at all.
+            The main dial for how short the shortlist is. <strong>75</strong> is the "clear" band, where
+            several independent axes have to agree rather than one carrying the rest. Below 75 is a
+            watchlist reading &mdash; it clears the floor with no margin. Raise it for fewer names; lower it
+            to see more. A row with no OI baseline never reaches this list at any setting.
+            <br><br>
+            Worth being precise about what this buys: <strong>selectivity, not probability</strong>. Nothing
+            measured yet says a 78 wins more often than a 68 &mdash; more independent agreement is the best
+            available proxy until the engine is backtested.
+          </div>
+        </div>
+        <div>
+          <label for="min_shortlist_coverage">Minimum evidence coverage (0-1)</label>
+          <input type="number" id="min_shortlist_coverage" name="min_shortlist_coverage" min="0" max="1" step="0.05" value="{{ s.MIN_SHORTLIST_COVERAGE }}">
+          <div class="hint">
+            How much of the evidence must actually have been measurable. This is a separate bar from the
+            score, because the two fail differently: a low score means the evidence disagrees, low coverage
+            means there wasn't much evidence to disagree. A row can score 82 on 60% coverage &mdash; confident
+            about a smaller thing &mdash; and the score alone can't catch that. 0.80 allows at most one
+            mid-weight axis to be missing.
           </div>
         </div>
         <div>

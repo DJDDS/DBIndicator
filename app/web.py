@@ -210,6 +210,7 @@ def settings_page():
             "REQUIRE_STRONG_CLOSE_AGREEMENT": form.get("require_strong_close_agreement") == "on",
             "REQUIRE_DELIVERY_AGREEMENT": form.get("require_delivery_agreement") == "on",
             "DELIVERY_THRESHOLD_PCT": form.get("delivery_threshold_pct", settings.DELIVERY_THRESHOLD_PCT),
+            "MIN_SHORTLIST_COVERAGE": form.get("min_shortlist_coverage", settings.MIN_SHORTLIST_COVERAGE),
             "BTST_ALERT_ENABLED": form.get("btst_alert_enabled") == "on",
             "BTST_ALERT_TIME": form.get("btst_alert_time", settings.BTST_ALERT_TIME),
             "MAX_ENTRY_EXTENSION_ATR": form.get("max_entry_extension_atr", settings.MAX_ENTRY_EXTENSION_ATR),

@@ -687,7 +687,16 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     macd_line, signal_line = series["macd_line"], series["signal_line"]
     fast, slow, sig = series["macd_params"]
 
-    i = len(df) - 1  # last closed candle
+    # The LAST bar, which during market hours is the still-FORMING one -
+    # scanner.fetch_candles requests up to now, and Kite returns the
+    # in-progress candle. The old comment here said "last closed candle",
+    # which was simply untrue and hid a real consequence: every reading
+    # below (RSI, MACD, close position, big candle) can move or vanish
+    # before the bar actually closes, and the backtest - which only ever
+    # sees completed bars - is therefore measuring a slightly different
+    # object than the dashboard displays. Live data over stale is the
+    # deliberate choice, but it should be stated rather than mislabelled.
+    i = len(df) - 1
     # The third crossover is CMF crossing its own zero line, matching the
     # three DIRECTIONAL votes below. This used to be the EMA9-vs-Bollinger
     # -mid cross; when CMF replaced that as a vote, leaving this on EMA/BB

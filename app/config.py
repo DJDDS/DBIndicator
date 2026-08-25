@@ -202,7 +202,7 @@ _TUNABLE_FIELDS = [
     "REQUIRE_BIG_CANDLE_AGREEMENT", "REQUIRE_STRONG_CLOSE_AGREEMENT",
     "REQUIRE_DELIVERY_AGREEMENT", "DELIVERY_THRESHOLD_PCT",
     "BTST_ALERT_ENABLED", "BTST_ALERT_TIME",
-    "REQUIRE_OI_AGREEMENT", "MIN_EARLY_SCORE", "SHORTLIST_MAX",
+    "REQUIRE_OI_AGREEMENT", "MIN_EARLY_SCORE", "MIN_SHORTLIST_COVERAGE", "SHORTLIST_MAX",
     "MIN_BTST_SCORE",
     "MAX_ENTRY_EXTENSION_ATR", "REQUIRE_ENTRY_LOCATION_AGREEMENT",
     "MIN_ATR_PCT", "REQUIRE_ATR_FLOOR",
@@ -412,9 +412,26 @@ def _env_defaults():
         # only ever revokes on ACTIVE disagreement - an absent OI baseline
         # is None, which never blocks (it costs the row coverage instead).
         "REQUIRE_OI_AGREEMENT": os.getenv("REQUIRE_OI_AGREEMENT", "true").strip().lower() in ("1", "true", "on", "yes"),
-        # Score floor for the shortlist. 65 is chosen so a row must be
-        # strong on OI or on volume, not merely unobjectionable everywhere.
-        "MIN_EARLY_SCORE": float(os.getenv("MIN_EARLY_SCORE", 65)),
+        # Score floor for the shortlist.
+        #
+        # Raised 65 -> 75. At 65 a row only had to be unobjectionable
+        # everywhere; 75 is early_signal's "clear" band, where several
+        # INDEPENDENT axes have to agree rather than one carrying the rest.
+        # 65-74 is a watchlist reading, not a trade - it clears the floor
+        # with no margin, and a screener whose bar is "no obvious problem"
+        # is not selecting.
+        #
+        # Honest limit: this buys SELECTIVITY, which is not the same thing
+        # as probability. Nothing yet measured says a 78 wins more often
+        # than a 68. More independent agreement is the best available proxy
+        # until the engine has been backtested - it is a proxy, not proof.
+        "MIN_EARLY_SCORE": float(os.getenv("MIN_EARLY_SCORE", 75)),
+        # Second, independent lever: how much of the evidence must actually
+        # have been measurable. A high score on partial evidence is a
+        # confident reading of a SMALLER thing, not a stronger claim - 0.80
+        # means at most one mid-weight axis may be missing. This catches
+        # rows the score alone cannot: an 82 built on 60% coverage.
+        "MIN_SHORTLIST_COVERAGE": float(os.getenv("MIN_SHORTLIST_COVERAGE", 0.80)),
         # Hard cap on the shortlist. Not a target - most days should come
         # in well under it, and an empty list is a valid answer.
         "SHORTLIST_MAX": int(os.getenv("SHORTLIST_MAX", 8)),
@@ -721,6 +738,15 @@ class Settings:
                 clean["MIN_EARLY_SCORE"] = val
             except (ValueError, TypeError):
                 errors.append("Minimum early score must be between 0 and 100.")
+
+        if "MIN_SHORTLIST_COVERAGE" in kwargs:
+            try:
+                val = float(kwargs["MIN_SHORTLIST_COVERAGE"])
+                if not (0.0 <= val <= 1.0):
+                    raise ValueError
+                clean["MIN_SHORTLIST_COVERAGE"] = val
+            except (ValueError, TypeError):
+                errors.append("Minimum coverage must be between 0 and 1.")
 
         if "SHORTLIST_MAX" in kwargs:
             try:
