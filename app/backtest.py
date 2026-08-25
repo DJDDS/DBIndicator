@@ -56,12 +56,14 @@ import time
 import numpy as np
 import pandas as pd
 
+from . import early_signal
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
     _OPENING_WINDOW_TIMEFRAMES,
     _compute_adx, _classify_regime, _in_opening_window, _in_4hour_warmup, _HTF_RESAMPLE,
 )
+from . import scanner as scanner_mod
 from .scanner import _load_instrument_map, _load_index_token, now_ist
 
 # Index symbols selectable as "also backtest" checkboxes on the Backtest
@@ -153,6 +155,12 @@ DEFAULT_REQUIRED = 2
 # chosen parameters already agree on. All default OFF so nothing here
 # changes any existing backtest/weight-run result unless you opt in.
 FILTER_DEFS = [
+    {
+        "id": "require_oi_agreement",
+        "label": "OI positioning agreement (an unusual OI move must form a fresh buildup in the "
+                  "signal's direction - THE gate the live shortlist runs on, and the one this file "
+                  "could not replay until now)",
+    },
     {
         "id": "require_htf",
         "label": "Higher-timeframe trend agreement (matches the live screener's HTF filter)",
@@ -250,7 +258,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
                     require_candle_pattern=False,
                     require_macd_hist=False, require_big_candle=False,
                     require_strong_close=False, require_entry_location=False,
-                    require_atr_floor=False,
+                    require_atr_floor=False, require_oi_agreement=False,
                     cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                     holdout_pct=0.0) -> dict:
     """Kicks off a backtest run in a background thread. Returns
@@ -279,6 +287,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
             "require_strong_close": bool(require_strong_close),
             "require_entry_location": bool(require_entry_location),
             "require_atr_floor": bool(require_atr_floor),
+            "require_oi_agreement": bool(require_oi_agreement),
         }
         _bt_state["result"] = None
         _bt_state["error"] = None
@@ -291,6 +300,7 @@ def start_backtest(kite, symbols=None, timeframe=None, days=30, horizons=DEFAULT
               require_htf, require_regime_volume, exclude_opening_window,
               require_candle_pattern, require_macd_hist, require_big_candle,
               require_strong_close, require_entry_location, require_atr_floor,
+              require_oi_agreement,
               cost_pct, slippage_pct, holdout_pct),
         daemon=True,
     )
@@ -303,7 +313,7 @@ def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required
                        require_candle_pattern=False,
                     require_macd_hist=False, require_big_candle=False,
                     require_strong_close=False, require_entry_location=False,
-                    require_atr_floor=False,
+                    require_atr_floor=False, require_oi_agreement=False,
                     cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                     holdout_pct=0.0):
     try:
@@ -317,6 +327,7 @@ def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required
             require_strong_close=require_strong_close,
             require_entry_location=require_entry_location,
             require_atr_floor=require_atr_floor,
+            require_oi_agreement=require_oi_agreement,
         )
         with _bt_lock:
             _bt_state["status"] = "done"
@@ -626,7 +637,8 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
                     require_htf: bool = False, require_regime_volume: bool = False,
                     exclude_opening_window: bool = False, require_candle_pattern: bool = False, require_macd_hist: bool = False,
                     require_big_candle: bool = False, require_strong_close: bool = False,
-                    require_entry_location: bool = False, require_atr_floor: bool = False):
+                    require_entry_location: bool = False, require_atr_floor: bool = False,
+                    require_oi_agreement: bool = False, oi_history=None, oi_intraday=False):
     """Combines the chosen parameters bar-by-bar: has_signal is true on
     any bar where at least `required` of them agree on the same
     direction at once. Deliberately NOT the continuous "aligned >=
@@ -692,6 +704,14 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
             raise ValueError("exclude_opening_window needs a timeframe")
         in_window = _opening_window_mask(series["df"], timeframe).reindex(index).fillna(False)
         has_signal = has_signal & ~in_window
+
+    if require_oi_agreement:
+        # The gate that actually decides the live shortlist. Until now this
+        # file could not replay it at all, so the ablation measured the old
+        # four-vote screen and said nothing about the engine in production.
+        z = _oi_zscore_series(oi_history, index, intraday=oi_intraday)
+        oi_ok = _oi_agrees_series(z, series["df"]["close"].reindex(index), direction)
+        has_signal = has_signal & oi_ok.fillna(1.0).astype(bool)
 
     if require_candle_pattern:
         candle_agrees = _candle_pattern_agree_series(series, direction).reindex(index).fillna(True)
@@ -852,13 +872,183 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
     }
 
 
+# --------------------------------------------------------------------------
+# Replaying the early-signal engine over history.
+#
+# Until now this file could not see app/early_signal.py at all, which meant
+# the gate ablation measured the OLD four-vote architecture and said nothing
+# about the OI engine that actually decides what appears on the dashboard.
+# Running it and calling the result validation would have been measuring the
+# wrong strategy carefully.
+#
+# Two pieces are needed, and they have different cost profiles:
+#
+#   * The OI z-score is needed on EVERY bar (the gate has to be applied
+#     bar-by-bar like every other gate), so it is computed as a rolling
+#     series rather than by calling early_signal.oi_zscore 250 times.
+#   * The full 5-component score is only needed at SIGNAL bars, which are
+#     sparse, so that stays a plain loop over the handful of entries.
+# --------------------------------------------------------------------------
+
+def _fetch_oi_history_for_backtest(kite, symbol, timeframe):
+    """Daily/intraday OI series for one symbol, for replaying the OI gate.
+
+    Deliberately goes through scanner.fetch_oi_history so the backtest reads
+    EXACTLY the series the live engine reads - same interval, same
+    continuous flag, same resample. A backtest that built its own OI series
+    a slightly different way would be measuring a different strategy and
+    would never announce it."""
+    hist = scanner_mod.fetch_oi_history(kite, [symbol], timeframe=timeframe, throttle=0)
+    return hist.get(symbol)
+
+
+def _oi_zscore_series(oi_series, price_index, intraday=False):
+    """Per-bar OI z-score, aligned to the price bars.
+
+    Returns a float Series on price_index, NaN wherever there is no usable
+    baseline. NaN means "unknown", never "normal" - the caller must not read
+    a missing baseline as an absence of unusual activity.
+
+    The rolling mean and standard deviation are SHIFTED by one so the bar
+    being scored never contributes to the distribution it is measured
+    against. Without the shift a large move inflates its own sigma and
+    shrinks its own z-score, which biases the measurement hardest on exactly
+    the events the engine exists to catch - and in a backtest that is
+    lookahead, because a live scan cannot know the current bar when it
+    builds the baseline."""
+    if oi_series is None or len(oi_series) < early_signal.MIN_BASELINE_OBS + 2:
+        return pd.Series(np.nan, index=price_index)
+
+    oi = pd.Series(oi_series).dropna()
+    oi = oi[oi > 0]
+    if len(oi) < early_signal.MIN_BASELINE_OBS + 2:
+        return pd.Series(np.nan, index=price_index)
+
+    changes = oi.pct_change() * 100.0
+    if intraday and isinstance(oi.index, pd.DatetimeIndex):
+        # Same overnight exclusion the live engine applies - see
+        # early_signal._pct_changes for why leaving those in makes the
+        # sigma so wide that real intraday builds stop registering.
+        same_session = pd.Series(oi.index.normalize()).diff().eq(pd.Timedelta(0))
+        changes = changes.where(pd.Series(same_session.values, index=oi.index))
+
+    window = early_signal.INTRADAY_BASELINE_OBS if intraday else early_signal.BASELINE_DAYS
+    valid = changes.dropna()
+    mu = valid.rolling(window, min_periods=early_signal.MIN_BASELINE_OBS).mean().shift(1)
+    sd = valid.rolling(window, min_periods=early_signal.MIN_BASELINE_OBS).std(ddof=1).shift(1)
+    z = (valid - mu) / sd.where(sd > 1e-6)
+    z = z.replace([np.inf, -np.inf], np.nan)
+
+    # Align onto the price bars. reindex + ffill because a price bar can
+    # exist where an OI bar does not (a futures contract that did not trade
+    # that interval); the most recent known OI reading is the honest value
+    # to carry forward, and the limit stops a long data gap being presented
+    # as a current reading.
+    return z.reindex(price_index, method="ffill", limit=2)
+
+
+def _oi_agrees_series(z_series, close, direction, price_threshold=0.3):
+    """Per-bar "does OI positioning back this bar's direction".
+
+    Mirrors early_signal.classify_oi_structure + FRESH_POSITIONING exactly:
+    an unusual OI move forming a fresh BUILDUP quadrant. Covering and
+    unwinding are position-closing flow and do not count as agreement, same
+    as live.
+
+    Returns True / False / NaN. NaN means "no unusual OI either way" and the
+    caller fills it with True, because the live gate only ever revokes on
+    ACTIVE disagreement. Treating unknown as disagreement would backtest a
+    far stricter strategy than the one actually running, and would make the
+    gate look better than it is by silently excluding every bar with no OI
+    reading."""
+    price_chg = close.pct_change() * 100.0
+    unusual = z_series.abs() >= early_signal.OI_Z_THRESHOLD
+    oi_up = z_series > 0
+    price_up = price_chg > price_threshold
+    price_down = price_chg < -price_threshold
+
+    long_buildup = unusual & price_up & oi_up
+    short_buildup = unusual & price_down & oi_up
+    wants_bull = direction.reindex(z_series.index) == "Bullish"
+
+    agrees = (wants_bull & long_buildup) | (~wants_bull & short_buildup)
+    disagrees = (wants_bull & short_buildup) | (~wants_bull & long_buildup)
+
+    out = pd.Series(np.nan, index=z_series.index, dtype="float64")
+    out[agrees] = 1.0
+    out[disagrees] = 0.0
+    return out
+
+def _early_score_at(series, df, pos, direction, z_series=None):
+    """The live engine's score for one historical bar.
+
+    Feeds early_signal.early_signal_score the components this replay
+    actually has. Relative strength is absent (the backtest replays one
+    symbol at a time, with no index series alongside), so that axis is
+    UNMEASURED rather than assumed neutral - which lowers coverage exactly
+    as it would live. Scores from here are therefore slightly conservative
+    versus the dashboard's, and comparable to each other, which is what
+    matters for ranking bands against outcomes."""
+    try:
+        i = int(pos)
+        close = df["close"]
+        vol = df["volume"] if "volume" in df.columns else None
+        rvol = None
+        if vol is not None and i >= 20:
+            avg = float(vol.iloc[max(0, i - 20):i].mean())
+            if avg > 0:
+                rvol = round(float(vol.iloc[i]) / avg, 2)
+        rvol_accel, vol_rising = (early_signal.rvol_acceleration(vol.iloc[: i + 1])
+                                  if vol is not None else (None, None))
+        hi, lo = float(df["high"].iloc[i]), float(df["low"].iloc[i])
+        close_pos = None
+        if hi > lo:
+            close_pos = round((float(close.iloc[i]) - lo) / (hi - lo) * 100.0, 1)
+
+        oi_z = None
+        if z_series is not None and i < len(z_series):
+            v = z_series.iloc[i]
+            oi_z = None if pd.isna(v) else round(float(v), 2)
+        structure = None
+        if oi_z is not None and i >= 1:
+            prev = float(close.iloc[i - 1])
+            if prev > 0:
+                structure = early_signal.classify_oi_structure(
+                    (float(close.iloc[i]) / prev - 1.0) * 100.0,
+                    1.0 if oi_z > 0 else -1.0, oi_z=oi_z)
+
+        rsi_line, rsi_smooth = series.get("rsi_line"), series.get("rsi_smooth")
+        macd_line, signal_line = series.get("macd_line"), series.get("signal_line")
+        bull = direction == "Bullish"
+        rsi_above = macd_agrees = rsi_cross = None
+        if rsi_line is not None and rsi_smooth is not None and i < len(rsi_line):
+            above = bool(rsi_line.iloc[i] > rsi_smooth.iloc[i])
+            rsi_above = above if bull else (not above)
+            if i >= 1:
+                prev_above = bool(rsi_line.iloc[i - 1] > rsi_smooth.iloc[i - 1])
+                rsi_cross = (above and not prev_above) if bull else ((not above) and prev_above)
+        if macd_line is not None and signal_line is not None and i < len(macd_line):
+            mabove = bool(macd_line.iloc[i] > signal_line.iloc[i])
+            macd_agrees = mabove if bull else (not mabove)
+
+        return early_signal.early_signal_score(
+            direction, oi_z=oi_z, oi_structure=structure,
+            rvol=rvol, rvol_accel=rvol_accel, vol_rising=vol_rising,
+            rsi_cross=rsi_cross, rsi_above=rsi_above, macd_agrees=macd_agrees,
+            close_pos=close_pos,
+        )
+    except Exception:  # noqa: BLE001 - a score we cannot compute is None, never a guess
+        return None
+
+
 def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, horizons, params, required,
                     cost_pct=0.0, slippage_pct=0.0,  # net-of-cost returns - see _compute_trade
                     require_htf=False, require_regime_volume=False, exclude_opening_window=False,
                     require_candle_pattern=False,
                     require_macd_hist=False, require_big_candle=False,
                     require_strong_close=False, require_entry_location=False,
-                    require_atr_floor=False):
+                    require_atr_floor=False,
+                    require_oi_agreement=False, oi_history=None, oi_intraday=False):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -867,9 +1057,15 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
     if "error" in series:
         return []
 
+    # One z-score pass for the whole symbol, reused at every signal bar.
+    _oi_z_cached = (_oi_zscore_series(oi_history, df.index, intraday=oi_intraday)
+                    if oi_history is not None else None)
+
     has_signal, direction = _signal_series(
         series, params, required, timeframe=timeframe,
         require_htf=require_htf, require_regime_volume=require_regime_volume,
+        require_oi_agreement=require_oi_agreement, oi_history=oi_history,
+        oi_intraday=oi_intraday,
         exclude_opening_window=exclude_opening_window,
         require_candle_pattern=require_candle_pattern,
             require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
@@ -917,6 +1113,8 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
                 else:
                     stop_price = round(ref_close + settings.ATR_STOP_MULTIPLIER * atr_v, 2)
                     target_price = round(ref_close - settings.ATR_TARGET_MULTIPLIER * atr_v, 2)
+        _dir = direction.iloc[pos]
+        _score = _early_score_at(series, df, pos, _dir, _oi_z_cached)
         trade = _compute_trade(df, pos, direction.iloc[pos], symbol, horizons,
                                 cost_pct=cost_pct, slippage_pct=slippage_pct,
                                 stop_price=stop_price, target_price=target_price)
@@ -1015,6 +1213,52 @@ def _summarize(trades, horizons):
     }
 
 
+def summarize_by_band(trades, horizons):
+    """Outcomes grouped by the engine's own score band.
+
+    This is the number the score bands assert and nothing has ever checked:
+    do higher-scoring setups actually win more often? If the bands are real,
+    win rate rises monotonically across them. If it is flat, the score is
+    ranking noise and the bands are decoration - which is a finding worth
+    having, not a failure.
+
+    Every row carries its trade_count, because a 71% win rate on 7 trades is
+    not evidence and must not be presented beside a rate built on 200."""
+    # Ranges stated EXPLICITLY rather than derived from the next entry.
+    # Deriving them looked tidy and produced overlapping buckets - the
+    # 65-band swallowed the 75-band's trades and every rate below the top
+    # band was a blend, which would have made the score look flatter than
+    # it is. Explicit bounds cannot drift.
+    bands = [(85, 101, "broad"), (75, 85, "clear"), (65, 75, "narrow"), (0, 65, "below floor")]
+    out = []
+    for lo, hi, label in bands:
+        group = [t for t in trades
+                 if t.get("early_score") is not None and lo <= t["early_score"] < hi]
+        if not group:
+            out.append({"band": label, "min_score": lo, "max_score": hi - 1,
+                        "trade_count": 0, "by_horizon": {}})
+            continue
+        by_h = {}
+        for h in horizons:
+            key = f"return_{h}_pct"
+            rets = [t[key] for t in group if t.get(key) is not None]
+            if not rets:
+                continue
+            wins = sum(1 for r in rets if r > 0)
+            by_h[str(h)] = {
+                "trade_count": len(rets),
+                "win_rate_pct": round(100.0 * wins / len(rets), 1),
+                "avg_return_pct": round(sum(rets) / len(rets), 3),
+            }
+        out.append({
+            "band": label, "min_score": lo, "max_score": hi - 1,
+            "trade_count": len(group),
+            "avg_score": round(sum(t["early_score"] for t in group) / len(group), 1),
+            "by_horizon": by_h,
+        })
+    return out
+
+
 def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_HORIZONS,
                   params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED, progress_cb=None,
                   require_htf=False, require_regime_volume=False, exclude_opening_window=False,
@@ -1023,7 +1267,8 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
                     require_strong_close=False, require_entry_location=False,
                     require_atr_floor=False,
                     cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
-                    holdout_pct=0.0) -> dict:
+                    holdout_pct=0.0,
+                 require_oi_agreement=False) -> dict:
     lo, hi, _default = backtest_day_bounds(timeframe)
     days = int(days or _default)
     if days < lo:
@@ -1091,9 +1336,24 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
             symbol_notes[symbol] = "not enough historical candles returned"
             continue
 
+        # OI history for this symbol, only when the gate is actually on -
+        # it is an extra API call per symbol and there is no reason to pay
+        # it for a run that will not consult it.
+        oi_hist = None
+        if require_oi_agreement:
+            try:
+                oi_hist = (_fetch_oi_history_for_backtest(kite, symbol, timeframe) or None)
+            except Exception as exc:  # noqa: BLE001 - a missing baseline must not kill the symbol
+                log.debug("Backtest OI history failed for %s: %s", symbol, exc)
+            if oi_hist is None:
+                symbol_notes[symbol] = "no OI history for the OI gate"
+            time.sleep(_RATE_LIMIT_PAUSE)
+
         try:
             symbol_trades = _replay_symbol(
                 df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required,
+                require_oi_agreement=require_oi_agreement, oi_history=oi_hist,
+                oi_intraday=scanner_mod.oi_is_intraday(timeframe),
                 require_htf=require_htf, require_regime_volume=require_regime_volume,
                 exclude_opening_window=exclude_opening_window,     require_candle_pattern=require_candle_pattern,
             require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
@@ -1158,6 +1418,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "trades": display_trades,
         "total_trade_count": total_trade_count,
         "summary": summary,
+        "by_band": summarize_by_band(trades, horizons),
         "cost_pct": float(cost_pct),
         "slippage_pct": float(slippage_pct),
         "holdout_pct": float(holdout_pct),
@@ -1437,6 +1698,11 @@ def _gate_applicability(gate_id, timeframe, params):
     and then reports a delta of exactly zero, which reads as "this gate does
     not help" when the truth is "this gate was never tested". Saying so
     plainly is the difference between a measurement and a misleading blank."""
+    if gate_id == "require_oi_agreement" and timeframe not in scanner_mod.OI_HISTORY_SPEC:
+        return (f"no OI baseline is defined for {timeframe} candles - see "
+                f"scanner.OI_HISTORY_SPEC. Testing it here would silently measure "
+                f"a gate that can never fire.")
+
     if gate_id == "exclude_opening_window" and timeframe not in _OPENING_WINDOW_TIMEFRAMES:
         return (f"not applicable on {timeframe} candles - the opening-window rule only "
                 f"suppresses bars on {'/'.join(_OPENING_WINDOW_TIMEFRAMES)}, so there is "
@@ -1457,6 +1723,9 @@ ABLATION_GATES = [
     ("require_strong_close", "Strong close in range"),
     ("require_entry_location", "Entry location (not chasing)"),
     ("require_atr_floor", "Minimum-ATR floor"),
+    # The gate that decides the live shortlist. Its absence from this
+    # list meant every ablation run measured the OLD architecture.
+    ("require_oi_agreement", "OI positioning agreement"),
 ]
 
 

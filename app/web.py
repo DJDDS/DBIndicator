@@ -531,6 +531,7 @@ def api_backtest_start():
         require_strong_close="require_strong_close" in filters,
         require_entry_location="require_entry_location" in filters,
         require_atr_floor="require_atr_floor" in filters,
+        require_oi_agreement="require_oi_agreement" in filters,
     )
     return jsonify(result)
 

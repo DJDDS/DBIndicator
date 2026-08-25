@@ -155,33 +155,9 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2>2 &middot; Auto-weight the four parameters</h2>
-    <p style="margin-top:-4px;">Backtests RSI, MACD and Chaikin Money Flow solo, plus Relative Volume as a confirmation
-    lift, and turns the result into the weights behind the dashboard's <strong>Score</strong> column. Measures one recent
-    window on your watchlist &mdash; re-run it periodically rather than treating one result as settled.</p>
-    <div style="margin-top:14px;">
-      <button type="button" class="btn" id="wt-run-btn" {{ 'disabled' if not logged_in else '' }}>Compute weights</button>
-      <span class="hint" id="wt-form-hint" style="margin-left:10px;"></span>
-    </div>
-    <div class="progress-wrap" id="wt-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="wt-progress-fill"></div></div>
-      <div class="progress-label" id="wt-progress-label">Starting…</div>
-    </div>
-    <div class="msg-err" id="wt-error" style="display:none; margin-top:16px;"></div>
-    <div id="wt-results" style="display:none; margin-top:18px;">
-      <p class="hint" id="wt-meta"></p>
-      <table>
-        <thead><tr><th>Parameter</th><th>Weight</th><th>Win rate</th><th>Trades</th><th>Notes</th></tr></thead>
-        <tbody id="wt-table-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <details class="card">
-    <summary><strong>3 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
-    <p class="hint" style="margin-top:10px;">Exploratory. The two tools above answer specific questions; this one lets you
-    ask your own. Worth knowing it's also the easiest way to overfit &mdash; tune here, then confirm on a holdout.</p>
+<details class="card">
+    <summary><strong>2 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
+    <p class="hint" style="margin-top:10px;">Exploratory. The tool above answers one specific question; this one lets you ask your own. Worth knowing it's also the easiest way to overfit &mdash; tune here, then confirm on a holdout.</p>
     <form id="bt-form" style="margin-top:14px;">
       <label>Parameters</label>
       <div class="horizons" id="bt-params">
@@ -222,6 +198,7 @@
 
   <div class="card" id="bt-results">
     <h2>Results</h2>
+    <div id="bt-bands"></div>
     <p class="hint" id="bt-signal-desc" style="margin:-4px 0 14px;"></p>
     <div class="stat-tiles" id="bt-tiles"></div>
     <div id="bt-groups"></div>
@@ -332,6 +309,42 @@ function renderGroup(label, groupSummary, horizons) {
     </div>`;
 }
 
+// Does a higher Early Score actually win more often? This is the one thing
+// the score bands assert and nothing has ever checked. If win rate climbs
+// across the bands, the score ranks something real. If it is flat, the
+// score is ranking noise and the bands are decoration - which is a finding
+// worth having, not a failure, and the honest thing is to show it either
+// way rather than quietly dropping the table.
+function renderBands(result) {
+  const el = document.getElementById('bt-bands');
+  if (!el) return;
+  const bands = (result.by_band || []).filter(b => b.trade_count > 0);
+  if (!bands.length) { el.innerHTML = ''; return; }
+  const h = (result.horizons || [])[0];
+  const rows = bands.map(b => {
+    const st = (b.by_horizon || {})[String(h)] || {};
+    const thin = (st.trade_count || 0) < 20;
+    return `<tr>
+      <td><strong>${b.band}</strong> <span class="hint">${b.min_score}-${b.max_score}</span></td>
+      <td style="text-align:right;">${b.trade_count}${thin ? ' <span class="hint" title="Under 20 trades - the confidence interval on this rate is too wide to act on.">thin</span>' : ''}</td>
+      <td style="text-align:right;">${st.win_rate_pct != null ? st.win_rate_pct + '%' : '—'}</td>
+      <td style="text-align:right;">${st.avg_return_pct != null ? st.avg_return_pct + '%' : '—'}</td>
+    </tr>`;
+  }).join('');
+  const rates = bands.map(b => ((b.by_horizon || {})[String(h)] || {}).win_rate_pct).filter(v => v != null);
+  let verdict = '';
+  if (rates.length >= 2) {
+    const rising = rates.every((v, i) => i === 0 || v <= rates[i - 1]);
+    verdict = rising
+      ? '<p class="hint">Win rate falls as the score falls, which is what the bands claim. Check the trade counts before leaning on it &mdash; a clean gradient across thin buckets is not yet evidence.</p>'
+      : '<p class="hint"><strong>Win rate does NOT fall consistently with the score.</strong> On this window the bands are not ranking outcomes, so treat the score as a filter rather than a ranking until a larger sample says otherwise.</p>';
+  }
+  el.innerHTML = `<h3 style="margin-top:22px;">Outcomes by Early Score band <span class="hint">(at ${h} bars)</span></h3>
+    <table class="tbl"><thead><tr><th>Band</th><th style="text-align:right;">Trades</th>
+    <th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return</th></tr></thead>
+    <tbody>${rows}</tbody></table>${verdict}`;
+}
+
 function renderResult(result) {
   const wrap = document.getElementById('bt-results');
   wrap.style.display = 'block';
@@ -348,6 +361,8 @@ function renderResult(result) {
   const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
   document.getElementById('bt-signal-desc').textContent =
     `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}`;
+
+  renderBands(result);
 
   const tiles = document.getElementById('bt-tiles');
   tiles.innerHTML = `
@@ -490,95 +505,6 @@ if (initialState.status === 'running') {
   poll();
 } else if (initialState.status === 'done' && initialState.result) {
   renderResult(initialState.result);
-}
-
-// --- Auto-Weight Parameters -------------------------------------------
-const PARAM_LABELS_WT = {
-  rsi_cross: 'RSI Cross', macd_cross: 'MACD Cross', cmf_flow: 'Chaikin Money Flow', rel_volume: 'Relative Volume',
-};
-
-function renderWeights(result) {
-  const wrap = document.getElementById('wt-results');
-  wrap.style.display = 'block';
-  document.getElementById('wt-meta').textContent =
-    `Computed ${result.computed_at || '?'} · ${result.timeframe} · ${result.days} days · ${result.symbols_count} symbols · ${result.ref_horizon}-bar horizon`;
-  const weights = result.weights || {};
-  const winRates = result.win_rates || {};
-  const notes = result.notes || {};
-  const body = document.getElementById('wt-table-body');
-  body.innerHTML = '';
-  Object.keys(weights).forEach(pid => {
-    const tr = document.createElement('tr');
-    const wr = winRates[pid];
-    const n = notes[pid] || {};
-    let noteText = `${n.trade_count ?? 0} trades`;
-    if (pid === 'rel_volume' && n.lift_pct !== undefined && n.lift_pct !== null) {
-      noteText += ` · lift ${n.lift_pct > 0 ? '+' : ''}${n.lift_pct}pp vs unconfirmed (${n.win_rate_without_volume ?? '—'}%)`;
-    }
-    tr.innerHTML = `
-      <td>${PARAM_LABELS_WT[pid] || pid}</td>
-      <td>${(weights[pid] * 100).toFixed(1)}%</td>
-      <td>${(wr === null || wr === undefined) ? '—' : wr.toFixed(1) + '%'}</td>
-      <td>${n.trade_count ?? 0}</td>
-      <td class="hint" style="text-align:left;">${noteText}</td>
-    `;
-    body.appendChild(tr);
-  });
-}
-
-function pollWeights() {
-  fetch('/api/weights/status').then(r => r.json()).then(state => {
-    updateWeightsUI(state);
-    if (state.status === 'running') {
-      setTimeout(pollWeights, 2000);
-    }
-  }).catch(() => setTimeout(pollWeights, 4000));
-}
-
-function updateWeightsUI(state) {
-  const progress = document.getElementById('wt-progress');
-  const errorBox = document.getElementById('wt-error');
-  const runBtn = document.getElementById('wt-run-btn');
-
-  if (state.status === 'running') {
-    runBtn.disabled = true;
-    progress.style.display = 'block';
-    errorBox.style.display = 'none';
-    const p = state.progress || {};
-    const phaseTotal = p.phase_total || 4;
-    const phaseIndex = p.phase_index || 0;
-    const withinPct = p.total ? (p.done / p.total) * (100 / phaseTotal) : 0;
-    const pct = Math.min(100, Math.round((phaseIndex / phaseTotal) * 100 + withinPct));
-    document.getElementById('wt-progress-fill').style.width = pct + '%';
-    const phaseLabel = p.phase_label || 'Starting';
-    document.getElementById('wt-progress-label').textContent =
-      `${phaseLabel} (${phaseIndex + 1}/${phaseTotal}) - ${p.symbol ? p.symbol + ' ' : ''}${p.done ?? 0}/${p.total ?? 0}…`;
-  } else {
-    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
-    progress.style.display = 'none';
-  }
-
-  if (state.status === 'error') {
-    errorBox.style.display = 'block';
-    errorBox.textContent = 'Weight computation failed: ' + (state.error || 'unknown error');
-  }
-
-  if (state.status === 'done' && state.result) {
-    renderWeights(state.result);
-  }
-}
-
-document.getElementById('wt-run-btn').addEventListener('click', function () {
-  const scope = readScope();
-  startJob('/api/weights/start', scope, { ref_horizon: String(scope.refHorizon) }, 'wt-form-hint', pollWeights);
-});
-
-const initialWeightsState = {{ weights_state | tojson }};
-updateWeightsUI(initialWeightsState);
-if (initialWeightsState.status === 'running') {
-  pollWeights();
-} else if (initialWeightsState.status === 'done' && initialWeightsState.result) {
-  renderWeights(initialWeightsState.result);
 }
 
 // --- Gate ablation sweep -----------------------------------------------
