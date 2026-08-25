@@ -119,6 +119,33 @@
           <div class="hint">How near the day's high/low a close must be to count as decisive. Also the hard gate for the BTST/STBT panel.</div>
         </div>
         <div>
+          <label for="min_early_score">Shortlist score floor (0-100)</label>
+          <input type="number" id="min_early_score" name="min_early_score" min="0" max="100" step="1" value="{{ s.MIN_EARLY_SCORE | round | int }}">
+          <div class="hint">
+            The main dial for how short the shortlist is. A name must score at least this much on the
+            evidence that was actually measurable for it. Raise it for fewer, higher-conviction names;
+            lower it to see more. Scores are out of what could be measured, not out of a wished-for 100 &mdash;
+            a row with no OI baseline never reaches this list at all.
+          </div>
+        </div>
+        <div>
+          <label for="shortlist_max">Shortlist size cap</label>
+          <input type="number" id="shortlist_max" name="shortlist_max" min="1" max="50" step="1" value="{{ s.SHORTLIST_MAX }}">
+          <div class="hint">
+            A ceiling, not a target. Most days should come in well under it, and an empty shortlist is a
+            valid answer &mdash; a screen that always returns the same number of names is sorting, not selecting.
+          </div>
+        </div>
+        <div>
+          <label for="min_btst_score">BTST/STBT minimum checks held</label>
+          <input type="number" id="min_btst_score" name="min_btst_score" min="0" max="9" step="1" value="{{ s.MIN_BTST_SCORE }}">
+          <div class="hint">
+            How many of the overnight checks must actually hold. Every check listed can genuinely fail &mdash;
+            the old panel counted several that were forced true by the same gates that admitted the row,
+            so its scores had a floor of 6 and meant almost nothing.
+          </div>
+        </div>
+        <div>
           <label for="btst_alert_time">BTST/STBT publish time (IST)</label>
           <input type="time" id="btst_alert_time" name="btst_alert_time" value="{{ s.BTST_ALERT_TIME }}">
           <div class="hint">
@@ -130,6 +157,16 @@
             <input type="checkbox" name="btst_alert_enabled" value="on" {% if s.BTST_ALERT_ENABLED %}checked{% endif %}>
             <span>Publish the daily BTST/STBT list</span>
           </label>
+          <label class="switch" style="margin-top:8px;">
+            <input type="checkbox" name="require_oi_agreement" value="on" {% if s.REQUIRE_OI_AGREEMENT %}checked{% endif %}>
+            <span>Require OI positioning to agree</span>
+          </label>
+          <div class="hint">
+            On by default, unlike every other gate here &mdash; this is what links the OI read to the technical
+            read, and it is the main reason the shortlist is short. It only ever rejects on ACTIVE disagreement:
+            an absent OI baseline is unknown, not contrary, so it costs a row its place by leaving evidence
+            unmeasured rather than by counting against it.
+          </div>
         </div>
       </div>
     </div>

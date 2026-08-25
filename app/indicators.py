@@ -10,6 +10,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
+from . import early_signal
 from .config import settings
 
 
@@ -1070,7 +1071,53 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
                 position_qty = qty
                 position_risk_amount = round(qty * per_share_risk, 2)
 
+    # ----------------------------------------------------------------
+    # Fields the early-signal engine needs (see app/early_signal.py).
+    #
+    # `open` and `prev_close` are here because their absence was a real
+    # bug, not an oversight: without them nothing downstream could tell an
+    # UP day from a DOWN day. close_position_pct only measures where the
+    # close sits inside the bar's own high-low range, so a stock that
+    # gapped up, sold off all session and bounced into the bell scored 85%
+    # and qualified as a BTST long - on a day it fell. Two scalars fix a
+    # whole class of wrong calls.
+    #
+    # The return figures are scalars rather than series so relative
+    # strength can be computed against one index number in background.py,
+    # instead of threading a second price series through every call.
+    # ----------------------------------------------------------------
+    def _ret_n(n):
+        if i - n < 0:
+            return None
+        past = float(close.iloc[i - n])
+        if not (past > 0) or not np.isfinite(past):
+            return None
+        return round((float(close.iloc[i]) / past - 1.0) * 100.0, 2)
+
+    vol_series = df["volume"].iloc[: i + 1]
+    rvol_accel, vol_rising = early_signal.rvol_acceleration(vol_series)
+
+    open_val = float(df["open"].iloc[i]) if "open" in df.columns else None
+    prev_close_val = float(close.iloc[i - 1]) if i >= 1 else None
+
     return {
+        "open": round(open_val, 2) if open_val is not None else None,
+        "prev_close": round(prev_close_val, 2) if prev_close_val is not None else None,
+        "ret_20": _ret_n(20),
+        "ret_10": _ret_n(10),
+        "rvol_accel": rvol_accel,
+        "vol_rising": vol_rising,
+        # One momentum axis, reported in two parts: did RSI cross its
+        # average on THIS bar (the early read), and is it merely holding
+        # above it (the weaker, later read). MACD is exposed separately as
+        # a confirmation flag rather than as a second vote - see
+        # early_signal._score_momentum for why counting it twice was
+        # inflating apparent confluence.
+        "rsi_cross": bool(series["rsi_up"].iloc[i]) if direction == "Bullish" else bool(series["rsi_dn"].iloc[i]),
+        "rsi_above": bool(rsi_line.iloc[i] > rsi_smooth.iloc[i]) if direction == "Bullish"
+                     else bool(rsi_line.iloc[i] < rsi_smooth.iloc[i]),
+        "macd_agrees": bool(macd_line.iloc[i] > signal_line.iloc[i]) if direction == "Bullish"
+                       else bool(macd_line.iloc[i] < signal_line.iloc[i]),
         "close": round(float(close.iloc[i]), 2),
         "rsi": round(float(rsi_line.iloc[i]), 1),
         "rsi_state": "Bullish" if rsi_line.iloc[i] > rsi_smooth.iloc[i] else "Bearish",

@@ -202,6 +202,8 @@ _TUNABLE_FIELDS = [
     "REQUIRE_BIG_CANDLE_AGREEMENT", "REQUIRE_STRONG_CLOSE_AGREEMENT",
     "REQUIRE_DELIVERY_AGREEMENT", "DELIVERY_THRESHOLD_PCT",
     "BTST_ALERT_ENABLED", "BTST_ALERT_TIME",
+    "REQUIRE_OI_AGREEMENT", "MIN_EARLY_SCORE", "SHORTLIST_MAX",
+    "MIN_BTST_SCORE",
     "MAX_ENTRY_EXTENSION_ATR", "REQUIRE_ENTRY_LOCATION_AGREEMENT",
     "MIN_ATR_PCT", "REQUIRE_ATR_FLOOR",
 ]
@@ -401,6 +403,25 @@ def _env_defaults():
         # essentially settled and early enough to still place an order.
         "BTST_ALERT_ENABLED": os.getenv("BTST_ALERT_ENABLED", "true").strip().lower() in ("1", "true", "on", "yes"),
         "BTST_ALERT_TIME": os.getenv("BTST_ALERT_TIME", "15:15"),
+
+        # --- The early-signal layer (see app/early_signal.py) ---
+        # REQUIRE_OI_AGREEMENT is ON by default, unlike every other gate
+        # here. That is the deliberate centre of this design: OI is the
+        # only reading in the app independent of price and volume, so
+        # requiring it is what turns a long list into a short one. Note it
+        # only ever revokes on ACTIVE disagreement - an absent OI baseline
+        # is None, which never blocks (it costs the row coverage instead).
+        "REQUIRE_OI_AGREEMENT": os.getenv("REQUIRE_OI_AGREEMENT", "true").strip().lower() in ("1", "true", "on", "yes"),
+        # Score floor for the shortlist. 65 is chosen so a row must be
+        # strong on OI or on volume, not merely unobjectionable everywhere.
+        "MIN_EARLY_SCORE": float(os.getenv("MIN_EARLY_SCORE", 65)),
+        # Hard cap on the shortlist. Not a target - most days should come
+        # in well under it, and an empty list is a valid answer.
+        "SHORTLIST_MAX": int(os.getenv("SHORTLIST_MAX", 8)),
+        # Minimum BTST/STBT score to qualify. Previously nothing filtered
+        # on this at all, so every candidate displayed and every candidate
+        # was pushed to Telegram.
+        "MIN_BTST_SCORE": int(os.getenv("MIN_BTST_SCORE", 4)),
         # Entry-location filter (PARAMETER_ANALYSIS_2.md Finding #4 -
         # "nothing prices in WHERE a move already is"; see indicators.
         # compute_signal's entry_extension_atr/entry_is_extended). How
@@ -685,6 +706,39 @@ class Settings:
                 clean["REQUIRE_DELIVERY_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_DELIVERY_AGREEMENT"] = bool(val)
+
+        for _flag in ("REQUIRE_OI_AGREEMENT",):
+            if _flag in kwargs:
+                val = kwargs[_flag]
+                clean[_flag] = (val.strip().lower() in ("1", "true", "on", "yes")
+                                if isinstance(val, str) else bool(val))
+
+        if "MIN_EARLY_SCORE" in kwargs:
+            try:
+                val = float(kwargs["MIN_EARLY_SCORE"])
+                if not (0 <= val <= 100):
+                    raise ValueError
+                clean["MIN_EARLY_SCORE"] = val
+            except (ValueError, TypeError):
+                errors.append("Minimum early score must be between 0 and 100.")
+
+        if "SHORTLIST_MAX" in kwargs:
+            try:
+                val = int(kwargs["SHORTLIST_MAX"])
+                if not (1 <= val <= 50):
+                    raise ValueError
+                clean["SHORTLIST_MAX"] = val
+            except (ValueError, TypeError):
+                errors.append("Shortlist size must be between 1 and 50.")
+
+        if "MIN_BTST_SCORE" in kwargs:
+            try:
+                val = int(kwargs["MIN_BTST_SCORE"])
+                if not (0 <= val <= 9):
+                    raise ValueError
+                clean["MIN_BTST_SCORE"] = val
+            except (ValueError, TypeError):
+                errors.append("Minimum BTST score must be between 0 and 9.")
 
         if "BTST_ALERT_ENABLED" in kwargs:
             val = kwargs["BTST_ALERT_ENABLED"]

@@ -41,7 +41,7 @@ _NON_STOCK_FNO_NAMES = {
 }
 
 _fno_cache = {"date": None, "symbols": []}
-_fut_map_cache = {"date": None, "map": {}}
+_fut_map_cache = {"date": None, "map": {}, "tokens": {}}
 
 
 def _load_instrument_map(kite):
@@ -104,12 +104,108 @@ def _load_current_fut_map(kite) -> dict:
             continue
         current = nearest.get(name)
         if current is None or expiry < current[0]:
-            nearest[name] = (expiry, row["tradingsymbol"])
-    fut_map = {name: symbol for name, (_, symbol) in nearest.items()}
+            nearest[name] = (expiry, row["tradingsymbol"], row.get("instrument_token"))
+    fut_map = {name: symbol for name, (_, symbol, _t) in nearest.items()}
     if fut_map:
         _fut_map_cache["date"] = today.isoformat()
         _fut_map_cache["map"] = fut_map
+        _fut_map_cache["tokens"] = {n: tok for n, (_, _s, tok) in nearest.items() if tok}
     return fut_map
+
+
+def _fut_token_map(kite) -> dict:
+    """Underlying name -> nearest-expiry futures INSTRUMENT TOKEN.
+
+    fetch_oi_map works off trading symbols because kite.quote() takes
+    symbols, but historical_data() takes a token, so the token is captured
+    alongside during the same daily instruments() walk rather than paying
+    for a second one."""
+    _load_current_fut_map(kite)
+    return _fut_map_cache.get("tokens") or {}
+
+
+# --------------------------------------------------------------------------
+# Daily OI history - the baseline behind every z-score in early_signal.py.
+#
+# The previous OI panel built its baseline by sampling live OI into an
+# in-memory buffer every scan, which meant it could not compute a 30-minute
+# acceleration until 60 minutes of samples had accumulated. It was blind
+# from 09:15 to about 10:15 every single day - precisely the window where a
+# day's trend gets set - and any redeploy reset the buffer and re-imposed
+# the blackout mid-session.
+#
+# Kite will simply give us daily OI history for a futures contract, so the
+# baseline exists the moment the app starts. continuous=True stitches the
+# series across expiries too, which fixes a second bug: without it, the
+# session after every monthly expiry compared the NEW contract's small
+# opening OI against the OLD contract's settled OI and printed a huge
+# spurious collapse.
+#
+# Fetched once per trading day and cached, because daily history only gains
+# one bar a day. Throttled, because this is one call per symbol and Kite
+# allows ~3 a second - an unthrottled sweep of a 190-name F&O universe
+# would trip the rate limiter and take the live scan down with it.
+# --------------------------------------------------------------------------
+
+OI_HISTORY_DAYS = 120
+_OI_HISTORY_THROTTLE_SECONDS = 0.35
+
+_oi_history_cache = {"date": None, "data": {}, "complete": False}
+
+
+def fetch_oi_history(kite, symbols, days=OI_HISTORY_DAYS, throttle=None):
+    """{symbol: [daily OI values, oldest first]} for the given symbols.
+
+    Never raises: a symbol Kite refuses simply gets no entry, and every
+    downstream consumer treats a missing baseline as "cannot score this
+    row" rather than guessing. That is deliberate - a wrong OI baseline is
+    far more dangerous than an absent one, because it produces a confident
+    z-score built on nothing."""
+    today = dt.date.today().isoformat()
+    if _oi_history_cache["date"] != today:
+        _oi_history_cache.update({"date": today, "data": {}, "complete": False})
+
+    cached = _oi_history_cache["data"]
+    todo = [s for s in symbols if s not in cached]
+    if not todo:
+        return dict(cached)
+
+    tokens = _fut_token_map(kite)
+    to_date = now_ist()
+    from_date = to_date - dt.timedelta(days=days)
+    pause = _OI_HISTORY_THROTTLE_SECONDS if throttle is None else throttle
+
+    fetched = 0
+    for sym in todo:
+        token = tokens.get(sym)
+        if not token:
+            continue
+        try:
+            rows = kite.historical_data(token, from_date, to_date, "day",
+                                        continuous=True, oi=True)
+        except Exception as exc:  # noqa: BLE001 - one bad symbol must not stop the sweep
+            log.debug("OI history failed for %s: %s", sym, exc)
+            continue
+        series = [r.get("oi") for r in (rows or []) if r.get("oi")]
+        if len(series) >= 3:
+            cached[sym] = series
+            fetched += 1
+        if pause:
+            time.sleep(pause)
+
+    _oi_history_cache["complete"] = len(cached) >= len(symbols)
+    if fetched:
+        log.info("Fetched daily OI history for %d symbol(s); %d cached total",
+                 fetched, len(cached))
+    return dict(cached)
+
+
+def oi_history_status():
+    return {
+        "date": _oi_history_cache["date"],
+        "symbols": len(_oi_history_cache["data"]),
+        "complete": _oi_history_cache["complete"],
+    }
 
 
 _nifty_fut_cache = {"date": None, "token": None, "symbol": None}
@@ -494,6 +590,36 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True) -> list:
             log.warning("Scan failed for %s: %s", symbol, exc)
             results.append({"symbol": symbol, "error": str(exc)})
     return results
+
+
+def fetch_index_returns(kite, timeframe: str = None, lookbacks=(20, 10)):
+    """The index's own N-bar returns, for the relative-strength axis.
+
+    Relative strength needs one number per lookback for the whole market,
+    not a series per stock: each row already carries its own ret_20/ret_10
+    from compute_signal, so the comparison is a subtraction. Returns
+    {lookback: pct} with None for any window there is not enough history
+    for. Never raises - a failed index fetch just means no relative-
+    strength component, which lowers coverage rather than inventing a
+    reading."""
+    timeframe = timeframe or WATCHLIST_TIMEFRAME
+    out = {n: None for n in lookbacks}
+    try:
+        token = _load_index_token(kite, _INDEX_SYMBOL)
+        if not token:
+            return out
+        df = fetch_candles(kite, token, timeframe)
+        if df.empty or "close" not in df.columns:
+            return out
+        close = df["close"].dropna()
+        for n in lookbacks:
+            if len(close) > n:
+                past = float(close.iloc[-(n + 1)])
+                if past > 0:
+                    out[n] = round((float(close.iloc[-1]) / past - 1.0) * 100.0, 2)
+    except Exception as exc:  # noqa: BLE001 - never break a scan over the index
+        log.debug("Index returns unavailable: %s", exc)
+    return out
 
 
 _INDEX_SYMBOL = "NIFTY 50"

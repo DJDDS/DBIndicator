@@ -81,6 +81,33 @@
   @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
   .hc-card { border-color: #3a2f0f; }
   .hc-card h2 { color: var(--amber); }
+  /* Shortlist - the headline panel. Deliberately allowed to be empty. */
+  .sl-card { border-color: var(--accent); }
+  .sl-list { display: flex; flex-direction: column; gap: 6px; }
+  .sl-row { display: grid; grid-template-columns: 34px 44px minmax(0, 1.1fr) minmax(0, 2fr) auto;
+            gap: 12px; align-items: center; padding: 10px 12px; border-radius: 8px;
+            background: var(--panel2); border: 1px solid var(--border); cursor: pointer; }
+  .sl-row:hover { border-color: var(--accent); }
+  .sl-row.bull { border-left: 3px solid var(--green); }
+  .sl-row.bear { border-left: 3px solid var(--red); }
+  .sl-rank { font-family: var(--mono); font-size: 15px; font-weight: 700; color: var(--dim); text-align: center; }
+  .sl-score { font-family: var(--mono); font-size: 19px; font-weight: 700; text-align: center; }
+  .sl-sym { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .sl-name { font-weight: 700; font-size: 14px; text-decoration: none; color: inherit; }
+  .sl-name:hover { color: var(--accent); }
+  .sl-close { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .sl-why { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11.5px; }
+  .sl-oi { font-weight: 700; }
+  .sl-oi.bull { color: var(--green); }
+  .sl-oi.bear { color: var(--red); }
+  .sl-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-tags { display: flex; gap: 6px; align-items: center; font-family: var(--mono); font-size: 10.5px; }
+  .sl-tag { padding: 2px 6px; border-radius: 4px; background: var(--panel); color: var(--muted); }
+  .sl-tag.strong { color: var(--accent); }
+  .sl-cov { color: var(--dim); }
+  .sl-empty { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 4px 0 0; }
+  .sl-empty strong { color: var(--text); }
+  .eq-bar-none { opacity: 0.28; }
   /* Best Entries panel - ranks already-confirmed rows by entry quality */
   .eq-card { border-color: #1e3a5f; margin-bottom: 14px; }
   .eq-card h2 { color: var(--accent); }
@@ -132,22 +159,6 @@
   .eq-warn { color: var(--amber); }
   .eq-dim { color: var(--dim); }
   .eq-coil { color: var(--accent); }
-  /* News column - headline clamped to 2 lines so a long title can't stretch the row */
-  /* News card - headlines for currently-Confirmed symbols, in one place
-     rather than a per-row column that mostly rendered an em-dash. */
-  .news-card .sub { font-weight: 400; }
-  .news-list { display: flex; flex-direction: column; gap: 1px; }
-  .news-item { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px;
-               align-items: baseline; padding: 8px 10px; border-radius: 6px;
-               text-decoration: none; color: inherit; border: 1px solid transparent; }
-  .news-item:hover { background: var(--panel2); border-color: var(--border); }
-  .news-sym { font-size: 12px; font-weight: 700; }
-  .news-sym.bull { color: var(--green); }
-  .news-sym.bear { color: var(--red); }
-  .news-head { font-size: 12.5px; line-height: 1.4; color: var(--text); }
-  .news-item:hover .news-head { color: var(--accent); }
-  .news-meta { font-size: 10.5px; color: var(--dim); margin-top: 2px; }
-  .news-none { color: var(--dim); }
   /* Timeframe-meaning advisory + the badges it applies to (config.BTST_TIMEFRAMES) */
   .tf-advisory { background: rgba(240,185,11,0.07); border: 1px solid rgba(240,185,11,0.28);
                  border-radius: 6px; padding: 9px 12px; margin-bottom: 12px;
@@ -195,17 +206,8 @@
   .mtf-block h3 { margin: 0; font-size: 12.5px; color: var(--text); font-weight: 700; }
   .mtf-block .sub { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 6px; }
   .mtf-block .mn-chip-scroll { max-height: 140px; }
-  .mtf-block .tier-grid { gap: 10px; margin-top: 10px; }
-  .mtf-block .tier-chips { max-height: 140px; }
-  .mtf-block .tier-col h4 { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); }
   .mtf-market { font-weight: 400; color: var(--muted); font-family: var(--sans); margin-right: 4px; }
 
-  /* Parameter Screener: 3 always-on tiers (2/3/4-of-4), side by side */
-  .tier-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
-  @media (max-width: 900px) { .tier-grid { grid-template-columns: 1fr; } }
-  .tier-col { min-width: 0; }
-  .tier-count { font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; }
-  .tier-chips { max-height: 260px; overflow-y: auto; }
 
   /* Master table */
   .table-card { padding: 0; overflow: hidden; }
@@ -277,7 +279,6 @@
   .toast.bear { border-left: 3px solid var(--red); }
   .toast.bull { border-left: 3px solid var(--green); }
   .toast.oi { border-left: 3px solid var(--amber); }
-  .toast.news { border-left: 3px solid #4a9eff; }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
   .insights-card h2 { color: var(--text); }
@@ -463,13 +464,6 @@
         {% set ns6.gated = ns6.gated + 1 %}
       {% endif %}
     {% endfor %}
-    {% set ns5 = namespace(t2=0, t3=0, t4=0) %}
-    {% for r in entry.results %}
-      {% if not r.error and r.param_tier == 2 %}{% set ns5.t2 = ns5.t2 + 1 %}
-      {% elif not r.error and r.param_tier == 3 %}{% set ns5.t3 = ns5.t3 + 1 %}
-      {% elif not r.error and r.param_tier == 4 %}{% set ns5.t4 = ns5.t4 + 1 %}
-      {% endif %}
-    {% endfor %}
     <div class="mtf-block">
       <div class="mn-header-row">
         <h3>{{ label }} <span class="sub">{{ entry.last_scan or "waiting for first scan..." }}</span></h3>
@@ -524,28 +518,6 @@
         </div>
       </div>
       {% endif %}
-      <div class="mn-header-row" style="margin-top:12px;">
-        <h4 class="mn-col-title" style="margin:0;">Parameter Match <span class="sub" style="font-weight:400;text-transform:none;letter-spacing:0;">RSI &middot; MACD &middot; EMA9/BB &middot; Rel Volume</span></h4>
-      </div>
-      <div class="tier-grid">
-        {% for tier in [4, 3, 2] %}
-        <div class="tier-col">
-          <h4>{{ tier }} of 4 <span class="tier-count">({{ ns5.t4 if tier == 4 else (ns5.t3 if tier == 3 else ns5.t2) }})</span></h4>
-          <div class="match-chips tier-chips">
-            {% for r in entry.results %}
-              {% if not r.error and r.param_tier == tier %}
-              <a class="match-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}">
-                <span class="mc-top">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span></span>
-              </a>
-              {% endif %}
-            {% endfor %}
-          </div>
-          {% if (tier == 4 and ns5.t4 == 0) or (tier == 3 and ns5.t3 == 0) or (tier == 2 and ns5.t2 == 0) %}
-          <p class="mn-empty">None right now.</p>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
     </div>
   {% endmacro %}
 
@@ -553,6 +525,53 @@
     <h2>⏱ Intraday Panel <span class="sub">15-minute entries cross-checked against the 4-hour trend - separate from the daily watchlist below</span></h2>
     {{ mtf_block("15-Minute", multi_tf["15minute"]) }}
     {{ mtf_block("4-Hour", multi_tf["4hour"]) }}
+  </div>
+
+  <div class="card sl-card">
+    <h2>🎯 Shortlist <span class="sub">names where the price read AND the positioning read agree - this list is meant to be short, and empty is a valid answer</span></h2>
+    <div id="sl-body">
+    {% set sl_rows = results | selectattr('shortlist_rank', 'defined') | selectattr('shortlist_rank', 'ne', None)
+                             | sort(attribute='shortlist_rank') | list %}
+    {% if sl_rows %}
+    <div class="sl-list">
+      {% for r in sl_rows %}
+      <div class="sl-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" onclick="window.location='/chart/{{ r.symbol }}'">
+        <span class="sl-rank">{{ r.shortlist_rank }}</span>
+        <span class="sl-score {{ 'bull' if r.direction == 'Bullish' else 'bear' }}"
+              title="{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">{{ r.early_score }}</span>
+        <span class="sl-sym">
+          <a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</a>
+          <span class="sl-close">{{ r.close }}</span>
+        </span>
+        <span class="sl-why">
+          <span class="sl-oi {{ 'bull' if r.direction == 'Bullish' else 'bear' }}">
+            {{ r.oi_structure_early or 'no unusual OI' }}{% if r.oi_z is not none %} &middot; {{ '%.1f'|format(r.oi_z|abs) }}&sigma;{% endif %}
+          </span>
+          <span class="sl-detail">
+            {%- for p in r.early_parts if p.measured and p.points and p.id != 'oi_anomaly' -%}
+              {{ p.note }}{% if not loop.last %} &middot; {% endif %}
+            {%- endfor -%}
+          </span>
+        </span>
+        <span class="sl-tags">
+          {% if r.rs_pct is not none %}<span class="sl-tag{{ ' strong' if (r.rs_pct > 0) == (r.direction == 'Bullish') else '' }}">RS {{ '%+.1f'|format(r.rs_pct) }}</span>{% endif %}
+          {% if r.vol_multiple %}<span class="sl-tag">{{ r.vol_multiple }}x</span>{% endif %}
+          {% if r.early_coverage is not none and r.early_coverage < 1.0 %}<span class="sl-cov" title="Only {{ (r.early_coverage * 100) | round }}% of the evidence was measurable for this row - the score is out of what could actually be checked, not out of 100 wished-for points.">{{ (r.early_coverage * 100) | round }}%</span>{% endif %}
+          <a class="eq-log journal-log-link" href="#" data-symbol="{{ r.symbol }}"
+             onclick="event.stopPropagation(); logPaperTrade(this); return false;"
+             title="Log {{ r.symbol }} as a {{ r.direction }} paper trade. Until these are logged and resolved, the shortlist is a reasoned ranking with no measured edge behind it.">Log</a>
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="sl-empty"><strong>Nothing qualifies right now.</strong> A name reaches this list only when the technical
+    read and an unusual OI move point the same way, and it clears {{ min_early_score | round | int }}/100 on evidence that
+    was actually measurable. Most days that is a handful of names; some days it is none. An empty shortlist is
+    the screen doing its job, not failing &mdash; the alternative is a list that is always full and therefore never
+    tells you anything.</p>
+    {% endif %}
+    </div>
   </div>
 
   <div class="card eq-card">
@@ -581,7 +600,12 @@
         </span>
         <span class="eq-bars" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">
           {% for p in r.entry_quality_parts %}
-          <span class="eq-bar" style="--fill: {{ (p.points / p.max * 100) | round }}%;"></span>
+          {# An unmeasured component renders as an explicitly empty, dimmed
+             bar rather than a half-full one. The old panel gave a "no
+             reading" a middling score AND a half-full bar, so absence
+             looked identical to mediocrity at a glance. #}
+          <span class="eq-bar{{ ' eq-bar-none' if p.points is none else '' }}"
+                style="--fill: {{ 0 if p.points is none else (p.points / p.max * 100) | round }}%;"></span>
           {% endfor %}
         </span>
         <span class="eq-tags">
@@ -609,29 +633,6 @@
     </div>
   </div>
 
-  <div class="card news-card">
-    <h2>📰 News <span class="sub">headlines for symbols currently Confirmed - the only ones queried, to stay inside the free news-API budget</span></h2>
-    <div id="news-body">
-      {% set news_rows = results | selectattr('news', 'defined') | selectattr('news') | list %}
-      {% if news_rows %}
-      <div class="news-list">
-        {% for r in news_rows %}
-          {% for a in r.news %}
-          <a class="news-item" href="{{ a.url }}" target="_blank" rel="noopener">
-            <span class="news-sym {{ 'bull' if r.direction == 'Bullish' else 'bear' }}">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</span>
-            <span>
-              <span class="news-head">{{ a.title }}</span>
-              <span class="news-meta">{{ a.source }}{% if a.published_at %} &middot; {{ a.published_at[:16].replace('T', ' ') }}{% endif %}</span>
-            </span>
-          </a>
-          {% endfor %}
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="mn-empty">No headlines right now. News is only fetched for Confirmed rows, so this stays empty when nothing is confirmed - or if MARKETAUX_API_TOKEN isn't set.</p>
-      {% endif %}
-    </div>
-  </div>
 
   <div class="signals-grid">
     <div class="card hc-card">
@@ -1037,8 +1038,7 @@
     <span style="color:var(--amber);">⚠</span> means the move is already extended beyond your threshold (you'd be
     chasing rather than catching it early). <strong>ATR N%</strong> is this stock's ATR as a percentage of its own
     price - a stock below your configured floor is too quiet right now to plausibly produce a big move no matter
-    how many parameters agree. Both have opt-in gates on the Settings page. <strong>News</strong> now has its own card near the top of the page rather than a table column that
-    mostly rendered an em-dash. The <strong>⚡ Best Entries</strong> card at the top ranks those same
+    how many parameters agree. Both have opt-in gates on the Settings page. The <strong>⚡ Best Entries</strong> card at the top ranks those same
     confirmed rows by how good the ENTRY looks (entry location, big candle, volatility, coiling, strong close,
     delivery) rather than by how strong the signal is - hover any row there for the full score breakdown.
     Signals are directional input, not investment advice.
@@ -1227,39 +1227,6 @@
     pollOi();
     setInterval(pollOi, 20000);
 
-    // News toasts (app/news.py) - fires once per genuinely new article
-    // matched to a symbol that was Confirmed at fetch time. Own toast
-    // style (blue) and click-through to the article, since unlike OI
-    // events this is meant to be actionable immediately.
-    var seenNews = new Set();
-    var firstNewsLoad = true;
-
-    function showNewsToast(a) {
-      var t = document.createElement('div');
-      t.className = 'toast news';
-      t.textContent = '\u{1F4F0} ' + a.symbol + ': ' + a.title;
-      t.style.cursor = 'pointer';
-      t.onclick = function () { if (a.url) window.open(a.url, '_blank', 'noopener'); };
-      wrap.appendChild(t);
-      setTimeout(function () { t.remove(); }, 15000);
-    }
-
-    function pollNews() {
-      fetch('/api/alerts/news_recent').then(function (r) { return r.json(); }).then(function (data) {
-        (data.alerts || []).forEach(function (a) {
-          var key = a.symbol + '|' + a.title + '|' + a.detected_at;
-          if (seenNews.has(key)) return;
-          seenNews.add(key);
-          if (!firstNewsLoad) {
-            showNewsToast(a);
-            beep();
-          }
-        });
-        firstNewsLoad = false;
-      }).catch(function () { /* ignore transient errors */ });
-    }
-    pollNews();
-    setInterval(pollNews, 20000);
   })();
 
   var currentSort = null; // {colIndex, asc}
@@ -1346,7 +1313,7 @@
   // 'eq-body' (Best Entries) is synced like every other live block - without
   // it the panel would silently freeze at whatever the last full page load
   // showed, which is worse than useless for a ranking meant to be read live.
-  var SYNCED_IDS = ['last-scan-text', 'last-error-wrap', 'eq-body', 'btst-body', 'news-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
+  var SYNCED_IDS = ['sl-body', 'last-scan-text', 'last-error-wrap', 'eq-body', 'btst-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

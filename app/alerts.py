@@ -170,7 +170,7 @@ def _format_btst_message(rows, now):
         return "\n".join(lines)
     for r in rows:
         lines.append(f"{r['btst_side']}  {r['symbol']}  {r.get('close')}   "
-                      f"({r.get('btst_score')} of {len(r.get('btst_reasons') or [])} checks)")
+                      f"({r.get('btst_score')} of {r.get('btst_max') or len(r.get('btst_reasons') or [])} checks held)")
         for w in (r.get("btst_reasons") or []):
             mark = "+" if w.get("ok") is True else ("-" if w.get("ok") is False else "?")
             lines.append(f"   {mark} {w.get('text')}")

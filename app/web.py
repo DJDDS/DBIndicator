@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, delivery, indicators, journal, kite_auth, scanner
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -86,6 +86,9 @@ def dashboard():
         quick_error=request.args.get("quick_error"),
         insights_enabled=insights_enabled(),
         telegram_enabled=alerts.telegram_enabled(),
+        min_early_score=settings.MIN_EARLY_SCORE,
+        shortlist_max=settings.SHORTLIST_MAX,
+        require_oi_agreement=settings.REQUIRE_OI_AGREEMENT,
         btst_window=scanner.btst_read_window(),
         btst_now=scanner.now_ist().strftime("%H:%M"),
         btst_alert_time=settings.BTST_ALERT_TIME,
@@ -228,6 +231,9 @@ def settings_page():
         valid_presets=config.VALID_MACD_PRESETS,
         logged_in=kite_auth.is_logged_in_today(),
         telegram_enabled=alerts.telegram_enabled(),
+        min_early_score=settings.MIN_EARLY_SCORE,
+        shortlist_max=settings.SHORTLIST_MAX,
+        require_oi_agreement=settings.REQUIRE_OI_AGREEMENT,
         btst_window=scanner.btst_read_window(),
         btst_now=scanner.now_ist().strftime("%H:%M"),
         btst_alert_time=settings.BTST_ALERT_TIME,
@@ -359,11 +365,6 @@ def api_alerts_oi_recent():
     return jsonify({"alerts": alerts.get_recent_oi(limit=20)})
 
 
-@app.route("/api/alerts/news_recent")
-@require_dashboard_password
-def api_alerts_news_recent():
-    return jsonify({"alerts": alerts.get_recent_news(limit=20)})
-
 
 @app.route("/oi-screener")
 @require_dashboard_password
@@ -379,15 +380,32 @@ def oi_screener_page():
 @app.route("/api/oi-screener")
 @require_dashboard_password
 def api_oi_screener():
-    # Deliberately NOT every scanned symbol - only rows that are
-    # currently in one of the 2/3/4-of-4 parameter screener tiers (see
-    # background._apply_param_tier). An unfiltered "every F&O stock's
-    # OI" list is mostly noise; this page is meant to answer "of the
-    # stocks the confluence screener already flagged, what's their OI
-    # actually doing" - not to be a second, independent universe.
+    # This filter used to be `r.get("param_tier")`, described as showing
+    # "only rows in one of the 2/3/4-of-4 tiers". That excluded nothing:
+    # param_tier comes from `aligned`, and dir_match_count = max(n, 3 - n)
+    # is never below 2, so EVERY non-error row had a tier. The page
+    # promised a shortlist and rendered the entire watchlist, which is a
+    # large part of why its picture never looked sharp.
+    #
+    # The filter is now an actual OI condition: show rows where this
+    # symbol's own OI move is statistically unusual FOR IT. That is the
+    # question the page exists to answer, and it is the one thing the old
+    # filter never asked. Rows with no baseline are excluded rather than
+    # shown with blank columns - see early_signal.py on why a missing
+    # baseline must never read as a quiet one.
     state = get_state()
-    results = [r for r in state["results"] if not r.get("error") and r.get("param_tier")]
-    return jsonify({"results": results, "min_required": settings.MIN_REQUIRED})
+    threshold = early_signal.OI_Z_THRESHOLD
+    results = [r for r in state["results"]
+               if not r.get("error")
+               and r.get("oi_z") is not None
+               and abs(r["oi_z"]) >= threshold]
+    results.sort(key=lambda r: abs(r["oi_z"]), reverse=True)
+    return jsonify({
+        "results": results,
+        "min_required": settings.MIN_REQUIRED,
+        "oi_z_threshold": threshold,
+        "oi_history": scanner.oi_history_status(),
+    })
 
 
 @app.route("/api/alerts/test", methods=["POST"])
