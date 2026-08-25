@@ -120,6 +120,31 @@ OPENING_WINDOW_MINUTES = 15  # signals formed in the first N minutes after the 9
                               # these candles are usually the most gap-driven and noisy of the day
 
 
+# Bars per trading session, used to scale the ATR floor across timeframes -
+# see effective_min_atr_pct below.
+_BARS_PER_SESSION = {"3minute": 125.0, "15minute": 25.0, "60minute": 6.25,
+                      "4hour": 1.5625, "day": 1.0, "week": 1.0}
+
+
+def effective_min_atr_pct(timeframe: str) -> float:
+    """settings.MIN_ATR_PCT is expressed as a DAILY figure (the watchlist runs
+    on daily bars, and "ATR is 1.2% of price" is only a meaningful sentence
+    once you say over what period). Applying that same number to a 15-minute
+    bar is a category error: a 15-minute bar's true range is a fraction of a
+    day's, so essentially nothing intraday could ever clear a daily floor -
+    the gate would silently exclude the entire universe rather than filter it.
+
+    Volatility scales with the SQUARE ROOT of time, so the floor is divided by
+    sqrt(bars per session): a 1.2% daily floor becomes ~0.24% on 15-minute
+    bars and ~0.96% on 4-hour ones. That is the standard scaling assumption
+    and an approximation - real intraday volatility is not uniform across the
+    session (opens and closes are livelier than midday) - but it is far closer
+    to right than reusing the daily number unchanged, and it keeps ONE tunable
+    rather than one per timeframe."""
+    bars = _BARS_PER_SESSION.get(timeframe, 1.0)
+    return settings.MIN_ATR_PCT / (bars ** 0.5)
+
+
 def _in_opening_window(ts, timeframe: str) -> bool:
     """True if this candle's timestamp falls within the first
     OPENING_WINDOW_MINUTES minutes after the 9:15 IST market open. Only
@@ -984,7 +1009,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     atr_floor_agrees = True
     if atr_value and close.iloc[i]:
         atr_pct = round(float(atr_value / float(close.iloc[i]) * 100), 3)
-        atr_floor_agrees = atr_pct >= settings.MIN_ATR_PCT
+        atr_floor_agrees = atr_pct >= effective_min_atr_pct(timeframe)
 
     # aligned: 0-4, how many of the 4 parameters currently agree with
     # this row's direction (the 3 directional ones, always 2 or 3 of

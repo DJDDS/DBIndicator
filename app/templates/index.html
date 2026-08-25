@@ -453,8 +453,14 @@
   {% macro mtf_block(label, entry) %}
     {% set ns3 = namespace(bull=0, bear=0) %}
     {% for r in entry.results %}
-      {% if not r.error and r.aligned is defined and r.aligned >= min_required %}
+      {% if not r.error and r.aligned is defined and r.aligned >= min_required and r.signal_confirmed %}
         {% if r.direction == 'Bullish' %}{% set ns3.bull = ns3.bull + 1 %}{% else %}{% set ns3.bear = ns3.bear + 1 %}{% endif %}
+      {% endif %}
+    {% endfor %}
+    {% set ns6 = namespace(gated=0) %}
+    {% for r in entry.results %}
+      {% if not r.error and r.aligned is defined and r.aligned >= min_required and not r.signal_confirmed %}
+        {% set ns6.gated = ns6.gated + 1 %}
       {% endif %}
     {% endfor %}
     {% set ns5 = namespace(t2=0, t3=0, t4=0) %}
@@ -477,6 +483,11 @@
           </span>
           <span class="bull">▲ {{ ns3.bull }}</span>
           <span class="bear">▼ {{ ns3.bear }}</span>
+          {% if ns6.gated %}
+          <span class="tb-status" title="These rows met your Aligned bar but were removed by the filters you have switched on (entry location, ATR floor, and any others). Before this the panel listed them anyway, so switching a filter on changed nothing here.">
+            +{{ ns6.gated }} filtered out
+          </span>
+          {% endif %}
         </div>
       </div>
       {% if entry.last_error %}
@@ -489,7 +500,7 @@
           <h4 class="mn-col-title bull">▲ Bullish ({{ ns3.bull }})</h4>
           <div class="mn-chip-scroll">
             {% for r in entry.results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-              {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
+              {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bullish' %}
               <a class="match-chip bull {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" href="/chart/{{ r.symbol }}">
                 <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
               </a>
@@ -502,7 +513,7 @@
           <h4 class="mn-col-title bear">▼ Bearish ({{ ns3.bear }})</h4>
           <div class="mn-chip-scroll">
             {% for r in entry.results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-              {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
+              {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bearish' %}
               <a class="match-chip bear {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" href="/chart/{{ r.symbol }}">
                 <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
               </a>
@@ -685,7 +696,7 @@
             <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
             <div class="mn-chip-scroll" id="mn-bull-scroll">
               {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-                {% if not r.error and r.aligned >= min_required and r.direction == 'Bullish' %}
+                {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bullish' %}
                 <a class="match-chip bull {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
                   <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
                   {{ chip_stats(r) }}
@@ -699,7 +710,7 @@
             <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
             <div class="mn-chip-scroll" id="mn-bear-scroll">
               {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-                {% if not r.error and r.aligned >= min_required and r.direction == 'Bearish' %}
+                {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bearish' %}
                 <a class="match-chip bear {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
                   <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
                   {{ chip_stats(r) }}
