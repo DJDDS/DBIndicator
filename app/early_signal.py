@@ -97,18 +97,44 @@ OI_Z_THRESHOLD = 1.5
 MIN_COVERAGE = 0.60
 
 
-def _pct_changes(series, days=BASELINE_DAYS):
-    """Percentage changes of a series, most recent last, NaNs dropped."""
+#: Baseline size for an intraday series. Larger than the daily one because
+#: intraday OI is noisier per observation, but still short enough to reflect
+#: the stock's CURRENT regime rather than what it was doing two months ago.
+INTRADAY_BASELINE_OBS = 400
+
+
+def _max_obs(intraday):
+    return INTRADAY_BASELINE_OBS if intraday else BASELINE_DAYS
+
+
+def _pct_changes(series, max_obs=BASELINE_DAYS, intraday=False):
+    """Percentage changes of a series, most recent last, NaNs dropped.
+
+    `intraday` drops every change that spans an overnight gap, and it
+    matters more than it looks. Open Interest genuinely resets its
+    character between sessions - positions settle, the next morning opens
+    on a different book - so the first bar of each day carries a change
+    that is systematically far larger than any within-session move. Leave
+    those in the baseline and that one daily jump dominates the standard
+    deviation, which makes every real intraday build look unremarkable by
+    comparison. The detector would go quiet exactly when it should speak.
+
+    Requires a DatetimeIndex to do it; without one it degrades to the
+    plain calculation rather than silently pretending it filtered."""
     if series is None:
         return None
     s = pd.Series(series).dropna()
     s = s[s > 0]  # OI and volume are strictly positive; a zero is missing data
     if len(s) < 3:
         return None
-    return s.pct_change().dropna().tail(days) * 100.0
+    changes = s.pct_change() * 100.0
+    if intraday and isinstance(s.index, pd.DatetimeIndex):
+        same_session = pd.Series(s.index.normalize()).diff().eq(pd.Timedelta(0))
+        changes = changes[same_session.values]
+    return changes.dropna().tail(max_obs)
 
 
-def oi_zscore(oi_history):
+def oi_zscore(oi_history, intraday=False):
     """How unusual is the latest OI change FOR THIS SYMBOL?
 
     Returns (z, latest_pct_change, sigma) or (None, None, None) when there
@@ -120,7 +146,7 @@ def oi_zscore(oi_history):
     today's change contributes to the mean and sigma it is being measured
     against, which shrinks every z-score toward zero and does so most for
     exactly the large moves we are trying to detect."""
-    changes = _pct_changes(oi_history)
+    changes = _pct_changes(oi_history, max_obs=_max_obs(intraday), intraday=intraday)
     if changes is None or len(changes) < MIN_BASELINE_OBS:
         return None, None, None
 
@@ -138,7 +164,7 @@ def oi_zscore(oi_history):
     return round((latest - mu) / sigma, 2), round(latest, 2), round(sigma, 3)
 
 
-def oi_acceleration_ratio(oi_history):
+def oi_acceleration_ratio(oi_history, intraday=False):
     """Latest OI change as a multiple of this symbol's own typical move.
 
     A companion to the z-score that is easier to read at a glance: 3.0
@@ -146,7 +172,7 @@ def oi_acceleration_ratio(oi_history):
     stock". Uses mean ABSOLUTE change, so a symbol whose OI drifts up and
     down in equal measure still gets a sensible denominator (its plain
     mean would be near zero and the ratio would explode)."""
-    changes = _pct_changes(oi_history)
+    changes = _pct_changes(oi_history, max_obs=_max_obs(intraday), intraday=intraday)
     if changes is None or len(changes) < MIN_BASELINE_OBS:
         return None
     latest = float(changes.iloc[-1])

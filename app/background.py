@@ -70,7 +70,8 @@ SCREEN_PARAM_DEFS = [
 # manage that.
 # --------------------------------------------------------------------------
 
-def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=None):
+def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=None,
+                        intraday=False):
     """Attach the early-signal score and its OI reading to every row.
 
     Everything here degrades to None rather than to a guess. A symbol with
@@ -96,10 +97,10 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
 
         direction = r.get("direction")
         hist = (oi_history or {}).get(r.get("symbol"))
-        oi_z, oi_chg, _sigma = early_signal.oi_zscore(hist)
+        oi_z, oi_chg, _sigma = early_signal.oi_zscore(hist, intraday=intraday)
         r["oi_z"] = oi_z
         r["oi_chg_pct_daily"] = oi_chg
-        r["oi_accel_ratio"] = early_signal.oi_acceleration_ratio(hist)
+        r["oi_accel_ratio"] = early_signal.oi_acceleration_ratio(hist, intraday=intraday)
 
         # Price change for the quadrant is close-vs-previous-close on the
         # SAME daily bar the OI figure belongs to - not an intraday
@@ -1245,7 +1246,8 @@ def _run_loop():
                     # F&O universe, and holding the lock through it would
                     # stall every dashboard request for that whole time.
                     try:
-                        oi_history = scanner.fetch_oi_history(kite, settings.WATCHLIST)
+                        oi_history = scanner.fetch_oi_history(
+                            kite, settings.WATCHLIST, timeframe=WATCHLIST_TIMEFRAME)
                     except Exception:  # noqa: BLE001 - a missing baseline must not stop the scan
                         log.exception("OI history fetch failed")
                         oi_history = {}
@@ -1458,15 +1460,40 @@ def _scan_one_multi_tf(kite, tf):
     """One timeframe's worth of the multi-tf panel: the same
     scan_watchlist() + param-tier bucketing + index-agreement gate the
     single-timeframe pipeline uses (so "Confirmed" means the same thing
-    here as it does everywhere else in the app), but deliberately skipping
-    _apply_oi_trend/_apply_oi_screener_fields/_apply_weighted_score - this
-    panel only needs symbol/direction/aligned/signal_confirmed/close, and
-    running the OI-history/day-baseline machinery 3x per cycle for data
-    this panel never displays would just be extra work and extra state to
-    persist for nothing."""
+    here as it does everywhere else in the app), and now the SAME
+    early-signal layer too.
+
+    That last part is new and it is the point. This panel used to run the
+    four-vote screen alone, which is why it kept passing a whole watchlist
+    on 15-minute bars - the votes are correlated, and `dir_match_count =
+    max(n, 3 - n)` guaranteed every row scored at least 2. It now gets the
+    OI gate as well, on OI sampled at ITS OWN timeframe rather than the
+    daily figure.
+
+    The distinction matters. A daily OI z-score is a CONSTANT within a
+    session - it cannot change between one 15-minute bar and the next - so
+    reusing it here would apply one identical verdict to every bar all day.
+    That is a bias, not a signal. scanner.OI_HISTORY_SPEC therefore builds
+    a separate 15-minute and 4-hour OI baseline, with overnight transitions
+    excluded so the once-a-day settlement jump does not swamp the standard
+    deviation that real intraday builds are measured against."""
     results = scan_watchlist(kite, timeframe=tf)
     index_direction, index_close, index_chg_pct = fetch_index_direction(kite, tf)
+    try:
+        oi_history = scanner.fetch_oi_history(kite, settings.WATCHLIST, timeframe=tf)
+    except Exception:  # noqa: BLE001 - a missing baseline must not stop the panel
+        log.exception("OI history fetch failed for %s", tf)
+        oi_history = {}
+    index_returns = scanner.fetch_index_returns(kite, tf)
     _apply_param_tier(results)
+    # Before the REQUIRE_* gates, same ordering as the daily pipeline, so
+    # the OI gate can actually revoke signal_confirmed rather than being
+    # computed after everything that might have consumed it.
+    _apply_early_signal(results, oi_history,
+                        index_ret_20=index_returns.get(20),
+                        index_ret_10=index_returns.get(10),
+                        intraday=scanner.oi_is_intraday(tf))
+    _apply_oi_gate(results)
     _apply_index_filter(results, index_direction)
     _apply_candle_pattern_filter(results)
     _apply_macd_hist_filter(results)
@@ -1475,6 +1502,7 @@ def _scan_one_multi_tf(kite, tf):
     _apply_entry_location_filter(results)
     _apply_atr_floor_filter(results)
     _apply_delivery_filter(results)  # cache lookup only - see that function's docstring, no network call here
+    _apply_shortlist(results)
     with _multi_tf_lock:
         _multi_tf_state[tf]["results"] = results
         _multi_tf_state[tf]["last_scan"] = now_ist().isoformat(timespec="seconds")

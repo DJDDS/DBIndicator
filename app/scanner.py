@@ -6,6 +6,7 @@ is fetched once and cached in memory.
 """
 import datetime as dt
 import logging
+import threading
 import time
 from zoneinfo import ZoneInfo
 
@@ -147,32 +148,96 @@ def _fut_token_map(kite) -> dict:
 # would trip the rate limiter and take the live scan down with it.
 # --------------------------------------------------------------------------
 
-OI_HISTORY_DAYS = 120
-_OI_HISTORY_THROTTLE_SECONDS = 0.35
+# How each timeframe's OI baseline is built. `interval` is what Kite is
+# actually asked for; `resample` (4-hour only) is applied afterwards because
+# Kite has no native 4-hour interval - same synthesis fetch_candles already
+# does for price, anchored identically to the 09:15 session open so the OI
+# bars line up bar-for-bar with the price bars they are judged against.
+#
+# `intraday` tells early_signal to exclude overnight transitions from the
+# baseline. See _pct_changes there: OI genuinely re-forms between sessions,
+# so the first bar of each day carries a change far larger than any
+# within-session move, and leaving those in makes the standard deviation so
+# wide that real intraday builds stop registering.
+OI_HISTORY_SPEC = {
+    "day":       {"interval": "day",      "days": 120, "resample": None, "intraday": False},
+    "15minute":  {"interval": "15minute", "days": 45,  "resample": None, "intraday": True},
+    "4hour":     {"interval": "60minute", "days": 120, "resample": "4h", "intraday": True},
+}
 
-_oi_history_cache = {"date": None, "data": {}, "complete": False}
+OI_HISTORY_DAYS = OI_HISTORY_SPEC["day"]["days"]
+
+# Kite allows roughly 3 historical requests a second. This sweep is one call
+# per symbol, and there are now THREE of them (daily, 15-minute, 4-hour) run
+# by two independent threads - on the first scan of a day they can all come
+# due at once, and three unthrottled sweeps plus the ordinary price scans
+# would sail past the limit and start failing symbols. Two guards:
+# a gentler per-call pause, and a lock so only one sweep is ever in flight.
+_OI_HISTORY_THROTTLE_SECONDS = 0.5
+_oi_history_lock = threading.Lock()
+
+# Cached per (timeframe, date) - a day's history only gains bars as the
+# session runs, and re-fetching 190 symbols every scan would be absurd.
+_oi_history_cache = {}
 
 
-def fetch_oi_history(kite, symbols, days=OI_HISTORY_DAYS, throttle=None):
-    """{symbol: [daily OI values, oldest first]} for the given symbols.
+def _resample_oi(rows, rule):
+    """60-minute OI rows -> 4-hour, taking the LAST value in each bucket.
+
+    This is the one place where OI must NOT be treated like volume. Volume
+    is a flow and resamples with `sum`; Open Interest is a LEVEL - the count
+    of contracts currently open - so summing it across four hourly bars
+    would report roughly four times the real position. The correct
+    aggregation is `last`, exactly as `close` is for price."""
+    if not rows:
+        return None
+    idx = pd.to_datetime([r["date"] for r in rows])
+    ser = pd.Series([r.get("oi") for r in rows], index=idx, dtype="float64").dropna()
+    if ser.empty:
+        return None
+    if rule:
+        ser = ser.resample(rule, origin="start_day", offset="9h15min").last().dropna()
+    return ser
+
+
+def fetch_oi_history(kite, symbols, timeframe="day", throttle=None):
+    """{symbol: pandas Series of OI indexed by bar timestamp} for a timeframe.
 
     Never raises: a symbol Kite refuses simply gets no entry, and every
-    downstream consumer treats a missing baseline as "cannot score this
-    row" rather than guessing. That is deliberate - a wrong OI baseline is
-    far more dangerous than an absent one, because it produces a confident
+    downstream consumer treats a missing baseline as "cannot score this row"
+    rather than guessing. That is deliberate - a wrong OI baseline is far
+    more dangerous than an absent one, because it produces a confident
     z-score built on nothing."""
+    spec = OI_HISTORY_SPEC.get(timeframe)
+    if spec is None:
+        return {}
     today = dt.date.today().isoformat()
-    if _oi_history_cache["date"] != today:
-        _oi_history_cache.update({"date": today, "data": {}, "complete": False})
+    key = (timeframe, today)
+    entry = _oi_history_cache.get(key)
+    if entry is None:
+        entry = _oi_history_cache[key] = {}
+        # drop other days so the cache cannot grow without bound
+        for k in [k for k in _oi_history_cache if k[1] != today]:
+            _oi_history_cache.pop(k, None)
 
-    cached = _oi_history_cache["data"]
-    todo = [s for s in symbols if s not in cached]
+    todo = [sym for sym in symbols if sym not in entry]
     if not todo:
-        return dict(cached)
+        return dict(entry)
 
+    # Serialise the sweeps. Whichever thread gets here first does the work;
+    # the others wait, then re-check the cache below and usually find their
+    # symbols already fetched, so waiting costs nothing but a lock.
+    with _oi_history_lock:
+        todo = [sym for sym in symbols if sym not in entry]
+        if not todo:
+            return dict(entry)
+        return _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle)
+
+
+def _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle):
     tokens = _fut_token_map(kite)
     to_date = now_ist()
-    from_date = to_date - dt.timedelta(days=days)
+    from_date = to_date - dt.timedelta(days=spec["days"])
     pause = _OI_HISTORY_THROTTLE_SECONDS if throttle is None else throttle
 
     fetched = 0
@@ -181,31 +246,34 @@ def fetch_oi_history(kite, symbols, days=OI_HISTORY_DAYS, throttle=None):
         if not token:
             continue
         try:
-            rows = kite.historical_data(token, from_date, to_date, "day",
-                                        continuous=True, oi=True)
+            rows = _fetch_historical_chunked(kite, token, from_date, to_date,
+                                             spec["interval"], oi=True, continuous=True)
         except Exception as exc:  # noqa: BLE001 - one bad symbol must not stop the sweep
-            log.debug("OI history failed for %s: %s", sym, exc)
+            log.debug("OI history failed for %s (%s): %s", sym, timeframe, exc)
             continue
-        series = [r.get("oi") for r in (rows or []) if r.get("oi")]
-        if len(series) >= 3:
-            cached[sym] = series
+        ser = _resample_oi(rows, spec["resample"])
+        if ser is not None and len(ser) >= 3:
+            entry[sym] = ser
             fetched += 1
         if pause:
             time.sleep(pause)
 
-    _oi_history_cache["complete"] = len(cached) >= len(symbols)
     if fetched:
-        log.info("Fetched daily OI history for %d symbol(s); %d cached total",
-                 fetched, len(cached))
-    return dict(cached)
+        log.info("Fetched %s OI history for %d symbol(s); %d cached total",
+                 timeframe, fetched, len(entry))
+    return dict(entry)
 
 
-def oi_history_status():
-    return {
-        "date": _oi_history_cache["date"],
-        "symbols": len(_oi_history_cache["data"]),
-        "complete": _oi_history_cache["complete"],
-    }
+def oi_is_intraday(timeframe):
+    spec = OI_HISTORY_SPEC.get(timeframe)
+    return bool(spec and spec["intraday"])
+
+
+def oi_history_status(timeframe="day"):
+    today = dt.date.today().isoformat()
+    entry = _oi_history_cache.get((timeframe, today)) or {}
+    return {"date": today, "timeframe": timeframe, "symbols": len(entry)}
+
 
 
 _nifty_fut_cache = {"date": None, "token": None, "symbol": None}
@@ -458,7 +526,8 @@ _HISTORICAL_CHUNK_DAYS = {
 }
 
 
-def _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interval):
+def _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interval,
+                              oi=False, continuous=False):
     """Fetches historical_data() in safe chunks (see _HISTORICAL_CHUNK_DAYS)
     and concatenates the results. Each chunk gets one retry (short
     backoff) on a transient failure - a brief network blip or rate-limit
@@ -474,7 +543,8 @@ def _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interv
         chunk_rows = None
         for attempt in range(2):
             try:
-                chunk_rows = kite.historical_data(instrument_token, chunk_start, chunk_end, interval)
+                chunk_rows = kite.historical_data(instrument_token, chunk_start, chunk_end,
+                                                  interval, continuous=continuous, oi=oi)
                 break
             except Exception as exc:  # noqa: BLE001
                 if attempt == 0:

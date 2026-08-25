@@ -81,6 +81,20 @@
   @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
   .hc-card { border-color: #3a2f0f; }
   .hc-card h2 { color: var(--amber); }
+  /* Intraday shortlist strip - OI-gated names on THIS timeframe's own OI */
+  .mtf-sl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 4px;
+            padding: 8px 10px; border-radius: 8px; background: var(--panel2);
+            border: 1px solid var(--accent); }
+  .mtf-sl-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+                  color: var(--accent); margin-right: 4px; }
+  .mtf-sl-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 8px;
+                 border-radius: 5px; background: var(--panel); text-decoration: none; color: inherit;
+                 font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
+  .mtf-sl-chip:hover { border-color: var(--accent); }
+  .mtf-sl-chip.bull { color: var(--green); }
+  .mtf-sl-chip.bear { color: var(--red); }
+  .mtf-sl-score { font-family: var(--mono); font-weight: 700; font-size: 12.5px; }
+  .mtf-sl-oi { font-family: var(--mono); font-size: 10px; color: var(--muted); }
   /* Shortlist - the headline panel. Deliberately allowed to be empty. */
   .sl-card { border-color: var(--accent); }
   .sl-list { display: flex; flex-direction: column; gap: 6px; }
@@ -484,6 +498,22 @@
           {% endif %}
         </div>
       </div>
+      {% set mtf_sl = entry.results | selectattr('shortlist_rank', 'defined')
+                                     | selectattr('shortlist_rank', 'ne', None)
+                                     | sort(attribute='shortlist_rank') | list %}
+      {% if mtf_sl %}
+      <div class="mtf-sl">
+        <span class="mtf-sl-label">Shortlist</span>
+        {% for r in mtf_sl %}
+        <a class="mtf-sl-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}"
+           title="{{ r.early_score }}/100 &middot; {{ r.oi_structure_early }}{% if r.oi_z is not none %} ({{ '%.1f'|format(r.oi_z|abs) }}&sigma; on {{ label }} OI){% endif %}&#10;{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">
+          <span class="mtf-sl-score">{{ r.early_score }}</span>
+          {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}
+          {% if r.oi_z is not none %}<span class="mtf-sl-oi">{{ '%.1f'|format(r.oi_z|abs) }}&sigma;</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
       {% if entry.last_error %}
       <p class="mn-empty" style="color:var(--red);">Last scan hit an error: {{ entry.last_error }}</p>
       {% elif ns3.bull == 0 and ns3.bear == 0 %}
