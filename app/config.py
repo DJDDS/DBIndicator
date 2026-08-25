@@ -201,6 +201,7 @@ _TUNABLE_FIELDS = [
     "BIG_CANDLE_ATR_MULTIPLIER", "STRONG_CLOSE_THRESHOLD_PCT",
     "REQUIRE_BIG_CANDLE_AGREEMENT", "REQUIRE_STRONG_CLOSE_AGREEMENT",
     "REQUIRE_DELIVERY_AGREEMENT", "DELIVERY_THRESHOLD_PCT",
+    "BTST_ALERT_ENABLED", "BTST_ALERT_TIME",
     "MAX_ENTRY_EXTENSION_ATR", "REQUIRE_ENTRY_LOCATION_AGREEMENT",
     "MIN_ATR_PCT", "REQUIRE_ATR_FLOOR",
 ]
@@ -393,6 +394,13 @@ def _env_defaults():
         # other REQUIRE_* gate above.
         "REQUIRE_DELIVERY_AGREEMENT": os.getenv("REQUIRE_DELIVERY_AGREEMENT", "false").strip().lower() in ("1", "true", "on", "yes"),
         "DELIVERY_THRESHOLD_PCT": float(os.getenv("DELIVERY_THRESHOLD_PCT", 30.0)),
+        # Daily BTST/STBT publish (see alerts.publish_btst_candidates). Unlike
+        # every other alert this one is TIME-driven, because a strong close is
+        # only knowable near the close - the daily bar is still being written
+        # until 15:30. 15:15 IST is late enough for the close position to have
+        # essentially settled and early enough to still place an order.
+        "BTST_ALERT_ENABLED": os.getenv("BTST_ALERT_ENABLED", "true").strip().lower() in ("1", "true", "on", "yes"),
+        "BTST_ALERT_TIME": os.getenv("BTST_ALERT_TIME", "15:15"),
         # Entry-location filter (PARAMETER_ANALYSIS_2.md Finding #4 -
         # "nothing prices in WHERE a move already is"; see indicators.
         # compute_signal's entry_extension_atr/entry_is_extended). How
@@ -677,6 +685,23 @@ class Settings:
                 clean["REQUIRE_DELIVERY_AGREEMENT"] = val.strip().lower() in ("1", "true", "on", "yes")
             else:
                 clean["REQUIRE_DELIVERY_AGREEMENT"] = bool(val)
+
+        if "BTST_ALERT_ENABLED" in kwargs:
+            val = kwargs["BTST_ALERT_ENABLED"]
+            if isinstance(val, str):
+                clean["BTST_ALERT_ENABLED"] = val.strip().lower() in ("1", "true", "on", "yes")
+            else:
+                clean["BTST_ALERT_ENABLED"] = bool(val)
+
+        if "BTST_ALERT_TIME" in kwargs:
+            raw = str(kwargs["BTST_ALERT_TIME"]).strip()
+            try:
+                hh, mm = (int(x) for x in raw.split(":"))
+                if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                    raise ValueError
+                clean["BTST_ALERT_TIME"] = f"{hh:02d}:{mm:02d}"
+            except (ValueError, TypeError):
+                errors.append("BTST alert time must be HH:MM in 24-hour form, e.g. 15:15.")
 
         if "DELIVERY_THRESHOLD_PCT" in kwargs:
             try:

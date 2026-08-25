@@ -1004,6 +1004,11 @@ def _run_loop():
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None
                     try:
+                        # Time-driven, once per day - see alerts.publish_btst_candidates
+                        alerts.publish_btst_candidates(results, now_ist())
+                    except Exception:  # noqa: BLE001 - must never break scanning
+                        log.exception("BTST publish failed")
+                    try:
                         alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
                     except Exception:  # noqa: BLE001 - alerting must never break scanning
                         log.exception("Alert processing failed")

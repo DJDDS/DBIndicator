@@ -666,8 +666,20 @@
         {% endif %}
       </div>
       <p class="btst-note">
-        Read this <strong>late in the session</strong>. The daily bar is still forming until 15:30, so
-        "closed strong" is provisional before then — a name here at noon can fail the test by the bell.
+        {% if btst_window == "settled" %}
+        <strong>{{ btst_now }} — close position is essentially set.</strong> This is the window to act in:
+        the daily bar is nearly done and there's still time to place before 15:30.
+        {% elif btst_window == "firming" %}
+        <strong>{{ btst_now }} — candidates are firming up.</strong> Worth shortlisting now; the list can
+        still shift, so confirm around {{ btst_alert_time }}.
+        {% elif btst_window == "closed" %}
+        <strong>{{ btst_now }} — the day is done.</strong> This is the final read, frozen at the close.
+        Too late to act on, but this is the version worth reviewing against what actually happened.
+        {% else %}
+        <strong>{{ btst_now }} — provisional.</strong> The daily bar has hours left to run, so "closed
+        strong" here means "strong <em>so far</em>". A name showing at noon can fail the test by the bell.
+        Read this again after 15:00.
+        {% endif %}
         Overnight positions also carry gap risk that intraday ones don't, which is what most of these
         checks are really about.
       </p>

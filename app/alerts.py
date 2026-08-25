@@ -21,12 +21,14 @@ signal doesn't re-fire every scan interval while it's still the most
 recently closed candle.
 """
 import collections
+import datetime as dt
 import logging
 import threading
 
 import requests
 
 from . import config
+from .config import settings
 from .scanner import now_ist
 
 log = logging.getLogger(__name__)
@@ -136,6 +138,91 @@ def process_scan_results(results, timeframe):
                 _telegram_call("sendMessage", chat_id=config.TELEGRAM_CHAT_ID, text=text)
             except Exception as exc:  # noqa: BLE001 - never let alerting break the scan loop
                 log.warning("Telegram alert failed for %s: %s", r["symbol"], exc)
+
+
+
+# --------------------------------------------------------------------------
+# Daily BTST/STBT publish
+#
+# Every other alert in this module is event-driven - something crossed, so
+# fire. This one is TIME-driven, because the thing it reports only becomes
+# true near the close: the BTST/STBT panel's hard gate is a strong close on
+# the DAILY bar, and that bar is still being written until 15:30. A candidate
+# at 11am is a statement about where price sits in a range that has six hours
+# left to move, which is a different quantity that happens to share a name.
+#
+# So this fires once per trading day at BTST_ALERT_TIME (15:15 IST by
+# default): late enough that the close position is essentially settled, early
+# enough to still place an order before the bell. Once per day, deduped on the
+# calendar date, so the remaining scan cycles before 15:30 cannot re-send it.
+# --------------------------------------------------------------------------
+
+_btst_sent_date = None
+
+
+def _format_btst_message(rows, now):
+    lines = [f"BTST / STBT candidates - {now.strftime('%d %b %Y, %H:%M')} IST", ""]
+    if not rows:
+        lines.append("No candidates. Nothing closed strong enough in its own direction today.")
+        lines.append("")
+        lines.append("An empty list is a result, not a failure - it means the screen "
+                      "found nothing worth carrying overnight.")
+        return "\n".join(lines)
+    for r in rows:
+        lines.append(f"{r['btst_side']}  {r['symbol']}  {r.get('close')}   "
+                      f"({r.get('btst_score')} of {len(r.get('btst_reasons') or [])} checks)")
+        for w in (r.get("btst_reasons") or []):
+            mark = "+" if w.get("ok") is True else ("-" if w.get("ok") is False else "?")
+            lines.append(f"   {mark} {w.get('text')}")
+        lines.append("")
+    lines.append("The daily bar is nearly closed but not quite - the last few minutes "
+                  "can still move a close position. Check before you place.")
+    return "\n".join(lines)
+
+
+def publish_btst_candidates(results, now):
+    """Call once per scan cycle. Fires only inside the publish window and only
+    once per calendar day; returns True if it actually sent.
+
+    The window is [BTST_ALERT_TIME, BTST_ALERT_TIME + 10 min) rather than an
+    exact time, because scans land on their own cadence (every
+    SCAN_INTERVAL_SECONDS) and would otherwise step straight over a single
+    instant and never fire at all."""
+    global _btst_sent_date
+    if not settings.BTST_ALERT_ENABLED:
+        return False
+    try:
+        hh, mm = (int(x) for x in str(settings.BTST_ALERT_TIME).split(":"))
+    except (ValueError, AttributeError):
+        log.warning("BTST_ALERT_TIME is not HH:MM (%r) - skipping", settings.BTST_ALERT_TIME)
+        return False
+
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if not (target <= now < target + dt.timedelta(minutes=10)):
+        return False
+
+    today = now.date().isoformat()
+    with _lock:
+        if _btst_sent_date == today:
+            return False
+        _btst_sent_date = today
+
+    rows = sorted(
+        [r for r in (results or []) if not r.get("error") and r.get("btst_side")],
+        key=lambda r: r.get("btst_score") or 0, reverse=True,
+    )
+    text = _format_btst_message(rows, now)
+    with _lock:
+        _recent.append({"symbol": "BTST/STBT", "direction": "Daily publish",
+                         "timeframe": "day", "close": None,
+                         "aligned": len(rows), "text": text,
+                         "candle_timestamp": now.isoformat(timespec="seconds")})
+    if telegram_enabled():
+        try:
+            _telegram_call("sendMessage", chat_id=config.TELEGRAM_CHAT_ID, text=text)
+        except Exception as exc:  # noqa: BLE001 - alerting must never break the scan loop
+            log.warning("BTST publish failed: %s", exc)
+    return True
 
 
 def get_recent(limit=20):

@@ -118,6 +118,19 @@
           <input type="number" id="strong_close_threshold_pct" name="strong_close_threshold_pct" min="50" max="100" step="1" value="{{ s.STRONG_CLOSE_THRESHOLD_PCT }}">
           <div class="hint">How near the day's high/low a close must be to count as decisive. Also the hard gate for the BTST/STBT panel.</div>
         </div>
+        <div>
+          <label for="btst_alert_time">BTST/STBT publish time (IST)</label>
+          <input type="time" id="btst_alert_time" name="btst_alert_time" value="{{ s.BTST_ALERT_TIME }}">
+          <div class="hint">
+            Sends the day's overnight candidates once, at this time. 15:15 is the sweet spot — the daily
+            bar's close position has essentially settled, and you still have fifteen minutes to place an
+            order before the 15:30 bell. Earlier and you're reading an unfinished bar; later and you can't act.
+          </div>
+          <label class="switch" style="margin-top:8px;">
+            <input type="checkbox" name="btst_alert_enabled" value="on" {% if s.BTST_ALERT_ENABLED %}checked{% endif %}>
+            <span>Publish the daily BTST/STBT list</span>
+          </label>
+        </div>
       </div>
     </div>
 

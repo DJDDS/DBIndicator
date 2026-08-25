@@ -743,3 +743,31 @@ def is_market_open() -> bool:
     open_t = now.replace(hour=9, minute=15, second=0, microsecond=0)
     close_t = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return open_t <= now <= close_t
+
+# --------------------------------------------------------------------------
+# Which part of the session are we in, as far as an OVERNIGHT read is
+# concerned? The BTST/STBT panel's hard gate is a strong close on the daily
+# bar - but during the session that bar is still being written (see
+# _lookback_days' caller: to_date is always "now"). So "closed in the top 20%
+# of its range" at 11am is not a weak version of the same statement, it's a
+# different quantity that happens to share a name: where price sits in a range
+# that still has hours left to move.
+#
+# The panel uses this to say which it is, rather than printing a fixed caveat
+# and leaving the reader to check the clock themselves.
+# --------------------------------------------------------------------------
+
+def btst_read_window(now=None):
+    """One of: "early" (bar has hours to run), "firming" (worth shortlisting),
+    "settled" (act now), "closed" (final read, too late to trade)."""
+    now = now or now_ist()
+    if now.weekday() >= 5:
+        return "closed"
+    mins = now.hour * 60 + now.minute
+    if mins >= 15 * 60 + 30:
+        return "closed"
+    if mins >= 15 * 60 + 10:
+        return "settled"
+    if mins >= 14 * 60 + 45:
+        return "firming"
+    return "early"
