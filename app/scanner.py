@@ -159,10 +159,28 @@ def _fut_token_map(kite) -> dict:
 # so the first bar of each day carries a change far larger than any
 # within-session move, and leaving those in makes the standard deviation so
 # wide that real intraday builds stop registering.
+# `continuous` is per-timeframe because Kite does NOT accept it on every
+# interval - a 15-minute request with continuous=True comes back "invalid
+# interval for continuous data" and the whole intraday baseline silently
+# ends up empty. It is only set where it is both accepted and needed.
+#
+# Losing it on the intraday specs costs less than it sounds. continuous
+# exists to stitch a series across expiries; without it a request returns
+# only that contract's own life. For the DAILY baseline that matters - 120
+# days spans several expiries and the roll would otherwise print a large
+# spurious OI collapse each month. For an intraday baseline it does not:
+# a near-month contract already gives roughly 25 sessions, which at 25 bars
+# a session is ~600 observations, far past what a stable sigma needs. And
+# because a single contract is one continuous book, there is no roll
+# artefact in the series at all.
+#
+# The honest cost: for a few sessions right after an expiry the new
+# contract has too little history, so intraday rows get no OI baseline and
+# drop off the intraday shortlist rather than being scored on nothing.
 OI_HISTORY_SPEC = {
-    "day":       {"interval": "day",      "days": 120, "resample": None, "intraday": False},
-    "15minute":  {"interval": "15minute", "days": 45,  "resample": None, "intraday": True},
-    "4hour":     {"interval": "60minute", "days": 120, "resample": "4h", "intraday": True},
+    "day":       {"interval": "day",      "days": 120, "resample": None, "intraday": False, "continuous": True},
+    "15minute":  {"interval": "15minute", "days": 45,  "resample": None, "intraday": True,  "continuous": False},
+    "4hour":     {"interval": "60minute", "days": 120, "resample": "4h", "intraday": True,  "continuous": False},
 }
 
 OI_HISTORY_DAYS = OI_HISTORY_SPEC["day"]["days"]
@@ -247,7 +265,8 @@ def _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle):
             continue
         try:
             rows = _fetch_historical_chunked(kite, token, from_date, to_date,
-                                             spec["interval"], oi=True, continuous=True)
+                                             spec["interval"], oi=True,
+                                             continuous=spec.get("continuous", False))
         except Exception as exc:  # noqa: BLE001 - one bad symbol must not stop the sweep
             log.debug("OI history failed for %s (%s): %s", sym, timeframe, exc)
             continue
