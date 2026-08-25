@@ -209,7 +209,13 @@ def oi_acceleration_ratio(oi_history, intraday=False):
     if _is_stale(oi_history, changes):
         return None
     latest = float(changes.iloc[-1])
-    typical = float(changes.iloc[:-1].abs().mean())
+    # MEDIAN absolute change, not mean. OI series carry occasional huge
+    # one-off moves (expiry week, a block trade, an index rebalance). A mean
+    # absorbs those into the denominator, so one outlier a month permanently
+    # raises the bar and quietly suppresses every ordinary-but-real reading
+    # afterwards. The median ignores them, which is what "typical" should
+    # mean.
+    typical = float(changes.iloc[:-1].abs().median())
     if not np.isfinite(typical) or typical < 1e-6:
         return None
     return round(latest / typical, 2)

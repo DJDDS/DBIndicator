@@ -88,7 +88,28 @@ _SNAPSHOT_FIELDS = [
 # live dashboard) and get_confidence_stats still lists the bucket, but
 # flagged so the /journal page can grey it out rather than hide it
 # entirely (transparency there matters more than tidiness).
-CONFIDENCE_MIN_SAMPLE = 5
+# Sample-size tiers for the realized win rate.
+#
+# This was a single threshold of 5, which is far too small to mean anything:
+# at n=5 a 60% win rate has a 95% confidence interval running roughly from
+# 15% to 95%, so the number told you almost nothing while looking precise.
+# Worse, a rate shown WITHOUT its sample size invites reading a lucky
+# three-from-five as an edge.
+#
+# The tiers below are the honest reading of a binomial proportion's width:
+# under 20 the interval is too wide to act on, by 50 it is informative, and
+# past 100 it is reasonably tight. The count is now always displayed beside
+# the rate so "67%" can never be read apart from what it rests on.
+CONFIDENCE_MIN_SAMPLE = 20
+CONFIDENCE_TIERS = ((100, "strong"), (50, "usable"), (20, "preliminary"))
+
+
+def confidence_tier(count):
+    """'strong' | 'usable' | 'preliminary' | 'too few' for a sample size."""
+    for threshold, label in CONFIDENCE_TIERS:
+        if count >= threshold:
+            return label
+    return "too few"
 
 # Individual gate-agreement factors tracked for the "by factor" breakdown
 # - mirrors exactly the REQUIRE_*_AGREEMENT settings this app already has
@@ -218,7 +239,9 @@ def get_confidence_stats():
             if not group:
                 continue
             stats = _stats(group)
-            stats.update(direction=direction, aligned=aligned, low_sample=stats["count"] < CONFIDENCE_MIN_SAMPLE)
+            stats.update(direction=direction, aligned=aligned,
+                         low_sample=stats["count"] < CONFIDENCE_MIN_SAMPLE,
+                         tier=confidence_tier(stats["count"]))
             by_setup.append(stats)
     # Most-tested setups first - what you actually have real evidence on.
     by_setup.sort(key=lambda s: s["count"], reverse=True)
@@ -231,8 +254,10 @@ def get_confidence_stats():
             continue  # this factor never had a reading in any resolved trade yet
         true_stats = _stats(true_group)
         false_stats = _stats(false_group)
-        true_stats.update(low_sample=true_stats["count"] < CONFIDENCE_MIN_SAMPLE)
-        false_stats.update(low_sample=false_stats["count"] < CONFIDENCE_MIN_SAMPLE)
+        true_stats.update(low_sample=true_stats["count"] < CONFIDENCE_MIN_SAMPLE,
+                          tier=confidence_tier(true_stats["count"]))
+        false_stats.update(low_sample=false_stats["count"] < CONFIDENCE_MIN_SAMPLE,
+                           tier=confidence_tier(false_stats["count"]))
         by_factor.append({"key": key, "label": label, "true": true_stats, "false": false_stats})
 
     return {"by_setup": by_setup, "by_factor": by_factor, "min_sample": CONFIDENCE_MIN_SAMPLE}
@@ -254,7 +279,7 @@ def get_setup_confidence(direction, aligned):
     if len(group) < CONFIDENCE_MIN_SAMPLE:
         return None
     stats = _stats(group)
-    stats.update(direction=direction, aligned=aligned)
+    stats.update(direction=direction, aligned=aligned, tier=confidence_tier(len(group)))
     return stats
 
 

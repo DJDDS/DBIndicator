@@ -993,8 +993,8 @@
             {% endif %}
             {% if r.journal_confidence %}
             <span class="{{ 'bull' if r.journal_confidence.win_rate_pct >= 50 else 'bear' }}" style="font-size:11px; margin-left:3px;"
-                  title="Your own Signal Journal: {{ r.direction }} + {{ r.aligned }}/4 aligned has resolved {{ r.journal_confidence.count }} paper trades at a {{ r.journal_confidence.win_rate_pct }}% win rate ({{ '{:+.2f}'.format(r.journal_confidence.avg_return_pct) }}% avg return) so far - realized history, not a guarantee. See /journal for the full breakdown.">
-              📓{{ r.journal_confidence.win_rate_pct }}%
+                  title="Your own Signal Journal: {{ r.direction }} + {{ r.aligned }}/4 aligned has resolved {{ r.journal_confidence.count }} paper trades at a {{ r.journal_confidence.win_rate_pct }}% win rate ({{ '{:+.2f}'.format(r.journal_confidence.avg_return_pct) }}% avg return) so far - realized history, not a guarantee. Sample is {{ r.journal_confidence.tier }} (n={{ r.journal_confidence.count }}): under 20 trades a win rate's confidence interval is too wide to act on, 50 is informative, 100+ is reasonably tight. See /journal for the full breakdown.">
+              📓{{ r.journal_confidence.win_rate_pct }}%<span style="color:var(--dim);font-size:9.5px;">&nbsp;n={{ r.journal_confidence.count }}</span>
             </span>
             {% endif %}
           </td>

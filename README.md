@@ -1,8 +1,17 @@
 # Scanner — Kite-connected web dashboard
 
-This runs your RSI + MACD + CMF + Relative Volume confluence Scanner against live
-Zerodha data for NSE F&O stocks and shows current signals, live charts,
-and an AI-generated summary on a simple web page you can open any time.
+This runs an Open-Interest-led screener for NSE F&O stocks against live
+Zerodha data, and shows a short ranked list of names, live charts, and an
+AI-generated summary on a simple web page you can open any time.
+
+**The screen is built around OI, not around indicators.** A name only
+reaches the Shortlist when the price read AND the futures positioning read
+agree. That is the whole design: OI is the one input here that is
+independent of price and volume — it counts contracts actually open, so it
+only rises when someone opens a NEW position — and requiring a second,
+independent witness is what turns a long list into a short one. Most days
+the Shortlist has a handful of names. Some days it is empty, and that is a
+result rather than a fault.
 It needs to run continuously on a server (not your own laptop that goes
 to sleep) — see Part 2 for how to get one.
 
@@ -14,6 +23,10 @@ button, sign in with your Zerodha password + 2FA (~30 seconds), and it
 runs on its own for the rest of the day.
 
 ## What's in this version
+
+The short version: **OI moved from a side panel into the signal engine.**
+It now gates what appears, rather than decorating what the indicators had
+already decided. See *How a name reaches the Shortlist* below.
 
 - **Timeframes are pinned per surface**, not chosen from a dropdown — the
   watchlist runs on **daily**, the intraday panel on **15-min against the
@@ -69,42 +82,6 @@ Both channels are deduplicated per candle — you get exactly one alert
 per fresh signal on its closing candle, not one every scan interval
 while it stays the most recent signal.
 
-## News (optional)
-
-Attaches recent headlines to any **Confirmed** row and fires the same
-Telegram/in-page alert as a fresh signal the moment a genuinely new
-article shows up for one of those symbols. Off entirely unless you set
-it up — no news source is built in by default.
-
-Headlines get their own **News card** on the dashboard, listing every
-recent headline across your currently-Confirmed symbols with its source
-and time. It started as a per-row table column, but since headlines are
-only fetched for Confirmed rows that column mostly rendered an em-dash —
-one card in a fixed place reads far better than a mostly-empty column.
-
-1. Sign up free at [marketaux.com](https://www.marketaux.com) (no card
-   needed) and grab your API key from the dashboard.
-2. Put it in `.env` as `MARKETAUX_API_TOKEN`, then restart the app.
-
-That's it — no chat ID or bot setup needed here, it reuses whatever
-Telegram config you already have from the Alerts section above (if any;
-without Telegram configured, news still shows on the dashboard and logs
-to the in-page toast, it just won't push to your phone).
-
-**A real limit worth knowing:** the free Marketaux plan allows 100
-requests/day and returns at most 3 articles per request, *total* —
-shared across however many of your symbols are Confirmed at once, not
-3 each. This app spends that budget deliberately: only Confirmed
-symbols are queried (not the whole watchlist), throttled to roughly
-every 15 minutes and capped well under the daily limit, so on a quiet
-day you'll see news for everything Confirmed, and on a day with many
-signals firing at once you'll see the handful Marketaux itself
-considers most relevant. Upgrading to a paid Marketaux plan (more
-requests/day and more articles/request) is just a higher tier on their
-side — nothing in this app needs to change.
-
----
-
 ## VWAP & Anchored VWAP
 
 Both are plotted on the **Chart** page (teal = session VWAP, dashed
@@ -116,17 +93,22 @@ VWAP price has run, in ATR units, in the row's own direction.
 
 ## Journal-based confidence score
 
-If you've logged paper trades in the Signal Journal (**/journal** page), a small
-**📓** badge now appears next to Confirmed rows showing the REALIZED win
-rate your own resolved trades have had on that exact setup (direction +
-how many of the 4 parameters aligned) — e.g. "📓67%" means your own
-Bullish/3-of-4 trades have won 67% of the time so far. It only appears
-once at least 5 of your own resolved trades share that setup, so it's
-never a misleading number from 1-2 trades. The **/journal** page itself
-now also has two breakdown tables: win rate by setup, and win rate by
-each optional agreement filter (sector/breadth/candle-pattern/higher-timeframe) — a real, walk-forward answer to "does turning
-this filter on actually help", from your own trading, not a generic
-claim.
+The dashboard can show a badge like **📓67% n=34** — the realized win rate
+of your OWN logged paper trades for that exact setup, with the sample size
+beside it.
+
+The sample size is displayed deliberately. A win rate shown without its `n`
+invites reading three-from-five as an edge. The minimum is **20** resolved
+trades, and the tooltip labels which side of usable a sample sits on:
+
+- **under 20** — interval too wide to act on; no badge is shown at all
+- **20–49** — preliminary
+- **50–99** — usable
+- **100+** — strong
+
+This was previously a single threshold of 5. At n=5 a 60% win rate has a
+95% confidence interval running roughly from 15% to 95% — precise-looking
+and worthless.
 
 ## MACD histogram momentum
 
@@ -161,28 +143,79 @@ Daily also finally has a **weekly** higher-timeframe check. Before this it
 had none at all, which meant the HTF gate silently did nothing on exactly
 the timeframe the watchlist now runs on.
 
-## The four parameters
+## How a name reaches the Shortlist
 
-**RSI · MACD · Chaikin Money Flow · Relative Volume.**
+Five axes, deliberately chosen to be *independent of each other*, scored
+out of 100 (see `app/early_signal.py`):
 
-CMF replaced the old *EMA9 vs Bollinger mid* vote. That one was a plain
-moving-average crossover wearing a Bollinger label — nothing in it read
-the bands at all — and being a third transform of the same closing-price
-series it added little that RSI and MACD didn't already say. Your own
-Auto-Weight run scored it 0.0%, though on only 4 trades, so treat that as
-suggestive rather than evidence; the structural argument is the real one
-(see `NEXT_HORIZON_RESEARCH.md` Finding 1 on correlated votes).
+| Axis | Weight | What it reads |
+|---|---|---|
+| **OI anomaly** | 30 | Is this OI move unusual *for this stock*? |
+| **Volume** | 20 | Is participation still building, or fading? |
+| **Momentum** | 20 | RSI vs its own average, with MACD confirming |
+| **Structure** | 20 | Close location, range expansion, compression |
+| **Relative strength** | 10 | Is it leading NIFTY, or just carried by it? |
 
-The vote is now **2 price reads + 2 volume reads** instead of 3 price + 1
-volume — genuinely more independent evidence behind the same count.
-Bollinger itself didn't leave: the bands still drive the breakout state
-and the band-width coiling read, which is what Bollinger Bands are
-actually built to measure.
+OI and volume together outweigh price momentum 50 to 20. That inversion is
+the point: positioning and participation lead, price confirms.
 
-Defaults are now **4-of-4**, with the entry-location and ATR-floor gates
-**on** — fewer candidates, each of which is early rather than chasing and
-in a stock that actually moves. Loosen on the Settings page if that's too
-tight for you.
+### Why not four separate indicator votes
+
+The previous design counted RSI, MACD, CMF and Relative Volume as four
+independent votes. They were not four. RSI and MACD are both derivatives of
+the same price series and agree with each other most of the time by
+construction; CMF and Relative Volume both come from the same volume
+series. "4 of 4 agree" was closer to "two things agree, twice."
+
+The arithmetic made it worse. `dir_match_count = max(n, 3 - n)` is never
+below 2 for n in 0..3, so **every** symbol scored at least 2 of 4 and landed
+in a tier. The old 2-of-4 / 3-of-4 / 4-of-4 lists were not a filter at all —
+they partitioned the entire watchlist while looking like a funnel.
+
+RSI and MACD are now one momentum axis, not two. The tier lists are gone.
+
+### Why a z-score rather than a percentage
+
+A raw OI percentage means nothing across symbols. A 3% OI jump in a name
+that routinely moves ±5% a day is noise; the same 3% in one that moves
+±0.4% is a five-sigma event. Absolute thresholds are unreachable for large
+caps and trivially exceeded by illiquid ones — which is why the old OI panel
+read "Stable" for nearly everything.
+
+Every reading is normalised against **the symbol's own history**, so the
+only question asked is: *is this unusual for this stock?*
+
+### No warm-up
+
+Baselines come from Kite's historical OI (`historical_data(..., oi=True)`),
+so they exist the moment the app starts. The old panel sampled OI live into
+a buffer and was structurally blind from 09:15 until roughly 10:15 — exactly
+the window where a day's trend gets set — and any redeploy re-imposed that
+blackout mid-session.
+
+Each timeframe gets its own baseline (`scanner.OI_HISTORY_SPEC`). A daily
+z-score is a *constant* within a session, so reusing it for 15-minute bars
+would apply one identical verdict to every bar all day — a bias, not a
+signal. Intraday baselines exclude overnight transitions, because OI
+genuinely re-forms between sessions and leaving those jumps in makes the
+standard deviation so wide that real intraday builds stop registering.
+
+Consequence worth knowing: **intraday OI is blank at the open** until the
+session's second bar closes. There is genuinely no within-session OI change
+before then.
+
+### Missing data never flatters a row
+
+A component with no reading earns nothing *and* removes its own weight from
+the denominator; scores are `earned / available`. A row without an OI
+baseline never reaches the Shortlist at all.
+
+This inverts an earlier bug worth recording: scoring panels used to give a
+"neutral middling" value to any missing component, so a row with almost no
+measurable data scored in the low 50s while a fully-measured but genuinely
+weak one scored 31. The emptiest rows floated to the top of a panel whose
+only job was ranking. Absence can now disqualify a row. It can never raise
+its rank.
 
 ## Backtest costs and holdout (research Finding 2)
 
@@ -371,6 +404,15 @@ and both are replayable on the Backtest page so you can measure whether
 turning them on actually helps.
 
 ## What was removed
+
+**News (removed entirely).** The free Marketaux tier returns 3 articles per
+request, which across a whole F&O watchlist is not enough to be timely or
+complete — it was decoration that looked like information. The card, the
+module wiring, the alert route and the toast poller are all gone.
+
+**The 2-of-4 / 3-of-4 / 4-of-4 tier lists.** They never filtered anything;
+see *How a name reaches the Shortlist*.
+
 
 Two orphaned parameters were deleted rather than left half-alive, both
 long-flagged in the analysis docs:
@@ -561,8 +603,6 @@ frequency. `.env` only holds secrets and one-time setup values:
 `KITE_API_KEY`, `KITE_API_SECRET`, `REDIRECT_URL`, `DASHBOARD_PASSWORD`,
 the optional `ANTHROPIC_API_KEY` for AI Insights, `TELEGRAM_BOT_TOKEN`/
 `TELEGRAM_CHAT_ID` for Telegram alerts, and the optional
-`MARKETAUX_API_TOKEN` for the News feature (see Alerts/News above for
-both). Settings changes
 are saved to `scanner_settings.json` next to the app, so they survive a
 restart too.
 
