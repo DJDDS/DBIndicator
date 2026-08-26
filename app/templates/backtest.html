@@ -598,9 +598,23 @@ function renderAblation(result) {
       return;
     }
 
-    const cov = (r.reading_coverage !== null && r.reading_coverage !== undefined && r.reading_coverage < 0.95)
-      ? ` <span class="hint" title="This gate had a usable reading on only ${Math.round(r.reading_coverage * 100)}% of signal bars. On the rest it passed rows through untested, so its effect is understated.">${Math.round(r.reading_coverage * 100)}% read</span>`
-      : '';
+    // Two numbers, because they mean opposite things. Low DATA coverage is a
+    // broken gate. Low VERDICT coverage with good data is a working gate
+    // that is simply strict - a finding, not a fault.
+    let cov = '';
+    if (r.data_coverage !== null && r.data_coverage !== undefined) {
+      const dp = Math.round(r.data_coverage * 100);
+      const vp = Math.round((r.reading_coverage || 0) * 100);
+      if (dp < 50) {
+        cov = ` <span class="hint" style="color:var(--amber);" title="The reading this gate needs was missing on ${100 - dp}% of signal bars, so it passed those through untested. This is a data problem, not a result.">data on only ${dp}%</span>`;
+      } else if (vp < 10) {
+        cov = ` <span class="hint" title="The reading existed on ${dp}% of signal bars but was decisive on only ${vp}%. The gate is working and simply very strict - it rarely has an opinion, so it rarely changes anything.">decisive on ${vp}% of ${dp}%</span>`;
+      } else if (vp < 95) {
+        cov = ` <span class="hint" title="Decisive on ${vp}% of signal bars (data present on ${dp}%).">decisive ${vp}%</span>`;
+      }
+    } else if (r.reading_coverage !== null && r.reading_coverage !== undefined && r.reading_coverage < 0.95) {
+      cov = ` <span class="hint">${Math.round(r.reading_coverage * 100)}% read</span>`;
+    }
 
     tr.innerHTML = `
       <td>${r.label}${cov}</td>

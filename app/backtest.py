@@ -727,7 +727,17 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
         # four-vote screen and said nothing about the engine in production.
         z = _oi_zscore_series(oi_history, index, intraday=oi_intraday)
         oi_ok = _oi_agrees_series(z, series["df"]["close"].reindex(index), direction)
-        _record(diag, "require_oi_agreement", oi_ok[has_signal].notna().sum(), has_signal.sum())
+        # TWO different questions, and reporting only the second made a rare
+        # gate indistinguishable from a broken one:
+        #   data     - did we have an OI baseline for this bar at all?
+        #   verdict  - did that baseline produce a decisive agree/disagree?
+        # A gate with data on 90% of bars and a verdict on 1% is WORKING and
+        # simply strict. A gate with data on 1% is still broken. Both showed
+        # "1% read" before.
+        _record(diag, "require_oi_agreement",
+                oi_ok[has_signal].notna().sum(), has_signal.sum())
+        _record(diag, "require_oi_agreement__data",
+                z[has_signal].notna().sum(), has_signal.sum())
         has_signal = has_signal & oi_ok.fillna(1.0).astype(bool)
 
     if require_candle_pattern:
@@ -2043,8 +2053,12 @@ def _ablation_row(label, gate_id, summary, baseline, ref_horizon, diagnostics=No
     ar, base_ar = stats.get("avg_return_pct"), base.get("avg_return_pct")
     n, base_n = stats.get("trade_count", 0), base.get("trade_count", 0)
     fired, coverage = _gate_fired(diagnostics, gate_id, None)
+    _, data_cov = _gate_fired(diagnostics, gate_id + "__data", None)
     return {
         "gate": gate_id,
+        # Present only for gates that report it. data_coverage answers "did
+        # the reading exist"; reading_coverage answers "was it decisive".
+        "data_coverage": None if data_cov is None else round(data_cov, 3),
         # None = this gate does not report coverage yet. False = it reports
         # coverage and had none, so its row is not a result.
         "fired": fired,
