@@ -32,6 +32,41 @@ load_dotenv()
 # GitHub-sourced services; they are read defensively because a local run has
 # none of them and must not crash for the lack.
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# WHAT THIS SCREENER IS TRYING TO DO, AS A NUMBER.
+#
+# Written down after a week of building, because its absence was the real
+# problem. "Catch big moves beforehand" cannot be tested: is a big move 3%?
+# One ATR? Over one day or five? Without a threshold there is no definition
+# of success, so every losing day reads as proof of failure and every
+# winning day as proof of edge - and no amount of tuning can settle it.
+#
+# The definition:
+#
+#   A signal SUCCEEDS if the stock reaches +1.0 ATR in the signal's own
+#   direction BEFORE it reaches -0.75 ATR against it, within 5 trading days.
+#
+#   The screener is WORTH TRADING if that happens in more than 45% of cases
+#   across at least 100 signals, net of costs.
+#
+# Why 45% and not 50%: at 1.0 ATR reward against 0.75 ATR risk, breakeven is
+# 42.9%. 45% is a real but modest edge, which is the honest target - a simple
+# screen that reliably found big moves before they happened would have been
+# arbitraged away long ago. The goal is a small repeatable edge worth sizing
+# against, not prescience.
+#
+# Why 100 signals: below that the confidence interval is too wide to act on.
+# At n=30 a 50% rate spans roughly 32%-68%.
+#
+# These constants are read by the backtest so the target is applied
+# consistently rather than re-remembered each time.
+# --------------------------------------------------------------------------
+SUCCESS_TARGET_ATR = 1.0        # move in the signal's favour that counts as a win
+SUCCESS_STOP_ATR = 0.75         # move against it that counts as a loss
+SUCCESS_HORIZON_BARS = 5        # bars allowed to get there
+SUCCESS_MIN_WIN_RATE = 45.0     # % needed to call the screen worth trading
+SUCCESS_MIN_SAMPLE = 100        # signals needed before the rate means anything
+
 GIT_COMMIT = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "")[:7] or "local"
 GIT_MESSAGE = os.getenv("RAILWAY_GIT_COMMIT_MESSAGE", "") or "not set"
 GIT_BRANCH = os.getenv("RAILWAY_GIT_BRANCH", "") or "-"

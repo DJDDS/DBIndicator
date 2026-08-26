@@ -76,38 +76,12 @@
   .qs-apply-btn { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 5px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
   .qs-note { margin: 10px 0 0; font-size: 11px; color: var(--dim); }
 
-  /* Signals row: BTST/STBT + Matching Now, side by side, compact */
-  .signals-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 14px; margin-bottom: 14px; align-items: start; }
-  @media (max-width: 900px) { .signals-grid { grid-template-columns: 1fr; } }
   .hc-card { border-color: #3a2f0f; }
   .hc-card h2 { color: var(--amber); }
-  /* Intraday shortlist strip - OI-gated names on THIS timeframe's own OI */
-  .mtf-sl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 4px;
-            padding: 8px 10px; border-radius: 8px; background: var(--panel2);
-            border: 1px solid var(--accent); }
-  .mtf-sl-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
-                  color: var(--accent); margin-right: 4px; }
-  .mtf-sl-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 8px;
-                 border-radius: 5px; background: var(--panel); text-decoration: none; color: inherit;
-                 font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
-  .mtf-sl-chip:hover { border-color: var(--accent); }
-  .mtf-sl-chip.bull { color: var(--green); }
-  .mtf-sl-chip.bear { color: var(--red); }
-  .mtf-sl-score { font-family: var(--mono); font-weight: 700; font-size: 12.5px; }
-  .mtf-sl-oi { font-family: var(--mono); font-size: 10px; color: var(--muted); }
-  .mtf-sl-none { font-size: 11.5px; line-height: 1.6; color: var(--muted); margin: 10px 0 4px;
-                 padding: 8px 10px; border-radius: 8px; background: var(--panel2);
-                 border: 1px dashed var(--border); }
-  .mtf-sl-oi { font-family: var(--mono); font-size: 10px; color: var(--muted); }
   /* The wide confluence lists are collapsed by default. They are the OLD
      screen's output - every row confirmed on price alone - and on a busy
      day that is 60-70 chips, which buries the handful of names that also
      have OI behind them. Available on demand, not the default view. */
-  .mn-all { margin-top: 10px; }
-  .mn-all > summary { cursor: pointer; font-size: 11.5px; font-weight: 700; color: var(--muted);
-                      padding: 6px 2px; list-style: revert; }
-  .mn-all > summary:hover { color: var(--text); }
-  .mn-all-hint { font-weight: 400; color: var(--dim); }
   /* Shortlist - the headline panel. Deliberately allowed to be empty. */
   .sl-card { border-color: var(--accent); }
   .sl-list { display: flex; flex-direction: column; gap: 6px; }
@@ -141,10 +115,6 @@
   .sl-cov { color: var(--dim); }
   .sl-empty { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 4px 0 0; }
   .sl-empty strong { color: var(--text); }
-  .eq-bar-none { opacity: 0.28; }
-  /* Best Entries panel - ranks already-confirmed rows by entry quality */
-  .eq-card { border-color: #1e3a5f; margin-bottom: 14px; }
-  .eq-card h2 { color: var(--accent); }
   .btst-list { display: flex; flex-direction: column; gap: 10px; }
   .btst-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel2); }
   .btst-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -165,84 +135,16 @@
   .why-unknown .why-mark { color: var(--dim); }
   .btst-note { margin: 12px 0 0; font-size: 11px; color: var(--dim); line-height: 1.6; }
   .btst-note strong { color: var(--amber); }
-  .eq-list { display: flex; flex-direction: column; gap: 2px; }
-  .eq-row { display: grid; grid-template-columns: 42px minmax(120px, 1.1fr) 96px minmax(0, 1.4fr) 54px;
-            gap: 12px; align-items: center; padding: 8px 10px; border-radius: 6px;
-            color: inherit; border: 1px solid transparent; cursor: pointer; }
-  .eq-row:hover { background: var(--panel2); border-color: var(--border); }
-  .eq-score { font-size: 17px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
-  .eq-row.bull .eq-score { color: var(--green); }
-  .eq-row.bear .eq-score { color: var(--red); }
-  .eq-sym { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-  .eq-name { font-size: 13px; font-weight: 600; text-decoration: none; }
-  .eq-name:hover { text-decoration: underline; }
-  .eq-log { font-size: 11px; color: var(--accent); text-decoration: none; text-align: right;
-            padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; white-space: nowrap; }
-  .eq-log:hover { background: var(--accent-bg); border-color: var(--accent); }
-  .eq-row.bull .eq-name { color: var(--green); }
-  .eq-row.bear .eq-name { color: var(--red); }
-  .eq-close { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .eq-bars { display: flex; gap: 3px; align-items: flex-end; height: 20px; }
-  .eq-bar { width: 100%; min-width: 8px; height: 100%; background: #1a2029; border-radius: 2px;
-            position: relative; overflow: hidden; }
-  .eq-bar::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: var(--fill);
-                   background: var(--accent); opacity: 0.75; }
-  .eq-tags { display: flex; gap: 8px; flex-wrap: wrap; font-size: 10.5px; align-items: center; }
-  .eq-tags > span { white-space: nowrap; }
-  .eq-good { color: var(--green); }
-  .eq-warn { color: var(--amber); }
-  .eq-dim { color: var(--dim); }
-  .eq-coil { color: var(--accent); }
   /* Timeframe-meaning advisory + the badges it applies to (config.BTST_TIMEFRAMES) */
-  .tf-advisory { background: rgba(240,185,11,0.07); border: 1px solid rgba(240,185,11,0.28);
-                 border-radius: 6px; padding: 9px 12px; margin-bottom: 12px;
-                 font-size: 11.5px; line-height: 1.65; color: var(--muted); }
-  .tf-advisory strong { color: var(--amber); }
-  .tf-advisory em { color: var(--text); font-style: normal; font-weight: 600; }
   .tf-offmeaning { opacity: 0.45; text-decoration: underline dotted var(--dim); text-underline-offset: 2px; }
-  .eq-note { margin: 12px 0 0; font-size: 11px; color: var(--dim); line-height: 1.6; }
-  .eq-note strong { color: var(--muted); }
   @media (max-width: 720px) {
-    .eq-row { grid-template-columns: 38px minmax(0, 1fr) 54px; }
-    .eq-bars, .eq-tags { grid-column: 2; }
   }
-  .match-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); gap: 6px; max-height: 260px; overflow-y: auto; }
-  .match-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 5px 9px; border-radius: 6px; text-decoration: none; }
-  .match-chip.bull { background: var(--green-bg); }
-  .match-chip.bear { background: var(--red-bg); }
-  .match-chip.bull:hover { filter: brightness(1.25); }
-  .match-chip.bear:hover { filter: brightness(1.25); }
-  .match-chip.moderate { opacity: 0.55; }
   .mc-top { font-size: 12px; font-weight: 700; font-family: var(--mono); white-space: nowrap; }
-  .match-chip.bull .mc-top { color: var(--green); }
-  .match-chip.bear .mc-top { color: var(--red); }
-  .match-chip-close { font-weight: 500; opacity: 0.8; }
   .mc-sub { font-size: 10.5px; font-weight: 600; font-family: var(--sans); color: var(--muted); white-space: normal; line-height: 1.4; }
-  .confirm-badge { display: inline-block; font-size: 10px; font-weight: 800; color: var(--amber); }
-  .mn-empty, .hc-empty { margin: 0; font-size: 12px; color: var(--dim); }
-
-  .mn-header-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-  .mn-counts { display: flex; gap: 12px; font-size: 12px; font-weight: 700; font-family: var(--mono); }
-  .mn-counts .bull { color: var(--green); }
-  .mn-counts .bear { color: var(--red); }
-  .mn-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 640px) { .mn-columns { grid-template-columns: 1fr; } }
-  .mn-col-title { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-  .mn-col-title.bull { color: var(--green); }
-  .mn-col-title.bear { color: var(--red); }
-  .mn-chip-scroll { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 5px; align-content: flex-start; max-height: 240px; overflow-y: auto; padding-right: 4px; }
-
   /* Multi-Timeframe Signals: 15-min/60-min/4-hour, always visible - each
      reuses the exact same match-chip/mn-* classes above at a shorter
      scroll height, stacked with a divider instead of side-by-side, since
      there are three of these instead of one. */
-  .mtf-block + .mtf-block { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
-  .mtf-block h3 { margin: 0; font-size: 12.5px; color: var(--text); font-weight: 700; }
-  .mtf-block .sub { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 6px; }
-  .mtf-block .mn-chip-scroll { max-height: 140px; }
-  .mtf-market { font-weight: 400; color: var(--muted); font-family: var(--sans); margin-right: 4px; }
-
-
   /* Master table */
   .table-card { padding: 0; overflow: hidden; }
   .table-card-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -322,8 +224,7 @@
   .build-line { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
                 font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
   .build-line code { color: var(--muted); }
-  .footer-note { font-size: 11px; color: var(--dim); }
-</style>
+  .footer-note { font-size: 11px; color: var(--dim); }</style>
 </head>
 <body>
 <div id="toast-wrap"></div>
@@ -488,120 +389,8 @@
     </div>
   </div>
 
-  {% macro mtf_block(label, entry) %}
-    {% set ns3 = namespace(bull=0, bear=0) %}
-    {% for r in entry.results %}
-      {% if not r.error and r.aligned is defined and r.aligned >= min_required and r.signal_confirmed %}
-        {% if r.direction == 'Bullish' %}{% set ns3.bull = ns3.bull + 1 %}{% else %}{% set ns3.bear = ns3.bear + 1 %}{% endif %}
-      {% endif %}
-    {% endfor %}
-    {% set ns6 = namespace(gated=0) %}
-    {% for r in entry.results %}
-      {% if not r.error and r.aligned is defined and r.aligned >= min_required and not r.signal_confirmed %}
-        {% set ns6.gated = ns6.gated + 1 %}
-      {% endif %}
-    {% endfor %}
-    <div class="mtf-block">
-      <div class="mn-header-row">
-        <h3>{{ label }} <span class="sub">{{ entry.last_scan or "waiting for first scan..." }}</span></h3>
-        <div class="mn-counts">
-          <span class="mtf-market" title="NIFTY 50's own confluence direction on this timeframe - the Index/Market-trend filter (Settings page) can require your signals to agree with this before counting as Confirmed.">
-            {% if entry.index_direction %}
-            Market: <span class="{{ 'bull' if entry.index_direction == 'Bullish' else 'bear' }}">{{ '▲' if entry.index_direction == 'Bullish' else '▼' }}{% if entry.index_chg_pct is not none %} ({{ '{:+.2f}'.format(entry.index_chg_pct) }}%){% endif %}</span>{% if require_index_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
-            {% else %}
-            Market: —
-            {% endif %}
-          </span>
-          <span class="bull">▲ {{ ns3.bull }}</span>
-          <span class="bear">▼ {{ ns3.bear }}</span>
-          {% if ns6.gated %}
-          <span class="tb-status" title="These rows met your Aligned bar but were removed by the filters you have switched on (entry location, ATR floor, and any others). Before this the panel listed them anyway, so switching a filter on changed nothing here.">
-            +{{ ns6.gated }} filtered out
-          </span>
-          {% endif %}
-        </div>
-      </div>
-      {% set mtf_sl = entry.results | selectattr('shortlist_rank', 'defined')
-                                     | selectattr('shortlist_rank', 'ne', None)
-                                     | sort(attribute='shortlist_rank') | list %}
-      {% if mtf_sl %}
-      <div class="mtf-sl">
-        <span class="mtf-sl-label">Shortlist</span>
-        {% for r in mtf_sl %}
-        <a class="mtf-sl-chip {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" href="/chart/{{ r.symbol }}"
-           title="{{ r.early_score }}/100{% if r.early_band %} ({{ r.early_band }} - {{ r.early_band_note }}){% endif %} &middot; {{ r.oi_structure_early }}{% if r.oi_z is not none %} ({{ '%.1f'|format(r.oi_z|abs) }}&sigma; on {{ label }} OI){% endif %}&#10;{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">
-          <span class="mtf-sl-score">{{ r.early_score }}</span>
-          {{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}
-          {% if r.oi_z is not none %}<span class="mtf-sl-oi">{{ '%.1f'|format(r.oi_z|abs) }}&sigma;</span>{% endif %}
-        </a>
-        {% endfor %}
-      </div>
-      {% elif entry.oi_baseline %}
-      {% set ob = entry.oi_baseline %}
-      <p class="mtf-sl-none">
-        {% if ob.with_oi == 0 %}
-        <strong>OI baseline still building for {{ label }}.</strong> None of {{ ob.scanned }} scanned symbols has
-        one yet, so nothing can reach this shortlist regardless of how the price read looks. It fetches once per
-        trading day and is shared with the other timeframes, so give it a few minutes after a restart.
-        {% elif ob.unusual == 0 %}
-        <strong>Baselines are in ({{ ob.with_oi }} of {{ ob.scanned }}), and no {{ label }} OI move is unusual
-        right now.</strong> That is a real reading, not a gap: positioning is behaving normally across the board
-        on this timeframe, so nothing has an independent witness to back a price signal.
-        {% else %}
-        <strong>{{ ob.unusual }} symbol{{ 's' if ob.unusual != 1 }} showing unusual {{ label }} OI, but none
-        cleared the bar.</strong> Either the OI pointed against the price read, or the overall score fell short
-        of {{ min_early_score | round | int }}. {{ ob.confirmed }} row{{ 's' if ob.confirmed != 1 }} still
-        confirmed on price alone below.
-        {% endif %}
-      </p>
-      {% endif %}
-      {% if entry.last_error %}
-      <p class="mn-empty" style="color:var(--red);">Last scan hit an error: {{ entry.last_error }}</p>
-      {% elif ns3.bull == 0 and ns3.bear == 0 %}
-      <p class="mn-empty">Nothing matching right now.</p>
-      {% else %}
-      <details class="mn-all">
-        <summary>Everything confirmed on price alone &mdash; {{ ns3.bull + ns3.bear }} name{{ 's' if (ns3.bull + ns3.bear) != 1 }}
-          <span class="mn-all-hint">(the Shortlist above is the subset that also has OI backing it)</span>
-        </summary>
-      <div class="mn-columns">
-        <div>
-          <h4 class="mn-col-title bull">▲ Bullish ({{ ns3.bull }})</h4>
-          <div class="mn-chip-scroll">
-            {% for r in entry.results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-              {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bullish' %}
-              <a class="match-chip bull {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" href="/chart/{{ r.symbol }}">
-                <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
-              </a>
-              {% endif %}
-            {% endfor %}
-            {% if ns3.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-          </div>
-        </div>
-        <div>
-          <h4 class="mn-col-title bear">▼ Bearish ({{ ns3.bear }})</h4>
-          <div class="mn-chip-scroll">
-            {% for r in entry.results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-              {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bearish' %}
-              <a class="match-chip bear {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" href="/chart/{{ r.symbol }}">
-                <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
-              </a>
-              {% endif %}
-            {% endfor %}
-            {% if ns3.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-          </div>
-        </div>
-      </div>
-      </details>
-      {% endif %}
-    </div>
-  {% endmacro %}
+  
 
-  <div class="card" id="multi-tf-panel">
-    <h2>⏱ Intraday Panel <span class="sub">15-minute entries cross-checked against the 4-hour trend - separate from the daily watchlist below</span></h2>
-    {{ mtf_block("15-Minute", multi_tf["15minute"]) }}
-    {{ mtf_block("4-Hour", multi_tf["4hour"]) }}
-  </div>
 
   <div class="card sl-card">
     <h2>🎯 Shortlist <span class="sub">names where the price read AND the positioning read agree - this list is meant to be short, and empty is a valid answer</span></h2>
@@ -652,64 +441,6 @@
     </div>
   </div>
 
-  <div class="card eq-card">
-    <h2>⚡ Best Entries <span class="sub">confirmed signals, ranked by how good the ENTRY looks right now - not by how strong the signal is</span></h2>
-    {% if not is_btst_timeframe %}
-    <div class="tf-advisory">
-      <strong>Scanning {{ timeframe_label }} bars.</strong> The BTST reads below measure that bar, not the trading day &mdash;
-      <em>Close@</em> is "closed strong in the last {{ timeframe_label }} bar" and <em>NR7</em> is "narrowest of the last 7
-      {{ timeframe_label }} bars", which is intraday micro-structure rather than the buy-today-sell-tomorrow conviction
-      those signals were added for. The maths is right either way; only the meaning shifts. Switch
-      <strong>Timeframe</strong> to <strong>day</strong> for the BTST reading. (Ext / ATR / 🎯 / 💥 are timeframe-relative
-      by construction and stay valid here; Deliv is always a daily NSE figure regardless.)
-    </div>
-    {% endif %}
-    <div id="eq-body">
-    {% set eq_rows = results | selectattr('entry_quality', 'defined') | selectattr('entry_quality', 'ne', None)
-                              | sort(attribute='entry_quality', reverse=true) %}
-    {% if eq_rows %}
-    <div class="eq-list">
-      {% for r in eq_rows[:entry_quality_top_n] %}
-      <div class="eq-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" onclick="window.location='/chart/{{ r.symbol }}'">
-        <span class="eq-score" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">{{ r.entry_quality }}</span>
-        <span class="eq-sym">
-          <a class="eq-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</a>
-          <span class="eq-close">{{ r.close }}</span>
-        </span>
-        <span class="eq-bars" title="{% for p in r.entry_quality_parts %}{{ p.label }}: {{ p.points }}/{{ p.max }} - {{ p.note }}&#10;{% endfor %}">
-          {% for p in r.entry_quality_parts %}
-          {# An unmeasured component renders as an explicitly empty, dimmed
-             bar rather than a half-full one. The old panel gave a "no
-             reading" a middling score AND a half-full bar, so absence
-             looked identical to mediocrity at a glance. #}
-          <span class="eq-bar{{ ' eq-bar-none' if p.points is none else '' }}"
-                style="--fill: {{ 0 if p.points is none else (p.points / p.max * 100) | round }}%;"></span>
-          {% endfor %}
-        </span>
-        <span class="eq-tags">
-          {% if r.entry_extension_atr is not none %}<span class="{{ 'eq-warn' if r.entry_is_extended else 'eq-good' }}">Ext {{ r.entry_extension_atr }}R</span>{% endif %}
-          {% if r.vol_contracting %}<span class="eq-coil">🎯</span>{% endif %}
-          {% if r.big_candle_recent_direction and r.big_candle_recent_direction == r.direction %}<span class="{{ 'bull' if r.direction == 'Bullish' else 'bear' }}">💥{% if r.big_candle_continuation %}✓{% endif %}</span>{% endif %}
-          {% if r.atr_pct is not none %}<span class="{{ 'eq-warn' if r.atr_floor_agrees == false else 'eq-dim' }}">ATR {{ r.atr_pct }}%</span>{% endif %}
-        </span>
-        <a class="eq-log journal-log-link" href="#" data-symbol="{{ r.symbol }}"
-           onclick="event.stopPropagation(); logPaperTrade(this); return false;"
-           title="Log {{ r.symbol }} as a {{ r.direction }} paper trade in the Signal Journal - entry, stop and target are taken from this row server-side, and the outcome resolves automatically as new candles close. This is what eventually tells you whether these rankings mean anything.">Log</a>
-      </div>
-      {% endfor %}
-    </div>
-    <p class="eq-note">
-      Score is a transparent 0-100 sum of six reads already on each row - entry location (30), big candle (25),
-      volatility (15), coiling (15), strong close (10), delivery (5). Hover any row for the full breakdown.
-      These weights are <strong>reasoned, not backtested</strong>: they encode the view that entry location matters
-      most and that a stock too quiet to move is a poor entry however many indicators agree. Use it to order your
-      shortlist, not as a measured edge.
-    </p>
-    {% else %}
-    <p class="mn-empty">No confirmed signals to rank right now - this panel only ever re-orders rows that already earned a ✓.</p>
-    {% endif %}
-    </div>
-  </div>
 
 
   <div class="signals-grid">
@@ -1116,9 +847,9 @@
     <span style="color:var(--amber);">⚠</span> means the move is already extended beyond your threshold (you'd be
     chasing rather than catching it early). <strong>ATR N%</strong> is this stock's ATR as a percentage of its own
     price - a stock below your configured floor is too quiet right now to plausibly produce a big move no matter
-    how many parameters agree. Both have opt-in gates on the Settings page. The <strong>⚡ Best Entries</strong> card at the top ranks those same
-    confirmed rows by how good the ENTRY looks (entry location, big candle, volatility, coiling, strong close,
-    delivery) rather than by how strong the signal is - hover any row there for the full score breakdown.
+    how many parameters agree. Both have opt-in gates on the Settings page.
+    The <strong>🎯 Shortlist</strong> at the top is the only list meant to be acted on: it needs the price read
+    and an unusual OI move to agree, and it is allowed to be empty.
     Signals are directional input, not investment advice.
     <div class="build-line">
       Running <code>{{ git_commit }}</code>{% if git_message and git_message != 'not set' %} &middot; {{ git_message }}{% endif %}
@@ -1394,10 +1125,10 @@
   makeSortable();
 
   var DASHBOARD_REFRESH_MS = 20000;
-  // 'eq-body' (Best Entries) is synced like every other live block - without
-  // it the panel would silently freeze at whatever the last full page load
-  // showed, which is worse than useless for a ranking meant to be read live.
-  var SYNCED_IDS = ['sl-body', 'last-scan-text', 'last-error-wrap', 'eq-body', 'btst-body', 'hc-body', 'mn-counts', 'mn-lists', 'main-tbody', 'multi-tf-panel'];
+  // Every live block re-syncs on this tick. A panel left out would silently
+  // freeze at whatever the last full page load showed, which is worse than
+  // useless for a list meant to be read live.
+  var SYNCED_IDS = ['sl-body', 'last-scan-text', 'last-error-wrap', 'btst-body', 'main-tbody'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {
