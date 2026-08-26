@@ -319,6 +319,9 @@
   .insights-body { font-size: 12.5px; line-height: 1.6; color: var(--text); white-space: pre-line; font-family: var(--sans); }
   .insights-body.muted, .insights-body.loading { color: var(--muted); font-style: italic; }
   .ai-badge { display: inline-block; background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+  .build-line { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+                font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+  .build-line code { color: var(--muted); }
   .footer-note { font-size: 11px; color: var(--dim); }
 </style>
 </head>
@@ -1117,6 +1120,12 @@
     confirmed rows by how good the ENTRY looks (entry location, big candle, volatility, coiling, strong close,
     delivery) rather than by how strong the signal is - hover any row there for the full score breakdown.
     Signals are directional input, not investment advice.
+    <div class="build-line">
+      Running <code>{{ git_commit }}</code>{% if git_message and git_message != 'not set' %} &middot; {{ git_message }}{% endif %}
+      &middot; started {{ started_at }}.
+      <span class="hint">If this commit isn't the one you just pushed, the deploy didn't happen &mdash; which looks
+      exactly like a feature that was never built.</span>
+    </div>
   </div>
 </div>
 <script>

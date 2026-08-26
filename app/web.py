@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 _scanner_started = False
+_STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
 
 def _check_auth(username, password):
@@ -89,6 +90,9 @@ def dashboard():
         min_early_score=settings.MIN_EARLY_SCORE,
         shortlist_max=settings.SHORTLIST_MAX,
         require_oi_agreement=settings.REQUIRE_OI_AGREEMENT,
+        git_commit=config.GIT_COMMIT,
+        git_message=config.GIT_MESSAGE,
+        started_at=_STARTED_AT,
         btst_window=scanner.btst_read_window(),
         btst_now=scanner.now_ist().strftime("%H:%M"),
         btst_alert_time=settings.BTST_ALERT_TIME,

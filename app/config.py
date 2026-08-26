@@ -22,6 +22,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# --------------------------------------------------------------------------
+# What is actually running.
+#
+# Added after a session where neither the owner nor I could tell, from the
+# app itself, which commit was live - so a deploy that silently never
+# happened looked identical to one that did, and we spent an hour chasing a
+# missing feature that had simply never shipped. Railway injects these for
+# GitHub-sourced services; they are read defensively because a local run has
+# none of them and must not crash for the lack.
+# --------------------------------------------------------------------------
+GIT_COMMIT = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "")[:7] or "local"
+GIT_MESSAGE = os.getenv("RAILWAY_GIT_COMMIT_MESSAGE", "") or "not set"
+GIT_BRANCH = os.getenv("RAILWAY_GIT_BRANCH", "") or "-"
+
 KITE_API_KEY = os.getenv("KITE_API_KEY", "")
 KITE_API_SECRET = os.getenv("KITE_API_SECRET", "")
 REDIRECT_URL = os.getenv("REDIRECT_URL", "http://localhost:5000/kite/callback")
