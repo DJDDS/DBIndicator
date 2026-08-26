@@ -1220,6 +1220,187 @@ def _summarize(trades, horizons):
     }
 
 
+# --------------------------------------------------------------------------
+# The overnight (BTST/STBT) test.
+#
+# Nothing else in this file can measure a BTST trade, and that is not a
+# tuning gap - it is a modelling one. Two mismatches, either of which alone
+# makes the number meaningless:
+#
+#   * HORIZON. DEFAULT_HORIZONS is (5, 10, 20) BARS. On daily candles that
+#     is five to twenty trading days. A BTST idea is ONE bar. Every win rate
+#     this app has ever printed for a BTST pick was really a two-to-four
+#     week swing trade wearing its name.
+#
+#   * ENTRY. _compute_trade enters at the NEXT bar's open, which is correct
+#     for avoiding lookahead on an ordinary signal. But a BTST signal is
+#     generated AT the close and acted on AT that close - entering the next
+#     open means you have already missed the overnight move you were trying
+#     to capture, and are measuring tomorrow's day-trade instead.
+#
+# So this models it properly: enter at the SIGNAL BAR's close, exit at the
+# next bar's open and again at the next bar's close. That is the actual
+# trade, and it is the only way to find out whether the premise holds.
+#
+# There is a real reason to doubt that premise. The gate selects for a stock
+# closing at the extreme top of its range on an up day - the single most
+# extended point of the session. Short-horizon REVERSAL is among the more
+# robust findings in equity microstructure: momentum tends to work over
+# months, while over one to five days strong recent returns tend to give
+# back. If that dominates here, "buy what closed strongest, hold overnight"
+# is not a weak edge, it is the wrong sign - and no amount of tightening the
+# other checks would fix it. This function is how we find out instead of
+# arguing about it.
+# --------------------------------------------------------------------------
+
+def overnight_outcomes(df, direction_series, signal_mask, cost_pct=0.0, slippage_pct=0.0):
+    """Enter at the signal bar's CLOSE; exit next open and next close.
+
+    Returns per-exit stats plus the raw per-trade returns, net of costs."""
+    o, c = df["open"], df["close"]
+    nxt_o, nxt_c = o.shift(-1), c.shift(-1)
+    drag = float(cost_pct) + 2.0 * float(slippage_pct)
+
+    long_mask = direction_series.reindex(df.index) == "Bullish"
+    sign = pd.Series(np.where(long_mask, 1.0, -1.0), index=df.index)
+
+    to_open = ((nxt_o / c - 1.0) * 100.0) * sign - drag
+    to_close = ((nxt_c / c - 1.0) * 100.0) * sign - drag
+
+    live = signal_mask.reindex(df.index).fillna(False) & nxt_c.notna()
+    out = {}
+    for label, ser in (("next_open", to_open), ("next_close", to_close)):
+        vals = ser[live].dropna()
+        if vals.empty:
+            out[label] = {"trade_count": 0}
+            continue
+        out[label] = {
+            "trade_count": int(len(vals)),
+            "win_rate_pct": round(float((vals > 0).mean() * 100.0), 1),
+            "avg_return_pct": round(float(vals.mean()), 3),
+            "median_return_pct": round(float(vals.median()), 3),
+            "best_pct": round(float(vals.max()), 2),
+            "worst_pct": round(float(vals.min()), 2),
+        }
+    return out
+
+
+_on_state = {"status": "idle", "result": None, "error": None, "progress": None}
+_on_lock = threading.Lock()
+
+
+def start_overnight_backtest(kite, symbols, **kw):
+    with _on_lock:
+        if _on_state["status"] == "running":
+            return {"started": False, "reason": "an overnight test is already running"}
+        _on_state.update(status="running", result=None, error=None, progress=None)
+
+    def _job():
+        try:
+            def _cb(i, total, sym):
+                with _on_lock:
+                    _on_state["progress"] = {"done": i, "total": total, "symbol": sym}
+            res = run_overnight_backtest(kite, symbols, progress_cb=_cb, **kw)
+            with _on_lock:
+                _on_state.update(status="done", result=res)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Overnight backtest failed")
+            with _on_lock:
+                _on_state.update(status="error", error=str(exc))
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True}
+
+
+def get_overnight_state():
+    with _on_lock:
+        return dict(_on_state)
+
+
+def run_overnight_backtest(kite, symbols, timeframe="day", days=365,
+                            strong_close_pct=None, require_up_day=True,
+                            cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
+                            progress_cb=None):
+    """Does the BTST/STBT premise hold at all?
+
+    Replays the panel's two HARD gates - closed decisively inside its own
+    range, and the day itself went that way - then measures the actual
+    overnight trade. Deliberately does NOT apply the soft checks: the
+    question here is whether the core premise has an edge before any
+    refinement, because refining a setup whose sign is wrong only produces
+    a smaller loss more confidently."""
+    threshold = float(strong_close_pct if strong_close_pct is not None
+                      else settings.STRONG_CLOSE_THRESHOLD_PCT)
+    instruments = _load_instrument_map(kite)
+    per_symbol, agg = {}, {"next_open": [], "next_close": []}
+    notes = {}
+
+    for idx, symbol in enumerate(symbols):
+        if progress_cb:
+            progress_cb(idx, len(symbols), symbol)
+        token = instruments.get(symbol)
+        if not token:
+            notes[symbol] = "symbol not found on NSE"
+            continue
+        try:
+            df = _fetch_history(token, timeframe, days, kite)
+        except Exception as exc:  # noqa: BLE001
+            notes[symbol] = f"history fetch failed: {exc}"
+            time.sleep(_RATE_LIMIT_PAUSE)
+            continue
+        time.sleep(_RATE_LIMIT_PAUSE)
+        if df is None or df.empty or len(df) < 30:
+            notes[symbol] = "not enough candles"
+            continue
+
+        o, h, l, c = df["open"], df["high"], df["low"], df["close"]
+        rng = (h - l).replace(0, np.nan)
+        close_pos = (c - l) / rng * 100.0
+
+        up_day = (c > o) & (c > c.shift(1))
+        down_day = (c < o) & (c < c.shift(1))
+        bull = close_pos >= threshold
+        bear = close_pos <= (100.0 - threshold)
+        if require_up_day:
+            bull, bear = bull & up_day, bear & down_day
+
+        sig = bull | bear
+        direction = pd.Series(np.where(bull, "Bullish", "Bearish"), index=df.index)
+        res = overnight_outcomes(df, direction, sig, cost_pct, slippage_pct)
+        per_symbol[symbol] = res
+        for k in agg:
+            st = res.get(k, {})
+            if st.get("trade_count"):
+                agg[k].append((st["trade_count"], st["win_rate_pct"], st["avg_return_pct"]))
+
+    summary = {}
+    for k, rows in agg.items():
+        n = sum(r[0] for r in rows)
+        if not n:
+            summary[k] = {"trade_count": 0}
+            continue
+        summary[k] = {
+            "trade_count": n,
+            # Weighted by trade count so a symbol with 3 signals cannot
+            # swing the headline as hard as one with 60.
+            "win_rate_pct": round(sum(r[0] * r[1] for r in rows) / n, 1),
+            "avg_return_pct": round(sum(r[0] * r[2] for r in rows) / n, 3),
+            "symbols": len(rows),
+        }
+    return {
+        "summary": summary,
+        "per_symbol": per_symbol,
+        "symbols_skipped": notes,
+        "strong_close_pct": threshold,
+        "require_up_day": bool(require_up_day),
+        "cost_pct": float(cost_pct),
+        "slippage_pct": float(slippage_pct),
+        "timeframe": timeframe,
+        "days": int(days),
+        "computed_at": now_ist().isoformat(timespec="seconds"),
+    }
+
+
 def summarize_by_band(trades, horizons):
     """Outcomes grouped by the engine's own score band.
 

@@ -664,6 +664,37 @@ def api_weights_status():
     return jsonify(backtest.get_weights_state())
 
 
+@app.route("/api/overnight/start", methods=["POST"])
+@require_dashboard_password
+def api_overnight_start():
+    """Does the BTST/STBT premise hold? Enter at the signal bar's close,
+    exit next open and next close - the trade as actually taken, which no
+    other endpoint here can express."""
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "not logged in to Kite"}), 400
+    form = request.form
+    universe = form.get("universe", "watchlist")
+    symbols = list(settings.WATCHLIST) if universe == "watchlist" else list(settings.WATCHLIST)
+    try:
+        days = int(form.get("days", 365))
+    except (TypeError, ValueError):
+        days = 365
+    lo, hi, _d = backtest.backtest_day_bounds("day")
+    if not (lo <= days <= hi):
+        return jsonify({"started": False,
+                        "reason": f"days must be between {lo} and {hi} for daily candles"}), 400
+    return jsonify(backtest.start_overnight_backtest(
+        kite, symbols, timeframe="day", days=days,
+        require_up_day=form.get("require_up_day", "on") == "on"))
+
+
+@app.route("/api/overnight/status")
+@require_dashboard_password
+def api_overnight_status():
+    return jsonify(backtest.get_overnight_state())
+
+
 @app.route("/api/ablation/start", methods=["POST"])
 @require_dashboard_password
 def api_ablation_start():

@@ -155,8 +155,33 @@
     </div>
   </div>
 
+  <div class="card">
+    <h2>2 &middot; Does the BTST/STBT premise hold?</h2>
+    <p style="margin-top:-4px;">The overnight panel picks stocks that closed at the extreme of their range on a day
+    that went their way, and holds them overnight. <strong>Nothing in this app could measure that trade until now</strong>
+    &mdash; every other tool here holds for 5 to 20 <em>bars</em> (a fortnight on daily) and enters at the next bar's
+    open, by which point the overnight move you were trying to catch has already happened.</p>
+    <p style="margin-top:8px;">This enters at the <strong>signal bar's own close</strong> and exits at the next open and
+    the next close &mdash; the trade as you would actually take it. It applies only the two hard gates, not the soft
+    checks, because the question is whether the core premise has an edge <em>before</em> any refinement. Refining a
+    setup whose sign is wrong just produces a smaller loss more confidently.</p>
+    <p class="hint" style="margin-top:8px;">Worth knowing what you might find: this setup buys the most extended point
+    of the session, and short-horizon <em>reversal</em> is a well-documented effect &mdash; momentum tends to work over
+    months, while over one to five days strong recent returns often give back. If the win rate lands meaningfully
+    below 50%, the premise is inverted rather than merely weak, and no amount of tightening the other checks fixes it.
+    A result near 50% after costs means there is no edge here either way.</p>
+    <div style="margin-top:14px;">
+      <label class="chk" style="display:flex;">
+        <input type="checkbox" id="on-upday" checked> Require the day itself to have gone the signal's way
+      </label>
+    </div>
+    <button class="btn" id="on-run" style="margin-top:14px;">Run the overnight test</button>
+    <div class="hint" id="on-hint" style="margin-top:8px;"></div>
+    <div id="on-results" style="margin-top:16px;"></div>
+  </div>
+
 <details class="card">
-    <summary><strong>2 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
+    <summary><strong>3 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
     <p class="hint" style="margin-top:10px;">Exploratory. The tool above answers one specific question; this one lets you ask your own. Worth knowing it's also the easiest way to overfit &mdash; tune here, then confirm on a holdout.</p>
     <form id="bt-form" style="margin-top:14px;">
       <label>Parameters</label>
@@ -587,6 +612,81 @@ const initialAblationState = {{ ablation_state | tojson }};
 updateAblationUI(initialAblationState);
 if (initialAblationState.status === 'running') pollAblation();
 else if (initialAblationState.status === 'done' && initialAblationState.result) renderAblation(initialAblationState.result);
+
+
+// --- Overnight (BTST/STBT) premise test ----------------------------------
+// Enter at the SIGNAL BAR's close, exit next open and next close. No other
+// tool on this page can express that trade: they hold 5-20 bars and enter
+// at the next open, so a BTST idea was always measured as a swing trade.
+document.getElementById('on-run').addEventListener('click', function () {
+  const scope = readScope();
+  const hint = document.getElementById('on-hint');
+  hint.textContent = 'Starting\u2026';
+  const body = new URLSearchParams({
+    universe: scope.universe || 'watchlist',
+    days: String(scope.days || 365),
+    require_up_day: document.getElementById('on-upday').checked ? 'on' : 'off',
+  });
+  fetch('/api/overnight/start', { method: 'POST', body })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.started) { hint.textContent = 'Could not start: ' + (d.reason || 'unknown'); return; }
+      hint.textContent = 'Running\u2026';
+      pollOvernight();
+    })
+    .catch(e => { hint.textContent = 'Failed: ' + e; });
+});
+
+function pollOvernight() {
+  fetch('/api/overnight/status').then(r => r.json()).then(st => {
+    const hint = document.getElementById('on-hint');
+    if (st.status === 'running') {
+      const p = st.progress;
+      hint.textContent = p ? ('Running\u2026 ' + p.done + '/' + p.total + ' (' + p.symbol + ')') : 'Running\u2026';
+      setTimeout(pollOvernight, 2000);
+      return;
+    }
+    if (st.status === 'error') { hint.textContent = 'Error: ' + st.error; return; }
+    if (st.status !== 'done' || !st.result) { hint.textContent = ''; return; }
+    hint.textContent = 'Done.';
+    renderOvernight(st.result);
+  }).catch(function () { setTimeout(pollOvernight, 3000); });
+}
+
+function renderOvernight(res) {
+  const el = document.getElementById('on-results');
+  const s = res.summary || {};
+  function row(label, st) {
+    if (!st || !st.trade_count) return '<tr><td>' + label + '</td><td colspan="3">no trades</td></tr>';
+    const thin = st.trade_count < 30 ? ' <span class="hint">thin</span>' : '';
+    return '<tr><td><strong>' + label + '</strong></td>' +
+      '<td style="text-align:right;">' + st.trade_count + thin + '</td>' +
+      '<td style="text-align:right;">' + st.win_rate_pct + '%</td>' +
+      '<td style="text-align:right;">' + st.avg_return_pct + '%</td></tr>';
+  }
+  const nx = s.next_close || {};
+  const wc = nx.win_rate_pct, nc = nx.trade_count || 0;
+  let verdict = '';
+  if (nc >= 100 && wc != null) {
+    if (wc < 45) {
+      verdict = '<p class="hint"><strong>The premise looks inverted.</strong> Holding these overnight lost money more '
+        + 'often than not across ' + nc + ' trades, net of costs. That is consistent with short-horizon reversal &mdash; '
+        + 'the gate selects the most extended point of the session. Tightening the soft checks cannot fix a wrong sign; '
+        + 'the honest options are to test the OPPOSITE direction, or retire the panel.</p>';
+    } else if (wc > 55) {
+      verdict = '<p class="hint"><strong>The premise holds on this window.</strong> Re-run on a different period before '
+        + 'trusting it &mdash; one window is one sample.</p>';
+    } else {
+      verdict = '<p class="hint"><strong>No edge either way.</strong> After costs this is close to a coin flip across '
+        + nc + ' trades, so the panel is not adding anything over picking at random. That is a result, not a bug.</p>';
+    }
+  } else if (nc) {
+    verdict = '<p class="hint">Only ' + nc + ' trades &mdash; too few to conclude anything. Widen the day range.</p>';
+  }
+  el.innerHTML = '<table class="tbl"><thead><tr><th>Exit</th><th style="text-align:right;">Trades</th>'
+    + '<th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return (net)</th></tr></thead>'
+    + '<tbody>' + row('Next open', s.next_open) + row('Next close', s.next_close) + '</tbody></table>' + verdict;
+}
 
 </script>
 </body>

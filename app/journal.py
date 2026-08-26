@@ -77,6 +77,12 @@ _SNAPSHOT_FIELDS = [
     # itself (e.g. "NIFTY BANK"), not just whether it agreed, so trades
     # logged today can be grouped by sector.
     "sector",
+    # WHICH PANEL SURFACED THIS TRADE. Without these, a BTST pick that
+    # resolved badly is indistinguishable from any other confirmed signal,
+    # so "BTST has been failing" cannot be checked against anything - which
+    # is exactly the position this journal existed to prevent.
+    "btst_side", "btst_score", "early_score", "early_coverage",
+    "oi_z", "oi_structure_early", "rs_pct", "close_position_pct",
 ]
 
 # Minimum RESOLVED trades a (direction, aligned) setup bucket or a
