@@ -1608,9 +1608,20 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         oi_hist = None
         if require_oi_agreement:
             try:
-                oi_hist = (_fetch_oi_history_for_backtest(kite, symbol, timeframe) or None)
+                # NOT `... or None`. That idiom is fine for a dict or a list
+                # and raises ValueError on a pandas Series ("the truth value
+                # of a Series is ambiguous") - so EVERY symbol threw, the
+                # broad except below swallowed it, the message went to
+                # log.debug where nothing surfaces it, and the gate silently
+                # received no baseline on every run. The ablation then
+                # reported it as a gate that changed nothing.
+                fetched = _fetch_oi_history_for_backtest(kite, symbol, timeframe)
+                if fetched is not None and len(fetched):
+                    oi_hist = fetched
             except Exception as exc:  # noqa: BLE001 - a missing baseline must not kill the symbol
-                log.debug("Backtest OI history failed for %s: %s", symbol, exc)
+                # log.warning, not debug: a baseline that cannot be fetched
+                # turns the gate into a no-op, and that must be visible.
+                log.warning("Backtest OI history failed for %s: %s", symbol, exc)
             if oi_hist is None:
                 symbol_notes[symbol] = "no OI history for the OI gate"
             time.sleep(_RATE_LIMIT_PAUSE)
