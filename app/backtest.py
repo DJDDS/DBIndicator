@@ -1120,6 +1120,13 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
                                 stop_price=stop_price, target_price=target_price)
         if trade:
             trade["vol_confirmed_at_entry"] = bool(vol_hot.iloc[pos])
+            # Carry the engine's own score onto the trade so outcomes can be
+            # reported BY BAND. Without this, summarize_by_band finds no
+            # scored trades and silently returns empty buckets - the table
+            # renders as "no data" rather than as an error, which is the
+            # worst kind of failure: the feature looks like it ran.
+            trade["early_score"] = _score["score"] if _score else None
+            trade["early_coverage"] = _score["coverage"] if _score else None
             trades.append(trade)
     return trades
 

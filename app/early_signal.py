@@ -146,10 +146,6 @@ def score_band(score, coverage=None):
                 return label, f"{note}. Partial evidence ({coverage * 100:.0f}% measurable) - a high score on less evidence is a smaller claim, not a stronger one."
             return label, note
     return None
-    for threshold, label, note in SCORE_BANDS:
-        if score >= threshold:
-            return label, note
-    return None
 
 
 #: Baseline size for an intraday series. Larger than the daily one because
