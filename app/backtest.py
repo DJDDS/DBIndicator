@@ -56,6 +56,7 @@ import time
 import numpy as np
 import pandas as pd
 
+from . import config
 from . import early_signal
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
@@ -633,12 +634,27 @@ def _opening_window_mask(df: pd.DataFrame, timeframe: str) -> pd.Series:
     )
 
 
+
+def _record(diag, gate, readable, total):
+    """Accumulate how many bars a gate had a REAL reading for.
+
+    Without this, a gate whose underlying reading is unavailable looks
+    identical to a gate that was evaluated and changed nothing: both cut 0%
+    of trades. Those call for opposite responses - one needs fixing, the
+    other needs removing - so the ablation must be able to tell them apart."""
+    if diag is None:
+        return
+    d = diag.setdefault(gate, {"readable": 0, "total": 0})
+    d["readable"] += int(readable)
+    d["total"] += int(total)
+
 def _signal_series(series: dict, params, required: int, timeframe: str = None,
                     require_htf: bool = False, require_regime_volume: bool = False,
                     exclude_opening_window: bool = False, require_candle_pattern: bool = False, require_macd_hist: bool = False,
                     require_big_candle: bool = False, require_strong_close: bool = False,
                     require_entry_location: bool = False, require_atr_floor: bool = False,
-                    require_oi_agreement: bool = False, oi_history=None, oi_intraday=False):
+                    require_oi_agreement: bool = False, oi_history=None, oi_intraday=False,
+                    diag=None):
     """Combines the chosen parameters bar-by-bar: has_signal is true on
     any bar where at least `required` of them agree on the same
     direction at once. Deliberately NOT the continuous "aligned >=
@@ -711,6 +727,7 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
         # four-vote screen and said nothing about the engine in production.
         z = _oi_zscore_series(oi_history, index, intraday=oi_intraday)
         oi_ok = _oi_agrees_series(z, series["df"]["close"].reindex(index), direction)
+        _record(diag, "require_oi_agreement", oi_ok[has_signal].notna().sum(), has_signal.sum())
         has_signal = has_signal & oi_ok.fillna(1.0).astype(bool)
 
     if require_candle_pattern:
@@ -732,7 +749,9 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
     if require_entry_location:
         if not timeframe:
             raise ValueError("require_entry_location needs a timeframe")
-        el_agrees = _entry_location_agree_series(series, direction, timeframe).reindex(index).fillna(True)
+        _el_raw = _entry_location_agree_series(series, direction, timeframe).reindex(index)
+        _record(diag, "require_entry_location", _el_raw[has_signal].notna().sum(), has_signal.sum())
+        el_agrees = _el_raw.fillna(True)
         has_signal = has_signal & el_agrees
 
     if require_atr_floor:
@@ -898,7 +917,13 @@ def _fetch_oi_history_for_backtest(kite, symbol, timeframe):
     continuous flag, same resample. A backtest that built its own OI series
     a slightly different way would be measuring a different strategy and
     would never announce it."""
-    hist = scanner_mod.fetch_oi_history(kite, [symbol], timeframe=timeframe, throttle=0)
+    # NOT throttle=0. That was a real bug: it removed the rate limiting on a
+    # path that then fetched OI for every symbol in the universe, so Kite
+    # started refusing calls, the baseline came back empty, and - because a
+    # missing baseline is None and None never blocks - the OI gate silently
+    # passed every row through and the ablation reported it as "no effect".
+    # A gate that never fired reported as a gate that did nothing.
+    hist = scanner_mod.fetch_oi_history(kite, [symbol], timeframe=timeframe)
     return hist.get(symbol)
 
 
@@ -1048,7 +1073,8 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
                     require_macd_hist=False, require_big_candle=False,
                     require_strong_close=False, require_entry_location=False,
                     require_atr_floor=False,
-                    require_oi_agreement=False, oi_history=None, oi_intraday=False):
+                    require_oi_agreement=False, oi_history=None, oi_intraday=False,
+                    diag=None):
     """Entry = the bar where your chosen parameter combination first
     reaches `required` agreement (see _signal_series), de-duped via a
     rising edge so a signal that stays true for a stretch of bars only
@@ -1065,7 +1091,7 @@ def _replay_symbol(df: pd.DataFrame, symbol: str, timeframe: str, window_start, 
         series, params, required, timeframe=timeframe,
         require_htf=require_htf, require_regime_volume=require_regime_volume,
         require_oi_agreement=require_oi_agreement, oi_history=oi_history,
-        oi_intraday=oi_intraday,
+        oi_intraday=oi_intraday, diag=diag,
         exclude_opening_window=exclude_opening_window,
         require_candle_pattern=require_candle_pattern,
             require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
@@ -1401,6 +1427,57 @@ def run_overnight_backtest(kite, symbols, timeframe="day", days=365,
     }
 
 
+def summarize_vs_target(trades, df_lookup=None):
+    """Does the screen hit the target written down in config.py?
+
+    Every other number this file produces answers a question nobody asked:
+    "what is the average return after exactly N bars." That is not how the
+    trade is taken. config.SUCCESS_* states the real one - reach
+    +SUCCESS_TARGET_ATR before -SUCCESS_STOP_ATR, within SUCCESS_HORIZON_BARS
+    - and this reports against it, verdict included, so the answer is a pass
+    or a fail rather than a number to interpret.
+
+    Uses the stop/target exits _compute_trade already walks bar by bar, so a
+    trade that hit its stop first is a loss even if it later recovered."""
+    resolved = [t for t in trades if t.get("exit_reason") in ("stop", "target")]
+    horizon_only = [t for t in trades if t.get("exit_reason") == "horizon"]
+    hits = sum(1 for t in resolved if t.get("exit_reason") == "target")
+    n = len(resolved)
+
+    target = config.SUCCESS_MIN_WIN_RATE
+    breakeven = config.SUCCESS_STOP_ATR / (config.SUCCESS_TARGET_ATR + config.SUCCESS_STOP_ATR) * 100.0
+    rate = round(100.0 * hits / n, 1) if n else None
+    enough = n >= config.SUCCESS_MIN_SAMPLE
+
+    if not n:
+        verdict = "no trades resolved to a stop or target - nothing to judge"
+    elif not enough:
+        verdict = (f"only {n} resolved trades, below the {config.SUCCESS_MIN_SAMPLE} "
+                   f"this target requires - the interval is too wide to act on")
+    elif rate >= target:
+        verdict = f"MEETS the target ({rate}% vs {target}% needed)"
+    elif rate >= breakeven:
+        verdict = (f"above breakeven ({breakeven:.1f}%) but BELOW the {target}% target "
+                   f"- an edge too thin to pay for mistakes")
+    else:
+        verdict = (f"FAILS - {rate}% is below the {breakeven:.1f}% needed just to break "
+                   f"even at {config.SUCCESS_TARGET_ATR}:{config.SUCCESS_STOP_ATR}")
+
+    return {
+        "target_atr": config.SUCCESS_TARGET_ATR,
+        "stop_atr": config.SUCCESS_STOP_ATR,
+        "horizon_bars": config.SUCCESS_HORIZON_BARS,
+        "required_win_rate": target,
+        "breakeven_win_rate": round(breakeven, 1),
+        "min_sample": config.SUCCESS_MIN_SAMPLE,
+        "resolved_count": n,
+        "unresolved_at_horizon": len(horizon_only),
+        "hit_rate_pct": rate,
+        "sample_sufficient": enough,
+        "verdict": verdict,
+    }
+
+
 def summarize_by_band(trades, horizons):
     """Outcomes grouped by the engine's own score band.
 
@@ -1502,6 +1579,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
 
     trades = []
     symbol_notes = {}
+    gate_diag = {}
 
     for idx, symbol in enumerate(symbols):
         if progress_cb:
@@ -1541,7 +1619,7 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
             symbol_trades = _replay_symbol(
                 df, symbol, timeframe, window_start.replace(tzinfo=None), horizons, params, required,
                 require_oi_agreement=require_oi_agreement, oi_history=oi_hist,
-                oi_intraday=scanner_mod.oi_is_intraday(timeframe),
+                oi_intraday=scanner_mod.oi_is_intraday(timeframe), diag=gate_diag,
                 require_htf=require_htf, require_regime_volume=require_regime_volume,
                 exclude_opening_window=exclude_opening_window,     require_candle_pattern=require_candle_pattern,
             require_macd_hist=require_macd_hist, require_big_candle=require_big_candle,
@@ -1607,6 +1685,8 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "total_trade_count": total_trade_count,
         "summary": summary,
         "by_band": summarize_by_band(trades, horizons),
+        "vs_target": summarize_vs_target(trades),
+        "gate_diagnostics": gate_diag,
         "cost_pct": float(cost_pct),
         "slippage_pct": float(slippage_pct),
         "holdout_pct": float(holdout_pct),
@@ -1917,7 +1997,30 @@ ABLATION_GATES = [
 ]
 
 
-def _ablation_row(label, gate_id, summary, baseline, ref_horizon):
+def _gate_fired(diagnostics, gate_id, trades_cut_pct):
+    """Did this gate actually get a chance to reject anything?
+
+    Two distinct failures look identical in a results table - both show 0%
+    of trades cut:
+
+      * the gate was evaluated on real readings and simply never disagreed
+      * the reading it depends on was unavailable, so every row passed
+        through untested
+
+    Only the first is a finding. Reporting the second as "no effect" is how
+    a gate that never ran gets retired for being useless, or trusted for
+    being harmless. Where a gate reports coverage, use it; where it does not
+    yet, say so rather than implying it was checked."""
+    d = (diagnostics or {}).get(gate_id)
+    if not d or not d.get("total"):
+        return None, None
+    coverage = d["readable"] / d["total"]
+    if coverage <= 0.001:
+        return False, coverage
+    return True, coverage
+
+
+def _ablation_row(label, gate_id, summary, baseline, ref_horizon, diagnostics=None):
     """One row of the ablation table: this gate's stats at ref_horizon and
     its deltas vs the shared baseline. Deltas are None when either side
     produced no trades at that horizon - a missing number is reported as
@@ -1928,8 +2031,13 @@ def _ablation_row(label, gate_id, summary, baseline, ref_horizon):
     wr, base_wr = stats.get("win_rate_pct"), base.get("win_rate_pct")
     ar, base_ar = stats.get("avg_return_pct"), base.get("avg_return_pct")
     n, base_n = stats.get("trade_count", 0), base.get("trade_count", 0)
+    fired, coverage = _gate_fired(diagnostics, gate_id, None)
     return {
         "gate": gate_id,
+        # None = this gate does not report coverage yet. False = it reports
+        # coverage and had none, so its row is not a result.
+        "fired": fired,
+        "reading_coverage": None if coverage is None else round(coverage, 3),
         "label": label,
         "win_rate_pct": wr,
         "avg_return_pct": ar,
@@ -1976,7 +2084,8 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
             skipped.append({"gate": gate_id, "label": label, "reason": reason})
             continue
         res = run_backtest(kite, symbols, progress_cb=_sub(i, label), **{**common, gate_id: True})
-        rows.append(_ablation_row(label, gate_id, res["summary"], baseline, ref_horizon))
+        rows.append(_ablation_row(label, gate_id, res["summary"], baseline, ref_horizon,
+                                   diagnostics=res.get("gate_diagnostics")))
 
     # Best first, but rows with no measurable delta sink to the bottom
     # rather than sorting as if they were zero.

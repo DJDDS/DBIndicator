@@ -223,6 +223,7 @@
 
   <div class="card" id="bt-results">
     <h2>Results</h2>
+    <div id="bt-target"></div>
     <div id="bt-bands"></div>
     <p class="hint" id="bt-signal-desc" style="margin:-4px 0 14px;"></p>
     <div class="stat-tiles" id="bt-tiles"></div>
@@ -340,6 +341,29 @@ function renderGroup(label, groupSummary, horizons) {
 // score is ranking noise and the bands are decoration - which is a finding
 // worth having, not a failure, and the honest thing is to show it either
 // way rather than quietly dropping the table.
+// The one number that answers the question actually written down in
+// config.py. Everything else on this page reports "average return after N
+// bars", which is not how the trade is taken.
+function renderTarget(result) {
+  const el = document.getElementById('bt-target');
+  if (!el) return;
+  const t = result.vs_target;
+  if (!t) { el.innerHTML = ''; return; }
+  const good = t.hit_rate_pct != null && t.sample_sufficient && t.hit_rate_pct >= t.required_win_rate;
+  const colour = !t.sample_sufficient ? 'var(--muted)' : (good ? 'var(--green)' : 'var(--red)');
+  el.innerHTML = `
+    <h3 style="margin-top:22px;">Against your written target</h3>
+    <p class="hint" style="margin-top:-4px;">Reach +${t.target_atr} ATR before &minus;${t.stop_atr} ATR,
+      within ${t.horizon_bars} bars. Needs ${t.required_win_rate}% across ${t.min_sample}+ trades;
+      breakeven at this risk-reward is ${t.breakeven_win_rate}%.</p>
+    <table class="tbl"><tbody>
+      <tr><td>Resolved to a stop or target</td><td style="text-align:right;">${t.resolved_count}</td></tr>
+      <tr><td>Still open at the horizon</td><td style="text-align:right;">${t.unresolved_at_horizon}</td></tr>
+      <tr><td>Hit the target first</td><td style="text-align:right;color:${colour};font-weight:600;">${t.hit_rate_pct == null ? '\u2014' : t.hit_rate_pct + '%'}</td></tr>
+    </tbody></table>
+    <p style="margin-top:10px;color:${colour};"><strong>${t.verdict}</strong></p>`;
+}
+
 function renderBands(result) {
   const el = document.getElementById('bt-bands');
   if (!el) return;
@@ -387,6 +411,7 @@ function renderResult(result) {
   document.getElementById('bt-signal-desc').textContent =
     `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}`;
 
+  renderTarget(result);
   renderBands(result);
 
   const tiles = document.getElementById('bt-tiles');
@@ -556,8 +581,29 @@ function renderAblation(result) {
     const colour = (d === null || d === undefined) ? '' :
       (d > 0 ? 'color:var(--green);font-weight:600;' : (d < 0 ? 'color:var(--red);' : ''));
     const tr = document.createElement('tr');
+
+    // A gate that reported coverage and had NONE never actually ran. Its
+    // numbers are not a result, and showing them beside real ones invites
+    // exactly the wrong conclusion - that the gate was checked and found
+    // harmless. Strike the row and say why instead.
+    if (r.fired === false) {
+      tr.innerHTML = `
+        <td>${r.label}</td>
+        <td colspan="6" style="color:var(--amber);">
+          <strong>Did not run.</strong> The reading this gate depends on was unavailable for every
+          signal bar, so it passed everything through untested. Its 0% is not a finding &mdash; fix the
+          data path, then re-run. Nothing here tells you whether this gate helps.
+        </td>`;
+      body.appendChild(tr);
+      return;
+    }
+
+    const cov = (r.reading_coverage !== null && r.reading_coverage !== undefined && r.reading_coverage < 0.95)
+      ? ` <span class="hint" title="This gate had a usable reading on only ${Math.round(r.reading_coverage * 100)}% of signal bars. On the rest it passed rows through untested, so its effect is understated.">${Math.round(r.reading_coverage * 100)}% read</span>`
+      : '';
+
     tr.innerHTML = `
-      <td>${r.label}</td>
+      <td>${r.label}${cov}</td>
       <td>${pct(r.win_rate_pct)}</td>
       <td style="${colour}">${signed(r.win_rate_delta, ' pp')}</td>
       <td>${pct(r.avg_return_pct)}</td>
