@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OI Screener</title>
+<style>
+  :root {
+    --bg: #0b0e14; --card: #12151f; --border: #232838; --text: #e6e9ef; --muted: #8b93a7;
+    --green: #2ecc71; --red: #ef4444; --accent: #3b82f6; --amber: #f5a524; --navy: #12151f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: #10131c; border-bottom: 1px solid var(--border); padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+  header nav a { color: var(--text); text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.06); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border); }
+  header nav a:hover { background: rgba(255,255,255,0.1); }
+  .wrap { max-width: 1500px; margin: 22px auto; padding: 0 16px 40px; }
+  .tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .tile-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+  .tile-value.green { color: var(--green); }
+  .tile-value.red { color: var(--red); }
+  .tile-value.amber { color: var(--amber); }
+  .tile-value.muted { color: var(--muted); }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  .toolbar input, .toolbar select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; }
+  .toolbar input { min-width: 200px; }
+  .toolbar-spacer { flex: 1; }
+  .toolbar-meta { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .live-dot { display: inline-flex; align-items: center; gap: 6px; background: rgba(46,204,113,0.12); color: var(--green); padding: 4px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .live-dot::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  /* 14 columns is wider than most windows, so this table always needs
+     horizontal scroll somewhere - two things make that usable instead of
+     just looking cut off: the Symbol column stays pinned via
+     position:sticky so you never lose track of which row you're on, and
+     a right-edge shadow (toggled by JS below based on actual scroll
+     position) makes it visually obvious there's more to scroll to,
+     instead of relying on a scrollbar that's easy to miss. */
+  .table-scroll { overflow-x: auto; position: relative; }
+  .table-scroll.has-more-right::after {
+    content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 28px;
+    background: linear-gradient(to right, transparent, rgba(0,0,0,0.4));
+    pointer-events: none;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; background: #171b28; color: var(--muted); padding: 10px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; cursor: pointer; user-select: none; }
+  th:hover { color: var(--text); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th.sym-col, td.sym-col { position: sticky; left: 0; z-index: 2; background: var(--card); }
+  th.sym-col { background: #171b28; z-index: 6; }
+  tr.data-row:hover td.sym-col { background: #171b28; }
+  tr.data-row:hover td { background: rgba(255,255,255,0.03); cursor: pointer; }
+  tr.data-row.filtered-out { display: none; }
+  a.sym-link { color: #6ea8fe; text-decoration: none; font-weight: 700; }
+  a.sym-link:hover { text-decoration: underline; }
+  .green-text { color: var(--green); font-weight: 600; }
+  .red-text { color: var(--red); font-weight: 600; }
+  .muted-text { color: var(--muted); }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 5px; font-size: 11.5px; font-weight: 700; }
+  .badge.long-buildup { background: rgba(46,204,113,0.15); color: var(--green); }
+  .badge.short-buildup { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge.short-covering { background: rgba(46,204,113,0.08); color: #7fd8a2; }
+  .badge.long-unwinding { background: rgba(245,165,36,0.12); color: #e0a34e; }
+  .badge.neutral { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .badge.tier-2 { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .badge.tier-3 { background: rgba(245,165,36,0.12); color: var(--amber); }
+  .badge.tier-4 { background: rgba(46,204,113,0.15); color: var(--green); }
+  .accel-strong-acceleration { color: var(--green); font-weight: 700; }
+  .accel-moderate-acceleration { color: var(--amber); font-weight: 700; }
+  .accel-weakening { color: #d18a4a; }
+  .accel-possible-exit-unwinding { color: var(--red); font-weight: 700; }
+  .accel-stable { color: var(--muted); }
+  .accel-new { color: var(--muted); font-style: italic; }
+  .signal-pill { padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .signal-pill.bull { background: rgba(46,204,113,0.15); color: var(--green); }
+  .signal-pill.bear { background: rgba(239,68,68,0.15); color: var(--red); }
+  .empty-note { padding: 30px; text-align: center; color: var(--muted); font-size: 13px; }
+  .footnote { margin-top: 16px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>OI Screener</h1>
+    <p>Open Interest value, % change, and acceleration &middot; stocks matching 2+ of the 4 Parameter Screener checks with a valid live OI quote</p>
+  </div>
+  <nav><a href="/">&larr; Dashboard</a></nav>
+</header>
+<div class="wrap">
+
+  {% if not logged_in %}
+  <div class="card" style="padding:20px;">
+    <p style="margin:0;color:var(--muted);">Not logged in to Kite for today yet - log in from the <a href="/" style="color:#6ea8fe;">Dashboard</a> first, then this screener will populate on the next scan.</p>
+  </div>
+  {% else %}
+
+  <div class="tiles" id="tiles">
+    <div class="tile"><div class="tile-label">Long Buildup</div><div class="tile-value green" id="tile-long-buildup">—</div></div>
+    <div class="tile"><div class="tile-label">Short Buildup</div><div class="tile-value red" id="tile-short-buildup">—</div></div>
+    <div class="tile"><div class="tile-label">Strong Accel</div><div class="tile-value green" id="tile-strong-accel">—</div></div>
+    <div class="tile"><div class="tile-label">Moderate Accel</div><div class="tile-value amber" id="tile-moderate-accel">—</div></div>
+    <div class="tile"><div class="tile-label">Weakening / Unwinding</div><div class="tile-value red" id="tile-weakening">—</div></div>
+    <div class="tile"><div class="tile-label">Active Alerts</div><div class="tile-value muted" id="tile-alerts">—</div></div>
+  </div>
+
+  <div class="toolbar">
+    <input type="text" id="f-symbol" placeholder="🔍 Search symbol...">
+    <select id="f-structure">
+      <option value="">All Structures</option>
+      <option>Long Buildup</option><option>Short Buildup</option>
+      <option>Short Covering</option><option>Long Unwinding</option><option>Neutral</option>
+    </select>
+    <select id="f-accel">
+      <option value="">All Acceleration</option>
+      <option>Strong acceleration</option><option>Moderate acceleration</option>
+      <option>Stable</option><option>Weakening</option>
+      <option>Possible exit/unwinding</option><option>New</option>
+    </select>
+    <select id="f-tier">
+      <option value="">All Tiers</option>
+      <option value="4">4 of 4</option><option value="3">3 of 4</option><option value="2">2 of 4</option>
+    </select>
+    <select id="f-oimove" title="Filters on the biggest of Day/15m/30m/60m OI % change">
+      <option value="">Any OI Move</option>
+      <option value="has">OI actually moving (has data)</option>
+      <option value="1">OI move ≥ 1%</option>
+      <option value="2">OI move ≥ 2%</option>
+      <option value="5">OI move ≥ 5%</option>
+    </select>
+    <select id="f-unusual" title="Optional statistical filter using each stock's own historical OI baseline">
+      <option value="">All valid OI</option>
+      <option value="1">Unusual OI only (|z| ≥ 1.5)</option>
+    </select>
+    <div class="toolbar-spacer"></div>
+    <div class="toolbar-meta">
+      <span id="symbol-count">— symbols</span> &middot; <span id="updated-at">not loaded yet</span>
+      <span class="live-dot">Live</span>
+    </div>
+  </div>
+
+  <div id="oi-history-status" class="card" style="display:none;padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px;"></div>
+
+  <div class="card">
+    <div class="table-scroll">
+    <table id="oi-table">
+      <thead>
+        <tr>
+          <th data-col="0" data-type="text" class="sym-col">Symbol</th>
+          <th data-col="1" data-type="num">Price</th>
+          <th data-col="2" data-type="num">Price Chg %</th>
+          <th data-col="3" data-type="num" data-default-dir="desc">OI Value</th>
+          <th data-col="4" data-type="num" data-default-dir="desc">Day OI Chg % <span title="vs yesterday's closing OI">(vs prev close)</span></th>
+          <th data-col="5" data-type="num" data-default-dir="desc">15m Chg %</th>
+          <th data-col="6" data-type="num" data-default-dir="desc">30m Chg %</th>
+          <th data-col="7" data-type="num" data-default-dir="desc">60m Chg %</th>
+          <th data-col="8" data-type="num" data-default-dir="desc">Acceleration (pp)</th>
+          <th data-col="9" data-type="text">Acceleration</th>
+          <th data-col="10" data-type="text">OI Structure</th>
+          <th data-col="11" data-type="num">Vol Multiple</th>
+          <th data-col="12" data-type="text">Signal</th>
+          <th data-col="13" data-type="num" data-default-dir="desc">Tier</th>
+        </tr>
+      </thead>
+      <tbody id="oi-tbody">
+        <tr><td colspan="14" class="empty-note">Loading...</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Shows stocks currently in one of the Dashboard's Parameter Screener tiers (matching 2, 3, or 4 of RSI/MACD/
+    EMA9-BB/Relative Volume right now) that also have a valid live futures OI quote - not the full watchlist.
+    <strong>Unusual OI only</strong> is optional: it applies the stock's own |z| ≥ 1.5 historical-OI test without hiding quiet-but-valid OI rows from the base page. <strong>Day OI Chg %</strong> = today's latest OI
+    vs yesterday's last-seen OI (its closing value). <strong>15m/30m/60m Chg %</strong> are rolling-window OI moves
+    ending now - 30m is the primary early-alert window, 60m the stronger confirmation window, 15m the fastest and
+    noisiest. <strong>Acceleration</strong> = the latest 30-minute OI change minus the previous 30-minute OI change,
+    in percentage points: above +2.00 is Strong, +0.5 to +1.00 is Moderate, -0.30 to +0.30 is Stable, below -0.30 is
+    Weakening, below -2.00 is Possible exit/unwinding. A stock can show a big whole-day OI number while actually
+    unwinding in the latest window, so for a fresh entry this recent-direction read matters more than the
+    cumulative one alone. <strong>OI Structure</strong> compares today's price move against today's OI move (both
+    since session open): both up is fresh buying (Long Buildup), both down is longs exiting (Long Unwinding), price
+    down with OI up is fresh shorting (Short Buildup), price up with OI down is shorts covering (Short Covering).
+    The <strong>OI Move</strong> filter lets you jump straight to symbols whose OI numbers are actually moving -
+    "has data" hides rows still showing "—" (not enough scan history yet), and the % thresholds hide anything
+    moving less than that. This page refreshes itself roughly every 20 seconds - no need to reload.
+  </p>
+
+  {% endif %}
+</div>
+<script>
+  var currentSort = { col: null, dir: 'desc', type: 'num' };
+  var latestResults = [];
+
+  function fmtPct(v) {
+    if (v === null || v === undefined) return '—';
+    return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+  }
+  function fmtPp(v) {
+    if (v === null || v === undefined) return '—';
+    return (v > 0 ? '+' : '') + v.toFixed(2) + 'pp';
+  }
+  function fmtNum(v) {
+    return (v === null || v === undefined) ? '—' : v.toLocaleString('en-IN');
+  }
+
+  function oiMoveMax(r) {
+    // Biggest of the four OI-change readings we track, ignoring
+    // whichever ones aren't populated yet (still "—") - used by the
+    // "OI Move" filter so it's easy to isolate symbols whose OI numbers
+    // are actually firing instead of scrolling past a page of dashes.
+    var vals = [r.oi_day_chg_pct, r.oi_chg_15m_pct, r.oi_chg_30m_pct, r.oi_chg_60m_pct]
+      .filter(function (v) { return v !== null && v !== undefined && !isNaN(v); })
+      .map(Math.abs);
+    return vals.length ? Math.max.apply(null, vals) : null;
+  }
+
+  function structureClass(s) {
+    return { 'Long Buildup': 'long-buildup', 'Short Buildup': 'short-buildup',
+      'Short Covering': 'short-covering', 'Long Unwinding': 'long-unwinding', 'Neutral': 'neutral' }[s] || 'neutral';
+  }
+  function accelClass(s) {
+    return { 'Strong acceleration': 'accel-strong-acceleration', 'Moderate acceleration': 'accel-moderate-acceleration',
+      'Stable': 'accel-stable', 'Weakening': 'accel-weakening',
+      'Possible exit/unwinding': 'accel-possible-exit-unwinding', 'New': 'accel-new' }[s] || 'accel-new';
+  }
+
+  function rowHtml(r) {
+    var priceChg = r.price_chg_today_pct;
+    var structure = r.oi_structure || 'Neutral';
+    var accel = r.oi_accel_label || 'New';
+    var tier = r.param_tier || '';
+    return '' +
+      '<td class="sym-col" data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
+      '<td data-sort="' + (r.close != null ? r.close : '') + '">' + (r.close != null ? r.close.toLocaleString('en-IN') : '—') + '</td>' +
+      '<td data-sort="' + (priceChg != null ? priceChg : '') + '" class="' + (priceChg > 0 ? 'green-text' : priceChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(priceChg) + '</td>' +
+      '<td data-sort="' + (r.oi != null ? r.oi : '') + '">' + fmtNum(r.oi) + '</td>' +
+      '<td data-sort="' + (r.oi_day_chg_pct != null ? r.oi_day_chg_pct : '') + '" class="' + (r.oi_day_chg_pct > 0 ? 'green-text' : r.oi_day_chg_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_day_chg_pct) + '</td>' +
+      '<td data-sort="' + (r.oi_chg_15m_pct != null ? r.oi_chg_15m_pct : '') + '" class="' + (r.oi_chg_15m_pct > 0 ? 'green-text' : r.oi_chg_15m_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_chg_15m_pct) + '</td>' +
+      '<td data-sort="' + (r.oi_chg_30m_pct != null ? r.oi_chg_30m_pct : '') + '" class="' + (r.oi_chg_30m_pct > 0 ? 'green-text' : r.oi_chg_30m_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_chg_30m_pct) + '</td>' +
+      '<td data-sort="' + (r.oi_chg_60m_pct != null ? r.oi_chg_60m_pct : '') + '" class="' + (r.oi_chg_60m_pct > 0 ? 'green-text' : r.oi_chg_60m_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_chg_60m_pct) + '</td>' +
+      '<td data-sort="' + (r.oi_acceleration != null ? r.oi_acceleration : '') + '" class="' + accelClass(accel) + '">' + fmtPp(r.oi_acceleration) + '</td>' +
+      '<td data-sort="' + accel + '" class="' + accelClass(accel) + '">' + accel + '</td>' +
+      '<td data-sort="' + structure + '"><span class="badge ' + structureClass(structure) + '">' + structure + '</span></td>' +
+      '<td data-sort="' + (r.vol_multiple != null ? r.vol_multiple : '') + '">' + (r.vol_multiple != null ? r.vol_multiple + 'x' : '—') + '</td>' +
+      '<td data-sort="' + (r.direction || '') + '">' + (r.direction ? '<span class="signal-pill ' + (r.direction === 'Bullish' ? 'bull">▲ Bullish' : 'bear">▼ Bearish') + '</span>' : '<span class="muted-text">—</span>') + '</td>' +
+      '<td data-sort="' + tier + '"><span class="badge tier-' + tier + '">' + (tier ? tier + ' of 4' : '—') + '</span></td>';
+  }
+
+  function buildRows(results) {
+    var tbody = document.getElementById('oi-tbody');
+    var rows = results.filter(function (r) { return !r.error; });
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="14" class="empty-note">No stocks with a valid live OI quote currently match 2+ of the Parameter Screener checks.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (r) {
+      var move = oiMoveMax(r);
+      return '<tr class="data-row" data-symbol="' + r.symbol + '" data-structure="' + (r.oi_structure || '') +
+        '" data-accel="' + (r.oi_accel_label || '') + '" data-tier="' + (r.param_tier || '') +
+        '" data-oimove="' + (move === null ? '' : move) +
+        '" data-z="' + (r.oi_z == null ? '' : Math.abs(r.oi_z)) +
+        '" onclick="window.location=\'/chart/' + r.symbol + '\'">' + rowHtml(r) + '</tr>';
+    }).join('');
+  }
+
+  function updateTiles(results) {
+    var valid = results.filter(function (r) { return !r.error; });
+    var count = function (fn) { return valid.filter(fn).length; };
+    document.getElementById('tile-long-buildup').textContent = count(function (r) { return r.oi_structure === 'Long Buildup'; });
+    document.getElementById('tile-short-buildup').textContent = count(function (r) { return r.oi_structure === 'Short Buildup'; });
+    document.getElementById('tile-strong-accel').textContent = count(function (r) { return r.oi_accel_label === 'Strong acceleration'; });
+    document.getElementById('tile-moderate-accel').textContent = count(function (r) { return r.oi_accel_label === 'Moderate acceleration'; });
+    document.getElementById('tile-weakening').textContent = count(function (r) { return r.oi_accel_label === 'Weakening' || r.oi_accel_label === 'Possible exit/unwinding'; });
+    document.getElementById('symbol-count').textContent = valid.length + ' symbols';
+  }
+
+  function applyFilters() {
+    var symbolQ = (document.getElementById('f-symbol').value || '').trim().toUpperCase();
+    var structureQ = document.getElementById('f-structure').value;
+    var accelQ = document.getElementById('f-accel').value;
+    var tierQ = document.getElementById('f-tier').value;
+    var oimoveQ = document.getElementById('f-oimove').value;
+    var unusualQ = document.getElementById('f-unusual').value;
+    document.querySelectorAll('#oi-tbody tr.data-row').forEach(function (row) {
+      var ok = true;
+      if (symbolQ && (row.getAttribute('data-symbol') || '').indexOf(symbolQ) === -1) ok = false;
+      if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
+      if (ok && accelQ && row.getAttribute('data-accel') !== accelQ) ok = false;
+      if (ok && tierQ && row.getAttribute('data-tier') !== tierQ) ok = false;
+      if (ok && unusualQ) {
+        var zAttr = row.getAttribute('data-z');
+        var z = zAttr === '' ? NaN : parseFloat(zAttr);
+        if (isNaN(z) || z < 1.5) ok = false;
+      }
+      if (ok && oimoveQ) {
+        var moveAttr = row.getAttribute('data-oimove');
+        var move = moveAttr === '' ? null : parseFloat(moveAttr);
+        if (oimoveQ === 'has') {
+          if (move === null) ok = false;
+        } else if (move === null || move < parseFloat(oimoveQ)) {
+          ok = false;
+        }
+      }
+      row.classList.toggle('filtered-out', !ok);
+    });
+  }
+
+  function applySort() {
+    if (currentSort.col === null) return;
+    var tbody = document.getElementById('oi-tbody');
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
+    if (!rows.length) return;
+    var col = currentSort.col, asc = currentSort.dir === 'asc';
+    rows.sort(function (a, b) {
+      var ac = a.children[col], bc = b.children[col];
+      var av = ac ? (ac.getAttribute('data-sort') || '') : '';
+      var bv = bc ? (bc.getAttribute('data-sort') || '') : '';
+      var an = parseFloat(av), bn = parseFloat(bv);
+      var cmp = (av !== '' && bv !== '' && !isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
+      return asc ? cmp : -cmp;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  document.querySelectorAll('#oi-table thead th').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var col = parseInt(th.getAttribute('data-col'), 10);
+      if (currentSort.col === col) {
+        currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        currentSort.col = col;
+        currentSort.dir = th.getAttribute('data-default-dir') || 'asc';
+      }
+      applySort();
+    });
+  });
+
+  ['f-symbol'].forEach(function (id) { document.getElementById(id).addEventListener('input', applyFilters); });
+  ['f-structure', 'f-accel', 'f-tier', 'f-oimove', 'f-unusual'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+
+  function loadData() {
+    fetch('/api/oi-screener').then(function (r) { return r.json(); }).then(function (data) {
+      latestResults = data.results || [];
+      buildRows(latestResults);
+      updateTiles(latestResults);
+      var historyBox = document.getElementById('oi-history-status');
+      var rh = data.rolling_history || {};
+      if (historyBox && rh.eligible_with_oi > 0 && rh.warming_up) {
+        historyBox.style.display = 'block';
+        historyBox.textContent = 'Building 30/60m OI history after restart: ' +
+          (rh.ready_30m || 0) + '/' + rh.eligible_with_oi + ' have 30m history; ' +
+          (rh.ready_60m || 0) + '/' + rh.eligible_with_oi + ' have 60m history. ' +
+          'Rows stay visible while these rolling windows fill.';
+      } else if (historyBox) {
+        historyBox.style.display = 'none';
+        historyBox.textContent = '';
+      }
+      applySort();
+      applyFilters();
+      updateScrollShadow();
+      document.getElementById('updated-at').textContent = 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      fetch('/api/alerts/oi_recent').then(function (r) { return r.json(); }).then(function (d) {
+        document.getElementById('tile-alerts').textContent = (d.alerts || []).length;
+      }).catch(function () {});
+    }).catch(function () {
+      document.getElementById('updated-at').textContent = 'update failed - retrying...';
+    });
+  }
+
+  function updateScrollShadow() {
+    var scroller = document.querySelector('.table-scroll');
+    if (!scroller) return;
+    var moreToScroll = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft > 4;
+    scroller.classList.toggle('has-more-right', moreToScroll);
+  }
+
+  var scrollEl = document.querySelector('.table-scroll');
+  if (scrollEl) {
+    scrollEl.addEventListener('scroll', updateScrollShadow);
+    window.addEventListener('resize', updateScrollShadow);
+  }
+
+  if (document.getElementById('oi-tbody')) {
+    loadData();
+    setInterval(loadData, 20000);
+    setTimeout(updateScrollShadow, 300);  // after the first render's actual widths settle
+  }
+</script>
+</body>
+</html>
