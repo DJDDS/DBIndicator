@@ -46,11 +46,42 @@ def macd_params_for_timeframe(timeframe: str):
         return settings.MACD_CUSTOM_FAST, settings.MACD_CUSTOM_SLOW, settings.MACD_CUSTOM_SIGNAL
     # auto
     if timeframe == "15minute":
-        return 3, 8, 9
+        return 8, 17, 9
     if timeframe == "30minute":
         return 8, 16, 9
     return settings.MACD_CUSTOM_FAST, settings.MACD_CUSTOM_SLOW, settings.MACD_CUSTOM_SIGNAL
 
+
+
+
+def time_of_day_rvol(df: pd.DataFrame, lookback_sessions: int = 20, now=None, interval_minutes: int = 15) -> pd.Series:
+    """Intraday volume pace versus the same clock slot on prior sessions.
+
+    A raw rolling-volume average compares the naturally busy opening/closing
+    bars with quiet midday bars and therefore over-rates the open and
+    under-rates midday ignition.  This baseline compares 10:00 with prior
+    10:00 bars, 12:00 with prior 12:00 bars, etc.  For a still-forming live
+    bar, expected volume is scaled by elapsed fraction so the first five
+    minutes of a 15-minute bar are not compared with a full historical bar.
+    """
+    if df is None or df.empty or "volume" not in df.columns or not isinstance(df.index, pd.DatetimeIndex):
+        return pd.Series(index=getattr(df, "index", None), dtype="float64")
+    out = pd.Series(np.nan, index=df.index, dtype="float64")
+    times = pd.Series(df.index.time, index=df.index)
+    for slot in sorted(set(times)):
+        mask = times.eq(slot)
+        vals = pd.to_numeric(df.loc[mask, "volume"], errors="coerce")
+        baseline = vals.shift(1).rolling(lookback_sessions, min_periods=min(2, lookback_sessions)).median()
+        denom = baseline.copy()
+        if now is not None and len(vals):
+            last_ts = vals.index[-1]
+            if last_ts.date() == now.date() and last_ts <= now < last_ts + dt.timedelta(minutes=interval_minutes):
+                elapsed = (now - last_ts).total_seconds() / (interval_minutes * 60.0)
+                elapsed = min(1.0, max(1.0 / interval_minutes, elapsed))
+                denom.iloc[-1] = denom.iloc[-1] * elapsed if pd.notna(denom.iloc[-1]) else np.nan
+        ratios = vals / denom.replace(0, np.nan)
+        out.loc[vals.index] = ratios
+    return out
 
 def _cross_up(a, b):
     return (a.shift(1) <= b.shift(1)) & (a > b)
@@ -594,6 +625,68 @@ def compute_avwap_series(series: dict) -> pd.Series:
     return anchored_vwap_series(series["df"], anchor_pos)
 
 
+def compute_compression_metrics(df: pd.DataFrame, bb_length: int = 20, lookback: int = 50) -> pd.DataFrame:
+    """Vectorised price-compression features used by live and research.
+
+    The score is intentionally directionless: it answers whether energy is
+    being stored, not which way price will break. Components are independent
+    enough to be ablated separately in research: Bollinger width percentile,
+    ATR compression, NR7, inside-bar structure, 5-vs-20 bar range contraction,
+    and EMA9/EMA20 convergence in ATR units.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(index=getattr(df, "index", None))
+    close = pd.to_numeric(df["close"], errors="coerce")
+    high = pd.to_numeric(df["high"], errors="coerce")
+    low = pd.to_numeric(df["low"], errors="coerce")
+    mid = close.rolling(bb_length).mean()
+    std = close.rolling(bb_length).std()
+    width = ((mid + 2 * std) - (mid - 2 * std)) / mid.replace(0, np.nan)
+
+    def _pct_last(x):
+        if len(x) < 5 or not np.isfinite(x[-1]):
+            return np.nan
+        vals = x[np.isfinite(x)]
+        if len(vals) < 5:
+            return np.nan
+        return float((vals <= x[-1]).mean() * 100.0)
+
+    width_pct = width.rolling(lookback, min_periods=5).apply(_pct_last, raw=True)
+    atr = compute_atr(df, settings.ATR_LENGTH)
+    atr_med = atr.rolling(20, min_periods=8).median()
+    atr_ratio = atr / atr_med.replace(0, np.nan)
+    rng = high - low
+    nr7 = rng.eq(rng.rolling(7, min_periods=7).min())
+    inside = high.le(high.shift(1)) & low.ge(low.shift(1))
+    range5 = high.rolling(5, min_periods=5).max() - low.rolling(5, min_periods=5).min()
+    range20 = high.rolling(20, min_periods=10).max() - low.rolling(20, min_periods=10).min()
+    range_ratio = range5 / range20.replace(0, np.nan)
+    ema9 = close.ewm(span=9, adjust=False).mean()
+    ema20 = close.ewm(span=20, adjust=False).mean()
+    ema_conv = (ema9 - ema20).abs() / atr.replace(0, np.nan)
+
+    score = pd.Series(0.0, index=df.index)
+    score += np.select([width_pct <= 10, width_pct <= 20, width_pct <= 30], [30, 24, 12], default=0)
+    score += np.select([atr_ratio <= 0.75, atr_ratio <= 0.90, atr_ratio <= 1.0], [20, 14, 7], default=0)
+    score += nr7.fillna(False).astype(int) * 15
+    score += inside.fillna(False).astype(int) * 10
+    score += np.select([range_ratio <= 0.40, range_ratio <= 0.60, range_ratio <= 0.75], [15, 10, 5], default=0)
+    score += np.select([ema_conv <= 0.15, ema_conv <= 0.30, ema_conv <= 0.50], [10, 7, 3], default=0)
+    score = score.clip(0, 100)
+    ready = width_pct.notna() & atr_ratio.notna() & range_ratio.notna() & ema_conv.notna()
+    score = score.where(ready)
+    return pd.DataFrame({
+        "bb_width_percentile": width_pct,
+        "atr_compression_ratio": atr_ratio,
+        "nr7": nr7,
+        "inside_bar": inside,
+        "range_compression_ratio": range_ratio,
+        "ema_convergence_atr": ema_conv,
+        "compression_score": score,
+        "energy_building": score.ge(60),
+    }, index=df.index)
+
+
 def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     """Computes every indicator series for the full df (used by the
     chart API). Returns a dict of aligned pandas Series/DataFrame plus
@@ -635,6 +728,9 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
     # compute_signal's own stop/target/position-size block always read the
     # exact same series - see "atr" in the returned dict.
     atr_series = compute_atr(df, settings.ATR_LENGTH)
+    compression = compute_compression_metrics(
+        df, bb_length=settings.BB_LENGTH, lookback=settings.VOL_CONTRACTION_LOOKBACK
+    )
     big_candle_direction, big_candle_level, close_position = _compute_big_candle(
         df, atr_series, settings.BIG_CANDLE_ATR_MULTIPLIER, settings.STRONG_CLOSE_THRESHOLD_PCT
     )
@@ -658,6 +754,7 @@ def compute_series(df: pd.DataFrame, timeframe: str) -> dict:
         "candle_direction": candle_direction,
         "candle_pattern_name": candle_pattern_name,
         "atr": atr_series,
+        "compression": compression,
         "big_candle_direction": big_candle_direction,
         "big_candle_level": big_candle_level,
         "close_position": close_position,
@@ -781,6 +878,19 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     vol_multiple = round(float(latest_vol / vol_avg), 2) if vol_avg and pd.notna(vol_avg) and vol_avg > 0 else None
     volume = int(latest_vol) if pd.notna(latest_vol) else None
 
+    # Time-of-day relative volume is the live participation read used by
+    # Best Entries.  It removes the strong intraday U-shape in volume, and
+    # scales a still-forming 15-minute bar to its elapsed fraction.
+    tod_rvol_series = time_of_day_rvol(df, lookback_sessions=20, now=now, interval_minutes=15) if timeframe == "15minute" else pd.Series(np.nan, index=df.index)
+    _tod = tod_rvol_series.iloc[i] if len(tod_rvol_series) else np.nan
+    tod_rvol = round(float(_tod), 2) if pd.notna(_tod) and np.isfinite(_tod) else None
+    tod_rvol_accel = None
+    _prev_tod = tod_rvol_series.iloc[max(0, i - 4):i].dropna()
+    if tod_rvol is not None and len(_prev_tod) >= 2:
+        _base_tod = float(_prev_tod.median())
+        if _base_tod > 0:
+            tod_rvol_accel = round(tod_rvol / _base_tod, 2)
+
     # Regime-adaptive volume bar: a choppy/Ranging market throws off a
     # lot more low-conviction volume spikes than a Trending one, so a
     # breakout there needs a STRICTER Relative Volume reading to be
@@ -803,14 +913,22 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     dir_match_count = max(align_count, 3 - align_count)  # how many of the 3 agree with the majority
     direction = "Bullish" if align_count >= 2 else "Bearish"
 
+    # Price-trend state for the early-movement engine.  EMA9 vs the
+    # Bollinger middle line is simply EMA9 vs SMA20; it is used as trend
+    # context, not counted as an independent evidence axis.
+    trend_state = None
+    if pd.notna(series["ema9"].iloc[i]) and pd.notna(series["bb_mid"].iloc[i]):
+        trend_state = "Bullish" if series["ema9"].iloc[i] > series["bb_mid"].iloc[i] else "Bearish"
+    vwap_side_agrees = None if not vwap else bool((close.iloc[i] > vwap) if direction == "Bullish" else (close.iloc[i] < vwap))
+
     # Entry timing is separate from state alignment. A row can stay aligned
     # for days after the useful entry has passed, which is why a pure 4-of-4
     # screen tends to surface mature moves. Record the most recent crossover
     # in the CURRENT direction across RSI/MACD/CMF, up to two bars back.
     if direction == "Bullish":
-        trigger_series = series["rsi_up"] | series["macd_up"] | cmf_up
+        trigger_series = series["rsi_up"] | series["macd_up"]
     else:
-        trigger_series = series["rsi_dn"] | series["macd_dn"] | cmf_dn
+        trigger_series = series["rsi_dn"] | series["macd_dn"]
     entry_trigger_bars_ago = None
     for _ago in range(0, min(2, i) + 1):
         if bool(trigger_series.iloc[i - _ago]):
@@ -888,6 +1006,21 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     macd_hist_agrees = True if macd_hist_rising is None else (
         macd_hist_rising if direction == "Bullish" else not macd_hist_rising
     )
+    rsi_spread_series = rsi_line - rsi_smooth
+    rsi_spread_now = rsi_spread_series.iloc[i]
+    rsi_spread_prev = rsi_spread_series.iloc[i - 1] if i > 0 else np.nan
+    rsi_spread_slope = None
+    if pd.notna(rsi_spread_now) and pd.notna(rsi_spread_prev):
+        rsi_spread_slope = round(float(rsi_spread_now - rsi_spread_prev), 3)
+    macd_hist_slope = None
+    if pd.notna(hist_now) and hist_prev is not None and pd.notna(hist_prev):
+        macd_hist_slope = round(float(hist_now - hist_prev), 4)
+    momentum_inflection_agrees = None
+    if rsi_spread_slope is not None and macd_hist_slope is not None:
+        if direction == "Bullish":
+            momentum_inflection_agrees = bool(rsi_spread_slope > 0 and macd_hist_slope > 0)
+        else:
+            momentum_inflection_agrees = bool(rsi_spread_slope < 0 and macd_hist_slope < 0)
 
     # close_position/nr7/bb_width_percentile/vol_contracting/big_candle*:
     # the app's ANTICIPATORY reads (see _compute_big_candle above) -
@@ -930,19 +1063,32 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     close_position_raw = series["close_position"].iloc[i]
     close_position_pct = round(float(close_position_raw) * 100, 1) if pd.notna(close_position_raw) else None
 
-    bb_width_series = (bb_upper - bb_lower) / bb_mid.replace(0, np.nan)
-    bw_now = bb_width_series.iloc[i]
+    compression = series.get("compression")
     bb_width_percentile = None
     vol_contracting = False
-    if pd.notna(bw_now):
-        window = settings.VOL_CONTRACTION_LOOKBACK
-        recent = bb_width_series.iloc[max(0, i - window + 1): i + 1].dropna()
-        if len(recent) >= 5:
-            bb_width_percentile = round(float((recent <= bw_now).mean() * 100), 1)
-            vol_contracting = bb_width_percentile <= settings.VOL_CONTRACTION_THRESHOLD_PCT
-
-    range_series = series["df"]["high"] - series["df"]["low"]
-    nr7 = bool(i >= 6 and range_series.iloc[i] == range_series.iloc[i - 6: i + 1].min())
+    nr7 = False
+    inside_bar = False
+    atr_compression_ratio = None
+    range_compression_ratio = None
+    ema_convergence_atr = None
+    compression_score = None
+    energy_building = False
+    if compression is not None and len(compression):
+        def _scalar(name, round_to=None):
+            v = compression[name].iloc[i]
+            if pd.isna(v) or not np.isfinite(v):
+                return None
+            v = float(v)
+            return round(v, round_to) if round_to is not None else v
+        bb_width_percentile = _scalar("bb_width_percentile", 1)
+        atr_compression_ratio = _scalar("atr_compression_ratio", 3)
+        range_compression_ratio = _scalar("range_compression_ratio", 3)
+        ema_convergence_atr = _scalar("ema_convergence_atr", 3)
+        compression_score = _scalar("compression_score", 1)
+        nr7 = bool(compression["nr7"].iloc[i])
+        inside_bar = bool(compression["inside_bar"].iloc[i])
+        energy_building = bool(compression["energy_building"].iloc[i])
+        vol_contracting = bool(bb_width_percentile is not None and bb_width_percentile <= settings.VOL_CONTRACTION_THRESHOLD_PCT)
 
     big_candle_dir_series = series["big_candle_direction"]
     big_candle_level_series = series["big_candle_level"]
@@ -1131,6 +1277,10 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "ret_10": _ret_n(10),
         "rvol_accel": rvol_accel,
         "vol_rising": vol_rising,
+        "tod_rvol": tod_rvol,
+        "tod_rvol_accel": tod_rvol_accel,
+        "trend_state": trend_state,
+        "vwap_side_agrees": vwap_side_agrees,
         # One momentum axis, reported in two parts: did RSI cross its
         # average on THIS bar (the early read), and is it merely holding
         # above it (the weaker, later read). MACD is exposed separately as
@@ -1175,10 +1325,20 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "macd_hist": macd_hist_value,
         "macd_hist_rising": macd_hist_rising,
         "macd_hist_agrees": macd_hist_agrees,
+        "rsi_spread_slope": rsi_spread_slope,
+        "macd_hist_slope": macd_hist_slope,
+        "momentum_inflection_agrees": momentum_inflection_agrees,
         "close_position_pct": close_position_pct,
         "nr7": nr7,
+        "inside_bar": inside_bar,
         "bb_width_percentile": bb_width_percentile,
+        "atr_compression_ratio": atr_compression_ratio,
+        "range_compression_ratio": range_compression_ratio,
+        "ema_convergence_atr": ema_convergence_atr,
+        "compression_score": compression_score,
+        "energy_building": energy_building,
         "vol_contracting": vol_contracting,
+        "vol_contracting_recent": vol_contracting,
         "big_candle": big_candle,
         "big_candle_direction": big_candle_direction_val,
         "big_candle_level": big_candle_level,

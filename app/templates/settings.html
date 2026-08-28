@@ -75,7 +75,7 @@
       <h2>Watchlist</h2>
       <label for="watchlist">NSE trading symbols (comma or newline separated)</label>
       <textarea id="watchlist" name="watchlist">{{ s.WATCHLIST | join(', ') }}</textarea>
-      <div class="hint">{{ s.WATCHLIST | length }} symbols currently. Scanned on <strong>daily</strong> candles.</div>
+      <div class="hint">Live Best Entries ignores a stale manual list and refreshes the current NSE stock-F&amp;O universe from Kite each trading day. This list remains available for research/backtests.</div>
       <div class="actions">
         <button class="btn secondary" type="submit" formaction="/settings/load-fno-list" {% if not logged_in %}disabled title="Log in to Kite first"{% endif %}>
           Load current F&amp;O list from Kite
@@ -85,142 +85,45 @@
     </div>
 
     <div class="card">
-      <h2>The screen</h2>
-      <p style="margin-top:-4px;">The five dials that actually change which stocks appear. Everything else on this page is
-      either a filter you switch on and off, or an internal you can leave alone.</p>
+      <h2>Live Early-Movement Engine</h2>
+      <p style="margin-top:-4px;">Best Entries is now a 15-minute F&amp;O execution screen. It does not count a large pile of indicators.
+      These are the only live controls worth tuning; OI, time-of-day RVOL, relative strength, higher-timeframe alignment and fresh trigger quality are evaluated automatically.</p>
       <div class="row2">
         <div>
-          <label for="min_required">Signal rule</label>
-          <select id="min_required" name="min_required">
-            <option value="2" {% if s.MIN_REQUIRED == 2 %}selected{% endif %}>2-of-4 parameters</option>
-            <option value="3" {% if s.MIN_REQUIRED == 3 %}selected{% endif %}>3-of-4</option>
-            <option value="4" {% if s.MIN_REQUIRED == 4 %}selected{% endif %}>4-of-4 (strict)</option>
-          </select>
-          <div class="hint">Out of RSI, MACD, Chaikin Money Flow and Relative Volume. <strong>Loosen this first</strong> if the screen is too empty.</div>
+          <label for="max_entry_extension_atr">Maximum entry extension (ATR past VWAP)</label>
+          <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.25" max="3" step="0.05" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
+          <div class="hint">Default 1.25 ATR. Beyond this, the move is considered late/chasing and cannot enter Best Entries.</div>
         </div>
         <div>
-          <label for="rel_volume_threshold">Relative Volume threshold</label>
-          <input type="number" id="rel_volume_threshold" name="rel_volume_threshold" min="0.1" step="0.1" value="{{ s.REL_VOLUME_THRESHOLD }}">
-          <div class="hint">Multiple of the 20-bar average volume needed to count as real participation.</div>
+          <label for="shortlist_max">Maximum Best Entries</label>
+          <input type="number" id="shortlist_max" name="shortlist_max" min="1" max="10" step="1" value="{{ s.SHORTLIST_MAX }}">
+          <div class="hint">A ceiling, not a target. The engine may return zero.</div>
         </div>
         <div>
-          <label for="min_atr_pct">Minimum ATR (% of price)</label>
-          <input type="number" id="min_atr_pct" name="min_atr_pct" min="0.05" max="20" step="0.05" value="{{ s.MIN_ATR_PCT }}">
-          <div class="hint">Below this a stock is too quiet to be worth the risk. <strong>Watch the ATR column for a few days and set this near the bottom quartile of what you actually see</strong> - the default is a guess, not a measurement.</div>
+          <label for="scan_interval_seconds">Scan interval (seconds)</label>
+          <input type="number" id="scan_interval_seconds" name="scan_interval_seconds" min="60" max="900" step="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
+          <div class="hint">180 seconds is responsive while staying respectful of Kite historical-data limits.</div>
         </div>
         <div>
-          <label for="max_entry_extension_atr">Max entry extension (ATR past VWAP)</label>
-          <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.1" max="20" step="0.1" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
-          <div class="hint">Past this you'd be chasing a move that already happened.</div>
+          <label for="rsi_length">RSI length</label>
+          <input type="number" id="rsi_length" name="rsi_length" min="2" max="50" value="{{ s.RSI_LENGTH }}">
+          <div class="hint">Default 14. The entry engine uses the RSI crossover as a fresh trigger, not as a separate vote.</div>
         </div>
         <div>
-          <label for="strong_close_threshold_pct">Strong-close threshold (%)</label>
-          <input type="number" id="strong_close_threshold_pct" name="strong_close_threshold_pct" min="50" max="100" step="1" value="{{ s.STRONG_CLOSE_THRESHOLD_PCT }}">
-          <div class="hint">How near the day's high/low a close must be to count as decisive. Also the hard gate for the BTST/STBT panel.</div>
+          <label for="rsi_smooth_length">RSI smoothing SMA</label>
+          <input type="number" id="rsi_smooth_length" name="rsi_smooth_length" min="2" max="50" value="{{ s.RSI_SMOOTH_LENGTH }}">
+          <div class="hint">Default 9 for a responsive signal line around RSI(14).</div>
         </div>
         <div>
-          <label for="min_early_score">Shortlist score floor (0-100)</label>
-          <input type="number" id="min_early_score" name="min_early_score" min="0" max="100" step="1" value="{{ s.MIN_EARLY_SCORE | round | int }}">
-          <div class="hint">
-            The main dial for how short the shortlist is. <strong>75</strong> is the "clear" band, where
-            several independent axes have to agree rather than one carrying the rest. Below 75 is a
-            watchlist reading &mdash; it clears the floor with no margin. Raise it for fewer names; lower it
-            to see more. A row with no OI baseline never reaches this list at any setting.
-            <br><br>
-            Worth being precise about what this buys: <strong>selectivity, not probability</strong>. Nothing
-            measured yet says a 78 wins more often than a 68 &mdash; more independent agreement is the best
-            available proxy until the engine is backtested.
-          </div>
-        </div>
-        <div>
-          <label for="min_shortlist_coverage">Minimum evidence coverage (0-1)</label>
-          <input type="number" id="min_shortlist_coverage" name="min_shortlist_coverage" min="0" max="1" step="0.05" value="{{ s.MIN_SHORTLIST_COVERAGE }}">
-          <div class="hint">
-            How much of the evidence must actually have been measurable. This is a separate bar from the
-            score, because the two fail differently: a low score means the evidence disagrees, low coverage
-            means there wasn't much evidence to disagree. A row can score 82 on 60% coverage &mdash; confident
-            about a smaller thing &mdash; and the score alone can't catch that. 0.80 allows at most one
-            mid-weight axis to be missing.
-          </div>
-        </div>
-        <div>
-          <label for="shortlist_max">Shortlist size cap</label>
-          <input type="number" id="shortlist_max" name="shortlist_max" min="1" max="50" step="1" value="{{ s.SHORTLIST_MAX }}">
-          <div class="hint">
-            A ceiling, not a target. Most days should come in well under it, and an empty shortlist is a
-            valid answer &mdash; a screen that always returns the same number of names is sorting, not selecting.
-          </div>
-        </div>
-        <div>
-          <label for="min_btst_score">BTST/STBT minimum checks held</label>
-          <input type="number" id="min_btst_score" name="min_btst_score" min="0" max="9" step="1" value="{{ s.MIN_BTST_SCORE }}">
-          <div class="hint">
-            How many of the overnight checks must actually hold. Every check listed can genuinely fail &mdash;
-            the old panel counted several that were forced true by the same gates that admitted the row,
-            so its scores had a floor of 6 and meant almost nothing.
-          </div>
-        </div>
-        <div>
-          <label for="btst_alert_time">BTST/STBT publish time (IST)</label>
-          <input type="time" id="btst_alert_time" name="btst_alert_time" value="{{ s.BTST_ALERT_TIME }}">
-          <div class="hint">
-            Sends the day's overnight candidates once, at this time. 15:15 is the sweet spot — the daily
-            bar's close position has essentially settled, and you still have fifteen minutes to place an
-            order before the 15:30 bell. Earlier and you're reading an unfinished bar; later and you can't act.
-          </div>
-          <label class="switch" style="margin-top:8px;">
-            <input type="checkbox" name="btst_alert_enabled" value="on" {% if s.BTST_ALERT_ENABLED %}checked{% endif %}>
-            <span>Publish the daily BTST/STBT list</span>
-          </label>
-          <label class="switch" style="margin-top:8px;">
-            <input type="checkbox" name="require_oi_agreement" value="on" {% if s.REQUIRE_OI_AGREEMENT %}checked{% endif %}>
-            <span>Require OI positioning to agree</span>
-          </label>
-          <div class="hint">
-            On by default, unlike every other gate here &mdash; this is what links the OI read to the technical
-            read, and it is the main reason the shortlist is short. It only ever rejects on ACTIVE disagreement:
-            an absent OI baseline is unknown, not contrary, so it costs a row its place by leaving evidence
-            unmeasured rather than by counting against it.
-          </div>
+          <label>15-minute MACD</label>
+          <div class="hint"><strong>8 / 17 / 9</strong> in Auto mode. MACD confirms momentum; it is not double-counted as another independent axis.</div>
         </div>
       </div>
     </div>
 
     <details class="card">
-      <summary><strong>Filters</strong> &mdash; switch checks on to make "Confirmed" stricter</summary>
-      <p class="hint" style="margin-top:10px;">Each one can only ever <em>remove</em> rows, never add them. Two are on by default.
-      Rather than guessing which help, run <strong>"Which gates actually earn their place?"</strong> on the
-      <a href="/backtest">Backtest</a> page &mdash; it measures each one against real outcomes on your own watchlist.</p>
-      <div class="row2" style="margin-top:12px;">
-        {{ gate('require_entry_location_agreement', s.REQUIRE_ENTRY_LOCATION_AGREEMENT, 'Require entry location', "Drops rows already extended past the limit above - stops you chasing. ON by default.") }}
-        {{ gate('require_atr_floor', s.REQUIRE_ATR_FLOOR, 'Require minimum ATR', "Drops stocks too quiet to move. ON by default.") }}
-        {{ gate('require_index_agreement', s.REQUIRE_INDEX_AGREEMENT, 'Require index agreement', "Row must agree with NIFTY 50's own direction.") }}
-        {{ gate('require_sector_agreement', s.REQUIRE_SECTOR_AGREEMENT, 'Require sector agreement', "Row must agree with its own NSE sectoral index. Overlaps heavily with index and breadth - on a down day all three usually fire together.") }}
-        {{ gate('require_breadth_agreement', s.REQUIRE_BREADTH_AGREEMENT, 'Require breadth agreement', "Row must agree with your watchlist's advance/decline split. Also overlaps with the two above.") }}
-        {{ gate('require_strong_close_agreement', s.REQUIRE_STRONG_CLOSE_AGREEMENT, 'Require strong close', "Row must close decisively in its own direction.") }}
-        {{ gate('require_big_candle_agreement', s.REQUIRE_BIG_CANDLE_AGREEMENT, 'Require big-candle agreement', "The most recent range-expansion bar must point the row's way.") }}
-        {{ gate('require_macd_hist_agreement', s.REQUIRE_MACD_HIST_AGREEMENT, 'Require MACD histogram momentum', "Momentum must be accelerating, not fading.") }}
-        {{ gate('require_candle_pattern_agreement', s.REQUIRE_CANDLE_PATTERN_AGREEMENT, 'Require candlestick pattern', "The latest candle pattern must agree.") }}
-        {{ gate('require_delivery_agreement', s.REQUIRE_DELIVERY_AGREEMENT, 'Require delivery %', "NSE delivery must clear the threshold below. Never blocks a symbol with no delivery data.") }}
-        <div>
-          <label for="delivery_threshold_pct">Delivery % threshold</label>
-          <input type="number" id="delivery_threshold_pct" name="delivery_threshold_pct" min="1" max="99" step="1" value="{{ s.DELIVERY_THRESHOLD_PCT }}">
-        </div>
-        <div>
-          <label for="breadth_threshold_pct">Breadth threshold %</label>
-          <input type="number" id="breadth_threshold_pct" name="breadth_threshold_pct" min="1" max="99" step="1" value="{{ s.BREADTH_THRESHOLD_PCT }}">
-        </div>
-      </div>
-      <p class="hint" style="margin-top:14px;">
-        NSE delivery data:
-        {% if delivery_status.available %}
-        <span style="color:var(--green); font-weight:600;">available</span> (as of {{ delivery_status.data_date }}, {{ delivery_status.symbol_count }} symbols)
-        {% else %}
-        <span style="color:var(--red); font-weight:600;">not available yet</span>{% if delivery_status.last_error %} &mdash; {{ delivery_status.last_error }}{% endif %}
-        {% endif %}
-        &mdash; end-of-day only, never live intraday, and NSE blocks some cloud hosts. If this never turns green
-        after a day or two, that's why, not a bug in the app.
-      </p>
+      <summary><strong>Legacy / research-only parameters</strong></summary>
+      <p class="hint" style="margin-top:10px;">Candlestick patterns, strong-close, big-candle, delivery %, breadth, generic ADX-regime volume and BTST/STBT controls no longer drive Best Entries. They remain in the code only so old charts and backtests can still reproduce historical experiments.</p>
     </details>
 
     <details class="card">
@@ -263,52 +166,6 @@
       </div>
     </details>
 
-    <details class="card">
-      <summary><strong>Indicator internals</strong> &mdash; safe to leave alone</summary>
-      <p class="hint" style="margin-top:10px;">Changing these re-tunes the indicators themselves. Tempting, but it's also
-      the fastest way to overfit to one recent window &mdash; the defaults are the conventional values.</p>
-      <div class="row2" style="margin-top:12px;">
-        <div>
-          <label for="macd_preset">MACD preset</label>
-          <select id="macd_preset" name="macd_preset">
-            {% for p in valid_presets %}<option value="{{ p }}" {% if p == s.MACD_PRESET %}selected{% endif %}>{{ p }}</option>{% endfor %}
-          </select>
-          <div class="hint">On daily candles "auto" resolves to the custom values below; the preset only differs on the 15-min intraday panel.</div>
-        </div>
-        <div><label for="macd_fast">MACD fast</label><input type="number" id="macd_fast" name="macd_fast" min="1" value="{{ s.MACD_CUSTOM_FAST }}"></div>
-        <div><label for="macd_slow">MACD slow</label><input type="number" id="macd_slow" name="macd_slow" min="1" value="{{ s.MACD_CUSTOM_SLOW }}"></div>
-        <div><label for="macd_signal">MACD signal</label><input type="number" id="macd_signal" name="macd_signal" min="1" value="{{ s.MACD_CUSTOM_SIGNAL }}"></div>
-        <div><label for="rsi_length">RSI length</label><input type="number" id="rsi_length" name="rsi_length" min="1" value="{{ s.RSI_LENGTH }}"></div>
-        <div><label for="rsi_smooth">RSI smoothing length</label><input type="number" id="rsi_smooth" name="rsi_smooth" min="1" value="{{ s.RSI_SMOOTH_LENGTH }}"></div>
-        <div><label for="bb_length">Bollinger Band length</label><input type="number" id="bb_length" name="bb_length" min="1" value="{{ s.BB_LENGTH }}"></div>
-        <div>
-          <label for="adx_length">ADX length</label>
-          <input type="number" id="adx_length" name="adx_length" min="2" value="{{ s.ADX_LENGTH }}">
-          <div class="hint">Drives the Regime column only.</div>
-        </div>
-        <div>
-          <label for="ranging_vol_multiplier">Ranging-regime volume multiplier</label>
-          <input type="number" id="ranging_vol_multiplier" name="ranging_vol_multiplier" min="1" step="0.1" value="{{ s.RANGING_VOL_MULTIPLIER }}">
-        </div>
-        <div>
-          <label for="big_candle_atr_multiplier">Big-candle ATR multiplier</label>
-          <input type="number" id="big_candle_atr_multiplier" name="big_candle_atr_multiplier" min="0.1" step="0.1" value="{{ s.BIG_CANDLE_ATR_MULTIPLIER }}">
-        </div>
-        <div>
-          <label for="vol_contraction_lookback">Coiling lookback (bars)</label>
-          <input type="number" id="vol_contraction_lookback" name="vol_contraction_lookback" min="5" value="{{ s.VOL_CONTRACTION_LOOKBACK }}">
-        </div>
-        <div>
-          <label for="vol_contraction_threshold_pct">Coiling percentile</label>
-          <input type="number" id="vol_contraction_threshold_pct" name="vol_contraction_threshold_pct" min="1" max="99" step="1" value="{{ s.VOL_CONTRACTION_THRESHOLD_PCT }}">
-          <div class="hint">Badge only - coiling has no direction, so it never gates anything.</div>
-        </div>
-        <div>
-          <label for="scan_interval">Scan interval (seconds)</label>
-          <input type="number" id="scan_interval" name="scan_interval" min="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
-        </div>
-      </div>
-    </details>
 
     <div class="actions">
       <button class="btn" type="submit">Save settings</button>

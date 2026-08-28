@@ -69,9 +69,6 @@
   .badge.short-covering { background: rgba(46,204,113,0.08); color: #7fd8a2; }
   .badge.long-unwinding { background: rgba(245,165,36,0.12); color: #e0a34e; }
   .badge.neutral { background: rgba(255,255,255,0.06); color: var(--muted); }
-  .badge.tier-2 { background: rgba(255,255,255,0.06); color: var(--muted); }
-  .badge.tier-3 { background: rgba(245,165,36,0.12); color: var(--amber); }
-  .badge.tier-4 { background: rgba(46,204,113,0.15); color: var(--green); }
   .accel-strong-acceleration { color: var(--green); font-weight: 700; }
   .accel-moderate-acceleration { color: var(--amber); font-weight: 700; }
   .accel-weakening { color: #d18a4a; }
@@ -89,7 +86,7 @@
 <header>
   <div>
     <h1>OI Screener</h1>
-    <p>Open Interest value, % change, and acceleration &middot; only stocks currently matching 2+ of the 4 Parameter Screener checks</p>
+    <p>Open Interest value, % change, and acceleration &middot; all current NSE stock-F&O contracts with valid live OI</p>
   </div>
   <nav><a href="/">&larr; Dashboard</a></nav>
 </header>
@@ -123,10 +120,6 @@
       <option>Stable</option><option>Weakening</option>
       <option>Possible exit/unwinding</option><option>New</option>
     </select>
-    <select id="f-tier">
-      <option value="">All Tiers</option>
-      <option value="4">4 of 4</option><option value="3">3 of 4</option><option value="2">2 of 4</option>
-    </select>
     <select id="f-oimove" title="Filters on the biggest of Day/15m/30m/60m OI % change">
       <option value="">Any OI Move</option>
       <option value="has">OI actually moving (has data)</option>
@@ -134,12 +127,18 @@
       <option value="2">OI move ≥ 2%</option>
       <option value="5">OI move ≥ 5%</option>
     </select>
+    <select id="f-unusual" title="Optional statistical filter using each stock's own historical OI baseline">
+      <option value="">All valid OI</option>
+      <option value="1">Unusual OI only (|z| ≥ 1.5)</option>
+    </select>
     <div class="toolbar-spacer"></div>
     <div class="toolbar-meta">
       <span id="symbol-count">— symbols</span> &middot; <span id="updated-at">not loaded yet</span>
       <span class="live-dot">Live</span>
     </div>
   </div>
+
+  <div id="oi-history-status" class="card" style="display:none;padding:12px 16px;margin-bottom:12px;color:var(--muted);font-size:12.5px;"></div>
 
   <div class="card">
     <div class="table-scroll">
@@ -159,19 +158,18 @@
           <th data-col="10" data-type="text">OI Structure</th>
           <th data-col="11" data-type="num">Vol Multiple</th>
           <th data-col="12" data-type="text">Signal</th>
-          <th data-col="13" data-type="num" data-default-dir="desc">Tier</th>
         </tr>
       </thead>
       <tbody id="oi-tbody">
-        <tr><td colspan="14" class="empty-note">Loading...</td></tr>
+        <tr><td colspan="13" class="empty-note">Loading...</td></tr>
       </tbody>
     </table>
     </div>
   </div>
 
   <p class="footnote">
-    Shows only stocks currently in one of the Dashboard's Parameter Screener tiers (matching 2, 3, or 4 of RSI/MACD/
-    EMA9-BB/Relative Volume right now) - not the full watchlist. <strong>Day OI Chg %</strong> = today's latest OI
+    Shows the current NSE stock-F&O universe whenever a valid live futures OI quote is available. OI is allowed to lead the technical trigger, so a stock does not need to pass an old indicator-count tier before appearing here.
+    <strong>Unusual OI only</strong> is optional: it applies the stock's own |z| ≥ 1.5 historical-OI test without hiding quiet-but-valid OI rows from the base page. <strong>Day OI Chg %</strong> = today's latest OI
     vs yesterday's last-seen OI (its closing value). <strong>15m/30m/60m Chg %</strong> are rolling-window OI moves
     ending now - 30m is the primary early-alert window, 60m the stronger confirmation window, 15m the fastest and
     noisiest. <strong>Acceleration</strong> = the latest 30-minute OI change minus the previous 30-minute OI change,
@@ -189,7 +187,7 @@
   {% endif %}
 </div>
 <script>
-  var currentSort = { col: 4, dir: 'desc', type: 'num' };
+  var currentSort = { col: null, dir: 'desc', type: 'num' };
   var latestResults = [];
 
   function fmtPct(v) {
@@ -229,12 +227,11 @@
     var priceChg = r.price_chg_today_pct;
     var structure = r.oi_structure || 'Neutral';
     var accel = r.oi_accel_label || 'New';
-    var tier = r.param_tier || '';
     return '' +
       '<td class="sym-col" data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
       '<td data-sort="' + (r.close != null ? r.close : '') + '">' + (r.close != null ? r.close.toLocaleString('en-IN') : '—') + '</td>' +
       '<td data-sort="' + (priceChg != null ? priceChg : '') + '" class="' + (priceChg > 0 ? 'green-text' : priceChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(priceChg) + '</td>' +
-      '<td data-sort="' + (r.oi != null ? r.oi : '') + '">' + fmtNum(r.oi) + '</td>' +
+      '<td data-sort="' + ((r.oi_total != null ? r.oi_total : r.oi) != null ? (r.oi_total != null ? r.oi_total : r.oi) : '') + '">' + fmtNum(r.oi_total != null ? r.oi_total : r.oi) + '</td>' +
       '<td data-sort="' + (r.oi_day_chg_pct != null ? r.oi_day_chg_pct : '') + '" class="' + (r.oi_day_chg_pct > 0 ? 'green-text' : r.oi_day_chg_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_day_chg_pct) + '</td>' +
       '<td data-sort="' + (r.oi_chg_15m_pct != null ? r.oi_chg_15m_pct : '') + '" class="' + (r.oi_chg_15m_pct > 0 ? 'green-text' : r.oi_chg_15m_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_chg_15m_pct) + '</td>' +
       '<td data-sort="' + (r.oi_chg_30m_pct != null ? r.oi_chg_30m_pct : '') + '" class="' + (r.oi_chg_30m_pct > 0 ? 'green-text' : r.oi_chg_30m_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_chg_30m_pct) + '</td>' +
@@ -243,22 +240,22 @@
       '<td data-sort="' + accel + '" class="' + accelClass(accel) + '">' + accel + '</td>' +
       '<td data-sort="' + structure + '"><span class="badge ' + structureClass(structure) + '">' + structure + '</span></td>' +
       '<td data-sort="' + (r.vol_multiple != null ? r.vol_multiple : '') + '">' + (r.vol_multiple != null ? r.vol_multiple + 'x' : '—') + '</td>' +
-      '<td data-sort="' + (r.direction || '') + '">' + (r.direction ? '<span class="signal-pill ' + (r.direction === 'Bullish' ? 'bull">▲ Bullish' : 'bear">▼ Bearish') + '</span>' : '<span class="muted-text">—</span>') + '</td>' +
-      '<td data-sort="' + tier + '"><span class="badge tier-' + tier + '">' + (tier ? tier + ' of 4' : '—') + '</span></td>';
+      '<td data-sort="' + (r.direction || '') + '">' + (r.direction ? '<span class="signal-pill ' + (r.direction === 'Bullish' ? 'bull">▲ Bullish' : 'bear">▼ Bearish') + '</span>' : '<span class="muted-text">—</span>') + '</td>';
   }
 
   function buildRows(results) {
     var tbody = document.getElementById('oi-tbody');
     var rows = results.filter(function (r) { return !r.error; });
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="14" class="empty-note">No stocks currently matching 2+ of the Parameter Screener checks.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13" class="empty-note">No current NSE stock-F&O symbols have a valid live OI quote yet.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(function (r) {
       var move = oiMoveMax(r);
       return '<tr class="data-row" data-symbol="' + r.symbol + '" data-structure="' + (r.oi_structure || '') +
-        '" data-accel="' + (r.oi_accel_label || '') + '" data-tier="' + (r.param_tier || '') +
+        '" data-accel="' + (r.oi_accel_label || '') +
         '" data-oimove="' + (move === null ? '' : move) +
+        '" data-z="' + (r.oi_z == null ? '' : Math.abs(r.oi_z)) +
         '" onclick="window.location=\'/chart/' + r.symbol + '\'">' + rowHtml(r) + '</tr>';
     }).join('');
   }
@@ -278,14 +275,18 @@
     var symbolQ = (document.getElementById('f-symbol').value || '').trim().toUpperCase();
     var structureQ = document.getElementById('f-structure').value;
     var accelQ = document.getElementById('f-accel').value;
-    var tierQ = document.getElementById('f-tier').value;
     var oimoveQ = document.getElementById('f-oimove').value;
+    var unusualQ = document.getElementById('f-unusual').value;
     document.querySelectorAll('#oi-tbody tr.data-row').forEach(function (row) {
       var ok = true;
       if (symbolQ && (row.getAttribute('data-symbol') || '').indexOf(symbolQ) === -1) ok = false;
       if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
       if (ok && accelQ && row.getAttribute('data-accel') !== accelQ) ok = false;
-      if (ok && tierQ && row.getAttribute('data-tier') !== tierQ) ok = false;
+      if (ok && unusualQ) {
+        var zAttr = row.getAttribute('data-z');
+        var z = zAttr === '' ? NaN : parseFloat(zAttr);
+        if (isNaN(z) || z < 1.5) ok = false;
+      }
       if (ok && oimoveQ) {
         var moveAttr = row.getAttribute('data-oimove');
         var move = moveAttr === '' ? null : parseFloat(moveAttr);
@@ -300,6 +301,7 @@
   }
 
   function applySort() {
+    if (currentSort.col === null) return;
     var tbody = document.getElementById('oi-tbody');
     var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
     if (!rows.length) return;
@@ -329,7 +331,7 @@
   });
 
   ['f-symbol'].forEach(function (id) { document.getElementById(id).addEventListener('input', applyFilters); });
-  ['f-structure', 'f-accel', 'f-tier', 'f-oimove'].forEach(function (id) {
+  ['f-structure', 'f-accel', 'f-oimove', 'f-unusual'].forEach(function (id) {
     document.getElementById(id).addEventListener('change', applyFilters);
   });
 
@@ -338,6 +340,18 @@
       latestResults = data.results || [];
       buildRows(latestResults);
       updateTiles(latestResults);
+      var historyBox = document.getElementById('oi-history-status');
+      var rh = data.rolling_history || {};
+      if (historyBox && rh.eligible_with_oi > 0 && rh.warming_up) {
+        historyBox.style.display = 'block';
+        historyBox.textContent = 'Building 30/60m OI history after restart: ' +
+          (rh.ready_30m || 0) + '/' + rh.eligible_with_oi + ' have 30m history; ' +
+          (rh.ready_60m || 0) + '/' + rh.eligible_with_oi + ' have 60m history. ' +
+          'Rows stay visible while these rolling windows fill.';
+      } else if (historyBox) {
+        historyBox.style.display = 'none';
+        historyBox.textContent = '';
+      }
       applySort();
       applyFilters();
       updateScrollShadow();

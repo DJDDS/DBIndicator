@@ -8,6 +8,7 @@ from . import alerts, backtest, background, config, delivery, early_signal, indi
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
+from .oi_view import select_oi_screener_rows, oi_history_readiness
 
 log = logging.getLogger(__name__)
 
@@ -172,30 +173,14 @@ def settings_page():
     if request.method == "POST":
         form = request.form
         payload = {
-            "WATCHLIST": form.get("watchlist", ""),
-            "MACD_PRESET": form.get("macd_preset", settings.MACD_PRESET),
-            "MACD_CUSTOM_FAST": form.get("macd_fast", settings.MACD_CUSTOM_FAST),
-            "MACD_CUSTOM_SLOW": form.get("macd_slow", settings.MACD_CUSTOM_SLOW),
-            "MACD_CUSTOM_SIGNAL": form.get("macd_signal", settings.MACD_CUSTOM_SIGNAL),
+            # Live F&O early-movement controls.
+            "WATCHLIST": form.get("watchlist", ""),  # research/backtest universe only; live refreshes F&O from Kite
             "RSI_LENGTH": form.get("rsi_length", settings.RSI_LENGTH),
-            "RSI_SMOOTH_LENGTH": form.get("rsi_smooth", settings.RSI_SMOOTH_LENGTH),
-            "BB_LENGTH": form.get("bb_length", settings.BB_LENGTH),
-            "MIN_REQUIRED": form.get("min_required", settings.MIN_REQUIRED),
-            "REL_VOLUME_THRESHOLD": form.get("rel_volume_threshold", settings.REL_VOLUME_THRESHOLD),
-            "SCAN_INTERVAL_SECONDS": form.get("scan_interval", settings.SCAN_INTERVAL_SECONDS),
-            "ADX_LENGTH": form.get("adx_length", settings.ADX_LENGTH),
-            "RANGING_VOL_MULTIPLIER": form.get("ranging_vol_multiplier", settings.RANGING_VOL_MULTIPLIER),
-            # A checkbox that isn't checked simply isn't submitted at all,
-            # so this can't use form.get(key, current-value) like every
-            # other field above (that fallback would silently keep the
-            # OLD value forever, making it impossible to ever uncheck) -
-            # "on" only when Flask actually received the field.
-            "REQUIRE_INDEX_AGREEMENT": form.get("require_index_agreement") == "on",
-            "REQUIRE_CANDLE_PATTERN_AGREEMENT": form.get("require_candle_pattern_agreement") == "on",
-            "REQUIRE_MACD_HIST_AGREEMENT": form.get("require_macd_hist_agreement") == "on",
-            "REQUIRE_SECTOR_AGREEMENT": form.get("require_sector_agreement") == "on",
-            "REQUIRE_BREADTH_AGREEMENT": form.get("require_breadth_agreement") == "on",
-            "BREADTH_THRESHOLD_PCT": form.get("breadth_threshold_pct", settings.BREADTH_THRESHOLD_PCT),
+            "RSI_SMOOTH_LENGTH": form.get("rsi_smooth_length", settings.RSI_SMOOTH_LENGTH),
+            "SCAN_INTERVAL_SECONDS": form.get("scan_interval_seconds", settings.SCAN_INTERVAL_SECONDS),
+            "MAX_ENTRY_EXTENSION_ATR": form.get("max_entry_extension_atr", settings.MAX_ENTRY_EXTENSION_ATR),
+            "SHORTLIST_MAX": form.get("shortlist_max", settings.SHORTLIST_MAX),
+            # Risk/position-sizing controls are display guidance only; they never decide shortlist membership.
             "ATR_LENGTH": form.get("atr_length", settings.ATR_LENGTH),
             "ATR_STOP_MULTIPLIER": form.get("atr_stop_multiplier", settings.ATR_STOP_MULTIPLIER),
             "ATR_TARGET_MULTIPLIER": form.get("atr_target_multiplier", settings.ATR_TARGET_MULTIPLIER),
@@ -203,21 +188,6 @@ def settings_page():
             "RISK_PER_TRADE_PCT": form.get("risk_per_trade_pct", settings.RISK_PER_TRADE_PCT),
             "MAX_DAILY_RISK_PCT": form.get("max_daily_risk_pct", settings.MAX_DAILY_RISK_PCT),
             "MAX_CONCURRENT_POSITIONS": form.get("max_concurrent_positions", settings.MAX_CONCURRENT_POSITIONS),
-            "VOL_CONTRACTION_LOOKBACK": form.get("vol_contraction_lookback", settings.VOL_CONTRACTION_LOOKBACK),
-            "VOL_CONTRACTION_THRESHOLD_PCT": form.get("vol_contraction_threshold_pct", settings.VOL_CONTRACTION_THRESHOLD_PCT),
-            "BIG_CANDLE_ATR_MULTIPLIER": form.get("big_candle_atr_multiplier", settings.BIG_CANDLE_ATR_MULTIPLIER),
-            "STRONG_CLOSE_THRESHOLD_PCT": form.get("strong_close_threshold_pct", settings.STRONG_CLOSE_THRESHOLD_PCT),
-            "REQUIRE_BIG_CANDLE_AGREEMENT": form.get("require_big_candle_agreement") == "on",
-            "REQUIRE_STRONG_CLOSE_AGREEMENT": form.get("require_strong_close_agreement") == "on",
-            "REQUIRE_DELIVERY_AGREEMENT": form.get("require_delivery_agreement") == "on",
-            "DELIVERY_THRESHOLD_PCT": form.get("delivery_threshold_pct", settings.DELIVERY_THRESHOLD_PCT),
-            "MIN_SHORTLIST_COVERAGE": form.get("min_shortlist_coverage", settings.MIN_SHORTLIST_COVERAGE),
-            "BTST_ALERT_ENABLED": form.get("btst_alert_enabled") == "on",
-            "BTST_ALERT_TIME": form.get("btst_alert_time", settings.BTST_ALERT_TIME),
-            "MAX_ENTRY_EXTENSION_ATR": form.get("max_entry_extension_atr", settings.MAX_ENTRY_EXTENSION_ATR),
-            "REQUIRE_ENTRY_LOCATION_AGREEMENT": form.get("require_entry_location_agreement") == "on",
-            "MIN_ATR_PCT": form.get("min_atr_pct", settings.MIN_ATR_PCT),
-            "REQUIRE_ATR_FLOOR": form.get("require_atr_floor") == "on",
         }
         errors = settings.update(**payload)
         saved = not errors
@@ -382,31 +352,21 @@ def oi_screener_page():
 @app.route("/api/oi-screener")
 @require_dashboard_password
 def api_oi_screener():
-    # This filter used to be `r.get("param_tier")`, described as showing
-    # "only rows in one of the 2/3/4-of-4 tiers". That excluded nothing:
-    # param_tier comes from `aligned`, and dir_match_count = max(n, 3 - n)
-    # is never below 2, so EVERY non-error row had a tier. The page
-    # promised a shortlist and rendered the entire watchlist, which is a
-    # large part of why its picture never looked sharp.
-    #
-    # The filter is now an actual OI condition: show rows where this
-    # symbol's own OI move is statistically unusual FOR IT. That is the
-    # question the page exists to answer, and it is the one thing the old
-    # filter never asked. Rows with no baseline are excluded rather than
-    # shown with blank columns - see early_signal.py on why a missing
-    # baseline must never read as a quiet one.
+    # Base universe = the live NSE stock-F&O universe with a valid futures
+    # OI quote. OI can lead price/technical alignment, so the OI radar must
+    # not wait for a legacy 2+/3+/4 parameter tier before surfacing a name.
     state = get_state()
     threshold = early_signal.OI_Z_THRESHOLD
-    results = [r for r in state["results"]
-               if not r.get("error")
-               and r.get("oi_z") is not None
-               and abs(r["oi_z"]) >= threshold]
-    results.sort(key=lambda r: abs(r["oi_z"]), reverse=True)
+    results = select_oi_screener_rows(
+        state["results"], unusual_only=False, min_tier=None, z_threshold=threshold
+    )
+    rolling = oi_history_readiness(results, min_tier=None)
     return jsonify({
         "results": results,
         "min_required": settings.MIN_REQUIRED,
         "oi_z_threshold": threshold,
         "oi_history": scanner.oi_history_status(),
+        "rolling_history": rolling,
     })
 
 
@@ -439,6 +399,7 @@ def backtest_page():
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         weights_state=backtest.get_weights_state(),
         ablation_state=backtest.get_ablation_state(),
+        early_research_state=backtest.get_early_research_state(),
         ablation_gate_count=len(backtest.ABLATION_GATES),
         index_symbols=backtest.INDEX_SYMBOLS,
         watchlist_count=len(settings.WATCHLIST),
@@ -466,6 +427,33 @@ def _resolve_backtest_symbols(form):
     universe = form.get("universe", "watchlist")
     symbols = _BACKTEST_UNIVERSES.get(universe, _BACKTEST_UNIVERSES["watchlist"])
     return list(symbols) if symbols is not None else list(settings.WATCHLIST)
+
+
+@app.route("/api/early-research/start", methods=["POST"])
+@require_dashboard_password
+def api_early_research_start():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+    try:
+        days = int(request.form.get("days", 30))
+    except ValueError:
+        return jsonify({"started": False, "reason": "days must be a number"}), 400
+    lo, hi, default = backtest.backtest_day_bounds("15minute")
+    days = max(lo, min(days or default, hi))
+    try:
+        symbols = scanner.get_fno_stock_list(kite)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"started": False, "reason": f"Could not load live F&O universe: {exc}"}), 400
+    if not symbols:
+        return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
+    return jsonify(backtest.start_early_movement_research(kite, symbols=symbols, days=days))
+
+
+@app.route("/api/early-research/status")
+@require_dashboard_password
+def api_early_research_status():
+    return jsonify(backtest.get_early_research_state())
 
 
 @app.route("/api/backtest/start", methods=["POST"])

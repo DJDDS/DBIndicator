@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, journal, kite_auth, scanner
+from . import alerts, delivery, early_signal, early_movement, journal, kite_auth, scanner
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -87,6 +87,7 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
         r["oi_agrees"] = None
         r["rs_pct"] = None
         r["rs_improving"] = None
+        r["rs_acceleration"] = None
         r["early_score"] = None
         r["early_band"] = None
         r["early_band_note"] = None
@@ -129,9 +130,12 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
         # market rallied - every stock looks strong when measured only
         # against itself.
         if index_ret_20 is not None and r.get("ret_20") is not None:
-            r["rs_pct"] = round(r["ret_20"] - index_ret_20, 2)
+            rs20 = r["ret_20"] - index_ret_20
+            r["rs_pct"] = round(rs20, 2)
             if index_ret_10 is not None and r.get("ret_10") is not None:
-                r["rs_improving"] = bool((r["ret_10"] - index_ret_10) > 0)
+                rs10 = r["ret_10"] - index_ret_10
+                r["rs_improving"] = bool(rs10 > 0)
+                r["rs_acceleration"] = round(rs10 - rs20, 2)
 
         scored = early_signal.early_signal_score(
             direction,
@@ -172,6 +176,71 @@ def _apply_oi_gate(results):
             # treated as confirmation. The previous asymmetry made the live
             # gate looser than its name and made research coverage misleading.
             r["signal_confirmed"] = False
+
+
+def _apply_early_movement_shortlist(results):
+    """Rank only fresh 15-minute F&O movement candidates.
+
+    This is intentionally independent of the legacy signal_confirmed/4-vote
+    state.  It consumes positioning, time-of-day participation, relative
+    strength, fresh trigger and entry location directly.
+    """
+    eligible = []
+    radar = []
+    for r in results:
+        r["shortlist_rank"] = None
+        r["radar_rank"] = None
+        r["movement_stage"] = None
+        r["movement_score"] = None
+        r["movement_coverage"] = None
+        r["movement_parts"] = None
+        r["movement_blockers"] = []
+        if r.get("error"):
+            continue
+        # Live recent OI direction: total OI increasing while the latest
+        # 15-minute price bar moves in the candidate's direction.  This is
+        # the early, rollover-resistant confirmation; the near-contract
+        # z-score remains a separate anomaly-strength input.
+        oi60 = r.get("oi_chg_60m_pct")
+        close_v, prev_v = r.get("close"), r.get("prev_close")
+        recent_agrees = None
+        if oi60 is not None and close_v and prev_v:
+            px = (close_v / prev_v - 1.0) * 100.0
+            if r.get("direction") == "Bullish":
+                recent_agrees = bool(oi60 > 0 and px > 0)
+            elif r.get("direction") == "Bearish":
+                recent_agrees = bool(oi60 > 0 and px < 0)
+        r["oi_recent_agrees"] = recent_agrees
+
+        scored = early_movement.score_candidate(r)
+        r["movement_score"] = scored["score"]
+        r["movement_coverage"] = scored["coverage"]
+        r["movement_parts"] = scored["parts"]
+        r["movement_blockers"] = scored["blockers"]
+        r["movement_stage"] = scored.get("stage")
+        if scored.get("stage") in ("Energy Building", "Ignition"):
+            radar.append(r)
+        if scored["eligible"]:
+            eligible.append(r)
+
+    radar.sort(key=lambda r: (
+        1 if r.get("movement_stage") == "Ignition" else 0,
+        r.get("movement_score") or -1,
+        r.get("compression_score") or -1,
+        r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
+    ), reverse=True)
+    for n, r in enumerate(radar[:8], start=1):
+        r["radar_rank"] = n
+
+    eligible.sort(key=lambda r: (
+        r.get("movement_score") or -1,
+        -(r.get("entry_trigger_bars_ago") if r.get("entry_trigger_bars_ago") is not None else 99),
+        r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
+        r.get("tod_rvol") if r.get("tod_rvol") is not None else -999,
+    ), reverse=True)
+    for n, r in enumerate(eligible[: settings.SHORTLIST_MAX], start=1):
+        r["shortlist_rank"] = n
+    return eligible[: settings.SHORTLIST_MAX]
 
 
 def _apply_shortlist(results):
@@ -599,178 +668,6 @@ def _apply_weighted_score(results):
 
 # --------------------------------------------------------------------------
 
-def _btst_day_direction(r):
-    """Did the day itself actually go the way we want to carry it?
-
-    This check did not exist, and its absence was the single biggest
-    reason the panel produced losers. `close_position_pct` only measures
-    where the close sits inside the bar's OWN high-low range - it never
-    sees the open or the previous close. So a stock that gapped up 3%,
-    sold off all session, and bounced in the last twenty minutes closed at
-    85% of its (now much lower) range and qualified as a BTST long, on a
-    day it FELL. The panel was reading a bounce off the lows as
-    conviction into the bell.
-
-    Requiring close > open AND close > previous close removes that whole
-    class. Both matter: close-vs-open says the session itself was won by
-    buyers, and close-vs-prev-close says the move is real rather than a
-    gap being given back. Returns "Bullish", "Bearish", or None when the
-    day was mixed or the data is missing."""
-    close_v, open_v, prev_v = r.get("close"), r.get("open"), r.get("prev_close")
-    if not (close_v and open_v and prev_v):
-        return None
-    if close_v > open_v and close_v > prev_v:
-        return "Bullish"
-    if close_v < open_v and close_v < prev_v:
-        return "Bearish"
-    return None
-
-
-def _btst_reasons(r, direction):
-    """Checks that CAN actually fail, each {ok, text}.
-
-    The previous version listed nine checks of which six were
-    tautologically True, because they re-asserted the very gates that had
-    already set signal_confirmed: entry location and the ATR floor are
-    default-ON gates that revoke it, htf_agrees is a conjunct of it, and
-    with MIN_REQUIRED at 4 both vol_confirmed and CMF agreement are forced
-    by the arithmetic. The score therefore had a hard floor of 6 out of 9
-    and carried about one bit of real information while presenting itself
-    as substantial corroboration - "7 of 9 checks" on a name whose seven
-    were mostly a restatement of its own admission ticket.
-
-    What remains here is only what can genuinely come out either way, so a
-    score of 5 means five things were independently checked and held."""
-    out = []
-
-    # Can fail: the day's own character (see _btst_day_direction).
-    day_dir = _btst_day_direction(r)
-    out.append({"ok": None if day_dir is None else (day_dir == direction),
-                "text": ("Closed up on the day, above both its open and yesterday's close"
-                         if day_dir == "Bullish" else
-                         "Closed down on the day, below both its open and yesterday's close"
-                         if day_dir == "Bearish" else
-                         "Mixed day - closed against either its open or yesterday's close")})
-
-    # Can fail: OI positioning. The strongest single addition here, because
-    # it is the only check independent of price.
-    oi_ok = r.get("oi_agrees")
-    struct = r.get("oi_structure_early")
-    out.append({"ok": oi_ok,
-                "text": (f"{struct} - fresh positioning backing the move" if oi_ok is True else
-                         f"{struct} - positioning points the other way" if oi_ok is False else
-                         "No unusual OI positioning either way")})
-
-    # Can fail: relative strength.
-    rs = r.get("rs_pct")
-    lead = None if rs is None else (rs if direction == "Bullish" else -rs)
-    out.append({"ok": None if lead is None else bool(lead > 0),
-                "text": ("No relative-strength reading" if lead is None else
-                         f"Leading NIFTY by {lead:.1f}pp over 20 sessions" if lead > 0 else
-                         f"Lagging NIFTY by {abs(lead):.1f}pp - carrying a laggard overnight")})
-
-    # Can fail: money flow.
-    flow = r.get("vol_flow_direction")
-    out.append({"ok": None if flow is None else (flow == direction),
-                "text": ("No clear money-flow read" if flow is None else
-                         "Money flow agrees - volume skewed the same way" if flow == direction
-                         else "Money flow disagrees - today's volume leaned the other way")})
-
-    # Can fail: delivery. Usually None, and None must read as unknown.
-    dp = r.get("delivery_pct")
-    out.append({"ok": None if dp is None else bool(r.get("delivery_agrees")),
-                "text": ("No delivery data (NSE publishes after the close)" if dp is None else
-                         f"{dp}% delivery - real positional buying, not intraday churn"
-                         if r.get("delivery_agrees") else
-                         f"Only {dp}% delivery - mostly intraday churn, weak overnight conviction")})
-
-    # Can fail: range expansion. Two bugs fixed here. A big candle pointing
-    # the WRONG way used to be silently omitted rather than marked failed,
-    # so a row's displayed ratio improved when the evidence went against it.
-    # And bars_ago == 0 leaves big_candle_continuation as None, which
-    # bool() turned into False - marking today's own range expansion, the
-    # archetypal BTST setup, as a failure. Best Entries already handled
-    # that case correctly, so the two panels disagreed about the same fact
-    # on the same row.
-    bc_dir = r.get("big_candle_recent_direction")
-    bars_ago = r.get("big_candle_recent_bars_ago")
-    if bc_dir is None:
-        out.append({"ok": None, "text": "No recent range-expansion bar"})
-    elif bc_dir != direction:
-        out.append({"ok": False,
-                    "text": f"Last range expansion was {bc_dir} - against this trade"})
-    elif bars_ago == 0:
-        out.append({"ok": True,
-                    "text": "Today IS the range expansion - the move is starting here"})
-    else:
-        out.append({"ok": bool(r.get("big_candle_continuation")),
-                    "text": (f"Cleared its range-expansion level ({r.get('big_candle_recent_level')})"
-                             if r.get("big_candle_continuation") else
-                             f"Range-expansion level {r.get('big_candle_recent_level')} not cleared yet")})
-
-    # Can fail: the market. None reads as unknown, not as agreement - the
-    # old version rendered a failed index fetch as the affirmative claim
-    # "NIFTY agrees", asserting a fact it did not have.
-    idx = r.get("index_agrees")
-    out.append({"ok": idx,
-                "text": ("NIFTY agrees - overnight gaps are largely market-driven" if idx is True else
-                         "Counter to NIFTY - overnight gaps are largely market-driven" if idx is False else
-                         "No index reading this scan")})
-
-    return out
-
-
-def _apply_btst_candidates(results):
-    """Attaches btst_side ("BTST"/"STBT"/None), btst_reasons and btst_score.
-
-    Only Confirmed rows that ALSO closed strong in their own direction
-    qualify - see the module note above on why the strong close is the one
-    hard requirement. Everything else is counted, shown, and never silently
-    decisive. Must run after every gate that can revoke signal_confirmed and
-    after the index/delivery filters, so the reasoning reflects final state."""
-    threshold = settings.STRONG_CLOSE_THRESHOLD_PCT
-    for r in results:
-        r["btst_side"] = None
-        r["btst_reasons"] = None
-        r["btst_score"] = None
-        r["btst_max"] = None
-        if r.get("error") or not r.get("signal_confirmed"):
-            continue
-        direction = r.get("direction")
-        cp = r.get("close_position_pct")
-        if direction not in ("Bullish", "Bearish") or cp is None:
-            continue
-
-        # Hard gate 1: closed decisively inside its own range.
-        if not (cp >= threshold if direction == "Bullish" else cp <= (100 - threshold)):
-            continue
-
-        # Hard gate 2: the day went the right way at all. See
-        # _btst_day_direction - without this a stock that fell all session
-        # and bounced into the bell qualified as a long.
-        if _btst_day_direction(r) != direction:
-            continue
-
-        reasons = _btst_reasons(r, direction)
-        score = sum(1 for x in reasons if x["ok"] is True)
-        against = sum(1 for x in reasons if x["ok"] is False)
-
-        # Hard gate 3: enough checks actually held. Previously nothing
-        # filtered on the score at all - every qualifier displayed, and
-        # alerts.publish_btst_candidates pushed every one of them to
-        # Telegram unsliced.
-        if score < settings.MIN_BTST_SCORE:
-            continue
-        # And no row survives with more evidence against it than for it.
-        if against >= score:
-            continue
-
-        r["btst_side"] = "BTST" if direction == "Bullish" else "STBT"
-        r["btst_reasons"] = reasons
-        r["btst_score"] = score
-        r["btst_max"] = len(reasons)
-
-
 def _apply_journal_confidence(results):
     """Mutates each result dict in place, attaching journal_confidence -
     a REALIZED win rate/avg return/count from YOUR OWN Signal Journal
@@ -832,7 +729,7 @@ def _apply_oi_trend(results):
     now = now_ist()
     cutoff = now - dt.timedelta(minutes=OI_HISTORY_MAX_MINUTES)
     for r in results:
-        symbol, oi = r.get("symbol"), r.get("oi")
+        symbol, oi = r.get("symbol"), (r.get("oi_total") if r.get("oi_total") is not None else r.get("oi"))
         if not symbol or oi is None:
             continue
         hist = history.setdefault(symbol, [])
@@ -875,7 +772,7 @@ def _apply_oi_screener_fields(results):
     prev_structure = _state["oi_structure_prev"]
 
     for r in results:
-        symbol, oi, close = r.get("symbol"), r.get("oi"), r.get("close")
+        symbol, oi, close = r.get("symbol"), (r.get("oi_total") if r.get("oi_total") is not None else r.get("oi")), r.get("close")
         if not symbol or r.get("error"):
             continue
 
@@ -1046,7 +943,8 @@ def _run_loop():
             kite = kite_auth.get_kite_client()
             if kite is not None and is_market_open():
                 try:
-                    results = scan_watchlist(kite)
+                    fno_symbols = scanner.get_fno_stock_list(kite)
+                    results = scan_watchlist(kite, timeframe=WATCHLIST_TIMEFRAME, symbols=fno_symbols)
                     # One extra Kite call per cycle for the Index/Market-
                     # trend filter - fetch_index_direction swallows its
                     # own exceptions and returns (None, None, None) on
@@ -1063,15 +961,6 @@ def _run_loop():
                                        if r.get("symbol") in SYMBOL_SECTOR_MAP}
                     sector_directions = fetch_sector_directions(kite, sectors_needed, WATCHLIST_TIMEFRAME) \
                         if sectors_needed else {}
-                    # Once per cycle, not once per result - see delivery.
-                    # refresh_if_stale's own docstring for why this is
-                    # cheap to call unconditionally (it no-ops unless the
-                    # cache is genuinely stale AND enough time has passed
-                    # since the last attempt).
-                    try:
-                        delivery.refresh_if_stale(now_ist())
-                    except Exception:  # noqa: BLE001 - delivery refresh must never break scanning
-                        log.exception("Delivery data refresh failed")
                     # OI history and index returns feed the early-signal
                     # layer. Both are fetched OUTSIDE the state lock - the
                     # OI sweep is throttled and can take a minute on a full
@@ -1079,46 +968,30 @@ def _run_loop():
                     # stall every dashboard request for that whole time.
                     try:
                         oi_history = scanner.fetch_oi_history(
-                            kite, settings.WATCHLIST, timeframe=WATCHLIST_TIMEFRAME)
+                            kite, fno_symbols, timeframe=WATCHLIST_TIMEFRAME)
                     except Exception:  # noqa: BLE001 - a missing baseline must not stop the scan
                         log.exception("OI history fetch failed")
                         oi_history = {}
                     index_returns = scanner.fetch_index_returns(kite)
 
                     with _state_lock:
-                        _apply_param_tier(results)
-                        # Must run BEFORE the REQUIRE_* gates below, so the
-                        # OI gate can actually revoke signal_confirmed. In
-                        # the old order OI was computed last and nothing
-                        # downstream could consume it - which is precisely
-                        # why the OI panel and the technical screen never
-                        # met.
+                        # Live Best Entries deliberately bypass the legacy
+                        # 4-vote/gate stack.  Only the evidence the new F&O
+                        # early-movement engine consumes is attached here:
+                        # historical OI context + relative strength, sector
+                        # context, rolling live OI, then the independent
+                        # movement score.  Legacy gates remain callable by
+                        # old research/backtest code but cannot suppress or
+                        # flatter the live shortlist.
                         _apply_early_signal(results, oi_history,
                                             index_ret_20=index_returns.get(20),
-                                            index_ret_10=index_returns.get(10))
-                        _apply_oi_gate(results)
-                        _apply_index_filter(results, index_direction)
-                        _apply_candle_pattern_filter(results)
-                        _apply_macd_hist_filter(results)
-                        _apply_big_candle_filter(results)
-                        _apply_strong_close_filter(results)
-                        _apply_entry_location_filter(results)
-                        _apply_atr_floor_filter(results)
-                        _apply_delivery_filter(results)
+                                            index_ret_10=index_returns.get(10),
+                                            intraday=scanner.oi_is_intraday(WATCHLIST_TIMEFRAME))
                         _apply_sector_filter(results, sector_directions)
-                        breadth = _compute_breadth(results)
-                        _apply_breadth_filter(results, breadth)
-                        # Must come after every REQUIRE_* gate above - it
-                        # ranks only rows that are still signal_confirmed
-                        # Recent 15/30/60-minute OI must be attached BEFORE
-                        # Best Entries are ranked; in the old order the shortlist
-                        # could not see these fields at all.
+                        breadth = _compute_breadth(results)  # display-only market context
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
-                        _apply_btst_candidates(results)
-                        _apply_weighted_score(results)
-                        _apply_journal_confidence(results)
-                        _apply_shortlist(results)
+                        _apply_early_movement_shortlist(results)
                         oi_events = _detect_oi_accel_events(results)
                         _state["results"] = results
                         _state["index_direction"] = index_direction
@@ -1127,11 +1000,6 @@ def _run_loop():
                         _state["breadth"] = breadth
                         _state["last_scan"] = now_ist().isoformat(timespec="seconds")
                         _state["last_error"] = None
-                    try:
-                        # Time-driven, once per day - see alerts.publish_btst_candidates
-                        alerts.publish_btst_candidates(results, now_ist())
-                    except Exception:  # noqa: BLE001 - must never break scanning
-                        log.exception("BTST publish failed")
                     try:
                         alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
                     except Exception:  # noqa: BLE001 - alerting must never break scanning

@@ -231,7 +231,7 @@
 <header>
   <div class="brand">
     <h1>Scanner Dashboard</h1>
-    <span class="tagline">RSI + MACD + CMF + Rel Volume &middot; daily watchlist &middot; {{ min_required }}-of-4</span>
+    <span class="tagline">F&O Early Movement &middot; 15-min execution &middot; Compression + OI + TOD RVOL + momentum/RS ignition</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -303,8 +303,8 @@
 
   <div class="toolbar">
     <div class="toolbar-row">
-      <span class="tb-status" title="The watchlist is pinned to DAILY candles - that is the bar a BTST or swing decision is actually made on, and the only one where Close@/NR7/Delivery carry their intended meaning. The intraday panel above is separate and always runs 15-minute against the 4-hour trend.">
-        Watchlist: <strong>daily</strong>
+      <span class="tb-status" title="Live universe is refreshed from current NSE stock futures. Execution evidence uses 15-minute candles with a 4-hour higher-timeframe read.">
+        F&amp;O universe: <strong>live</strong> &middot; execution: <strong>15m</strong> &middot; HTF: <strong>4h</strong>
       </span>
       <form method="POST" action="/quick-settings" class="tb-timeframe-form" id="tf-form">
         <!-- carry the rest of Quick Settings' current values along so switching
@@ -320,11 +320,7 @@
         <input type="hidden" name="rel_volume_threshold" value="{{ rel_volume_threshold }}">
       </form>
       <span class="tb-status">{{ total_scanned }} scanned</span>
-      {% if breadth and breadth.total %}
-      <span class="tb-status" title="Advance/decline split across your own watchlist's currently-resolved rows (not full-NSE breadth) - the Require breadth agreement gate on the Settings page compares each row's direction against this.">
-        Breadth: <span class="bull">{{ breadth.bullish }}▲</span> / <span class="bear">{{ breadth.bearish }}▼</span> ({{ breadth.bullish_pct }}% bullish){% if require_breadth_agreement %} <span style="color:var(--amber);">gate ON</span>{% endif %}
-      </span>
-      {% endif %}
+
       {% if risk_budget and risk_budget.trades_today %}
       <span class="tb-status" title="Trades YOU logged in the Signal Journal today, converted to committed risk via your Risk-per-trade % setting - not a real broker P&#39;&amp;L feed, this app places no orders. Tune limits on the Settings page.">
         Risk: <span style="{{ 'color:var(--red);font-weight:700;' if risk_budget.risk_budget_exceeded else '' }}">{{ risk_budget.committed_risk_pct }}%/{{ risk_budget.max_daily_risk_pct }}%</span>
@@ -337,18 +333,6 @@
         <div class="qs-popover-body">
           <form method="POST" action="/quick-settings" class="quick-settings-form">
             <input type="hidden" name="timeframe" value="{{ timeframe }}">
-            <div class="qs-field">
-              <label for="qs-min-required">Match required</label>
-              <select id="qs-min-required" name="min_required">
-                <option value="2" {% if min_required == 2 %}selected{% endif %}>2-of-4</option>
-                <option value="3" {% if min_required == 3 %}selected{% endif %}>3-of-4</option>
-                <option value="4" {% if min_required == 4 %}selected{% endif %}>4-of-4 (strict)</option>
-              </select>
-            </div>
-            <div class="qs-field">
-              <label for="qs-rel-volume">Rel Volume &times;</label>
-              <input id="qs-rel-volume" type="number" name="rel_volume_threshold" value="{{ rel_volume_threshold }}" min="0.1" step="0.1">
-            </div>
             <div class="qs-field">
               <label for="qs-macd-preset">MACD preset</label>
               <select id="qs-macd-preset" name="macd_preset">
@@ -392,6 +376,33 @@
   
 
 
+  <div class="card" style="border-color:#3a2f0f;">
+    <h2>⚡ Early Radar <span class="sub">before the full breakout — Energy Building / Ignition</span></h2>
+    {% set radar_rows = results | selectattr('radar_rank', 'defined') | selectattr('radar_rank', 'ne', None) | sort(attribute='radar_rank') | list %}
+    {% if radar_rows %}
+    <div class="sl-list">
+      {% for r in radar_rows %}
+      <div class="sl-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" onclick="window.location='/chart/{{ r.symbol }}'">
+        <span class="sl-rank">{{ r.radar_rank }}</span>
+        <span class="sl-score" style="color:var(--amber);">{{ r.movement_score if r.movement_score is not none else '—' }}</span>
+        <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a><span class="sl-close">{{ r.movement_stage }}</span></span>
+        <span class="sl-why">
+          <span class="sl-oi">{% if r.compression_score is not none %}Compression {{ '%.0f'|format(r.compression_score) }}{% else %}Compression warming{% endif %}</span>
+          <span class="sl-detail">{% if r.oi_chg_60m_pct is not none %}OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}% · {% endif %}{% if r.tod_rvol %}TOD RVOL {{ r.tod_rvol }}x · {% endif %}{% if r.rs_acceleration is not none %}RS accel {{ '%+.2f'|format(r.rs_acceleration) }}{% endif %}</span>
+        </span>
+        <span class="sl-tags">
+          {% if r.bb_width_percentile is not none %}<span class="sl-tag">BB width p{{ '%.0f'|format(r.bb_width_percentile) }}</span>{% endif %}
+          {% if r.energy_building %}<span class="sl-tag strong">Energy Building</span>{% endif %}
+          {% if r.movement_stage == 'Ignition' %}<span class="sl-tag strong">Ignition</span>{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="sl-empty"><strong>No early setup is building right now.</strong> This radar looks for compression/BB coil plus waking OI, time-of-day volume or relative strength before a full Best Entry exists.</p>
+    {% endif %}
+  </div>
+
   <div class="card sl-card">
     <h2>🎯 Best Entries <span class="sub">fresh 1–3 day setups only — OI agrees, trigger is recent, and the entry is not already extended</span></h2>
     <div id="sl-body">
@@ -403,31 +414,26 @@
       <div class="sl-row {{ 'bull' if r.direction == 'Bullish' else 'bear' }}" onclick="window.location='/chart/{{ r.symbol }}'">
         <span class="sl-rank">{{ r.shortlist_rank }}</span>
         <span class="sl-score {{ 'bull' if r.direction == 'Bullish' else 'bear' }}"
-              title="{% for p in r.early_parts %}{{ p.label }}: {% if p.measured %}{{ p.points }}/{{ p.max }}{% else %}not measured{% endif %} - {{ p.note }}&#10;{% endfor %}">{{ r.early_score }}</span>
+              title="{% for p in r.movement_parts %}{{ p.id }}: {{ p.points }}/{{ p.max }}&#10;{% endfor %}">{{ r.movement_score }}</span>
         <span class="sl-sym">
-          {% if r.early_band %}<span class="sl-band sl-band-{{ r.early_band | replace(' ', '-') }}"
-                title="{{ r.early_band_note }}. These are interpretation bands, not calibrated probabilities - an 82 does not mean an 82% chance of anything. They exist so the gap between 'just cleared the floor' and 'rare' is visible at a glance.">{{ r.early_band }}</span>{% endif %}
           <a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ '▲' if r.direction == 'Bullish' else '▼' }} {{ r.symbol }}</a>
           <span class="sl-close">{{ r.close }}</span>
         </span>
         <span class="sl-why">
           <span class="sl-oi {{ 'bull' if r.direction == 'Bullish' else 'bear' }}">
-            {{ r.oi_structure_early or 'no unusual OI' }}{% if r.oi_z is not none %} &middot; {{ '%.1f'|format(r.oi_z|abs) }}&sigma;{% endif %}
+            F&O OI 60m {% if r.oi_chg_60m_pct is not none %}{{ '%+.1f'|format(r.oi_chg_60m_pct) }}%{% else %}warming{% endif %}
+            {% if r.oi_z is not none %} &middot; near OI {{ '%.1f'|format(r.oi_z|abs) }}&sigma;{% endif %}
           </span>
-          <span class="sl-detail">
-            {%- for p in r.early_parts if p.measured and p.points and p.id != 'oi_anomaly' -%}
-              {{ p.note }}{% if not loop.last %} &middot; {% endif %}
-            {%- endfor -%}
-          </span>
+          <span class="sl-detail">fresh trigger &middot; HTF/VWAP aligned &middot; market-relative &middot; not extended</span>
         </span>
         <span class="sl-tags">
           {% if r.rs_pct is not none %}<span class="sl-tag{{ ' strong' if (r.rs_pct > 0) == (r.direction == 'Bullish') else '' }}">RS {{ '%+.1f'|format(r.rs_pct) }}</span>{% endif %}
-          {% if r.vol_multiple %}<span class="sl-tag">{{ r.vol_multiple }}x vol</span>{% endif %}
+          {% if r.tod_rvol %}<span class="sl-tag strong">TOD RVOL {{ r.tod_rvol }}x</span>{% endif %}
           {% if r.entry_trigger_bars_ago is not none %}<span class="sl-tag strong">trigger {{ r.entry_trigger_bars_ago }}b ago</span>{% endif %}
           {% if r.oi_chg_60m_pct is not none %}<span class="sl-tag">OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%</span>{% endif %}
           {% if r.oi_acceleration is not none %}<span class="sl-tag">OI accel {{ '%+.2f'|format(r.oi_acceleration) }}pp</span>{% endif %}
           {% if r.entry_extension_atr is not none %}<span class="sl-tag">ext {{ '%.1f'|format(r.entry_extension_atr) }} ATR</span>{% endif %}
-          {% if r.early_coverage is not none and r.early_coverage < 1.0 %}<span class="sl-cov" title="Only {{ (r.early_coverage * 100) | round }}% of the evidence was measurable for this row - the score is out of what could actually be checked, not out of 100 wished-for points.">{{ (r.early_coverage * 100) | round }}%</span>{% endif %}
+          {% if r.movement_coverage is not none and r.movement_coverage < 1.0 %}<span class="sl-cov">{{ (r.movement_coverage * 100) | round }}% measured</span>{% endif %}
           <a class="eq-log journal-log-link" href="#" data-symbol="{{ r.symbol }}"
              onclick="event.stopPropagation(); logPaperTrade(this); return false;"
              title="Log {{ r.symbol }} as a {{ r.direction }} paper trade. Until these are logged and resolved, the shortlist is a reasoned ranking with no measured edge behind it.">Log</a>
@@ -436,10 +442,9 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="sl-empty"><strong>Nothing qualifies right now.</strong> A name reaches this list only when the technical read and unusual OI point the same way, a crossover trigger occurred within the last two bars, the move is not overextended, and it clears {{ min_early_score | round | int }}/100 on evidence that
-    was actually measurable. Most days that is a handful of names; some days it is none. An empty shortlist is
-    the screen doing its job, not failing &mdash; the alternative is a list that is always full and therefore never
-    tells you anything.</p>
+    <p class="sl-empty"><strong>Nothing qualifies right now.</strong> Best Entries now needs a fresh 15-minute trigger,
+    fresh expanding futures OI, time-of-day participation, market-relative strength, higher-timeframe/VWAP alignment,
+    and a non-extended entry. It is intentionally allowed to return zero names.</p>
     {% endif %}
     </div>
   </div>
@@ -448,107 +453,14 @@
 
   <div class="signals-grid">
     <div class="card hc-card">
-      <h2>🌙 BTST / STBT <span class="sub">worth holding overnight — and why</span></h2>
-      <div id="btst-body">
-        {% set btst_rows = results | selectattr('btst_side', 'defined') | selectattr('btst_side')
-                                   | sort(attribute='btst_score', reverse=true) %}
-        {% if btst_rows %}
-        <div class="btst-list">
-          {% for r in btst_rows[:6] %}
-          <div class="btst-item">
-            <div class="btst-head">
-              <a class="btst-sym {{ 'bull' if r.btst_side == 'BTST' else 'bear' }}" href="/chart/{{ r.symbol }}">
-                <span class="btst-tag {{ 'bull' if r.btst_side == 'BTST' else 'bear' }}">{{ r.btst_side }}</span>
-                {{ r.symbol }} <span class="btst-close">{{ r.close }}</span>
-              </a>
-              <span class="btst-count">{{ r.btst_score }} of {{ r.btst_reasons | length }} checks</span>
-            </div>
-            <ul class="btst-why">
-              {% for w in r.btst_reasons %}
-              <li class="{{ 'why-ok' if w.ok else ('why-no' if w.ok == false else 'why-unknown') }}">
-                <span class="why-mark">{{ '✓' if w.ok else ('✗' if w.ok == false else '·') }}</span>{{ w.text }}
-              </li>
-              {% endfor %}
-            </ul>
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <p class="hc-empty">No overnight candidates. A row only qualifies if it's Confirmed <em>and</em> closed
-        strong in its own direction — holding something overnight that closed weak is the opposite of the setup.</p>
-        {% endif %}
+      <h2>Overnight research <span class="sub">BTST/STBT live picks retired</span></h2>
+      <div id="overnight-research-body">
+        <p class="hc-empty"><strong>No live BTST/STBT candidates are published.</strong> Your 19,200-trade overnight test
+        showed negative net expectancy for both continuation and reversal. Overnight logic remains on the
+        <a href="/backtest">Backtest</a> page and can only return to the live dashboard after a positive chronological holdout.</p>
       </div>
-      <p class="btst-note">
-        {% if btst_window == "settled" %}
-        <strong>{{ btst_now }} — close position is essentially set.</strong> This is the window to act in:
-        the daily bar is nearly done and there's still time to place before 15:30.
-        {% elif btst_window == "firming" %}
-        <strong>{{ btst_now }} — candidates are firming up.</strong> Worth shortlisting now; the list can
-        still shift, so confirm around {{ btst_alert_time }}.
-        {% elif btst_window == "closed" %}
-        <strong>{{ btst_now }} — the day is done.</strong> This is the final read, frozen at the close.
-        Too late to act on, but this is the version worth reviewing against what actually happened.
-        {% else %}
-        <strong>{{ btst_now }} — provisional.</strong> The daily bar has hours left to run, so "closed
-        strong" here means "strong <em>so far</em>". A name showing at noon can fail the test by the bell.
-        Read this again after 15:00.
-        {% endif %}
-        Overnight positions also carry gap risk that intraday ones don't, which is what most of these
-        checks are really about.
-      </p>
     </div>
 
-    <div class="card">
-      {% set ns = namespace(bull=0, bear=0) %}
-      {% for r in results %}
-        {% if not r.error and r.aligned is defined and r.aligned >= min_required %}
-          {% if r.direction == 'Bullish' %}{% set ns.bull = ns.bull + 1 %}{% else %}{% set ns.bear = ns.bear + 1 %}{% endif %}
-        {% endif %}
-      {% endfor %}
-      <div class="mn-header-row">
-        <h2>Matching Now <span class="sub">{{ timeframe }}</span></h2>
-        <div class="mn-counts" id="mn-counts">
-          <span class="bull">▲ {{ ns.bull }}</span>
-          <span class="bear">▼ {{ ns.bear }}</span>
-        </div>
-      </div>
-      <div id="mn-lists">
-        {% if ns.bull == 0 and ns.bear == 0 %}
-        <p class="mn-empty">Nothing matching right now.</p>
-        {% else %}
-        <div class="mn-columns">
-          <div>
-            <h3 class="mn-col-title bull">▲ Bullish ({{ ns.bull }})</h3>
-            <div class="mn-chip-scroll" id="mn-bull-scroll">
-              {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-                {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bullish' %}
-                <a class="match-chip bull {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                  <span class="mc-top">▲ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
-                  {{ chip_stats(r) }}
-                </a>
-                {% endif %}
-              {% endfor %}
-              {% if ns.bull == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-            </div>
-          </div>
-          <div>
-            <h3 class="mn-col-title bear">▼ Bearish ({{ ns.bear }})</h3>
-            <div class="mn-chip-scroll" id="mn-bear-scroll">
-              {% for r in results | selectattr('aligned', 'defined') | sort(attribute='aligned', reverse=true) %}
-                {% if not r.error and r.aligned >= min_required and r.signal_confirmed and r.direction == 'Bearish' %}
-                <a class="match-chip bear {{ 'moderate' if r.aligned < 4 else '' }} {{ 'not-confirmed' if not (r.signal_confirmed is defined and r.signal_confirmed) else '' }}" data-aligned="{{ r.aligned }}" href="/chart/{{ r.symbol }}">
-                  <span class="mc-top">▼ {{ r.symbol }} <span class="match-chip-close">{{ r.close }}</span>{% if r.signal_confirmed is defined and r.signal_confirmed %} <span class="confirm-badge">✓</span>{% endif %}</span>
-                  {{ chip_stats(r) }}
-                </a>
-                {% endif %}
-              {% endfor %}
-              {% if ns.bear == 0 %}<p class="mn-empty">None right now.</p>{% endif %}
-            </div>
-          </div>
-        </div>
-        {% endif %}
-      </div>
-    </div>
   </div>
 
   {% if insights_enabled %}
@@ -787,79 +699,12 @@
   {% endif %}
 
   <div class="card footer-note">
-    This page updates itself live in the background every 20 seconds (no full reload, so your
-    filters, sort order, and scroll position stay put). <strong>OI</strong> = today's Open
-    Interest with Structure badge (buildup/unwind vs today's open) and % change.
-    <strong>OI Accel</strong> compares OI's move in the latest 30 minutes to the 30 minutes
-    before that (in percentage points) - Strong/Moderate acceleration means it's building
-    faster than its own recent pace; a bold Break Up/Down badge means the OI Structure agrees
-    with that acceleration too. See the <a href="/oi-screener">OI Screener</a> for the full
-    breakdown (15/30/60-min windows, Day OI Change vs yesterday's close). <strong>Vol</strong> =
-    latest candle volume as a multiple of its recent average (orange 1.5&ndash;3&times;, red
-    above 3&times;). <strong>Aligned</strong> is out of 4 parameters - RSI, MACD, Chaikin Money Flow
-    (directional volume) and Relative Volume (magnitude) - each counted equally. CMF replaced the old
-    EMA9-vs-Bollinger-mid vote, which was a third transform of the same close series; the vote is now
-    2 price reads + 2 volume reads, which is genuinely more independent evidence. "Match required" in the Settings popover sets how many of the 4 must agree for a
-    row to count as Bullish/Bearish. A <span class="confirm-badge">✓</span> = "Confirmed": Aligned
-    meets your Match required setting and (15-min scans) the 4-hour trend agrees too - Telegram
-    alerts only fire for confirmed signals. <strong>Regime</strong> is an ADX-based read of
-    whether this stock is currently Trending or Ranging/choppy (number in parens is the raw ADX
-    value) - in a Ranging regime the Relative Volume bar automatically gets stricter (multiplier
-    set on the Settings page) since breakouts there are more prone to false starts. A
-    <span style="color:var(--amber);">⚠</span> next to Signal means this row's direction disagrees
-    with the <strong>Market</strong> banner above (NIFTY 50's own current direction) - turn on
-    "Require index/market agreement" on the Settings page to have disagreeing rows lose their
-    Confirmed status automatically. <strong>Score</strong> is a backtest-informed alternative to
-    the plain Aligned count - each of the 4 parameters is weighted by its own recent historical
-    win rate instead of counted equally; run "Auto-Weight Parameters" on the
-    <a href="/backtest">Backtest</a> page to compute real weights from your watchlist (defaults to
-    equal 25%-each weighting, same as Aligned/4, until you do). Want a bigger-picture read? Switch
-    Timeframe (top-left of the filter bar) to 4hour, or use the Backtest page. The small
-    <span class="bear">SL</span> / <span class="bull">TGT</span> line under Close is a suggested
-    stop-loss/target sized to this stock's own recent volatility (ATR) rather than a flat
-    percentage - display only, tune the ATR length and multipliers on the Settings page. A
-    <span style="font-size:11px;">📓</span> badge next to Signal shows the REALIZED win rate from your own
-    <a href="/journal">Signal Journal</a> for rows sharing this exact (direction, aligned) setup - only appears
-    once at least 5 of your own resolved paper trades share it, so it's never a misleading number from 1-2
-    trades. VWAP and anchored VWAP moved off this table to the chart page - <strong>Ext</strong> below already
-    carries the actionable version of that distance.
-    <strong>Qty</strong> under Close is a fixed-fractional position-size suggestion (risk a set % of your Account
-    capital, set on the Settings page, if the SL is hit) - and the toolbar's <strong>Risk</strong> pill tracks
-    trades YOU logged in the <a href="/journal">Signal Journal</a> today against your own daily-risk/position/
-    sector-concentration limits. This app places no real orders and has no visibility into your broker account -
-    both are suggestions computed from numbers you configured, not live account data. The small
-    <span class="bull">▲</span>/<span class="bear">▼</span> badge next to MACD shows whether the histogram itself
-    is rising or falling vs. the previous bar - momentum accelerating or fading, genuinely different from
-    macd_line vs. signal_line (which just says which side of zero it's on); turn on "Require MACD histogram
-    momentum agreement" on the Settings page to have a fading-momentum row lose Confirmed status. Under Close, a
-    <span style="color:var(--accent);">🎯 Coiling</span> badge means this stock's Bollinger Band width is near a
-    multi-week low relative to its own history (NR7 = today's range is the narrowest of the last 7 bars) - tight,
-    ANTICIPATORY reads (unlike RSI/MACD/EMA-BB/CMF, which are all confirmatory) that have historically preceded
-    bigger breakouts more often than an already-wide range. A <span class="bull">💥▲</span>/<span class="bear">💥▼</span>
-    badge is a "big candle" - a bar whose own range was a real multiple of its ATR AND closed near its own
-    high/low - with the level it set and whether price has since continued through it (✓); turn on "Require
-    big-candle agreement" on the Settings page to gate on it. <strong>Close@N%</strong> shows where the close
-    landed within today's own high-low range (100% = at the high) - the BTST "closed with conviction" read; turn
-    on "Require strong-close agreement" to gate on it. <strong>Close@ and NR7 are measured on the daily bar</strong>, which is where they carry
-    their intended BTST meaning - the watchlist is pinned to daily precisely so these never silently describe
-    something else. <strong>Deliv N%</strong> is NSE's delivery percentage
-    (real overnight conviction vs. intraday churn) as of its most recently PUBLISHED session - never a live
-    number, and it may never appear at all if NSE is blocking this deployment's requests (see the Settings page
-    for status). <strong>Ext N R</strong> is how far price already is past its own VWAP in ATR units, measured in
-    this row's own direction - negative means still early / pulled back, and an
-    <span style="color:var(--amber);">⚠</span> means the move is already extended beyond your threshold (you'd be
-    chasing rather than catching it early). <strong>ATR N%</strong> is this stock's ATR as a percentage of its own
-    price - a stock below your configured floor is too quiet right now to plausibly produce a big move no matter
-    how many parameters agree. Both have opt-in gates on the Settings page.
-    The <strong>🎯 Shortlist</strong> at the top is the only list meant to be acted on: it needs the price read
-    and an unusual OI move to agree, and it is allowed to be empty.
-    Signals are directional input, not investment advice.
-    <div class="build-line">
-      Running <code>{{ git_commit }}</code>{% if git_message and git_message != 'not set' %} &middot; {{ git_message }}{% endif %}
-      &middot; started {{ started_at }}.
-      <span class="hint">If this commit isn't the one you just pushed, the deploy didn't happen &mdash; which looks
-      exactly like a feature that was never built.</span>
-    </div>
+    <strong>Live ranking is not the old indicator vote.</strong> Best Entries is NSE stock-F&amp;O only and ranks seven evidence groups:
+    OI velocity/acceleration (25%), compression/BB-coil energy (20%), time-of-day participation (15%), momentum inflection/fresh trigger (15%),
+    stock/sector/NIFTY relative-strength acceleration (10%), VWAP/entry structure (10%) and higher-timeframe context (5%).
+    The table below keeps extra diagnostics for investigation, but candlestick patterns, delivery %, breadth, big-candle/strong-close and BTST/STBT do not drive Best Entries.
+    Overnight ideas stay research-only until they show positive chronological holdout expectancy after costs.
+  </div>
   </div>
 </div>
 <script>
@@ -1131,7 +976,7 @@
   // Every live block re-syncs on this tick. A panel left out would silently
   // freeze at whatever the last full page load showed, which is worse than
   // useless for a list meant to be read live.
-  var SYNCED_IDS = ['sl-body', 'last-scan-text', 'last-error-wrap', 'btst-body', 'main-tbody'];
+  var SYNCED_IDS = ['sl-body', 'last-scan-text', 'last-error-wrap', 'main-tbody'];
 
   function refreshDashboard() {
     fetch(window.location.pathname + window.location.search).then(function (r) {

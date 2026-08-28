@@ -94,13 +94,21 @@ def discover_chat_id():
 def _format_message(r, timeframe):
     alert_direction = r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
     arrow = "\U0001F53A" if alert_direction == "Bullish" else "\U0001F53B"
-    vol_note = f"Vol {r['vol_multiple']}x" if r.get("vol_multiple") is not None else "Vol confirmed"
-    htf_note = ", higher-timeframe trend agrees" if r.get("htf_direction") else ""
+    score = r.get("movement_score")
+    oi60 = r.get("oi_chg_60m_pct")
+    accel = r.get("oi_acceleration")
+    tod = r.get("tod_rvol")
+    rs = r.get("rs_pct")
+    score_note = f"Score {score}" if score is not None else "Score —"
+    oi_note = f"OI60 {oi60:+.2f}%" if oi60 is not None else "OI60 —"
+    accel_note = f"Accel {accel:+.2f}pp" if accel is not None else "Accel —"
+    tod_note = f"TOD RVOL {tod}x" if tod is not None else "TOD RVOL —"
+    rs_note = f"RS {rs:+.2f}pp" if rs is not None else "RS —"
+    htf_note = r.get("htf_direction") or "—"
     return (
-        f"{arrow} {r['symbol']} - {alert_direction} Best Entry on {timeframe} (confirmed: {vol_note}{htf_note})\n"
-        f"Close: {r['close']} | RSI {r['rsi']} ({r['rsi_state']}) | "
-        f"MACD {r['macd_params']} ({r['macd_state']}) | CMF ({r.get('vol_flow_direction') or '-'}) | "
-        f"Aligned {r['aligned']}/4"
+        f"{arrow} {r['symbol']} - {alert_direction} F&O Early-Movement Entry ({timeframe})\n"
+        f"Close {r['close']} | {score_note} | {oi_note} | {accel_note}\n"
+        f"{tod_note} | {rs_note} | HTF {htf_note} | fresh trigger + anti-chase passed"
     )
 
 
@@ -116,8 +124,6 @@ def process_scan_results(results, timeframe):
         # entry. Otherwise the user is pinged for rows the shortlist itself
         # rejected as late, weak-OI or low-quality.
         if not r.get("shortlist_rank"):
-            continue
-        if not (r.get("vol_confirmed") and r.get("htf_agrees", True)):
             continue
         alert_direction = r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
         if alert_direction not in ("Bullish", "Bearish"):

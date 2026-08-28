@@ -1,626 +1,126 @@
-# Scanner — Kite-connected web dashboard
-
-This runs an Open-Interest-led screener for NSE F&O stocks against live
-Zerodha data, and shows a short ranked list of names, live charts, and an
-AI-generated summary on a simple web page you can open any time.
-
-**The screen is built around OI, not around indicators.** A name only
-reaches the Shortlist when the price read AND the futures positioning read
-agree. That is the whole design: OI is the one input here that is
-independent of price and volume — it counts contracts actually open, so it
-only rises when someone opens a NEW position — and requiring a second,
-independent witness is what turns a long list into a short one. Most days
-the Shortlist has a handful of names. Some days it is empty, and that is a
-result rather than a fault.
-It needs to run continuously on a server (not your own laptop that goes
-to sleep) — see Part 2 for how to get one.
-
-**Reality check before you start:** Zerodha requires a fresh login every
-trading day for security reasons — there's no way to eliminate this step
-entirely without storing your password, which this app deliberately does
-not do. So the daily routine is: open the dashboard, click one login
-button, sign in with your Zerodha password + 2FA (~30 seconds), and it
-runs on its own for the rest of the day.
-
-## What's in this version
-
-The short version: **OI moved from a side panel into the signal engine.**
-It now gates what appears, rather than decorating what the indicators had
-already decided. See *How a name reaches the Shortlist* below.
-
-- **Timeframes are pinned per surface**, not chosen from a dropdown — the
-  watchlist runs on **daily**, the intraday panel on **15-min against the
-  4-hour trend**. See "How the timeframes work" below.
-- **F&O-only watchlist**: on the Settings page, "Load current F&O list
-  from Kite" pulls the *exact, live* list of NSE stocks currently
-  eligible for futures & options trading straight from Kite's own
-  instrument list — not a hardcoded list that can go stale as NSE
-  periodically revises F&O eligibility.
-- **Everything tunable from the browser**: watchlist, MACD preset/custom
-  values, RSI/EMA/Bollinger lengths, how many of the 4 parameters must
-  agree, and scan frequency all live-update from the **Settings** page —
-  no editing `.env` or restarting the server.
-- **Real charts**: click any row (or "Chart →") to open a candlestick
-  chart with the 9 EMA and Bollinger mid-band overlaid, plus separate
-  RSI and MACD panes, all synced and zoomable (TradingView's open-source
-  Lightweight Charts library).
-- **AI Insights**: an optional panel that asks Claude to summarize the
-  latest scan in plain English — which stocks just signaled and why,
-  which are close to aligning, whether the session looks unusually quiet
-  or busy. Uses your own Anthropic API key; the panel is simply hidden
-  if you don't set one.
-- **Alerts**: get notified the moment a Bullish/Bearish confluence
-  signal fires, instead of having to watch the table — see the dedicated
-  section below.
-
----
-
-## Alerts
-
-Two channels, and you can use either or both:
-
-- **In-page (works automatically, no setup)** — while the dashboard tab
-  is open, a toast banner and a short beep fire for every new signal.
-  This is free but only works while you're actually looking at the tab.
-- **Telegram (recommended — works even with the app closed)** — a
-  message lands in Telegram on your phone the moment a signal fires.
-  Setup takes about two minutes:
-  1. On Telegram, message **@BotFather**, send `/newbot`, and follow the
-     prompts (pick any name/username). It replies with a token like
-     `123456789:AAF-abc...` — put that in `.env` as `TELEGRAM_BOT_TOKEN`,
-     then restart the app.
-  2. Send any message (e.g. "hi") to your new bot on Telegram — bots
-     can't message you first, so this step is required.
-  3. On the dashboard's **Settings** page, click **"Find my chat ID"** —
-     it reads Telegram's own API to find the chat you just started and
-     shows you the number. Put that in `.env` as `TELEGRAM_CHAT_ID`, then
-     restart the app once more.
-  4. Use the **"Send test alert"** button on Settings to confirm it
-     works, any time.
-
-Both channels are deduplicated per candle — you get exactly one alert
-per fresh signal on its closing candle, not one every scan interval
-while it stays the most recent signal.
-
-## VWAP & Anchored VWAP
-
-Both are plotted on the **Chart** page (teal = session VWAP, dashed
-magenta = anchored VWAP, measured since the current trend leg began).
-They used to also appear as text under Close in the watchlist table; that
-was removed when the table was de-cluttered, because **Ext** already
-carries the actionable version of the same information — how far past
-VWAP price has run, in ATR units, in the row's own direction.
-
-## Journal-based confidence score
-
-The dashboard can show a badge like **📓67% n=34** — the realized win rate
-of your OWN logged paper trades for that exact setup, with the sample size
-beside it.
-
-The sample size is displayed deliberately. A win rate shown without its `n`
-invites reading three-from-five as an edge. The minimum is **20** resolved
-trades, and the tooltip labels which side of usable a sample sits on:
-
-- **under 20** — interval too wide to act on; no badge is shown at all
-- **20–49** — preliminary
-- **50–99** — usable
-- **100+** — strong
-
-This was previously a single threshold of 5. At n=5 a 60% win rate has a
-95% confidence interval running roughly from 15% to 95% — precise-looking
-and worthless.
-
-## MACD histogram momentum
-
-The MACD column now carries a small ▲/▼ badge showing whether the
-histogram itself is **rising or falling** vs. the previous bar — is the
-crossover's momentum accelerating or already fading. This is genuinely
-different from the existing macd_line-vs-signal-line check (which just
-says which side of zero the histogram is on — mathematically the same
-thing as "is the histogram positive"), so it's a new, second read rather
-than a restatement. Off by default; turn on "Require MACD histogram
-momentum agreement" on the Settings page to have a row whose momentum is
-fading against its own direction lose its Confirmed status.
-
-## How the timeframes work (read this first)
-
-Every surface is **pinned** to the timeframe that matches its job. There is
-no global timeframe dropdown any more — that one knob was the biggest
-source of confusion in this app, because the same badge meant different
-things depending on a setting you'd changed days earlier.
-
-| Surface | Timeframe | Why |
-|---|---|---|
-| Watchlist table, OI Screener, Best Entries, alerts, journal | **daily** | The bar a BTST/swing decision is actually made on, and the only one where Close@, NR7 and Delivery mean what their names say |
-| Intraday panel | **15-minute, cross-checked against 4-hour** | Entry timing, with the 4-hour trend as the confluence check |
-| Chart & Backtest pages | your choice | Research surfaces, where switching timeframe is the point |
-
-60-minute was dropped: it sat between the two timeframes that actually do
-a job, adding scan load and screen clutter without answering a question
-the other two didn't already answer.
-
-Daily also finally has a **weekly** higher-timeframe check. Before this it
-had none at all, which meant the HTF gate silently did nothing on exactly
-the timeframe the watchlist now runs on.
-
-## How a name reaches the Shortlist
-
-Five axes, deliberately chosen to be *independent of each other*, scored
-out of 100 (see `app/early_signal.py`):
-
-| Axis | Weight | What it reads |
-|---|---|---|
-| **OI anomaly** | 30 | Is this OI move unusual *for this stock*? |
-| **Volume** | 20 | Is participation still building, or fading? |
-| **Momentum** | 20 | RSI vs its own average, with MACD confirming |
-| **Structure** | 20 | Direction-aware close, compression, and anti-chase entry location |
-| **Relative strength** | 10 | Is it leading NIFTY, or just carried by it? |
-
-OI and volume together outweigh price momentum 50 to 20. That inversion is
-the point: positioning and participation lead, price confirms.
-
-### Why not four separate indicator votes
-
-The previous design counted RSI, MACD, CMF and Relative Volume as four
-independent votes. They were not four. RSI and MACD are both derivatives of
-the same price series and agree with each other most of the time by
-construction; CMF and Relative Volume both come from the same volume
-series. "4 of 4 agree" was closer to "two things agree, twice."
-
-The arithmetic made it worse. `dir_match_count = max(n, 3 - n)` is never
-below 2 for n in 0..3, so **every** symbol scored at least 2 of 4 and landed
-in a tier. The old 2-of-4 / 3-of-4 / 4-of-4 lists were not a filter at all —
-they partitioned the entire watchlist while looking like a funnel.
-
-RSI and MACD are now one momentum axis, not two. The tier lists are gone.
-
-### Why a z-score rather than a percentage
-
-A raw OI percentage means nothing across symbols. A 3% OI jump in a name
-that routinely moves ±5% a day is noise; the same 3% in one that moves
-±0.4% is a five-sigma event. Absolute thresholds are unreachable for large
-caps and trivially exceeded by illiquid ones — which is why the old OI panel
-read "Stable" for nearly everything.
-
-Every reading is normalised against **the symbol's own history**, so the
-only question asked is: *is this unusual for this stock?*
-
-### No warm-up
-
-Baselines come from Kite's historical OI (`historical_data(..., oi=True)`),
-so they exist the moment the app starts. The old panel sampled OI live into
-a buffer and was structurally blind from 09:15 until roughly 10:15 — exactly
-the window where a day's trend gets set — and any redeploy re-imposed that
-blackout mid-session.
-
-Each timeframe gets its own baseline (`scanner.OI_HISTORY_SPEC`). A daily
-z-score is a *constant* within a session, so reusing it for 15-minute bars
-would apply one identical verdict to every bar all day — a bias, not a
-signal. Intraday baselines exclude overnight transitions, because OI
-genuinely re-forms between sessions and leaving those jumps in makes the
-standard deviation so wide that real intraday builds stop registering.
-
-Consequence worth knowing: the historical OI z-score is available immediately, but **Best Entries also requires a measured recent 60-minute OI trend and acceleration**. After a fresh service restart it therefore waits until enough timestamped live OI samples exist rather than guessing. That can make the Best Entries list temporarily empty, by design.
-
-### Missing data never flatters a row
-
-A component with no reading earns nothing *and* removes its own weight from
-the denominator; scores are `earned / available`. A row without an OI
-baseline never reaches the Shortlist at all.
-
-This inverts an earlier bug worth recording: scoring panels used to give a
-"neutral middling" value to any missing component, so a row with almost no
-measurable data scored in the low 50s while a fully-measured but genuinely
-weak one scored 31. The emptiest rows floated to the top of a panel whose
-only job was ranking. Absence can now disqualify a row. It can never raise
-its rank.
-
-## Backtest costs and holdout (research Finding 2)
-
-Backtest returns are now **net of costs by default**. Every horizon's
-return has a round-trip drag subtracted: `cost_pct` (0.08% default, from
-Zerodha's published stock-futures charges) plus `slippage_pct` twice
-(0.05% per side, because you cross the spread entering and exiting).
-
-This matters more than it sounds. A trade showing +0.05% gross is
-**−0.13% net** — the sign flips. Options are far worse than futures here,
-because STT and exchange charges are levied on premium rather than
-underlying notional; test an options strategy with a much higher figure.
-
-Drawdown (`mae_pct`) is deliberately left **gross** — it describes raw
-adverse price action, which is a property of the market rather than of
-your cost structure.
-
-`holdout_pct` adds the overfitting discipline: split the window, tune
-freely against the earlier portion, then look at the holdout **once** and
-accept what it says. A holdout you re-check after every tweak has quietly
-become training data.
-
-## BTST / STBT panel
-
-**Live overnight alerts are off by default.** The Backtest page now compares
-continuation and the exact opposite reversal direction side-by-side at next
-open and next close. Do not enable the continuation alert just because the
-panel can produce candidates; enable a side only after it shows positive net
-expectancy on an untouched period.
-
-Replaces the old "High Conviction" card, which stacked several conditions
-that move together in practice (a 4-of-4 row is already likely to be above
-VWAP and volume-heavy), so it looked far more selective than it was — and
-its own docstring admitted none of it had been backtested. It also answered
-a question nobody asked: *which row has the most things lit up?*
-
-The replacement answers the question you're actually trading: **is this
-worth holding overnight?** That's a different bar, because an overnight
-position carries gap risk an intraday one doesn't.
-
-**One hard requirement: a strong close in the row's own direction.**
-Holding something overnight that closed weak into the bell is the opposite
-of the setup, no matter how many indicators agree. Everything else is
-supporting evidence — counted, shown, never silently decisive.
-
-And every candidate **argues its own case**. Instead of one opaque flag you
-get each check in plain words, marked met (✓), not met (✗), or unknown (·):
-
-```
-BTST  RELIANCE  1412.65                        7 of 9 checks
-  ✓ Closed at 94% of the day's range - buyers held it into the bell
-  ✓ Not extended - you're not carrying an already-stretched move overnight
-  ✓ Moves enough to be worth the gap risk (ATR 2.4%)
-  ✗ Against the weekly trend - a gap against you is more likely
-  · No delivery data (NSE publishes after the close)
-```
-
-Missing data reads as *unknown*, never as a failure — same convention as
-every gate in the app.
-
-**Read it late in the session.** The daily bar is still forming until 15:30,
-so "closed strong" is provisional before then; a name here at noon can fail
-the test by the bell. The panel says so itself.
-
-## Which gates actually earn their place?
-
-On the Backtest page. Until now, none of the optional gates had ever been
-measured — the app had far more machinery than evidence about any of it.
-
-It runs a baseline, every gate individually, and a small set of targeted OI
-pairs. Every run uses the same cached market-data snapshot and a **30%
-chronological holdout**. Rows are ranked by untouched holdout average net
-return (then holdout profit factor), not by win-rate lift. This prevents a
-filter that wins slightly more often but loses more money from being labelled
-"better", and makes in-sample-only improvements visible. OI rows also show
-exact pass / fail / missing counts so weak coverage cannot masquerade as a
-no-effect result.
-
-## Best Entries panel
-
-The main table answers whether a stock is aligned; **🎯 Best Entries** answers
-whether it is a *timely, independently-confirmed entry right now*. A row is
-allowed into this list only when all of these are true:
-
-- the base state has at least **3 of 4** components aligned;
-- at least one RSI / MACD / CMF crossover triggered in the trade direction
-  within the **last two bars**;
-- the historical futures-OI anomaly is measurable and explicitly agrees;
-- the rolling **60-minute OI change is positive** and OI acceleration is
-  measurable rather than unknown/fading;
-- the setup clears the Early Signal quality and data-coverage floors; and
-- price is not beyond the configured ATR-extension anti-chase limit.
-
-The ranking then prefers higher Early Signal quality, the freshest trigger,
-stronger recent OI, a larger stock-specific OI anomaly, and better evidence
-coverage. Missing evidence can delay or disqualify a row; it never receives
-neutral points just to keep the list populated. An empty Best Entries card is
-therefore valid output.
-
-The structure score is direction-aware and **does not reward a big candle
-merely for being big**. The gate research showed that strong-close / large
-range-expansion entries can be exhaustion; they are now descriptive and
-anti-chase context rather than automatic positive points.
-
-## Anticipatory signals (catch a big move before it happens)
-
-RSI/MACD/EMA-BB/CMF are all confirmatory — smoothed derivatives of price
-that tell you a move is already under way. These four are genuinely
-ANTICIPATORY instead, aimed at BTST/swing trades and catching a big move
-early rather than after the fact:
-
-- **🎯 Coiling / NR7** (under Close, display only) — is this stock's
-  Bollinger Band width currently near a multi-week low relative to its
-  own recent history (the classic Minervini Volatility Contraction
-  Pattern), or is today's range the narrowest of the last 7 bars? Tight
-  consolidation has historically preceded outsized breakouts more often
-  than an already-wide range — but a coiled stock can break either
-  direction, so this is a "worth watching" badge, not a directional gate.
-- **💥 Big candle / range expansion** — a bar whose own true range is a
-  real multiple of its ATR AND whose close lands in the extreme top/bottom
-  of its own high-low range (a real range expansion with real conviction,
-  not just a wide indecisive bar). The badge shows the level that bar set
-  and whether price has since continued through it (✓) — the "does
-  yesterday's big candle hold up" read that matters for a BTST/swing
-  continuation decision. Turn on "Require big-candle agreement" on the
-  Settings page to gate Confirmed status on it.
-- **Close@N%** — where today's close landed within its own high-low range
-  (100% = closed at the high), independent of range size — the classic
-  BTST "closed with conviction" checklist item. Turn on "Require
-  strong-close agreement" to gate on it.
-- **Deliv N%** — NSE's delivery percentage (real overnight conviction vs.
-  intraday churn), pulled from NSE's own public bhavcopy archives (Kite
-  Connect has no delivery data at all). **Read this carefully**: it is
-  never a same-day-live number — NSE only publishes a session's own
-  figure after that session's close, so it's always the most recently
-  PUBLISHED reading, shown with its own date. It may also never appear at
-  all: NSE is known to block requests from some cloud/datacenter hosts,
-  and this app degrades gracefully (delivery data just reads "unavailable"
-  everywhere) rather than breaking anything if that happens. Check the
-  Settings page for a live status line showing whether it's actually
-  getting through from wherever this is deployed.
-
-Big-candle and strong-close are also now selectable parameters on the
-[Backtest](#) page (alongside RSI/MACD/EMA-BB/etc.) — the actual way to
-empirically check, on your own watchlist history, whether these two
-precede bigger moves than the confirmatory indicators do.
-
-## Entry quality: am I early, or am I chasing?
-
-Two additions that don't add a new *signal* so much as grade the one you
-already have — both flagged as gaps in `PARAMETER_ANALYSIS_2.md`
-(Findings #4 and #5) before this:
-
-**Ext N R** (under Close) is how far price already is past its own VWAP,
-measured in ATR units and signed by the row's own direction. Negative
-means price is still early or pulled back; a positive number beyond your
-configured threshold earns a ⚠ and means you'd be *chasing* a move that's
-already run rather than catching it as it turns. Until now those two
-situations carried an identical "Confirmed" mark, which for a
-catch-it-early strategy is exactly the distinction that matters. Uses
-session VWAP intraday and falls back to the anchored VWAP on daily/weekly
-bars, so it's never silently blank.
-
-**ATR N%** is the stock's ATR as a percentage of its own price — a
-volatility *floor*. A name whose own recent range is tiny structurally
-cannot deliver a big move no matter how many parameters line up, and
-screening those out is different from what the ADX regime check does
-(that reads trend *strength*, not movement *size*). Expressed as a
-percentage so one threshold behaves the same on a ₹150 stock and a ₹5,000
-one. Note this is deliberately *not* applied to the Coiling badge above —
-a coiled stock has low volatility precisely because it's about to expand,
-which is the opposite of dead.
-
-Both are display-only by default with opt-in gates on the Settings page,
-and both are replayable on the Backtest page so you can measure whether
-turning them on actually helps.
-
-## What was removed
-
-**News (removed entirely).** The free Marketaux tier returns 3 articles per
-request, which across a whole F&O watchlist is not enough to be timely or
-complete — it was decoration that looked like information. The card, the
-module wiring, the alert route and the toast poller are all gone.
-
-**The 2-of-4 / 3-of-4 / 4-of-4 tier lists.** They never filtered anything;
-see *How a name reaches the Shortlist*.
-
-
-Two orphaned parameters were deleted rather than left half-alive, both
-long-flagged in the analysis docs:
-
-**`rsi_threshold`** (RSI > 65 / < 35) existed only as a Backtest-page
-checkbox with no live equivalent anywhere — so you could tune it, get a
-number, and never be able to deploy that combination. Any
-"Auto-Weight Parameters" run including it was measuring something
-unreachable.
-
-**`RSI_MOMENTUM_BULL`/`RSI_MOMENTUM_BEAR`** in the scalp screener (and the
-`rsi_up`/`rsi_dn` cross series they fed) were computed on every single
-scan and read by nothing — the scalp RSI vote has always been a plain
-above/below-50 state check by design. Dead weight that made it genuinely
-unclear from the UI which parameters actually count.
-
-Nothing else was removed. In particular **EMA9-vs-Bollinger-mid was kept
-despite being the weakest of the four core parameters** (it's really a
-slow moving-average cross, not a Bollinger signal — the genuine
-Bollinger-volatility read is now the Coiling badge instead): removing it
-would silently change the `aligned` score on every historical journal
-entry and invalidate past data. The right way to handle it is to lean on
-the **Score** column instead of raw Aligned, since Score already
-down-weights it based on measured win rate — and to re-run
-"Auto-Weight Parameters" across your full watchlist to get a trustworthy
-weight for it.
-
-## Risk management (position sizing &amp; daily limits)
-
-Your own research notes (see `NEXT_HORIZON_RESEARCH.md`) flagged this as
-more important to real outcomes than any indicator — so on the Settings
-page there's now a **Risk management** card: tell it your real **Account
-capital** and a **Risk per trade %** (1-2% is the typical starting point
-for F&amp;O), and every row's Close cell gains a **Qty** suggestion —
-fixed-fractional position sizing, computed off the ATR stop above, sized
-to risk exactly that % of your capital if the stop is hit. The toolbar
-also shows a **Risk** pill tracking trades you've logged in the [Signal
-Journal](#journal-based-confidence-score) today against your own
-**Max daily risk %**, **Max concurrent positions**, and a
-sector-concentration flag (2+ open trades in the same NSE sector today).
-None of this is enforced — this app places no real orders and has no
-visibility into your actual broker account, so nothing here can or does
-block you from logging another trade past a limit. It's a suggestion and
-a plain-language check-in against discipline you set for yourself, not
-automation.
-
-## Risk layer (ATR stop/target)
-
-Every row now shows a small suggested **stop-loss / target** line under its
-Close price, sized to that stock's own recent volatility (Average True
-Range) instead of a flat percentage — a quiet stock gets a tight stop, a
-volatile one gets a wide one, automatically. Hover it for the raw ATR
-value. This is **display only** — nothing here places an order, and it
-never affects whether a row counts as Confirmed. Tune the ATR length and
-the stop/target multipliers on the **Settings** page (default 1.5x/3.0x
-ATR = a 1:2 risk-reward starting point).
-
----
-
-## Part 1 — Get Kite Connect API access
-
-1. Go to [developers.kite.trade](https://developers.kite.trade) and sign
-   in with your Zerodha account.
-2. Subscribe to the **Connect** plan — ₹500/month, this covers the market
-   data (historical + live candles) the Scanner needs. Order-placing APIs
-   are free, but this app only reads prices, it doesn't place trades.
-3. Create a new app. You'll be asked for a **Redirect URL** — for now, set
-   it to `http://localhost:5000/kite/callback`. You'll update this once
-   you have a real server address (Part 2).
-4. Copy your **API Key** and **API Secret** — you'll need them next.
-
-## Part 2 — Get a server to run this on
-
-This needs to be online continuously during market hours, so it can't be
-your personal laptop unless you're willing to leave it on and connected
-all day. Two ways to get one:
-
-### Option A — Render (fastest, I can set this up with you)
-
-Render is a cloud host that a Claude session can provision directly
-through its MCP connector, instead of you clicking through a dashboard
-yourself. The Starter plan (**$7/month**, always-on — the free tier
-sleeps after 15 minutes idle, which would break the background scanner)
-is the cheapest tier that works for this app.
-
-To use this path: connect the **Render** integration from your Claude
-settings (Settings → Connectors → add Render, or ask me and I'll surface
-the connect prompt). Once it's connected, tell me to go ahead and I'll:
-create the web service from this project's code, set your environment
-variables (you'll still enter `KITE_API_KEY`/`KITE_API_SECRET`/
-`DASHBOARD_PASSWORD`/etc. yourself so I never see your credentials), and
-give you the live URL to use as your Redirect URL in Part 1, step 3.
-I'll always confirm with you before anything that spends money — this
-plan does have a real $7/month charge on your Render account.
-
-### Option B — A small VPS (DigitalOcean / Hetzner / AWS Lightsail)
-
-1. Sign up with a provider — budget ~$4-6/month for the smallest box.
-2. Create a server with **Ubuntu 22.04** (any recent Ubuntu works).
-3. Note its public IP address — you'll use this to reach your dashboard
-   and as part of your Redirect URL.
-4. Update the Redirect URL in your Kite Connect app settings (Part 1,
-   step 3) to `http://YOUR_SERVER_IP:5000/kite/callback`.
-
-*(If you'd rather I walk you through one specific provider's exact
-click-by-click setup, tell me which one and I'll write that out.)*
-
-## Part 3 — Deploy the app
-
-SSH into your server, then:
+# DBIndicator — NSE F&O Early-Movement Screener
+
+DBIndicator is a Zerodha Kite-connected research and screening dashboard for **NSE stock F&O only**. Its live objective is narrow: surface developing moves early enough to investigate without filling the screen with late, already-extended names.
+
+It does **not** place orders. Best Entries, alerts, stops/targets and research statistics are decision-support only.
+
+## Current live architecture
+
+The old 4-of-4 indicator-voting model is no longer the Best Entries engine. The live path is fixed to **15-minute execution** with a small **4-hour context** check and ranks seven evidence groups:
+
+| Evidence | Weight | Purpose |
+|---|---:|---|
+| Futures OI velocity / acceleration | 25% | Is fresh positioning appearing now? |
+| Compression / BB coil | 20% | Is volatility/range energy stored before expansion? |
+| Time-of-day participation | 15% | Is volume accelerating versus the same clock slot historically? |
+| Momentum inflection | 15% | Has RSI-vs-RSI-SMA / MACD histogram momentum just turned? |
+| Relative-strength acceleration | 10% | Is the stock beginning to lead/lag NIFTY and its sector? |
+| Entry structure | 10% | VWAP acceptance, breakout context and anti-chase location |
+| Higher-timeframe context | 5% | Small confirmation, not a late-entry driver |
+
+### Three live stages
+
+1. **Energy Building** — compression/BB coil plus evidence beginning to wake up; direction may not be executable yet.
+2. **Ignition** — a fresh directional momentum trigger is firing with participation/positioning evidence.
+3. **Best Entry** — Ignition plus OI confirmation, adequate evidence coverage, relative-strength/context checks, correct VWAP side and no excessive ATR extension.
+
+The screener may return **zero Best Entries**. That is preferable to manufacturing a shortlist from weak evidence.
+
+### F&O OI handling
+
+Live OI uses the first three stock-futures expiries (near / next / far) where available and tracks recent 15/30/60-minute change plus acceleration. OI is an important participation layer, but it is **not** used alone to predict direction.
+
+The OI Screener intentionally shows the current stock-F&O universe whenever valid live OI exists. “Unusual OI only” is optional; a z-score is supporting evidence rather than a hard requirement for the base radar.
+
+## Parameters intentionally removed from live Best Entries
+
+These can remain in legacy diagnostics/backtests, but they do not drive the current live shortlist:
+
+- 4-of-4 / indicator-count voting
+- generic candlestick-pattern gate
+- big-candle gate
+- strong-close gate
+- delivery percentage as directional evidence
+- breadth as a mandatory entry filter
+- generic ADX regime as an entry gate
+- fixed/static relative-volume vote
+- BTST/STBT recommendation engine
+
+BTST/STBT is research-only because the broad overnight tests did not demonstrate positive net expectancy after costs.
+
+## Backtesting and improvement workflow
+
+Open **Backtest → F&O Early Movement Research**. This is the primary live-parity research surface.
+
+It measures two different targets:
+
+- **Energy Building:** after a coil/compression event, did price expand by at least 1 ATR within the next 4 or 8 bars, regardless of direction?
+- **Ignition / Best Entry:** after direction appears, what are the net 1/2/3/5/10-bar outcomes when entering at the **next bar open**?
+
+Research includes:
+
+- brokerage/cost + slippage assumptions
+- Bullish/Bearish directional returns
+- win rate, average/median return, profit factor, average winner/loss
+- **30% chronological holdout** (latest events kept untouched)
+- component-ablation/lift ranking on holdout
+- one-factor threshold sensitivity for compression, 60m OI, TOD RVOL, movement score and RS acceleration
+- historical 4-hour context using only the previous fully closed HTF bucket (no look-ahead)
+- historical sector context when the mapped NSE sector-index history is available
+
+### Historical OI limitation
+
+Kite historical futures data cannot reconstruct the exact near+next+far OI book for every old timestamp. Therefore historical rollover-period OI is an approximation using Kite's available futures-history series, while **live** OI aggregation remains near+next+far. The Research page states this explicitly.
+
+Use research results to change **one threshold at a time**. Do not promote a rule because it has the highest in-sample win rate. Prefer positive chronological-holdout expectancy after costs, profit factor > 1, enough trades, and stability across directions/regimes.
+
+## Useful live settings
+
+Settings intentionally exposes only the controls that still matter to the live engine plus risk-display settings:
+
+- Maximum entry extension in ATR (default 1.25)
+- Maximum Best Entries (a ceiling, not a target)
+- Scan interval
+- RSI length and RSI smoothing
+- MACD live preset (8/17/9 in Auto)
+- risk/ATR stop and position-sizing display inputs
+
+BB/compression, OI acceleration, TOD RVOL, RS/context and fresh-trigger quality are calculated automatically.
+
+## Zerodha login
+
+Kite requires a fresh authenticated access token each trading day. Open the dashboard and use **Login to Kite** each morning. The app deliberately does not store your Zerodha password or 2FA secret.
+
+Required Railway/environment variables typically include your Kite app credentials (see `.env.example`). Never commit `.env`, access tokens, passwords or personal secrets to GitHub.
+
+## Run locally
 
 ```bash
-sudo apt update && sudo apt install -y python3-pip python3-venv
-
-# Upload this project folder to the server (scp, git, or however you prefer),
-# then from inside the project folder:
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env
-nano .env   # fill in KITE_API_KEY, KITE_API_SECRET, REDIRECT_URL (with your
-            # server's real IP), and DASHBOARD_PASSWORD (make one up - long
-            # and random, this is what keeps your dashboard private).
-            # ANTHROPIC_API_KEY is optional - only needed for AI Insights.
-```
-
-Run it once to make sure it starts cleanly:
-
-```bash
+python -m pip install -r requirements.txt
 python run.py
 ```
 
-Open `http://YOUR_SERVER_IP:5000` in a browser — you should see a login
-prompt (that's the DASHBOARD_PASSWORD you set, not your Zerodha one), then
-the Scanner page with a "Login to Kite" button. Stop it with Ctrl+C once
-confirmed working.
+Then open the local URL printed by Flask.
 
-### Keep it running permanently
+## Run tests
 
-Running `python run.py` stops the moment you close your SSH session. Use
-`systemd` so it survives reboots and restarts automatically if it crashes:
+From the project root:
 
 ```bash
-sudo tee /etc/systemd/system/scanner.service > /dev/null <<EOF
-[Unit]
-Description=Scanner Dashboard
-After=network.target
-
-[Service]
-WorkingDirectory=$(pwd)
-ExecStart=$(pwd)/venv/bin/gunicorn -w 1 -b 0.0.0.0:5000 run:app
-Restart=always
-User=$(whoami)
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now scanner
+PYTHONPATH=. pytest -q
+python -m compileall -q app run.py
 ```
 
-Check it's running: `sudo systemctl status scanner`. To see logs:
-`journalctl -u scanner -f`.
+## Railway deployment
 
-## Your daily routine
+Railway can auto-deploy from the GitHub repository's `main` branch. After replacing the project files in your local GitHub Desktop clone:
 
-1. Open `http://YOUR_SERVER_IP:5000` (bookmark it).
-2. Enter your dashboard password (once per browser session, not per day).
-3. Click **"Login to Kite"**, sign in with your Zerodha credentials + 2FA.
-4. You're done — the dashboard now scans your watchlist automatically,
-   shows current signals, live charts (click any row), and an AI summary
-   until the token expires overnight, at which point tomorrow's visit
-   starts back at step 3.
+1. Review the changed files.
+2. Commit to `main`.
+3. Click **Push origin**.
+4. Wait for Railway to show the new deployment as **Active**.
+5. Log into Kite and smoke-test Early Radar, Best Entries, OI Screener and F&O Early Movement Research.
 
-First time only: open **Settings**, click **"Load current F&O list from
-Kite"** (after logging in) to populate your watchlist with the live,
-exact F&O-eligible stock list, and set your preferred timeframe/
-parameters. Everything there applies immediately — no restart.
+## Safety / interpretation
 
-## Configuration
-
-Almost everything now lives in the **Settings** page in the browser, not
-`.env` — watchlist, timeframe (including 4-hour), MACD preset, RSI/EMA/BB
-lengths, minimum indicators required (2-of-3 or 3-of-3), and scan
-frequency. `.env` only holds secrets and one-time setup values:
-`KITE_API_KEY`, `KITE_API_SECRET`, `REDIRECT_URL`, `DASHBOARD_PASSWORD`,
-the optional `ANTHROPIC_API_KEY` for AI Insights, `TELEGRAM_BOT_TOKEN`/
-`TELEGRAM_CHAT_ID` for Telegram alerts, and the optional
-are saved to `scanner_settings.json` next to the app, so they survive a
-restart too.
-
-## Known limitations, please read
-
-- **This is not investment advice.** Signals are based on historical
-  price patterns and the backtest we ran earlier showed a fairly low win
-  rate (see the earlier report) — treat this as one input, not a trading
-  system to follow blindly. The AI Insights panel describes the scan
-  data, it does not add new analysis beyond what's in the numbers.
-- **No order-placement logic, still** — the app now suggests a
-  stop-loss/target (ATR-based) and a position-size (fixed-fractional,
-  see below), but these are display-only suggestions computed from
-  numbers you configured; it still doesn't place trades or know
-  anything about your real broker account/positions/P&L. That's
-  intentional.
-- **Single point of failure**: if your server goes down, or you forget
-  to log in one morning, you get no signals (and no alerts) that day —
-  there's no separate uptime monitor watching the app itself. Telegram
-  alerts (see above) at least mean you don't have to keep the dashboard
-  open, but if the server is down, nothing fires.
-- **Rate limits**: Kite Connect has API rate limits; the default 3-minute
-  scan interval is chosen to stay comfortably under them with a normal
-  F&O-sized watchlist (~180-200 stocks as of writing). If you load the
-  full live F&O list and see rate-limit errors in the dashboard's warning
-  banner, raise `SCAN_INTERVAL_SECONDS` in Settings.
-- **AI Insights costs money per call** (your own Anthropic API usage,
-  typically a fraction of a cent per summary) and is capped at roughly
-  one call per scan interval via caching — but it's still real usage on
-  your key, so keep an eye on it if you set a very short scan interval.
-- **Chart data depth is limited by Kite's historical-data API limits**
-  per interval (shorter timeframes get less lookback) — this is a Kite
-  platform limit, not something this app can work around.
+A high Movement Score is not a probability of profit. OI can reflect hedging/arbitrage, compressed stocks can break either way, and options can lose even when the underlying direction is correct because of IV, spread and theta. Use the system as a research/shortlisting tool and validate changes out-of-sample before risking capital.

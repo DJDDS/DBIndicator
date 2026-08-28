@@ -86,6 +86,7 @@ TOKEN_CACHE_FILE = os.getenv("TOKEN_CACHE_FILE", "kite_token_cache.json")
 
 # Where live-editable scanner settings are persisted (also gitignored).
 SETTINGS_FILE = os.getenv("SETTINGS_FILE", "scanner_settings.json")
+SETTINGS_SCHEMA_VERSION = 2
 
 # Where the most recent scan results are persisted (also gitignored), so
 # the dashboard still shows the last scan for analysis after market
@@ -207,7 +208,7 @@ VALID_TIMEFRAMES = ["15minute", "60minute", "4hour", "day", "week"]
 # VALID_TIMEFRAMES above is still the menu for the Chart and Backtest pages,
 # which are research surfaces where switching timeframe IS the point.
 # --------------------------------------------------------------------------
-WATCHLIST_TIMEFRAME = "day"
+WATCHLIST_TIMEFRAME = "15minute"
 
 # Human-readable names for each timeframe, used wherever a badge or tooltip
 # has to state WHICH bar a reading was computed on - see BTST_TIMEFRAMES
@@ -268,10 +269,10 @@ def _env_defaults():
     return {
         "WATCHLIST": _env_watchlist(),
         "MACD_PRESET": os.getenv("MACD_PRESET", "auto"),
-        "MACD_CUSTOM_FAST": int(os.getenv("MACD_CUSTOM_FAST", 12)),
-        "MACD_CUSTOM_SLOW": int(os.getenv("MACD_CUSTOM_SLOW", 26)),
+        "MACD_CUSTOM_FAST": int(os.getenv("MACD_CUSTOM_FAST", 8)),
+        "MACD_CUSTOM_SLOW": int(os.getenv("MACD_CUSTOM_SLOW", 17)),
         "MACD_CUSTOM_SIGNAL": int(os.getenv("MACD_CUSTOM_SIGNAL", 9)),
-        "RSI_LENGTH": int(os.getenv("RSI_LENGTH", 9)),
+        "RSI_LENGTH": int(os.getenv("RSI_LENGTH", 14)),
         "RSI_SMOOTH_LENGTH": int(os.getenv("RSI_SMOOTH_LENGTH", 9)),
         "BB_LENGTH": int(os.getenv("BB_LENGTH", 20)),
         # 4-parameter confluence: RSI (vs its smoothing line), MACD (vs
@@ -483,7 +484,7 @@ def _env_defaults():
         "MIN_SHORTLIST_COVERAGE": float(os.getenv("MIN_SHORTLIST_COVERAGE", 0.80)),
         # Hard cap on the shortlist. Not a target - most days should come
         # in well under it, and an empty list is a valid answer.
-        "SHORTLIST_MAX": int(os.getenv("SHORTLIST_MAX", 8)),
+        "SHORTLIST_MAX": int(os.getenv("SHORTLIST_MAX", 5)),
         # Minimum BTST/STBT score to qualify. Previously nothing filtered
         # on this at all, so every candidate displayed and every candidate
         # was pushed to Telegram.
@@ -499,7 +500,7 @@ def _env_defaults():
         # When REQUIRE_ENTRY_LOCATION_AGREEMENT is on, an extended row
         # loses its "Confirmed" status; off by default, same reasoning as
         # every other REQUIRE_* gate above.
-        "MAX_ENTRY_EXTENSION_ATR": float(os.getenv("MAX_ENTRY_EXTENSION_ATR", 2.0)),
+        "MAX_ENTRY_EXTENSION_ATR": float(os.getenv("MAX_ENTRY_EXTENSION_ATR", 1.25)),
         "REQUIRE_ENTRY_LOCATION_AGREEMENT": os.getenv("REQUIRE_ENTRY_LOCATION_AGREEMENT", "true").strip().lower() in ("1", "true", "on", "yes"),
         # Minimum-ATR volatility floor (PARAMETER_ANALYSIS_2.md Finding
         # #5 - "no volatility floor, in either engine"; see indicators.
@@ -524,17 +525,37 @@ class Settings:
     def __init__(self):
         self._lock = threading.Lock()
         data = _env_defaults()
+        saved = {}
+        needs_schema_write = False
         if os.path.exists(SETTINGS_FILE):
             try:
                 with open(SETTINGS_FILE) as f:
                     saved = json.load(f)
+                saved_version = int(saved.get("_schema_version", 0) or 0)
                 for k, v in saved.items():
                     if k in _TUNABLE_FIELDS:
                         data[k] = v
-            except (json.JSONDecodeError, OSError):
+                # Quality-upgrade migration: older deployments often persisted
+                # strict 4-of-4.  The new entry engine is designed around 3-of-4
+                # state confirmation plus a fresh trigger, so migrate that old
+                # persisted value once.  After the schema marker is written, a
+                # user can deliberately choose 4-of-4 again and it is preserved.
+                if saved_version < SETTINGS_SCHEMA_VERSION:
+                    if data.get("MIN_REQUIRED") == 4:
+                        data["MIN_REQUIRED"] = 3
+                    needs_schema_write = True
+            except (json.JSONDecodeError, OSError, TypeError, ValueError):
                 pass
         for k, v in data.items():
             setattr(self, k, v)
+        if needs_schema_write:
+            try:
+                payload = {k: getattr(self, k) for k in _TUNABLE_FIELDS}
+                payload["_schema_version"] = SETTINGS_SCHEMA_VERSION
+                with open(SETTINGS_FILE, "w") as f:
+                    json.dump(payload, f, indent=2)
+            except OSError:
+                pass
 
     def as_dict(self):
         with self._lock:
@@ -880,6 +901,7 @@ class Settings:
             for k, v in clean.items():
                 setattr(self, k, v)
             data = {k: getattr(self, k) for k in _TUNABLE_FIELDS}
+            data["_schema_version"] = SETTINGS_SCHEMA_VERSION
         with open(SETTINGS_FILE, "w") as f:
             json.dump(data, f, indent=2)
         return []

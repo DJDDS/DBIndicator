@@ -57,7 +57,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import early_signal
+from . import early_signal, early_research
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -81,6 +81,22 @@ INDEX_SYMBOLS = ["NIFTY 50", "SENSEX"]
 log = logging.getLogger(__name__)
 
 DEFAULT_HORIZONS = (1, 2, 3, 5, 10)
+
+
+def research_promotable(stats, min_trades=60, min_profit_factor=1.10):
+    """Whether an untouched holdout result is strong enough for live use.
+
+    This is intentionally simple and conservative: positive net expectancy,
+    profit factor above 1.10 and enough trades.  Win rate alone is not a
+    promotion criterion.
+    """
+    if not stats:
+        return False
+    return bool(
+        (stats.get("trade_count") or 0) >= min_trades
+        and (stats.get("avg_return_pct") is not None and stats.get("avg_return_pct") > 0)
+        and (stats.get("profit_factor") is not None and stats.get("profit_factor") > min_profit_factor)
+    )
 WARMUP_DAYS = 20          # extra calendar days fetched before the requested
                            # window purely so indicators are warmed up -
                            # trades are never counted in this stretch.
@@ -1774,6 +1790,156 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         "train_holdout": train_holdout,
         "generated_at": to_date.isoformat(timespec="seconds"),
     }
+
+
+# --------------------------------------------------------------------------
+# F&O Early Movement research - live-engine parity, not legacy vote counts.
+# --------------------------------------------------------------------------
+
+def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
+                                cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
+                                progress_cb=None) -> dict:
+    """Replay Energy Building -> Ignition -> Best Entry on 15-minute F&O data.
+
+    This is deliberately separate from `run_backtest`, which remains the
+    legacy/custom indicator-combination laboratory.  The early-movement
+    report measures the exact evidence axes used by the new live shortlist
+    and exposes one-factor sensitivity tables for later calibration.
+    """
+    timeframe = "15minute"
+    lo, hi, default = backtest_day_bounds(timeframe)
+    days = max(lo, min(int(days or default), hi))
+    symbols = list(symbols or settings.WATCHLIST)
+    horizons = DEFAULT_HORIZONS
+    instruments = _load_instrument_map(kite)
+    index_token = _load_index_token(kite, "NIFTY 50")
+    index_df = None
+    try:
+        if index_token:
+            index_df = _fetch_history(index_token, timeframe, days + WARMUP_DAYS, kite)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Early research NIFTY history unavailable: %s", exc)
+
+    replays = []
+    notes = {}
+    sector_history = {}
+    window_start = (now_ist() - dt.timedelta(days=days)).replace(tzinfo=None).isoformat()
+    for i, symbol in enumerate(symbols):
+        if progress_cb:
+            progress_cb(i, len(symbols), symbol)
+        token = instruments.get(symbol)
+        if not token:
+            notes[symbol] = "symbol not found on NSE"
+            continue
+        try:
+            df = _fetch_history(token, timeframe, days + WARMUP_DAYS, kite)
+            if df is None or df.empty:
+                notes[symbol] = "no price history"
+                continue
+            oi = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
+            sector_df = None
+            sector_symbol = scanner_mod.SYMBOL_SECTOR_MAP.get(symbol)
+            if sector_symbol:
+                if sector_symbol not in sector_history:
+                    try:
+                        sector_token = _load_index_token(kite, sector_symbol)
+                        sector_history[sector_symbol] = (
+                            _fetch_history(sector_token, timeframe, days + WARMUP_DAYS, kite)
+                            if sector_token else None
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("Early research sector history unavailable for %s: %s", sector_symbol, exc)
+                        sector_history[sector_symbol] = None
+                sector_df = sector_history.get(sector_symbol)
+            feat = early_research.build_feature_frame(
+                df, timeframe, oi_series=oi, index_df=index_df, sector_df=sector_df)
+            if feat.empty:
+                notes[symbol] = "not enough history for early-movement features"
+                continue
+            # Preserve ATR for Energy Building's directionless expansion target.
+            series = compute_series(df, timeframe)
+            if "error" not in series:
+                feat["atr"] = series["atr"]
+            replay = early_research.replay_feature_frame(
+                df, feat, symbol, horizons=horizons,
+                cost_pct=cost_pct, slippage_pct=slippage_pct,
+            )
+            for key in ("energy_events", "ignition_events", "best_entry_events"):
+                replay[key] = [e for e in replay.get(key, [])
+                               if e.get("signal_time", e.get("entry_time", "")) >= window_start]
+            replays.append(replay)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Early movement research failed for %s", symbol)
+            notes[symbol] = str(exc)
+        time.sleep(_RATE_LIMIT_PAUSE)
+
+    if progress_cb:
+        progress_cb(len(symbols), len(symbols), None)
+    research = early_research.aggregate_research(
+        replays, holdout_pct=holdout_pct, ref_horizon=3, horizons=horizons)
+    return {
+        "timeframe": timeframe,
+        "days": days,
+        "symbols_scanned": len(symbols),
+        "symbols_completed": len(replays),
+        "symbols_skipped": notes,
+        "cost_pct": float(cost_pct),
+        "slippage_pct": float(slippage_pct),
+        "research": research,
+        "research_notes": [
+            "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",
+            "4-hour context is replayed using only the previous fully closed higher-timeframe bucket to avoid look-ahead.",
+            "Sector context is replayed when the stock has a mapped NSE sector index and that index history is available.",
+        ],
+        "generated_at": now_ist().isoformat(timespec="seconds"),
+    }
+
+
+_early_research_lock = threading.Lock()
+_early_research_state = {
+    "status": "idle", "progress": {"done": 0, "total": 0, "symbol": None},
+    "result": None, "error": None, "started_at": None, "finished_at": None,
+}
+
+def get_early_research_state():
+    with _early_research_lock:
+        return dict(_early_research_state, progress=dict(_early_research_state["progress"]))
+
+def start_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
+                                  cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT):
+    with _early_research_lock:
+        if _early_research_state["status"] == "running":
+            return {"started": False, "reason": "Early Movement Research is already running."}
+        symbols = list(symbols or settings.WATCHLIST)
+        _early_research_state.update({
+            "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None},
+            "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
+            "finished_at": None,
+        })
+
+    def _progress(done, total, symbol):
+        with _early_research_lock:
+            _early_research_state["progress"] = {"done": done, "total": total, "symbol": symbol}
+
+    def _job():
+        try:
+            result = run_early_movement_research(
+                kite, symbols=symbols, days=days, holdout_pct=holdout_pct,
+                cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress)
+            with _early_research_lock:
+                _early_research_state["status"] = "done"
+                _early_research_state["result"] = result
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Early movement research run failed")
+            with _early_research_lock:
+                _early_research_state["status"] = "error"
+                _early_research_state["error"] = str(exc)
+        finally:
+            with _early_research_lock:
+                _early_research_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True}
 
 
 # --------------------------------------------------------------------------
