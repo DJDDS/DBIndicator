@@ -218,7 +218,7 @@ def _resample_oi(rows, rule):
     return ser
 
 
-def fetch_oi_history(kite, symbols, timeframe="day", throttle=None):
+def fetch_oi_history(kite, symbols, timeframe="day", throttle=None, days_override=None):
     """{symbol: pandas Series of OI indexed by bar timestamp} for a timeframe.
 
     Never raises: a symbol Kite refuses simply gets no entry, and every
@@ -230,12 +230,16 @@ def fetch_oi_history(kite, symbols, timeframe="day", throttle=None):
     if spec is None:
         return {}
     today = dt.date.today().isoformat()
-    key = (timeframe, today)
+    requested_days = int(days_override) if days_override is not None else int(spec["days"])
+    # Keep research windows separate from the live cache. If a 120-day live
+    # cache is reused by a 365-day backtest, most historical signal bars have
+    # no OI and the gate is never genuinely tested.
+    key = (timeframe, today, requested_days)
     entry = _oi_history_cache.get(key)
     if entry is None:
         entry = _oi_history_cache[key] = {}
         # drop other days so the cache cannot grow without bound
-        for k in [k for k in _oi_history_cache if k[1] != today]:
+        for k in [k for k in _oi_history_cache if len(k) >= 2 and k[1] != today]:
             _oi_history_cache.pop(k, None)
 
     todo = [sym for sym in symbols if sym not in entry]
@@ -249,7 +253,9 @@ def fetch_oi_history(kite, symbols, timeframe="day", throttle=None):
         todo = [sym for sym in symbols if sym not in entry]
         if not todo:
             return dict(entry)
-        return _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle)
+        spec_for_run = dict(spec)
+        spec_for_run["days"] = requested_days
+        return _sweep_oi_history(kite, todo, entry, spec_for_run, timeframe, throttle)
 
 
 def _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle):
@@ -290,7 +296,8 @@ def oi_is_intraday(timeframe):
 
 def oi_history_status(timeframe="day"):
     today = dt.date.today().isoformat()
-    entry = _oi_history_cache.get((timeframe, today)) or {}
+    spec = OI_HISTORY_SPEC.get(timeframe) or {}
+    entry = _oi_history_cache.get((timeframe, today, int(spec.get("days", 0)))) or {}
     return {"date": today, "timeframe": timeframe, "symbols": len(entry)}
 
 

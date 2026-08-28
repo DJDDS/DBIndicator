@@ -153,7 +153,7 @@ out of 100 (see `app/early_signal.py`):
 | **OI anomaly** | 30 | Is this OI move unusual *for this stock*? |
 | **Volume** | 20 | Is participation still building, or fading? |
 | **Momentum** | 20 | RSI vs its own average, with MACD confirming |
-| **Structure** | 20 | Close location, range expansion, compression |
+| **Structure** | 20 | Direction-aware close, compression, and anti-chase entry location |
 | **Relative strength** | 10 | Is it leading NIFTY, or just carried by it? |
 
 OI and volume together outweigh price momentum 50 to 20. That inversion is
@@ -200,9 +200,7 @@ signal. Intraday baselines exclude overnight transitions, because OI
 genuinely re-forms between sessions and leaving those jumps in makes the
 standard deviation so wide that real intraday builds stop registering.
 
-Consequence worth knowing: **intraday OI is blank at the open** until the
-session's second bar closes. There is genuinely no within-session OI change
-before then.
+Consequence worth knowing: the historical OI z-score is available immediately, but **Best Entries also requires a measured recent 60-minute OI trend and acceleration**. After a fresh service restart it therefore waits until enough timestamped live OI samples exist rather than guessing. That can make the Best Entries list temporarily empty, by design.
 
 ### Missing data never flatters a row
 
@@ -239,6 +237,12 @@ accept what it says. A holdout you re-check after every tweak has quietly
 become training data.
 
 ## BTST / STBT panel
+
+**Live overnight alerts are off by default.** The Backtest page now compares
+continuation and the exact opposite reversal direction side-by-side at next
+open and next close. Do not enable the continuation alert just because the
+panel can produce candidates; enable a side only after it shows positive net
+expectancy on an untouched period.
 
 Replaces the old "High Conviction" card, which stacked several conditions
 that move together in practice (a 4-of-4 row is already likely to be above
@@ -279,56 +283,40 @@ the test by the bell. The panel says so itself.
 On the Backtest page. Until now, none of the optional gates had ever been
 measured — the app had far more machinery than evidence about any of it.
 
-It runs a **baseline backtest with every gate off**, then **one run per gate
-with only that gate on**, and reports what each did to your win rate, net of
-costs, on your own watchlist. One click instead of hand-running the backtest
-twice per gate.
-
-Read it honestly, and the panel says all of this on screen:
-
-- Each gate is measured **in isolation**, so it can't see two gates that
-  only help together, or that overlap and double-count. A full interaction
-  study is 2^N runs; this is N+1.
-- **Fewer trades isn't automatically worse.** A gate that cuts 60% of trades
-  for +3 points of win rate may or may not suit you, so both numbers sit
-  side by side rather than collapsed into one score.
-- A big delta on a handful of trades is noise, which is why the trade count
-  is on every row.
+It runs a baseline, every gate individually, and a small set of targeted OI
+pairs. Every run uses the same cached market-data snapshot and a **30%
+chronological holdout**. Rows are ranked by untouched holdout average net
+return (then holdout profit factor), not by win-rate lift. This prevents a
+filter that wins slightly more often but loses more money from being labelled
+"better", and makes in-sample-only improvements visible. OI rows also show
+exact pass / fail / missing counts so weak coverage cannot masquerade as a
+no-effect result.
 
 ## Best Entries panel
 
-The screener answers "does this stock have a signal?" The **⚡ Best
-Entries** card at the top of the dashboard answers the second question you
-were otherwise left doing by eye: *given several rows that all currently
-qualify, which are the better entries right now?*
+The main table answers whether a stock is aligned; **🎯 Best Entries** answers
+whether it is a *timely, independently-confirmed entry right now*. A row is
+allowed into this list only when all of these are true:
 
-It takes only rows that already earned a Confirmed ✓ — it can never
-promote something the screener didn't surface — and re-orders them by a
-0-100 score built from six reads already sitting on each row:
+- the base state has at least **3 of 4** components aligned;
+- at least one RSI / MACD / CMF crossover triggered in the trade direction
+  within the **last two bars**;
+- the historical futures-OI anomaly is measurable and explicitly agrees;
+- the rolling **60-minute OI change is positive** and OI acceleration is
+  measurable rather than unknown/fading;
+- the setup clears the Early Signal quality and data-coverage floors; and
+- price is not beyond the configured ATR-extension anti-chase limit.
 
-| Component | Max | What earns it |
-|---|---|---|
-| Entry location | 30 | Price still near/behind VWAP rather than ATRs past it |
-| Big candle | 25 | A range-expansion bar in this row's direction, level cleared |
-| Volatility | 15 | ATR comfortably above your floor — the stock actually moves |
-| Coiling | 15 | Band width tight / NR7 — a squeeze that hasn't released yet |
-| Strong close | 10 | Closed decisively in this row's own direction |
-| Delivery | 5 | NSE delivery % above your mark |
+The ranking then prefers higher Early Signal quality, the freshest trigger,
+stronger recent OI, a larger stock-specific OI anomaly, and better evidence
+coverage. Missing evidence can delay or disqualify a row; it never receives
+neutral points just to keep the list populated. An empty Best Entries card is
+therefore valid output.
 
-Entry location carries the most weight deliberately: it's the one
-component that separates catching a move from chasing one. A component
-with no reading scores a neutral middle value rather than zero, so a
-missing number never ranks a stock below one that actively looks bad.
-
-Hover any row for the full per-component breakdown — the score is never a
-black box.
-
-**These weights are reasoned, not backtested.** They encode a specific
-opinion (entry location matters most; a stock too quiet to move is a poor
-entry however many indicators agree), but nobody has measured this exact
-combination against historical outcomes. Treat it as a sensible way to
-order your shortlist, not as a validated edge — the same caveat that
-applies to "High Conviction."
+The structure score is direction-aware and **does not reward a big candle
+merely for being big**. The gate research showed that strong-close / large
+range-expansion entries can be exhaustion; they are now descriptive and
+anti-chase context rather than automatic positive points.
 
 ## Anticipatory signals (catch a big move before it happens)
 

@@ -533,26 +533,44 @@ def _score_momentum(direction, rsi_cross, macd_agrees, rsi_above):
     return min(pts, WEIGHTS["momentum"]), "; ".join(bits)
 
 
-def _score_structure(close_pos, big_candle_agrees, coiling, nr7):
-    parts = [x for x in (close_pos, big_candle_agrees, coiling, nr7) if x is not None]
+def _score_structure(direction, close_pos, big_candle_agrees, coiling, nr7, entry_extension_atr=None):
+    parts = [x for x in (close_pos, big_candle_agrees, coiling, nr7, entry_extension_atr) if x is not None]
     if not parts:
         return None, "no structural reading"
     pts, bits = 0, []
     if close_pos is not None:
-        if close_pos >= 80 or close_pos <= 20:
-            pts += 8; bits.append(f"closed at {close_pos:.0f}% of range")
-        elif 40 <= close_pos <= 60:
-            bits.append("closed mid-range - no conviction either way")
+        # Close location is directional. The old score rewarded BOTH extremes,
+        # so a bullish setup closing near the low earned the same 8 points as
+        # one closing near the high.
+        directional_pos = close_pos if direction == "Bullish" else (100.0 - close_pos)
+        if directional_pos >= 80:
+            pts += 5; bits.append(f"directional close {directional_pos:.0f}%")
+        elif directional_pos >= 60:
+            pts += 3; bits.append(f"directional close {directional_pos:.0f}%")
+        elif directional_pos <= 35:
+            bits.append("close rejected the trade direction")
         else:
-            pts += 4; bits.append(f"closed at {close_pos:.0f}% of range")
-    if big_candle_agrees is True:
-        pts += 7; bits.append("range expansion in this direction")
-    elif big_candle_agrees is False:
+            pts += 1; bits.append("close only modestly supports direction")
+    # Range expansion is descriptive, not automatically a good ENTRY. The
+    # BTST study showed chasing large/strong candles can be exhaustion, so it
+    # no longer earns points merely for existing.
+    if big_candle_agrees is False:
         bits.append("last range expansion went the other way")
+    elif big_candle_agrees is True:
+        bits.append("range expansion agrees (not scored - avoid chasing)")
+    if entry_extension_atr is not None:
+        if entry_extension_atr <= 0.75:
+            pts += 8; bits.append(f"early location ({entry_extension_atr:.1f} ATR extension)")
+        elif entry_extension_atr <= 1.25:
+            pts += 5; bits.append(f"acceptable location ({entry_extension_atr:.1f} ATR)")
+        elif entry_extension_atr <= 1.75:
+            pts += 2; bits.append(f"late-ish location ({entry_extension_atr:.1f} ATR)")
+        else:
+            bits.append(f"extended/chasing ({entry_extension_atr:.1f} ATR)")
     if coiling:
-        pts += 3; bits.append("volatility compressed")
+        pts += 4; bits.append("volatility compressed")
     if nr7:
-        pts += 2; bits.append("narrowest range in 7")
+        pts += 3; bits.append("narrowest range in 7")
     return min(pts, WEIGHTS["structure"]), "; ".join(bits)
 
 
@@ -580,7 +598,7 @@ def early_signal_score(direction, *, oi_z=None, oi_structure=None,
                        rvol=None, rvol_accel=None, vol_rising=None,
                        rsi_cross=None, rsi_above=None, macd_agrees=None,
                        close_pos=None, big_candle_agrees=None,
-                       coiling=None, nr7=None,
+                       coiling=None, nr7=None, entry_extension_atr=None,
                        rs_pct=None, rs_improving=None):
     """Score a row 0-100 on EVIDENCE ACTUALLY PRESENT.
 
@@ -598,7 +616,7 @@ def early_signal_score(direction, *, oi_z=None, oi_structure=None,
         ("oi_anomaly", "OI anomaly", _score_oi(direction, oi_z, oi_structure)),
         ("volume", "Volume", _score_volume(rvol, rvol_accel, vol_rising)),
         ("momentum", "Momentum", _score_momentum(direction, rsi_cross, macd_agrees, rsi_above)),
-        ("structure", "Structure", _score_structure(close_pos, big_candle_agrees, coiling, nr7)),
+        ("structure", "Structure", _score_structure(direction, close_pos, big_candle_agrees, coiling, nr7, entry_extension_atr)),
         ("rel_strength", "Relative strength", _score_rel_strength(direction, rs_pct, rs_improving)),
     ]
 

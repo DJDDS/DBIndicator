@@ -640,7 +640,7 @@ def api_weights_start():
     except ValueError:
         return jsonify({"started": False, "reason": "days must be a number"}), 400
     try:
-        ref_horizon = int(form.get("ref_horizon", 10))
+        ref_horizon = int(form.get("ref_horizon", 3))
     except ValueError:
         return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
     if ref_horizon <= 0:
@@ -715,7 +715,7 @@ def api_ablation_start():
     except ValueError:
         return jsonify({"started": False, "reason": "days must be a number"}), 400
     try:
-        ref_horizon = int(form.get("ref_horizon", 10))
+        ref_horizon = int(form.get("ref_horizon", 3))
     except ValueError:
         return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
     if ref_horizon <= 0:

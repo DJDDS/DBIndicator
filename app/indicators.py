@@ -803,6 +803,21 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     dir_match_count = max(align_count, 3 - align_count)  # how many of the 3 agree with the majority
     direction = "Bullish" if align_count >= 2 else "Bearish"
 
+    # Entry timing is separate from state alignment. A row can stay aligned
+    # for days after the useful entry has passed, which is why a pure 4-of-4
+    # screen tends to surface mature moves. Record the most recent crossover
+    # in the CURRENT direction across RSI/MACD/CMF, up to two bars back.
+    if direction == "Bullish":
+        trigger_series = series["rsi_up"] | series["macd_up"] | cmf_up
+    else:
+        trigger_series = series["rsi_dn"] | series["macd_dn"] | cmf_dn
+    entry_trigger_bars_ago = None
+    for _ago in range(0, min(2, i) + 1):
+        if bool(trigger_series.iloc[i - _ago]):
+            entry_trigger_bars_ago = _ago
+            break
+    entry_trigger = direction if entry_trigger_bars_ago is not None else None
+
     # vol_confirmed: today's actual participation, not just the price
     # pattern - a real move is usually backed by above-average volume,
     # so a signal on quiet volume is more likely to be noise. This is
@@ -1140,6 +1155,8 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         # never a tie, so align_count >= 2 always means bullish majority.
         "direction": direction,
         "fresh_signal": fresh_signal,
+        "entry_trigger": entry_trigger,
+        "entry_trigger_bars_ago": entry_trigger_bars_ago,
         "timestamp": df.index[i].isoformat(),
         "vwap": round(vwap, 2) if vwap else None,
         "vs_vwap": vs_vwap,

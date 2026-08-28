@@ -280,7 +280,7 @@ def _env_defaults():
         # must currently agree for a "confirmed" signal (was 2/3-of-3
         # before Relative Volume joined the count as a real, equally-
         # weighted 4th parameter instead of an always-mandatory add-on).
-        "MIN_REQUIRED": int(os.getenv("MIN_REQUIRED", 4)),
+        "MIN_REQUIRED": int(os.getenv("MIN_REQUIRED", 3)),
         "REL_VOLUME_THRESHOLD": float(os.getenv("REL_VOLUME_THRESHOLD", 1.2)),
         "SCAN_INTERVAL_SECONDS": int(os.getenv("SCAN_INTERVAL_SECONDS", 180)),
         # Regime-adaptive volume bar (see indicators.compute_signal): ADX
@@ -450,7 +450,7 @@ def _env_defaults():
         # only knowable near the close - the daily bar is still being written
         # until 15:30. 15:15 IST is late enough for the close position to have
         # essentially settled and early enough to still place an order.
-        "BTST_ALERT_ENABLED": os.getenv("BTST_ALERT_ENABLED", "true").strip().lower() in ("1", "true", "on", "yes"),
+        "BTST_ALERT_ENABLED": os.getenv("BTST_ALERT_ENABLED", "false").strip().lower() in ("1", "true", "on", "yes"),
         "BTST_ALERT_TIME": os.getenv("BTST_ALERT_TIME", "15:15"),
 
         # --- The early-signal layer (see app/early_signal.py) ---

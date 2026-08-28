@@ -80,7 +80,7 @@ INDEX_SYMBOLS = ["NIFTY 50", "SENSEX"]
 
 log = logging.getLogger(__name__)
 
-DEFAULT_HORIZONS = (5, 10, 20)
+DEFAULT_HORIZONS = (1, 2, 3, 5, 10)
 WARMUP_DAYS = 20          # extra calendar days fetched before the requested
                            # window purely so indicators are warmed up -
                            # trades are never counted in this stretch.
@@ -648,6 +648,18 @@ def _record(diag, gate, readable, total):
     d["readable"] += int(readable)
     d["total"] += int(total)
 
+
+def _record_verdicts(diag, gate, verdict, candidate_mask):
+    """Record exact pass/fail/missing counts for a tri-state gate."""
+    if diag is None:
+        return
+    cand = candidate_mask.fillna(False).astype(bool)
+    v = verdict.reindex(cand.index)[cand]
+    d = diag.setdefault(gate, {"readable": 0, "total": 0})
+    d["passed"] = d.get("passed", 0) + int(v.eq(1.0).sum())
+    d["failed"] = d.get("failed", 0) + int(v.eq(0.0).sum())
+    d["missing"] = d.get("missing", 0) + int(v.isna().sum())
+
 def _signal_series(series: dict, params, required: int, timeframe: str = None,
                     require_htf: bool = False, require_regime_volume: bool = False,
                     exclude_opening_window: bool = False, require_candle_pattern: bool = False, require_macd_hist: bool = False,
@@ -738,7 +750,11 @@ def _signal_series(series: dict, params, required: int, timeframe: str = None,
                 oi_ok[has_signal].notna().sum(), has_signal.sum())
         _record(diag, "require_oi_agreement__data",
                 z[has_signal].notna().sum(), has_signal.sum())
-        has_signal = has_signal & oi_ok.fillna(1.0).astype(bool)
+        _record_verdicts(diag, "require_oi_agreement", oi_ok, has_signal)
+        # An OI-required experiment must be evaluated only where OI produced a
+        # decisive agreement. Missing/neutral OI is NOT a pass: otherwise a gate
+        # with 25% coverage can appear to cut 0% of trades and falsely look useless.
+        has_signal = has_signal & oi_ok.eq(1.0)
 
     if require_candle_pattern:
         candle_agrees = _candle_pattern_agree_series(series, direction).reindex(index).fillna(True)
@@ -919,7 +935,7 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 #     sparse, so that stays a plain loop over the handful of entries.
 # --------------------------------------------------------------------------
 
-def _fetch_oi_history_for_backtest(kite, symbol, timeframe):
+def _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=None):
     """Daily/intraday OI series for one symbol, for replaying the OI gate.
 
     Deliberately goes through scanner.fetch_oi_history so the backtest reads
@@ -930,10 +946,12 @@ def _fetch_oi_history_for_backtest(kite, symbol, timeframe):
     # NOT throttle=0. That was a real bug: it removed the rate limiting on a
     # path that then fetched OI for every symbol in the universe, so Kite
     # started refusing calls, the baseline came back empty, and - because a
-    # missing baseline is None and None never blocks - the OI gate silently
-    # passed every row through and the ablation reported it as "no effect".
+    # missing baseline used to be silently treated as a pass, so the OI gate
+    # could report "no effect" even when it was mostly unmeasured.
     # A gate that never fired reported as a gate that did nothing.
-    hist = scanner_mod.fetch_oi_history(kite, [symbol], timeframe=timeframe)
+    days_override = (int(days) + WARMUP_DAYS) if days is not None else None
+    hist = scanner_mod.fetch_oi_history(
+        kite, [symbol], timeframe=timeframe, days_override=days_override)
     return hist.get(symbol)
 
 
@@ -990,12 +1008,10 @@ def _oi_agrees_series(z_series, close, direction, price_threshold=0.3):
     unwinding are position-closing flow and do not count as agreement, same
     as live.
 
-    Returns True / False / NaN. NaN means "no unusual OI either way" and the
-    caller fills it with True, because the live gate only ever revokes on
-    ACTIVE disagreement. Treating unknown as disagreement would backtest a
-    far stricter strategy than the one actually running, and would make the
-    gate look better than it is by silently excluding every bar with no OI
-    reading."""
+    Returns True / False / NaN. NaN means the OI gate is not decisively
+    measurable on that bar. When OI agreement is explicitly required, NaN is
+    excluded rather than silently counted as a pass; diagnostics separately
+    report how often that happened."""
     price_chg = close.pct_change() * 100.0
     unusual = z_series.abs() >= early_signal.OI_Z_THRESHOLD
     oi_up = z_series > 0
@@ -1182,10 +1198,22 @@ def _summarize_group(trades, horizons):
             out[str(h)] = {"trade_count": 0}
             continue
         wins = [r for r in rets if r > 0]
+        losses = [r for r in rets if r < 0]
+        gross_profit = sum(wins)
+        gross_loss = abs(sum(losses))
+        avg_winner = (sum(wins) / len(wins)) if wins else None
+        avg_loser = (sum(losses) / len(losses)) if losses else None
+        payoff = (avg_winner / abs(avg_loser)) if avg_winner is not None and avg_loser not in (None, 0) else None
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (float("inf") if gross_profit > 0 else None)
         out[str(h)] = {
             "trade_count": len(rets),
             "win_rate_pct": round(len(wins) / len(rets) * 100, 1),
             "avg_return_pct": round(sum(rets) / len(rets), 3),
+            "median_return_pct": round(float(np.median(rets)), 3),
+            "avg_winner_pct": round(avg_winner, 3) if avg_winner is not None else None,
+            "avg_loser_pct": round(avg_loser, 3) if avg_loser is not None else None,
+            "payoff_ratio": round(payoff, 2) if payoff is not None else None,
+            "profit_factor": round(profit_factor, 2) if profit_factor is not None and np.isfinite(profit_factor) else profit_factor,
             "best_return_pct": round(max(rets), 3),
             "worst_return_pct": round(min(rets), 3),
         }
@@ -1321,6 +1349,21 @@ def overnight_outcomes(df, direction_series, signal_mask, cost_pct=0.0, slippage
     return out
 
 
+def compare_overnight_outcomes(df, direction_series, signal_mask, cost_pct=0.0, slippage_pct=0.0):
+    """Compare the same overnight setup in its original direction and reversed.
+
+    This prevents a losing continuation premise from being endlessly tuned with
+    extra filters when the data is actually signalling short-horizon mean reversion.
+    Both legs use identical signals, prices and costs; only the trade sign changes.
+    """
+    continuation = overnight_outcomes(
+        df, direction_series, signal_mask, cost_pct=cost_pct, slippage_pct=slippage_pct)
+    reversed_direction = direction_series.map({"Bullish": "Bearish", "Bearish": "Bullish"})
+    reversal = overnight_outcomes(
+        df, reversed_direction, signal_mask, cost_pct=cost_pct, slippage_pct=slippage_pct)
+    return {"continuation": continuation, "reversal": reversal}
+
+
 _on_state = {"status": "idle", "result": None, "error": None, "progress": None}
 _on_lock = threading.Lock()
 
@@ -1368,7 +1411,11 @@ def run_overnight_backtest(kite, symbols, timeframe="day", days=365,
     threshold = float(strong_close_pct if strong_close_pct is not None
                       else settings.STRONG_CLOSE_THRESHOLD_PCT)
     instruments = _load_instrument_map(kite)
-    per_symbol, agg = {}, {"next_open": [], "next_close": []}
+    per_symbol = {}
+    agg = {
+        "continuation": {"next_open": [], "next_close": []},
+        "reversal": {"next_open": [], "next_close": []},
+    }
     notes = {}
 
     for idx, symbol in enumerate(symbols):
@@ -1402,27 +1449,30 @@ def run_overnight_backtest(kite, symbols, timeframe="day", days=365,
 
         sig = bull | bear
         direction = pd.Series(np.where(bull, "Bullish", "Bearish"), index=df.index)
-        res = overnight_outcomes(df, direction, sig, cost_pct, slippage_pct)
+        res = compare_overnight_outcomes(df, direction, sig, cost_pct, slippage_pct)
         per_symbol[symbol] = res
-        for k in agg:
-            st = res.get(k, {})
-            if st.get("trade_count"):
-                agg[k].append((st["trade_count"], st["win_rate_pct"], st["avg_return_pct"]))
+        for strategy, exits in agg.items():
+            for k in exits:
+                st = res.get(strategy, {}).get(k, {})
+                if st.get("trade_count"):
+                    exits[k].append((st["trade_count"], st["win_rate_pct"], st["avg_return_pct"]))
 
     summary = {}
-    for k, rows in agg.items():
-        n = sum(r[0] for r in rows)
-        if not n:
-            summary[k] = {"trade_count": 0}
-            continue
-        summary[k] = {
-            "trade_count": n,
-            # Weighted by trade count so a symbol with 3 signals cannot
-            # swing the headline as hard as one with 60.
-            "win_rate_pct": round(sum(r[0] * r[1] for r in rows) / n, 1),
-            "avg_return_pct": round(sum(r[0] * r[2] for r in rows) / n, 3),
-            "symbols": len(rows),
-        }
+    for strategy, exits in agg.items():
+        summary[strategy] = {}
+        for k, rows in exits.items():
+            n = sum(r[0] for r in rows)
+            if not n:
+                summary[strategy][k] = {"trade_count": 0}
+                continue
+            summary[strategy][k] = {
+                "trade_count": n,
+                # Weighted by trade count so a symbol with 3 signals cannot
+                # swing the headline as hard as one with 60.
+                "win_rate_pct": round(sum(r[0] * r[1] for r in rows) / n, 1),
+                "avg_return_pct": round(sum(r[0] * r[2] for r in rows) / n, 3),
+                "symbols": len(rows),
+            }
     return {
         "summary": summary,
         "per_symbol": per_symbol,
@@ -1543,7 +1593,8 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
                     require_atr_floor=False,
                     cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                     holdout_pct=0.0,
-                 require_oi_agreement=False) -> dict:
+                 require_oi_agreement=False,
+                 history_cache=None, oi_history_cache=None) -> dict:
     lo, hi, _default = backtest_day_bounds(timeframe)
     days = int(days or _default)
     if days < lo:
@@ -1600,13 +1651,20 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         if not token:
             symbol_notes[symbol] = "symbol not found on NSE"
             continue
-        try:
-            df = _fetch_history(token, timeframe, fetch_days, kite)
-        except Exception as exc:  # noqa: BLE001 - one bad symbol never aborts the whole backtest
-            symbol_notes[symbol] = f"history fetch failed: {exc}"
+        history_key = (symbol, timeframe, fetch_days)
+        cached_price = history_cache is not None and history_key in history_cache
+        if cached_price:
+            df = history_cache[history_key]
+        else:
+            try:
+                df = _fetch_history(token, timeframe, fetch_days, kite)
+            except Exception as exc:  # noqa: BLE001 - one bad symbol never aborts the whole backtest
+                symbol_notes[symbol] = f"history fetch failed: {exc}"
+                time.sleep(_RATE_LIMIT_PAUSE)
+                continue
+            if history_cache is not None:
+                history_cache[history_key] = df
             time.sleep(_RATE_LIMIT_PAUSE)
-            continue
-        time.sleep(_RATE_LIMIT_PAUSE)
 
         if df is None or df.empty or len(df) < max(settings.BB_LENGTH, 35) + 5:
             symbol_notes[symbol] = "not enough historical candles returned"
@@ -1617,24 +1675,26 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
         # it for a run that will not consult it.
         oi_hist = None
         if require_oi_agreement:
-            try:
-                # NOT `... or None`. That idiom is fine for a dict or a list
-                # and raises ValueError on a pandas Series ("the truth value
-                # of a Series is ambiguous") - so EVERY symbol threw, the
-                # broad except below swallowed it, the message went to
-                # log.debug where nothing surfaces it, and the gate silently
-                # received no baseline on every run. The ablation then
-                # reported it as a gate that changed nothing.
-                fetched = _fetch_oi_history_for_backtest(kite, symbol, timeframe)
-                if fetched is not None and len(fetched):
-                    oi_hist = fetched
-            except Exception as exc:  # noqa: BLE001 - a missing baseline must not kill the symbol
-                # log.warning, not debug: a baseline that cannot be fetched
-                # turns the gate into a no-op, and that must be visible.
-                log.warning("Backtest OI history failed for %s: %s", symbol, exc)
+            oi_key = (symbol, timeframe, days)
+            cached_oi = oi_history_cache is not None and oi_key in oi_history_cache
+            if cached_oi:
+                oi_hist = oi_history_cache[oi_key]
+            else:
+                try:
+                    # NOT `... or None`. That idiom is fine for a dict or a list
+                    # and raises ValueError on a pandas Series.
+                    fetched = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
+                    if fetched is not None and len(fetched):
+                        oi_hist = fetched
+                except Exception as exc:  # noqa: BLE001 - a missing baseline must not kill the symbol
+                    log.warning("Backtest OI history failed for %s: %s", symbol, exc)
+                if oi_history_cache is not None:
+                    # Cache None too, so an unavailable symbol is not retried for
+                    # every gate in the same research sweep.
+                    oi_history_cache[oi_key] = oi_hist
+                time.sleep(_RATE_LIMIT_PAUSE)
             if oi_hist is None:
                 symbol_notes[symbol] = "no OI history for the OI gate"
-            time.sleep(_RATE_LIMIT_PAUSE)
 
         try:
             symbol_trades = _replay_symbol(
@@ -1734,7 +1794,7 @@ _WEIGHT_PHASES = [
 ]
 
 
-def compute_param_weights(kite, symbols=None, timeframe=None, days=30, ref_horizon=10, progress_cb=None):
+def compute_param_weights(kite, symbols=None, timeframe=None, days=30, ref_horizon=3, progress_cb=None):
     """Runs a handful of backtests over your watchlist to measure each of
     the 4 screener parameters' own recent historical predictive power,
     then converts that into normalized weights for background.py's
@@ -1767,7 +1827,7 @@ def compute_param_weights(kite, symbols=None, timeframe=None, days=30, ref_horiz
     symbols = list(symbols or settings.WATCHLIST)
     timeframe = timeframe or WATCHLIST_TIMEFRAME
     ref_horizon = int(ref_horizon)
-    horizons = tuple(sorted({5, 10, 20, ref_horizon}))
+    horizons = tuple(sorted(set(DEFAULT_HORIZONS) | {ref_horizon}))
 
     def _sub_progress(phase_index, phase_label):
         def _cb(done, total, symbol):
@@ -1869,7 +1929,7 @@ def _weights_progress_cb(phase_index, phase_total, phase_label, done, total, sym
         }
 
 
-def start_weight_computation(kite, symbols=None, timeframe=None, days=30, ref_horizon=10) -> dict:
+def start_weight_computation(kite, symbols=None, timeframe=None, days=30, ref_horizon=3) -> dict:
     """Kicks off an "Auto-Weight Parameters" run in a background thread,
     same pattern as start_backtest above. Only one weight computation
     runs at a time, and not alongside a regular backtest run either -
@@ -1966,9 +2026,9 @@ _load_persisted_weights_state()
 # shared baseline.
 #
 # Deliberate limits, stated rather than hidden:
-#   - This measures each gate IN ISOLATION. It cannot see interactions (two
-#     gates that only help together, or that overlap and double-count). A
-#     full interaction study is 2^N runs; this is N+1.
+#   - Every gate is measured in isolation AND a small set of targeted pairs
+#     (especially OI interactions) is measured. This is intentionally not a
+#     brute-force 2^N search, which would invite overfitting.
 #   - Fewer trades is not automatically worse. A gate that removes 60% of
 #     trades and lifts win rate 3 points may or may not be worth it - that
 #     depends on how many opportunities you can actually take. Both numbers
@@ -2017,6 +2077,15 @@ ABLATION_GATES = [
     ("require_oi_agreement", "OI positioning agreement"),
 ]
 
+# Small, targeted interaction set. A full 2^N search would overfit and be
+# prohibitively slow; these pairs test the combinations most likely to be
+# complementary rather than duplicated information.
+ABLATION_PAIRS = [
+    (("require_oi_agreement", "require_htf"), "OI + higher-timeframe trend"),
+    (("require_oi_agreement", "require_entry_location"), "OI + anti-chase entry location"),
+    (("require_oi_agreement", "require_macd_hist"), "OI + MACD momentum slope"),
+]
+
 
 def _gate_fired(diagnostics, gate_id, trades_cut_pct):
     """Did this gate actually get a chance to reject anything?
@@ -2041,7 +2110,10 @@ def _gate_fired(diagnostics, gate_id, trades_cut_pct):
     return True, coverage
 
 
-def _ablation_row(label, gate_id, summary, baseline, ref_horizon, diagnostics=None):
+def _ablation_row(label, gate_id, summary, baseline, ref_horizon, diagnostics=None,
+                  diagnostic_gate=None, kind="single", train_holdout=None,
+                  baseline_train_holdout=None):
+
     """One row of the ablation table: this gate's stats at ref_horizon and
     its deltas vs the shared baseline. Deltas are None when either side
     produced no trades at that horizon - a missing number is reported as
@@ -2051,11 +2123,21 @@ def _ablation_row(label, gate_id, summary, baseline, ref_horizon, diagnostics=No
     base = (baseline or {}).get("all", {}).get(str(ref_horizon), {}) or {}
     wr, base_wr = stats.get("win_rate_pct"), base.get("win_rate_pct")
     ar, base_ar = stats.get("avg_return_pct"), base.get("avg_return_pct")
+    pf = stats.get("profit_factor")
     n, base_n = stats.get("trade_count", 0), base.get("trade_count", 0)
-    fired, coverage = _gate_fired(diagnostics, gate_id, None)
-    _, data_cov = _gate_fired(diagnostics, gate_id + "__data", None)
+
+    hold = (((train_holdout or {}).get("holdout") or {}).get("all") or {}).get(str(ref_horizon), {}) or {}
+    base_hold = (((baseline_train_holdout or {}).get("holdout") or {}).get("all") or {}).get(str(ref_horizon), {}) or {}
+    hold_wr, base_hold_wr = hold.get("win_rate_pct"), base_hold.get("win_rate_pct")
+    hold_ar, base_hold_ar = hold.get("avg_return_pct"), base_hold.get("avg_return_pct")
+
+    diag_gate = diagnostic_gate or gate_id
+    fired, coverage = _gate_fired(diagnostics, diag_gate, None)
+    _, data_cov = _gate_fired(diagnostics, diag_gate + "__data", None)
+    diag_counts = (diagnostics or {}).get(diag_gate, {}) or {}
     return {
         "gate": gate_id,
+        "kind": kind,
         # Present only for gates that report it. data_coverage answers "did
         # the reading exist"; reading_coverage answers "was it decisive".
         "data_coverage": None if data_cov is None else round(data_cov, 3),
@@ -2066,15 +2148,25 @@ def _ablation_row(label, gate_id, summary, baseline, ref_horizon, diagnostics=No
         "label": label,
         "win_rate_pct": wr,
         "avg_return_pct": ar,
+        "profit_factor": pf,
         "trade_count": n,
         "win_rate_delta": round(wr - base_wr, 1) if wr is not None and base_wr is not None else None,
         "avg_return_delta": round(ar - base_ar, 3) if ar is not None and base_ar is not None else None,
+        "holdout_win_rate_pct": hold_wr,
+        "holdout_avg_return_pct": hold_ar,
+        "holdout_profit_factor": hold.get("profit_factor"),
+        "holdout_trade_count": hold.get("trade_count", 0),
+        "holdout_win_rate_delta": round(hold_wr - base_hold_wr, 1) if hold_wr is not None and base_hold_wr is not None else None,
+        "holdout_avg_return_delta": round(hold_ar - base_hold_ar, 3) if hold_ar is not None and base_hold_ar is not None else None,
+        "oi_passed": diag_counts.get("passed"),
+        "oi_failed": diag_counts.get("failed"),
+        "oi_missing": diag_counts.get("missing"),
         "trades_removed": (base_n - n) if base_n and n is not None else None,
         "trades_removed_pct": round((base_n - n) / base_n * 100, 1) if base_n else None,
     }
 
 
-def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=10,
+def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=3,
                        params=DEFAULT_PARAMS, required=DEFAULT_REQUIRED,
                        cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                        progress_cb=None):
@@ -2085,9 +2177,11 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
     symbols = list(symbols or settings.WATCHLIST)
     timeframe = timeframe or WATCHLIST_TIMEFRAME
     ref_horizon = int(ref_horizon)
-    horizons = tuple(sorted({5, 10, 20, ref_horizon}))
+    horizons = tuple(sorted(set(DEFAULT_HORIZONS) | {ref_horizon}))
     _runnable = [g for g, _ in ABLATION_GATES if not _gate_applicability(g, timeframe, params)]
-    total_phases = len(_runnable) + 1
+    _runnable_pairs = [pair for pair, _ in ABLATION_PAIRS
+                       if not any(_gate_applicability(g, timeframe, params) for g in pair)]
+    total_phases = len(_runnable) + len(_runnable_pairs) + 1
 
     def _sub(idx, label):
         def _cb(done, total, symbol):
@@ -2095,9 +2189,12 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
                 progress_cb(idx, total_phases, label, done, total, symbol)
         return _cb
 
+    price_cache, oi_cache = {}, {}
     common = dict(timeframe=timeframe, days=days, horizons=horizons,
                   params=params, required=required,
-                  cost_pct=cost_pct, slippage_pct=slippage_pct)
+                  cost_pct=cost_pct, slippage_pct=slippage_pct,
+                  holdout_pct=30.0,
+                  history_cache=price_cache, oi_history_cache=oi_cache)
 
     baseline_result = run_backtest(kite, symbols, progress_cb=_sub(0, "Baseline (all gates off)"), **common)
     baseline = baseline_result["summary"]
@@ -2109,19 +2206,49 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
             skipped.append({"gate": gate_id, "label": label, "reason": reason})
             continue
         res = run_backtest(kite, symbols, progress_cb=_sub(i, label), **{**common, gate_id: True})
-        rows.append(_ablation_row(label, gate_id, res["summary"], baseline, ref_horizon,
-                                   diagnostics=res.get("gate_diagnostics")))
+        rows.append(_ablation_row(
+            label, gate_id, res["summary"], baseline, ref_horizon,
+            diagnostics=res.get("gate_diagnostics"),
+            train_holdout=res.get("train_holdout"),
+            baseline_train_holdout=baseline_result.get("train_holdout"),
+        ))
 
-    # Best first, but rows with no measurable delta sink to the bottom
-    # rather than sorting as if they were zero.
-    rows.sort(key=lambda r: (r["win_rate_delta"] is None, -(r["win_rate_delta"] or 0)))
+    phase_index = 1 + len(_runnable)
+    for pair, label in ABLATION_PAIRS:
+        reasons = [_gate_applicability(g, timeframe, params) for g in pair]
+        if any(reasons):
+            skipped.append({"gate": "+".join(pair), "label": label,
+                            "reason": "; ".join(r for r in reasons if r)})
+            continue
+        flags = {g: True for g in pair}
+        res = run_backtest(kite, symbols, progress_cb=_sub(phase_index, label),
+                           **{**common, **flags})
+        diag_gate = "require_oi_agreement" if "require_oi_agreement" in pair else pair[0]
+        rows.append(_ablation_row(
+            label, "+".join(pair), res["summary"], baseline, ref_horizon,
+            diagnostics=res.get("gate_diagnostics"), diagnostic_gate=diag_gate, kind="pair",
+            train_holdout=res.get("train_holdout"),
+            baseline_train_holdout=baseline_result.get("train_holdout")))
+        phase_index += 1
+
+    # Rank by untouched holdout expectancy first, not headline win rate.
+    # Win rate can rise while the strategy still loses money; average net
+    # return on data that was not used to discover the gate is the more
+    # honest primary ranking. Missing holdout results sink to the bottom.
+    rows.sort(key=lambda r: (
+        r.get("holdout_avg_return_pct") is None,
+        -(r.get("holdout_avg_return_pct") or 0),
+        -(r.get("holdout_profit_factor") or 0),
+    ))
 
     base_stats = baseline.get("all", {}).get(str(ref_horizon), {}) or {}
     return {
         "baseline": {
             "win_rate_pct": base_stats.get("win_rate_pct"),
             "avg_return_pct": base_stats.get("avg_return_pct"),
+            "profit_factor": base_stats.get("profit_factor"),
             "trade_count": base_stats.get("trade_count", 0),
+            "holdout": ((((baseline_result.get("train_holdout") or {}).get("holdout") or {}).get("all") or {}).get(str(ref_horizon), {}) or {}),
         },
         "rows": rows,
         # Reported, never silently dropped - a gate that could not be tested is
@@ -2140,7 +2267,7 @@ def run_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=1
 _ab_lock = threading.Lock()
 _ab_state = {
     "status": "idle",
-    "progress": {"phase_index": 0, "phase_total": len(ABLATION_GATES) + 1,
+    "progress": {"phase_index": 0, "phase_total": len(ABLATION_GATES) + len(ABLATION_PAIRS) + 1,
                   "phase_label": None, "done": 0, "total": 0, "symbol": None},
     "params": None, "result": None, "error": None,
     "started_at": None, "finished_at": None,
@@ -2158,7 +2285,7 @@ def _ablation_progress_cb(phase_index, phase_total, phase_label, done, total, sy
                                   "phase_label": phase_label, "done": done, "total": total, "symbol": symbol}
 
 
-def start_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=10) -> dict:
+def start_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon=3) -> dict:
     """Same one-at-a-time discipline as start_weight_computation: this runs
     N+1 full backtests back to back, so letting it overlap with another run
     would just make both crawl against Kite's shared rate limit."""
@@ -2172,7 +2299,7 @@ def start_gate_ablation(kite, symbols=None, timeframe=None, days=30, ref_horizon
         symbols = list(symbols or settings.WATCHLIST)
         timeframe = timeframe or WATCHLIST_TIMEFRAME
         _ab_state["status"] = "running"
-        _ab_state["progress"] = {"phase_index": 0, "phase_total": len(ABLATION_GATES) + 1,
+        _ab_state["progress"] = {"phase_index": 0, "phase_total": len(ABLATION_GATES) + len(ABLATION_PAIRS) + 1,
                                   "phase_label": None, "done": 0, "total": len(symbols), "symbol": None}
         _ab_state["params"] = {"timeframe": timeframe, "days": days, "ref_horizon": ref_horizon}
         _ab_state["result"] = None

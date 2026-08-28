@@ -393,7 +393,7 @@
 
 
   <div class="card sl-card">
-    <h2>🎯 Shortlist <span class="sub">names where the price read AND the positioning read agree - this list is meant to be short, and empty is a valid answer</span></h2>
+    <h2>🎯 Best Entries <span class="sub">fresh 1–3 day setups only — OI agrees, trigger is recent, and the entry is not already extended</span></h2>
     <div id="sl-body">
     {% set sl_rows = results | selectattr('shortlist_rank', 'defined') | selectattr('shortlist_rank', 'ne', None)
                              | sort(attribute='shortlist_rank') | list %}
@@ -422,7 +422,11 @@
         </span>
         <span class="sl-tags">
           {% if r.rs_pct is not none %}<span class="sl-tag{{ ' strong' if (r.rs_pct > 0) == (r.direction == 'Bullish') else '' }}">RS {{ '%+.1f'|format(r.rs_pct) }}</span>{% endif %}
-          {% if r.vol_multiple %}<span class="sl-tag">{{ r.vol_multiple }}x</span>{% endif %}
+          {% if r.vol_multiple %}<span class="sl-tag">{{ r.vol_multiple }}x vol</span>{% endif %}
+          {% if r.entry_trigger_bars_ago is not none %}<span class="sl-tag strong">trigger {{ r.entry_trigger_bars_ago }}b ago</span>{% endif %}
+          {% if r.oi_chg_60m_pct is not none %}<span class="sl-tag">OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%</span>{% endif %}
+          {% if r.oi_acceleration is not none %}<span class="sl-tag">OI accel {{ '%+.2f'|format(r.oi_acceleration) }}pp</span>{% endif %}
+          {% if r.entry_extension_atr is not none %}<span class="sl-tag">ext {{ '%.1f'|format(r.entry_extension_atr) }} ATR</span>{% endif %}
           {% if r.early_coverage is not none and r.early_coverage < 1.0 %}<span class="sl-cov" title="Only {{ (r.early_coverage * 100) | round }}% of the evidence was measurable for this row - the score is out of what could actually be checked, not out of 100 wished-for points.">{{ (r.early_coverage * 100) | round }}%</span>{% endif %}
           <a class="eq-log journal-log-link" href="#" data-symbol="{{ r.symbol }}"
              onclick="event.stopPropagation(); logPaperTrade(this); return false;"
@@ -432,8 +436,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="sl-empty"><strong>Nothing qualifies right now.</strong> A name reaches this list only when the technical
-    read and an unusual OI move point the same way, and it clears {{ min_early_score | round | int }}/100 on evidence that
+    <p class="sl-empty"><strong>Nothing qualifies right now.</strong> A name reaches this list only when the technical read and unusual OI point the same way, a crossover trigger occurred within the last two bars, the move is not overextended, and it clears {{ min_early_score | round | int }}/100 on evidence that
     was actually measurable. Most days that is a handful of names; some days it is none. An empty shortlist is
     the screen doing its job, not failing &mdash; the alternative is a list that is always full and therefore never
     tells you anything.</p>

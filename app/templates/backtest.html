@@ -70,9 +70,9 @@
     <p>
       Replays whichever parameters you pick below - bar by bar over real historical price data
       from your Kite connection. An entry fires the moment at least your chosen "Required" count
-      of them agree on the same direction at once. Deliberately does <strong>not</strong> factor
-      in Open Interest or VWAP - this tests your own combination of indicator and volume
-      conditions on its own, separate from the broader "High-Conviction" filter on the dashboard.
+      of them agree on the same direction at once. The custom test starts with the indicator/volume
+      votes, and the live-parity filters below can then add OI, higher-timeframe, entry-location and
+      other gates explicitly so you can see what each layer contributes rather than hiding it.
       Results are broken out for Bullish and Bearish setups separately, since a strategy's edge
       often differs by direction.
     </p>
@@ -114,12 +114,13 @@
       <div>
         <label>Return horizons (bars held)</label>
         <div class="horizons">
+          <label class="chk"><input type="checkbox" name="horizon" value="1" checked> 1</label>
           <label class="chk"><input type="checkbox" name="horizon" value="2" checked> 2</label>
           <label class="chk"><input type="checkbox" name="horizon" value="3" checked> 3</label>
           <label class="chk"><input type="checkbox" name="horizon" value="5" checked> 5</label>
           <label class="chk"><input type="checkbox" name="horizon" value="10" checked> 10</label>
         </div>
-        <div class="hint">Also the reference horizon for the two tools below (the largest is used).</div>
+        <div class="hint">The research tools use <strong>3 bars</strong> as the primary 1&ndash;3 day reference; all selected horizons are still reported.</div>
       </div>
     </div>
   </div>
@@ -127,12 +128,11 @@
   <div class="card">
     <h2>1 &middot; Which gates earn their place?</h2>
     <p style="margin-top:-4px;">Runs a baseline with every gate off, then one pass per gate with only that gate on, and
-    reports what each did to your win rate &mdash; net of costs, on your own watchlist. <strong>Start here:</strong> it's
-    the only tool that measures the filters you're actually running.</p>
-    <p class="hint">Measured <strong>in isolation</strong>, so it can't see two gates that only help together. Fewer trades
-    isn't automatically worse, which is why trade count sits beside every win rate &mdash; a big delta on a handful of
-    trades is noise. Gates that <em>cannot</em> apply to your scope are skipped and listed rather than reported as
-    "no change", since never-tested and tested-and-useless are different findings.</p>
+    reports what each did to expectancy and profit factor &mdash; net of costs, on your own watchlist. <strong>Start here:</strong> it
+    measures the filters you're actually running instead of assuming more filters are better.</p>
+    <p class="hint">Each gate is tested alone plus a few targeted OI combinations. A <strong>30% chronological holdout</strong>
+    is kept untouched and is the primary ranking column, so a gate that only looks good in-sample does not float to the top.
+    Gates that cannot apply to your scope are skipped rather than reported as "no change".</p>
     <div style="margin-top:14px;">
       <button type="button" class="btn" id="ab-run-btn" {{ 'disabled' if not logged_in else '' }}>Run gate sweep</button>
       <span class="hint" id="ab-form-hint" style="margin-left:10px;"></span>
@@ -146,8 +146,8 @@
       <p class="hint" id="ab-meta"></p>
       <table>
         <thead><tr>
-          <th>Gate</th><th>Win rate</th><th>&Delta; win rate</th>
-          <th>Avg return</th><th>&Delta; avg</th><th>Trades</th><th>Trades cut</th>
+          <th>Gate</th><th>Full avg</th><th>&Delta; avg</th><th>PF</th>
+          <th>Holdout avg</th><th>Holdout PF</th><th>Win rate</th><th>Trades</th><th>Cut</th>
         </tr></thead>
         <tbody id="ab-table-body"></tbody>
       </table>
@@ -159,12 +159,12 @@
     <h2>2 &middot; Does the BTST/STBT premise hold?</h2>
     <p style="margin-top:-4px;">The overnight panel picks stocks that closed at the extreme of their range on a day
     that went their way, and holds them overnight. <strong>Nothing in this app could measure that trade until now</strong>
-    &mdash; every other tool here holds for 5 to 20 <em>bars</em> (a fortnight on daily) and enters at the next bar's
-    open, by which point the overnight move you were trying to catch has already happened.</p>
+    &mdash; the normal research tools measure 1/2/3/5/10-bar moves and enter at the next executable bar, while an
+    overnight idea must enter at the signal close to measure the gap itself.</p>
     <p style="margin-top:8px;">This enters at the <strong>signal bar's own close</strong> and exits at the next open and
     the next close &mdash; the trade as you would actually take it. It applies only the two hard gates, not the soft
-    checks, because the question is whether the core premise has an edge <em>before</em> any refinement. Refining a
-    setup whose sign is wrong just produces a smaller loss more confidently.</p>
+    checks, and automatically compares the original <strong>continuation</strong> direction with the exact opposite
+    <strong>reversal</strong> direction. If the sign is wrong, the research says so instead of trying to rescue it with more gates.</p>
     <p class="hint" style="margin-top:8px;">Worth knowing what you might find: this setup buys the most extended point
     of the session, and short-horizon <em>reversal</em> is a well-documented effect &mdash; momentum tends to work over
     months, while over one to five days strong recent returns often give back. If the win rate lands meaningfully
@@ -263,7 +263,7 @@ function readScope() {
     timeframe: document.getElementById('scope-timeframe').value,
     days: document.getElementById('scope-days').value,
     horizons: horizons,
-    refHorizon: horizons.length ? Math.max.apply(null, horizons.map(Number)) : 10,
+    refHorizon: horizons.includes('3') ? 3 : (horizons.length ? Math.min.apply(null, horizons.map(Number)) : 3),
   };
 }
 
@@ -288,6 +288,7 @@ const PARAM_LABELS = {};
 {% for p in param_defs %}PARAM_LABELS['{{ p.id }}'] = {{ p.label | tojson }};
 {% endfor %}
 const FILTER_LABELS = {
+  require_oi_agreement: 'OI positioning agreement',
   require_htf: 'HTF agreement',
   require_regime_volume: 'Regime-adaptive volume',
   exclude_opening_window: 'Opening-window excluded',
@@ -318,6 +319,8 @@ function renderGroup(label, groupSummary, horizons) {
         <td>${row.trade_count ?? 0}</td>
         <td class="${wrClass}">${row.trade_count ? row.win_rate_pct.toFixed(1) + '%' : '—'}</td>
         <td>${row.trade_count ? fmtPct(row.avg_return_pct) : '—'}</td>
+        <td>${row.trade_count && row.profit_factor != null ? (row.profit_factor === Infinity ? '∞' : row.profit_factor) : '—'}</td>
+        <td>${row.trade_count && row.payoff_ratio != null ? row.payoff_ratio : '—'}</td>
         <td>${row.trade_count ? fmtPct(row.best_return_pct) : '—'}</td>
         <td>${row.trade_count ? fmtPct(row.worst_return_pct) : '—'}</td>
       </tr>`;
@@ -327,7 +330,7 @@ function renderGroup(label, groupSummary, horizons) {
       <h3 class="bt-group-title">${label} <span class="bt-group-count">(${ov.total_trades ?? 0} trades)</span></h3>
       <table>
         <thead>
-          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Best</th><th>Worst</th></tr>
+          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Profit factor</th><th>Payoff</th><th>Best</th><th>Worst</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -369,7 +372,8 @@ function renderBands(result) {
   if (!el) return;
   const bands = (result.by_band || []).filter(b => b.trade_count > 0);
   if (!bands.length) { el.innerHTML = ''; return; }
-  const h = (result.horizons || [])[0];
+  const hs = result.horizons || [];
+  const h = hs.includes(3) ? 3 : hs[0];
   const rows = bands.map(b => {
     const st = (b.by_horizon || {})[String(h)] || {};
     const thin = (st.trade_count || 0) < 20;
@@ -564,10 +568,12 @@ function renderAblation(result) {
   const b = result.baseline || {};
   const pct = v => (v === null || v === undefined) ? '\u2014' : v + '%';
   const signed = (v, suf) => (v === null || v === undefined) ? '\u2014' : (v > 0 ? '+' : '') + v + (suf || '');
+  const bh = b.holdout || {};
   document.getElementById('ab-meta').textContent =
-    `Baseline, all gates off: ${pct(b.win_rate_pct)} win rate \u00b7 ${pct(b.avg_return_pct)} avg \u00b7 ` +
+    `Baseline: ${pct(b.avg_return_pct)} full avg \u00b7 PF ${b.profit_factor ?? '\u2014'} \u00b7 ` +
+    `${pct(bh.avg_return_pct)} holdout avg \u00b7 holdout PF ${bh.profit_factor ?? '\u2014'} \u00b7 ` +
     `${b.trade_count || 0} trades \u2014 ${result.timeframe}, ${result.days} days, ${result.symbols_count} symbols, ` +
-    `${result.ref_horizon}-bar horizon, net of ${result.cost_pct}% costs + ${result.slippage_pct}% slippage/side`;
+    `${result.ref_horizon}-bar reference, 30% chronological holdout, net of ${result.cost_pct}% costs + ${result.slippage_pct}% slippage/side`;
   const skipWrap = document.getElementById('ab-skipped');
   const skipped = result.skipped || [];
   skipWrap.innerHTML = skipped.length
@@ -577,7 +583,7 @@ function renderAblation(result) {
   const body = document.getElementById('ab-table-body');
   body.innerHTML = '';
   (result.rows || []).forEach(r => {
-    const d = r.win_rate_delta;
+    const d = r.holdout_avg_return_delta;
     const colour = (d === null || d === undefined) ? '' :
       (d > 0 ? 'color:var(--green);font-weight:600;' : (d < 0 ? 'color:var(--red);' : ''));
     const tr = document.createElement('tr');
@@ -589,7 +595,7 @@ function renderAblation(result) {
     if (r.fired === false) {
       tr.innerHTML = `
         <td>${r.label}</td>
-        <td colspan="6" style="color:var(--amber);">
+        <td colspan="8" style="color:var(--amber);">
           <strong>Did not run.</strong> The reading this gate depends on was unavailable for every
           signal bar, so it passed everything through untested. Its 0% is not a finding &mdash; fix the
           data path, then re-run. Nothing here tells you whether this gate helps.
@@ -616,12 +622,18 @@ function renderAblation(result) {
       cov = ` <span class="hint">${Math.round(r.reading_coverage * 100)}% read</span>`;
     }
 
+    let oiCounts = '';
+    if (r.oi_passed !== null && r.oi_passed !== undefined) {
+      oiCounts = ` <span class="hint" title="OI verdicts among candidate bars">pass ${r.oi_passed} / fail ${r.oi_failed ?? 0} / missing ${r.oi_missing ?? 0}</span>`;
+    }
     tr.innerHTML = `
-      <td>${r.label}${cov}</td>
-      <td>${pct(r.win_rate_pct)}</td>
-      <td style="${colour}">${signed(r.win_rate_delta, ' pp')}</td>
+      <td>${r.kind === 'pair' ? '<strong>PAIR</strong> ' : ''}${r.label}${cov}${oiCounts}</td>
       <td>${pct(r.avg_return_pct)}</td>
       <td>${signed(r.avg_return_delta, '%')}</td>
+      <td>${r.profit_factor ?? '\u2014'}</td>
+      <td style="${colour}">${pct(r.holdout_avg_return_pct)}</td>
+      <td>${r.holdout_profit_factor ?? '\u2014'}</td>
+      <td>${pct(r.win_rate_pct)}</td>
       <td>${r.trade_count ?? 0}</td>
       <td>${r.trades_removed_pct === null || r.trades_removed_pct === undefined ? '\u2014' : r.trades_removed_pct + '%'}</td>
     `;
@@ -675,9 +687,9 @@ else if (initialAblationState.status === 'done' && initialAblationState.result) 
 
 
 // --- Overnight (BTST/STBT) premise test ----------------------------------
-// Enter at the SIGNAL BAR's close, exit next open and next close. No other
-// tool on this page can express that trade: they hold 5-20 bars and enter
-// at the next open, so a BTST idea was always measured as a swing trade.
+// Enter at the SIGNAL BAR's close, exit next open and next close. The normal
+// backtest also reports short 1-3 bar horizons, but enters at the next open;
+// that still cannot measure the overnight gap captured from today's close.
 document.getElementById('on-run').addEventListener('click', function () {
   const scope = readScope();
   const hint = document.getElementById('on-hint');
@@ -716,36 +728,32 @@ function pollOvernight() {
 function renderOvernight(res) {
   const el = document.getElementById('on-results');
   const s = res.summary || {};
-  function row(label, st) {
-    if (!st || !st.trade_count) return '<tr><td>' + label + '</td><td colspan="3">no trades</td></tr>';
+  function row(strategy, label, st) {
+    if (!st || !st.trade_count) return '<tr><td>' + strategy + '</td><td>' + label + '</td><td colspan="3">no trades</td></tr>';
     const thin = st.trade_count < 30 ? ' <span class="hint">thin</span>' : '';
-    return '<tr><td><strong>' + label + '</strong></td>' +
+    return '<tr><td><strong>' + strategy + '</strong></td><td><strong>' + label + '</strong></td>' +
       '<td style="text-align:right;">' + st.trade_count + thin + '</td>' +
       '<td style="text-align:right;">' + st.win_rate_pct + '%</td>' +
       '<td style="text-align:right;">' + st.avg_return_pct + '%</td></tr>';
   }
-  const nx = s.next_close || {};
-  const wc = nx.win_rate_pct, nc = nx.trade_count || 0;
+  const cont = s.continuation || {};
+  const rev = s.reversal || {};
+  const c = cont.next_open || {}, r = rev.next_open || {};
   let verdict = '';
-  if (nc >= 100 && wc != null) {
-    if (wc < 45) {
-      verdict = '<p class="hint"><strong>The premise looks inverted.</strong> Holding these overnight lost money more '
-        + 'often than not across ' + nc + ' trades, net of costs. That is consistent with short-horizon reversal &mdash; '
-        + 'the gate selects the most extended point of the session. Tightening the soft checks cannot fix a wrong sign; '
-        + 'the honest options are to test the OPPOSITE direction, or retire the panel.</p>';
-    } else if (wc > 55) {
-      verdict = '<p class="hint"><strong>The premise holds on this window.</strong> Re-run on a different period before '
-        + 'trusting it &mdash; one window is one sample.</p>';
+  if ((c.trade_count || 0) >= 100 && c.avg_return_pct != null && r.avg_return_pct != null) {
+    if (c.avg_return_pct <= 0 && r.avg_return_pct > 0) {
+      verdict = '<p class="hint"><strong>Reversal is stronger on this window.</strong> Do not force the old continuation BTST rule. Validate the reversal leg on a different/holdout period before using it live.</p>';
+    } else if (c.avg_return_pct > 0 && c.win_rate_pct >= 50) {
+      verdict = '<p class="hint"><strong>Continuation has positive expectancy on this window.</strong> Confirm it on a holdout period before enabling live BTST alerts.</p>';
     } else {
-      verdict = '<p class="hint"><strong>No edge either way.</strong> After costs this is close to a coin flip across '
-        + nc + ' trades, so the panel is not adding anything over picking at random. That is a result, not a bug.</p>';
+      verdict = '<p class="hint"><strong>No robust overnight edge is visible.</strong> Keep BTST alerts disabled and use the 1–3 day Best Entries shortlist instead.</p>';
     }
-  } else if (nc) {
-    verdict = '<p class="hint">Only ' + nc + ' trades &mdash; too few to conclude anything. Widen the day range.</p>';
   }
-  el.innerHTML = '<table class="tbl"><thead><tr><th>Exit</th><th style="text-align:right;">Trades</th>'
-    + '<th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return (net)</th></tr></thead>'
-    + '<tbody>' + row('Next open', s.next_open) + row('Next close', s.next_close) + '</tbody></table>' + verdict;
+  el.innerHTML = '<table class="tbl"><thead><tr><th>Strategy</th><th>Exit</th><th style="text-align:right;">Trades</th>'
+    + '<th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return (net)</th></tr></thead><tbody>'
+    + row('Continuation', 'Next open', cont.next_open) + row('Continuation', 'Next close', cont.next_close)
+    + row('Reversal', 'Next open', rev.next_open) + row('Reversal', 'Next close', rev.next_close)
+    + '</tbody></table>' + verdict;
 }
 
 </script>

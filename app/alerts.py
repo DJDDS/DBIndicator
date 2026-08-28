@@ -92,31 +92,37 @@ def discover_chat_id():
 
 
 def _format_message(r, timeframe):
-    arrow = "\U0001F53A" if r["fresh_signal"] == "Bullish" else "\U0001F53B"
+    alert_direction = r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
+    arrow = "\U0001F53A" if alert_direction == "Bullish" else "\U0001F53B"
     vol_note = f"Vol {r['vol_multiple']}x" if r.get("vol_multiple") is not None else "Vol confirmed"
     htf_note = ", higher-timeframe trend agrees" if r.get("htf_direction") else ""
     return (
-        f"{arrow} {r['symbol']} - {r['fresh_signal']} confluence on {timeframe} (confirmed: {vol_note}{htf_note})\n"
+        f"{arrow} {r['symbol']} - {alert_direction} Best Entry on {timeframe} (confirmed: {vol_note}{htf_note})\n"
         f"Close: {r['close']} | RSI {r['rsi']} ({r['rsi_state']}) | "
         f"MACD {r['macd_params']} ({r['macd_state']}) | CMF ({r.get('vol_flow_direction') or '-'}) | "
-        f"Aligned {r['aligned']}/3"
+        f"Aligned {r['aligned']}/4"
     )
 
 
 def process_scan_results(results, timeframe):
-    """Call once after every completed scan. Sends Telegram alerts (if
-    configured) and always records fresh, CONFIRMED signals to the
-    in-app log - fresh_signal alone (a bare 2-of-3 or 3-of-3 crossover)
-    is no longer enough; vol_confirmed and htf_agrees (see
-    indicators.compute_signal) must also hold, same bar as the
-    dashboard's own "Confirmed" filter, so you don't get pinged for
-    something the dashboard itself wouldn't flag as solid."""
+    """Call once after every completed scan. Alerts are generated only for
+    rows already ranked in Best Entries, so Telegram/in-app alerts cannot
+    bypass the same fresh-trigger, OI, anti-chase and evidence-quality rules
+    used by the dashboard shortlist."""
     for r in results or []:
-        if r.get("error") or not r.get("fresh_signal"):
+        if r.get("error"):
+            continue
+        # Alerts and the dashboard must use the same definition of a best
+        # entry. Otherwise the user is pinged for rows the shortlist itself
+        # rejected as late, weak-OI or low-quality.
+        if not r.get("shortlist_rank"):
             continue
         if not (r.get("vol_confirmed") and r.get("htf_agrees", True)):
             continue
-        key = (r["symbol"], timeframe, str(r.get("timestamp")), r["fresh_signal"])
+        alert_direction = r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
+        if alert_direction not in ("Bullish", "Bearish"):
+            continue
+        key = (r["symbol"], timeframe, str(r.get("timestamp")), alert_direction)
         with _lock:
             if key in _seen:
                 continue
@@ -126,7 +132,7 @@ def process_scan_results(results, timeframe):
 
         text = _format_message(r, timeframe)
         entry = {
-            "symbol": r["symbol"], "direction": r["fresh_signal"], "timeframe": timeframe,
+            "symbol": r["symbol"], "direction": alert_direction, "timeframe": timeframe,
             "close": r["close"], "aligned": r["aligned"], "text": text,
             "candle_timestamp": str(r.get("timestamp")),
         }

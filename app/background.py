@@ -143,6 +143,7 @@ def _apply_early_signal(results, oi_history, index_ret_20=None, index_ret_10=Non
             close_pos=r.get("close_position_pct"),
             big_candle_agrees=r.get("big_candle_agrees"),
             coiling=r.get("vol_contracting"), nr7=r.get("nr7"),
+            entry_extension_atr=r.get("entry_extension_atr"),
             rs_pct=r.get("rs_pct"), rs_improving=r.get("rs_improving"),
         )
         r["early_score"] = scored["score"]
@@ -158,21 +159,18 @@ def _apply_oi_gate(results):
     """When REQUIRE_OI_AGREEMENT is on, a row whose OI positioning does not
     back its direction loses signal_confirmed.
 
-    Note the asymmetry, which is deliberate and follows the same "None
-    never blocks" convention as every other gate here: oi_agrees is False
-    only when there IS an unusual OI move and it points the OTHER way.
-    oi_agrees is None when there is no baseline yet or no unusual move -
-    that is an absence of evidence, not evidence against, so it does not
-    revoke on its own. What it does do is leave the OI component
-    unmeasured, which lowers coverage and can push the row below the
-    eligibility floor in _apply_shortlist. Absence costs a row its place on
-    the shortlist without ever being treated as a contrary signal."""
+    When OI is configured as mandatory, only an explicit True counts as
+    confirmation. False is active disagreement and None is unmeasured or
+    neutral; neither is strong enough evidence for a Best Entry."""
     if not settings.REQUIRE_OI_AGREEMENT:
         return
     for r in results:
         if r.get("error"):
             continue
-        if r.get("signal_confirmed") and r.get("oi_agrees") is False:
+        if r.get("signal_confirmed") and r.get("oi_agrees") is not True:
+            # If OI is configured as mandatory, unknown/neutral OI cannot be
+            # treated as confirmation. The previous asymmetry made the live
+            # gate looser than its name and made research coverage misleading.
             r["signal_confirmed"] = False
 
 
@@ -217,11 +215,44 @@ def _apply_shortlist(results):
         # the score alone cannot catch that.
         if (r.get("early_coverage") or 0) < settings.MIN_SHORTLIST_COVERAGE:
             continue
+        # Best Entries must be timely, not merely a mature aligned state.
+        # Require at least one RSI/MACD/CMF crossover in the current trade
+        # direction within the last two bars.
+        if r.get("entry_trigger") != r.get("direction"):
+            continue
+        bars_ago = r.get("entry_trigger_bars_ago")
+        if bars_ago is None or bars_ago > 2:
+            continue
+        if r.get("entry_is_extended") is True:
+            continue
+        # Best Entries needs a measured latest-hour OI read. A fresh deploy
+        # can therefore produce an empty list until the live history is long
+        # enough; that is safer than treating unknown positioning as fresh.
+        recent_60 = r.get("oi_chg_60m_pct")
+        accel = r.get("oi_acceleration")
+        # Best means verified now. If the service just restarted or has not
+        # collected enough timestamped OI yet, wait instead of ranking a
+        # candidate on stale/unknown positioning.
+        if recent_60 is None or accel is None:
+            continue
+        if recent_60 <= 0:
+            continue
+        if accel < -0.30:
+            continue
         eligible.append(r)
 
     # Ties broken by coverage: between two rows on the same score, prefer
     # the one backed by more measured evidence.
-    eligible.sort(key=lambda r: (r["early_score"], r.get("early_coverage") or 0), reverse=True)
+    eligible.sort(
+        key=lambda r: (
+            r["early_score"],
+            -(r.get("entry_trigger_bars_ago") if r.get("entry_trigger_bars_ago") is not None else 99),
+            r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
+            abs(r.get("oi_z") or 0),
+            r.get("early_coverage") or 0,
+        ),
+        reverse=True,
+    )
     for n, r in enumerate(eligible[: settings.SHORTLIST_MAX], start=1):
         r["shortlist_rank"] = n
     return eligible[: settings.SHORTLIST_MAX]
@@ -1079,12 +1110,15 @@ def _run_loop():
                         _apply_breadth_filter(results, breadth)
                         # Must come after every REQUIRE_* gate above - it
                         # ranks only rows that are still signal_confirmed
+                        # Recent 15/30/60-minute OI must be attached BEFORE
+                        # Best Entries are ranked; in the old order the shortlist
+                        # could not see these fields at all.
+                        _apply_oi_trend(results)
+                        _apply_oi_screener_fields(results)
                         _apply_btst_candidates(results)
                         _apply_weighted_score(results)
                         _apply_journal_confidence(results)
                         _apply_shortlist(results)
-                        _apply_oi_trend(results)
-                        _apply_oi_screener_fields(results)
                         oi_events = _detect_oi_accel_events(results)
                         _state["results"] = results
                         _state["index_direction"] = index_direction
