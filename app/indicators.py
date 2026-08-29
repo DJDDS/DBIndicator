@@ -1389,6 +1389,10 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "prior_low_50d": round(prior_low_50d, 2) if prior_low_50d is not None else None,
         "ret_20": _ret_n(20),
         "ret_10": _ret_n(10),
+        # Four 15-minute bars = 60 minutes. V8 uses this exact same-window
+        # price return with the rolling 60-minute futures OI change to classify
+        # Long Buildup / Short Covering / Fresh Short Buildup / Long Unwinding.
+        "ret_4": _ret_n(4) if timeframe == "15minute" else None,
         "rvol_accel": rvol_accel,
         "vol_rising": vol_rising,
         "tod_rvol": tod_rvol,

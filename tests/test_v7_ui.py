@@ -13,8 +13,8 @@ def test_backtest_ui_has_one_frozen_v7_final_test_and_predeclared_thresholds():
     assert '3 of 4 chronological blocks positive' in text
 
 
-def test_build_marker_is_v7_frozen():
-    build_id = '2026-08-29-INSTITUTIONAL-V7-FROZEN'
+def test_current_build_marker_is_v8_while_v7_panel_remains_available():
+    build_id = '2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA'
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text()
     assert build_id in (ROOT / 'RESEARCH_BUILD.txt').read_text()
 

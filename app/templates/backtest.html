@@ -67,12 +67,12 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-INSTITUTIONAL-V7-FROZEN</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA</div>
     <p>
-      <strong>V7 is the frozen production-candidate decision.</strong> The only rule allowed to see the final 20% is Bullish Recent-Range + Catalyst Score &ge; 60 on 15-minute setup/execution, evaluated at 1D. OI, basis, 4H, sector and other V6 fields remain diagnostics rather than extra eligibility gates.
+      <strong>V8 Dual Alpha is the primary research architecture.</strong> Bullish and bearish 15-minute Recent-Range events are ranked independently using Structure, Participation, Relative strength/weakness and direction-aware Derivatives evidence. 4H is context only; OI is sponsorship rather than a universal veto.
     </p>
     <p>
-      Use <strong>Run Frozen V7 Final Test</strong> for the one-shot decision. The older V6 edge lab, gate sweep and custom replay remain below strictly as diagnostics; their final samples stay locked so they cannot be used to fish for a better-looking rule.
+      Use <strong>Run V8 Dual Alpha Backtest</strong> for the full F&amp;O, 15-minute research path. V8 uses a fixed ablation list and a locked final 20%; the older V7 frozen test and V6 labs remain below only for audit continuity, not for tuning V8.
     </p>
   </div>
 
@@ -119,9 +119,10 @@
     <h2>1 &middot; F&amp;O Stock-in-Play &amp; Breakout Research</h2>
     <p style="margin-top:-4px;"><strong>This is the primary research tool for Intraday Best Entry and Swing 1&ndash;2D.</strong> Compression is treated as a directionless movement setup. Direction comes only from an actual close outside the selected setup timeframe's prior decision range. On 15m, Opening Range remains available; on 4H, Recent Range spans prior completed 4H candles across sessions and no 30-minute opening-range shortcut is used.</p>
     <p class="hint"><strong>Three questions are kept separate:</strong> Does compression predict expansion versus the unconditional F&amp;O baseline? Does an actual breakout make money intraday? Does the same breakout retain enough sponsorship for a 1&ndash;2 day swing? Results include a 30% chronological holdout and only motivated interaction tests &mdash; no brute-force parameter grid.</p>
-    <button type="button" class="btn" id="er-v7-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Frozen V7 Final Test</button>
-    <button type="button" class="btn secondary" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Diagnostic Research</button>
-    <span class="hint" id="er-form-hint" style="margin-left:10px;">Frozen V7 automatically uses full F&amp;O · 15minute setup/execution · 180 days · fixed costs. Diagnostic Research follows the scope controls above.</span>
+    <button type="button" class="btn" id="er-v8-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V8 Dual Alpha Backtest</button>
+    <button type="button" class="btn secondary" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Legacy / 4H Diagnostic</button>
+    <button type="button" class="btn secondary" id="er-v7-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Frozen V7 Final Test</button>
+    <span class="hint" id="er-form-hint" style="margin-left:10px;">V8 always uses the full F&amp;O universe and a true 15-minute signal/entry path; Days back follows the scope above. The legacy diagnostic button can still replay 4H research. V7 is retained only for audit continuity.</span>
     <div class="progress-wrap" id="er-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="er-progress-fill"></div></div>
       <div class="progress-label" id="er-progress-label">Starting…</div>
@@ -141,6 +142,10 @@
       <p class="hint">Focused research only: Recent Range vs bullish/bearish, TOD volume, OI, 4H, no-chase, VWAP proximity, one-bar retention and retest. It is intentionally <strong>not</strong> a Cartesian parameter grid. The live Best Entry is now restricted to sponsored Recent-Range escapes while this table decides which confirmation sequence deserves promotion.</p>
       <div class="hint" id="er-recent-range-note" style="margin-bottom:8px;"></div>
       <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
+
+      <h3 class="bt-group-title" style="margin-top:18px;">V8 Dual Alpha <span class="hint">Bull &amp; Bear independent · final 20% locked</span></h3>
+      <p class="hint">Cross-sectional 15-minute Recent-Range research with no fitted weighting model. Bullish Engine and Bearish Engine are evaluated separately. Fixed ablations show whether Structure, Participation, Relative performance or Derivatives evidence actually adds edge before the Full Consensus is considered.</p>
+      <div id="er-v8-dual"></div>
       <h3 class="bt-group-title" style="margin-top:18px;">V7 Frozen Final Test</h3>
       <p class="hint"><strong>RR_LONG_CATALYST60_15M_NEXTBAR_1D</strong> is frozen: 15m Bullish Recent-Range escape + Catalyst Score &ge; 60, next executable 15m entry, evaluated at 1D. No threshold controls exist on this final-test path.</p>
       <p class="hint"><strong>Pre-declared acceptance:</strong> N ≥ 80 · Avg net ≥ +0.15% · PF ≥ 1.20 · 3 of 4 chronological blocks positive.</p>
@@ -287,7 +292,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V7-FROZEN";
+const RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -619,12 +624,14 @@ function updateEarlyResearchUI(state) {
   const label = document.getElementById('er-progress-label');
   const errorBox = document.getElementById('er-error');
   const runBtn = document.getElementById('er-run-btn');
+  const v8RunBtn = document.getElementById('er-v8-run-btn');
   const v7RunBtn = document.getElementById('er-v7-run-btn');
   const hint = document.getElementById('er-form-hint');
   const p = state.progress || {};
 
   if (state.status === 'running') {
     runBtn.disabled = true;
+    v8RunBtn.disabled = true;
     v7RunBtn.disabled = true;
     progress.style.display = 'block';
     errorBox.style.display = 'none';
@@ -638,6 +645,7 @@ function updateEarlyResearchUI(state) {
   }
 
   runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v8RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
   v7RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
   progress.style.display = 'none';
   if (state.status === 'error') {
@@ -717,7 +725,54 @@ function renderEarlyResearch(result) {
     ? `Best 1D variant with at least 30 holdout trades: ${String(labBest.variant).replaceAll('_',' ')} · avg ${pct(labBest.holdout_1D_avg)} · PF ${pf(labBest.holdout_1D_pf)}. TOD RVOL test floor ${lab.tod_rvol_threshold ?? '—'}x; VWAP proximity research ≤ ${lab.vwap_proximity_max_atr ?? '—'} ATR.`
     : 'No Recent-Range variant has at least 30 holdout trades yet.';
 
-  const v7 = r.v7_frozen || {};
+
+
+  const v8 = r.v8_dual || {};
+  const v8Box = document.getElementById('er-v8-dual');
+  if (v8Box) {
+    const variants = [
+      ['raw_recent_range','Raw Recent Range'],
+      ['structure_only','Structure only'],
+      ['participation_only','Participation only'],
+      ['relative_only','Relative only'],
+      ['derivatives_only','Derivatives only'],
+      ['full_consensus','Full Consensus']
+    ];
+    const renderV8Side = (title, sideKey) => {
+      const side = v8[sideKey] || {};
+      const rows = variants.map(([key,label]) => {
+        const variant = side[key] || {};
+        const i = variant['2h'] || {}; const sw = variant['1D'] || {};
+        const iv = i.validation || {}; const sv = sw.validation || {};
+        const final = sw.final_test || {};
+        const igood = iv.avg_return_pct != null && iv.avg_return_pct > 0;
+        const sgood = sv.avg_return_pct != null && sv.avg_return_pct > 0;
+        return `<tr><td><strong>${label}</strong></td>` +
+          `<td>${iv.trade_count || 0}</td><td style="color:${igood ? 'var(--green)' : 'var(--red)'}">${pct(iv.avg_return_pct)} / ${pf(iv.profit_factor)}</td>` +
+          `<td>${sv.trade_count || 0}</td><td style="color:${sgood ? 'var(--green)' : 'var(--red)'}">${pct(sv.avg_return_pct)} / ${pf(sv.profit_factor)}</td>` +
+          `<td>${final.locked === false ? `${pct(final.avg_return_pct)} / PF ${pf(final.profit_factor)}` : 'Locked'}</td></tr>`;
+      }).join('');
+      const bench = side.benchmark || {};
+      const intra = bench.intraday_2h || {}; const swing = bench.swing_1D || {};
+      const colour = x => (x.status === 'PROMOTABLE' ? 'var(--green)' : 'var(--red)');
+      const blockText = x => x.positive_blocks == null ? '—' : `${x.positive_blocks}/4 positive blocks`;
+      return `<div style="margin-top:12px;"><h4 style="margin:0 0 7px;">${title}</h4>` +
+        `<table><thead><tr><th>Variant</th><th>2H Validation N</th><th>2H Avg / PF</th><th>1D Validation N</th><th>1D Avg / PF</th><th>Final</th></tr></thead><tbody>${rows}</tbody></table>` +
+        `<div class="hint"><strong>2H benchmark:</strong> <span style="color:${colour(intra)}">${intra.status || 'RESEARCH'}</span> · ${blockText(intra)} &nbsp; | &nbsp; ` +
+        `<strong>1D benchmark:</strong> <span style="color:${colour(swing)}">${swing.status || 'RESEARCH'}</span> · ${blockText(swing)}</div></div>`;
+    };
+    if (!v8.bullish && !v8.bearish) {
+      v8Box.innerHTML = '<p class="hint">Run Diagnostic Research to generate the V8 Dual Alpha Bullish Engine and Bearish Engine report.</p>';
+    } else {
+      const protocol = v8.protocol || {};
+      const combined = v8.combined_status || 'RESEARCH';
+      const c = combined === 'PROMOTABLE' ? 'var(--green)' : 'var(--red)';
+      v8Box.innerHTML = `<div class="hint"><strong>Protocol:</strong> ${protocol.setup_timeframe || '15minute'} · ${protocol.final_split || 'Final 20% locked'} · no fitted weights · <strong>Combined:</strong> <span style="color:${c}">${combined}</span></div>` +
+        renderV8Side('Bullish Engine', 'bullish') + renderV8Side('Bearish Engine', 'bearish');
+    }
+  }
+
+    const v7 = r.v7_frozen || {};
   const v7Box = document.getElementById('er-v7-frozen');
   if (v7Box) {
     const rule = v7.rule || {}; const protocol = v7.protocol || {}; const val7 = v7.validation || {};
@@ -799,6 +854,12 @@ function renderEarlyResearch(result) {
 function pollEarlyResearch() {
   fetch('/api/early-research/status').then(r => r.json()).then(st => { updateEarlyResearchUI(st); if (st.status === 'running') setTimeout(pollEarlyResearch, 2500); }).catch(() => setTimeout(pollEarlyResearch, 5000));
 }
+document.getElementById('er-v8-run-btn').addEventListener('click', function () {
+  // V8 is a 15-minute dual-direction model; 4H remains context/legacy diagnostic only.
+  const scope = readScope();
+  document.getElementById('scope-timeframe').value = '15minute';
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:String(scope.days), horizons:[]}, {}, 'er-form-hint', pollEarlyResearch);
+});
 document.getElementById('er-v7-run-btn').addEventListener('click', function () {
   // One-click frozen protocol: there is intentionally nothing to tune here.
   document.getElementById('scope-timeframe').value = '15minute';

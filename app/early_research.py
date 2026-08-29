@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V7-FROZEN"
+RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA"
 
 
 
@@ -240,6 +240,15 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
     out["entry_is_extended"] = effective_extension > stock_in_play._live_setting("MAX_ENTRY_EXTENSION_ATR", stock_in_play.MAX_BREAKOUT_EXTENSION_ATR)
     out["breakout_entry_extended"] = out["entry_is_extended"]
     out["breakout_state"] = np.where(context_direction.eq("Bullish"), "Breakout", np.where(context_direction.eq("Bearish"), "Breakdown", None))
+
+    # V8 pairs price and OI over the SAME 60-minute window.  This is kept
+    # separate from the older 20-bar relative-strength return so the OI
+    # quadrant cannot silently compare different horizons.
+    close_num = pd.to_numeric(df["close"], errors="coerce")
+    out["price_chg_60m_pct"] = (
+        _session_pct_change(close_num, 4)
+        if timeframe == "15minute" else close_num.pct_change() * 100.0
+    )
 
     # Intraday OI. The timezone-safe _session_pct_change is critical: previous
     # code stripped timezone from one side of the same-session comparison and
@@ -596,6 +605,13 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "setup_timeframe": setup_timeframe,
             "execution_timeframe": execution_timeframe,
             "direction": direction,
+            # Raw signal-candle geometry is carried into V8 so Bull and Bear
+            # price-acceptance scores are genuinely directional rather than
+            # inferred later from a generic breakout label.
+            "high": float(df["high"].iloc[pos]),
+            "low": float(df["low"].iloc[pos]),
+            "close": float(df["close"].iloc[pos]),
+            "price_chg_60m_pct": row.get("price_chg_60m_pct"),
             "breakout_source": row.get("breakout_source") or row.get("retained_breakout_source"),
             "breakout_level": row.get("breakout_level") if row.get("breakout_level") is not None else row.get("retained_breakout_level"),
             "breakout_extension_atr": row.get("breakout_extension_atr") if row.get("breakout_extension_atr") is not None else row.get("retained_breakout_extension_atr"),
@@ -1196,6 +1212,7 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
         result["recent_range_edge_lab"] = _recent_range_edge_report(
             ignition, recent_range_confirmation_events, holdout_pct
         )
+        result["v8_dual"] = v8_dual_report(ignition)
         result["v6_edge_lab"] = v6_edge_report(ignition)
         from . import v7_frozen
         result["v7_frozen"] = v7_frozen.frozen_candidate_report(ignition, run_context=run_context)
@@ -1318,6 +1335,204 @@ def _v6_path_exit_report(events):
         }
     return out
 
+
+def _v8_return_stats(events, field, key):
+    vals = []
+    for e in events or []:
+        payload = e.get(field) or {}
+        value = payload.get(key) if isinstance(payload, dict) else None
+        try:
+            if value is not None and np.isfinite(float(value)):
+                vals.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return {"trade_count": 0, "win_rate_pct": None, "avg_return_pct": None,
+                "median_return_pct": None, "profit_factor": None}
+    wins = [v for v in vals if v > 0]
+    losses = [v for v in vals if v < 0]
+    gp, gl = float(sum(wins)), abs(float(sum(losses)))
+    pf = gp / gl if gl > 0 else (float("inf") if gp > 0 else None)
+    return {
+        "trade_count": len(vals),
+        "win_rate_pct": round(len(wins) / len(vals) * 100.0, 1),
+        "avg_return_pct": round(float(np.mean(vals)), 3),
+        "median_return_pct": round(float(np.median(vals)), 3),
+        "profit_factor": round(float(pf), 2) if pf is not None and np.isfinite(pf) else pf,
+    }
+
+
+def _v8_three_way(events, field, key):
+    from . import v6_edge
+    dev, validation, _final = v6_edge.three_way_split(events)
+    return {
+        "development": _v8_return_stats(dev, field, key),
+        "validation": _v8_return_stats(validation, field, key),
+        "final_test": {
+            "locked": True,
+            "message": "V8 final 20% is locked until the dual Bull/Bear model is frozen.",
+        },
+        "split": {"development_pct": 60, "validation_pct": 20, "final_pct": 20},
+    }
+
+
+def _v8_validation_blocks(events, field, key):
+    """Four chronological blocks inside the validation 20%, never final data."""
+    from . import v6_edge
+    _dev, validation, _final = v6_edge.three_way_split(events)
+    rows = list(validation)
+    if not rows:
+        return []
+    chunks = np.array_split(np.arange(len(rows)), 4)
+    out = []
+    for i, idxs in enumerate(chunks, 1):
+        subset = [rows[int(j)] for j in idxs]
+        stats = _v8_return_stats(subset, field, key)
+        out.append({"block": i, **stats, "positive": bool(
+            stats.get("avg_return_pct") is not None and stats["avg_return_pct"] > 0
+        )})
+    return out
+
+
+def _v8_excursion_ratio(events, key="1D"):
+    mfes, maes = [], []
+    for e in events or []:
+        mfe = (e.get("mfe_atr") or {}).get(key)
+        mae = (e.get("mae_atr") or {}).get(key)
+        try:
+            if mfe is not None and mae is not None and np.isfinite(float(mfe)) and np.isfinite(float(mae)):
+                mfes.append(float(mfe)); maes.append(float(mae))
+        except (TypeError, ValueError):
+            continue
+    if not mfes:
+        return None
+    mean_mfe = float(np.mean(mfes)); mean_mae = float(np.mean(maes))
+    if mean_mae <= 1e-9:
+        return float("inf") if mean_mfe > 0 else None
+    return round(mean_mfe / mean_mae, 2)
+
+
+def _v8_benchmark(events, field, key):
+    from . import v6_edge
+    _dev, validation, _final = v6_edge.three_way_split(events)
+    stats = _v8_return_stats(validation, field, key)
+    blocks = _v8_validation_blocks(events, field, key)
+    positive_blocks = sum(1 for b in blocks if b.get("positive"))
+    excursion = _v8_excursion_ratio(validation, "1D" if field == "swing_returns" else key)
+    pf = stats.get("profit_factor")
+    checks = {
+        "sample": stats.get("trade_count", 0) >= 100,
+        "expectancy": stats.get("avg_return_pct") is not None and stats["avg_return_pct"] > 0,
+        "profit_factor": pf is not None and (pf == float("inf") or pf >= 1.25),
+        "excursion_quality": None if excursion is None else excursion >= 1.40,
+        "chronological_stability": len(blocks) == 4 and positive_blocks >= 3,
+    }
+    mandatory = [checks["sample"], checks["expectancy"], checks["profit_factor"], checks["chronological_stability"]]
+    if checks["excursion_quality"] is not None:
+        mandatory.append(checks["excursion_quality"])
+    return {
+        "status": "PROMOTABLE" if all(mandatory) else "RESEARCH",
+        "validation": stats,
+        "checks": checks,
+        "mfe_mae_ratio": excursion,
+        "positive_blocks": positive_blocks,
+        "blocks": blocks,
+        "requirements": {"n": 100, "avg_net_gt": 0.0, "pf": 1.25, "mfe_mae": 1.40, "positive_blocks": 3},
+    }
+
+
+def _ensure_v8_event_scores(events):
+    """Score events missing V8 fields, grouped at their signal timestamp.
+
+    Backtest.py can attach full-universe percentiles before aggregation. This
+    fallback keeps unit tests and partial research runs usable by ranking the
+    contemporaneous event cross-section only; it never overwrites pre-ranked
+    full-universe scores.
+    """
+    from . import v8_dual
+    rows = [dict(e) for e in (events or [])]
+    missing = [i for i, e in enumerate(rows) if e.get("v8_alpha") is None]
+    if not missing:
+        return rows
+    groups = {}
+    for i in missing:
+        groups.setdefault(rows[i].get("signal_time") or rows[i].get("entry_time") or "", []).append(i)
+    for idxs in groups.values():
+        scored = v8_dual.rank_cross_section([rows[i] for i in idxs])
+        for i, s in zip(idxs, scored):
+            for key, value in s.items():
+                if key.startswith("v8_"):
+                    rows[i][key] = value
+    return rows
+
+
+def v8_dual_report(events):
+    """Fixed, non-grid V8 Bull/Bear research report with locked final 20%."""
+    from . import v8_dual
+    rows = _ensure_v8_event_scores(events)
+    recent = [e for e in rows if e.get("breakout_source") == "Recent Range"]
+
+    def fin(e, key):
+        try:
+            v = e.get(key)
+            return float(v) if v is not None and np.isfinite(float(v)) else None
+        except (TypeError, ValueError):
+            return None
+
+    def not_chased(e):
+        ext = fin(e, "breakout_extension_atr")
+        return ext is None or ext <= v8_dual.MAX_EXTENSION_ATR
+
+    variants = {
+        "raw_recent_range": lambda e: not_chased(e),
+        "structure_only": lambda e: not_chased(e) and (fin(e, "v8_structure") or -1) >= 85,
+        "participation_only": lambda e: not_chased(e) and (fin(e, "v8_participation") or -1) >= 85,
+        "relative_only": lambda e: not_chased(e) and (fin(e, "v8_relative") or -1) >= 85,
+        "derivatives_only": lambda e: not_chased(e) and (fin(e, "v8_derivatives") or -1) >= 85,
+        "full_consensus": lambda e: bool(e.get("v8_eligible")),
+    }
+
+    report = {
+        "protocol": {
+            "setup_timeframe": "15minute",
+            "entry": "next executable 15-minute bar",
+            "weights_fitted": False,
+            "parameter_grid": False,
+            "final_locked": True,
+            "trade_alpha_min": v8_dual.TRADE_ALPHA_MIN,
+            "participation_min": v8_dual.PARTICIPATION_MIN,
+            "max_extension_atr": v8_dual.MAX_EXTENSION_ATR,
+        }
+    }
+    side_status = []
+    for direction, name in (("Bullish", "bullish"), ("Bearish", "bearish")):
+        side = [e for e in recent if e.get("direction") == direction]
+        payload = {}
+        for variant_name, pred in variants.items():
+            subset = [e for e in side if pred(e)]
+            payload[variant_name] = {
+                "2h": _v8_three_way(subset, "intraday_returns", "2h"),
+                "1D": _v8_three_way(subset, "swing_returns", "1D"),
+            }
+        full = [e for e in side if variants["full_consensus"](e)]
+        payload["full_horizons"] = {
+            "30m": _v8_three_way(full, "intraday_returns", "30m"),
+            "1h": _v8_three_way(full, "intraday_returns", "1h"),
+            "2h": _v8_three_way(full, "intraday_returns", "2h"),
+            "eod": _v8_three_way(full, "intraday_returns", "eod"),
+            "1D": _v8_three_way(full, "swing_returns", "1D"),
+            "2D": _v8_three_way(full, "swing_returns", "2D"),
+        }
+        payload["benchmark"] = {
+            "intraday_2h": _v8_benchmark(full, "intraday_returns", "2h"),
+            "swing_1D": _v8_benchmark(full, "swing_returns", "1D"),
+        }
+        report[name] = payload
+        side_status.append(payload["benchmark"]["intraday_2h"]["status"] == "PROMOTABLE")
+        side_status.append(payload["benchmark"]["swing_1D"]["status"] == "PROMOTABLE")
+    report["combined_status"] = "PROMOTABLE" if all(side_status) else "RESEARCH"
+    report["total_recent_range_events"] = len(recent)
+    return report
 
 def v6_edge_report(events):
     """Focused 60/20/20 V6 variants; final 20% stays locked by default."""

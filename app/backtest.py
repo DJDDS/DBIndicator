@@ -57,7 +57,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import early_signal, early_research, v6_edge
+from . import early_signal, early_research, v6_edge, v8_dual
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -1831,6 +1831,104 @@ def _trim_replay_to_window(replay, window_start):
     return out
 
 
+
+def _attach_v8_full_universe_scores(replays, feature_frames):
+    """Attach point-in-time V8 percentiles using every researched F&O stock.
+
+    The helper intentionally constructs one cross-sectional frame at a time so a
+    180/365-day full-universe run does not retain a stack of large rank matrices
+    in memory. Breakout strength is ranked among contemporaneous breakout events;
+    participation, relative performance and OI magnitude are ranked against the
+    full researched universe at the same timestamp.
+    """
+    frames = {s: f for s, f in (feature_frames or {}).items() if f is not None and not f.empty}
+    if not frames:
+        return replays
+
+    event_refs = []
+    families = ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events")
+    for replay in replays or []:
+        for family in families:
+            for event in replay.get(family) or []:
+                event_refs.append(event)
+    if not event_refs:
+        return replays
+
+    def _norm_ts(frame, raw):
+        try:
+            ts = pd.Timestamp(raw)
+            if frame.index.tz is None and ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            elif frame.index.tz is not None and ts.tzinfo is None:
+                ts = ts.tz_localize(frame.index.tz)
+            return ts
+        except Exception:
+            return None
+
+    def _attach_rank(output_key, extractor, *, inverse_for_bear=False):
+        parts = {}
+        for symbol, frame in frames.items():
+            try:
+                ser = pd.to_numeric(extractor(frame), errors="coerce")
+                ser.name = symbol
+                parts[symbol] = ser
+            except Exception:
+                continue
+        if not parts:
+            return
+        raw = pd.concat(parts, axis=1).sort_index()
+        bull_rank = raw.rank(axis=1, pct=True, method="average") * 100.0
+        bear_rank = (-raw).rank(axis=1, pct=True, method="average") * 100.0 if inverse_for_bear else None
+        for event in event_refs:
+            symbol = event.get("symbol")
+            if symbol not in bull_rank.columns:
+                continue
+            ts = _norm_ts(bull_rank, event.get("signal_time"))
+            if ts is None or ts not in bull_rank.index:
+                continue
+            use = bear_rank if inverse_for_bear and event.get("direction") == "Bearish" else bull_rank
+            value = use.at[ts, symbol]
+            if pd.notna(value):
+                event[output_key] = round(float(value), 2)
+        del raw, bull_rank, bear_rank
+
+    _attach_rank("v8_tod_rvol_percentile", lambda f: f.get("tod_rvol"))
+    _attach_rank("v8_opening_rvol_percentile", lambda f: f.get("opening_rvol"))
+    _attach_rank("v8_range_shock_percentile", lambda f: f.get("bar_range_atr"))
+    _attach_rank("v8_gap_shock_percentile", lambda f: pd.to_numeric(f.get("gap_atr"), errors="coerce").abs())
+    _attach_rank("v8_turnover_percentile", lambda f: f.get("turnover_notional"))
+    _attach_rank("v8_oi_strength_percentile", lambda f: pd.to_numeric(f.get("oi_chg_60m_pct"), errors="coerce").abs())
+
+    def _relative(frame):
+        cols = []
+        for col in ("rs_pct", "stock_sector_lead_pct"):
+            if col in frame:
+                cols.append(pd.to_numeric(frame[col], errors="coerce"))
+        if not cols:
+            return pd.Series(np.nan, index=frame.index)
+        return pd.concat(cols, axis=1).median(axis=1, skipna=True)
+    _attach_rank("v8_relative_percentile", _relative, inverse_for_bear=True)
+
+    # Breakout strength belongs to the candidate set, not to quiet stocks with
+    # no escaped level. Rank it only among simultaneous directional events.
+    by_time = {}
+    for event in event_refs:
+        if event.get("breakout_source") != "Recent Range":
+            continue
+        by_time.setdefault(event.get("signal_time"), []).append(event)
+    for group in by_time.values():
+        vals = [e.get("breakout_extension_atr") for e in group]
+        ranks = v8_dual.percentile_rank(vals)
+        for event, rank in zip(group, ranks):
+            event["v8_breakout_strength_percentile"] = rank
+
+    for event in event_refs:
+        scored = v8_dual.score_preranked_row(event)
+        for key, value in scored.items():
+            if key.startswith("v8_"):
+                event[key] = value
+    return replays
+
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                                 progress_cb=None, universe_is_full_fno=False) -> dict:
@@ -1884,6 +1982,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         sector_rank_frame = sector_ret_frame.rank(axis=1, pct=True, method="average") * 100.0
 
     turnover_series = {}
+    v8_feature_frames = {}
     window_start = (now_ist() - dt.timedelta(days=days)).replace(tzinfo=None).isoformat()
     for i, symbol in enumerate(symbols):
         if progress_cb:
@@ -1922,6 +2021,12 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 continue
             if "turnover_notional" in feat.columns:
                 turnover_series[symbol] = pd.to_numeric(feat["turnover_notional"], errors="coerce")
+            v8_cols = [c for c in (
+                "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
+                "turnover_notional", "oi_chg_60m_pct", "rs_pct", "stock_sector_lead_pct"
+            ) if c in feat.columns]
+            if v8_cols:
+                v8_feature_frames[symbol] = feat[v8_cols].copy()
             # Preserve ATR for Energy Building's directionless expansion target.
             series = compute_series(df, timeframe)
             if "error" not in series:
@@ -1972,6 +2077,8 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                             )
                     except Exception:
                         continue
+
+    _attach_v8_full_universe_scores(replays, v8_feature_frames)
 
     if progress_cb:
         progress_cb(len(symbols), len(symbols), None)

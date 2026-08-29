@@ -3,9 +3,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_backtest_ui_exposes_v7_build_and_keeps_legacy_v6_final_locked():
+def test_backtest_ui_exposes_v8_build_and_keeps_legacy_v6_final_locked():
     html = (ROOT / 'app/templates/backtest.html').read_text()
-    build_id = '2026-08-29-INSTITUTIONAL-V7-FROZEN'
+    build_id = '2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA'
     assert build_id in html
     assert build_id in (ROOT / 'app/early_research.py').read_text()
     assert build_id in (ROOT / 'RESEARCH_BUILD.txt').read_text()

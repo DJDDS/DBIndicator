@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, journal, kite_auth, scanner
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, journal, kite_auth, scanner
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -439,6 +439,51 @@ def _apply_v6_cross_sectional_context(results, *, index_chg_pct=None, breadth=No
             tod_rvol=r.get("tod_rvol"), bar_range_atr=r.get("bar_range_atr"),
             turnover_percentile=r.get("turnover_percentile"),
         )
+    return results
+
+
+def _apply_v8_dual_alpha(results, now=None):
+    """Attach V8 Bull/Bear cross-sectional alpha fields in place.
+
+    V8 reads the same live NSE F&O cross-section for both sides, but interprets
+    relative performance and derivatives directionally.  OI is evidence, never
+    a veto.  `ret_4` is the exact 60-minute price return on the 15-minute live
+    engine and is exposed explicitly for the four-quadrant OI state.
+    """
+    rows = [r for r in (results or []) if not r.get("error")]
+    if not rows:
+        return results
+    for r in rows:
+        if r.get("price_chg_60m_pct") is None:
+            if r.get("ret_4") is not None:
+                r["price_chg_60m_pct"] = r.get("ret_4")
+            else:
+                # Conservative fallback for old/scarce rows.  It is labelled as
+                # unavailable to V8 if even the session return cannot be formed.
+                c, p = r.get("close"), r.get("prev_close")
+                try:
+                    r["price_chg_60m_pct"] = round((float(c) / float(p) - 1.0) * 100.0, 3) if c and p else None
+                except (TypeError, ValueError, ZeroDivisionError):
+                    r["price_chg_60m_pct"] = None
+    ranked = v8_dual.rank_cross_section(rows)
+    clock = now if now is not None else now_ist()
+    for original, scored in zip(rows, ranked):
+        for key, value in scored.items():
+            if key.startswith("v8_"):
+                original[key] = value
+        direction = original.get("v8_direction")
+        if direction in ("Bullish", "Bearish"):
+            swing = v8_dual.classify_swing_opportunity(
+                original, direction=direction, alpha=original.get("v8_alpha"),
+                participation=original.get("v8_participation"),
+                derivatives=original.get("v8_derivatives"), now_time=clock,
+            )
+            original["v8_swing_alpha"] = swing.get("alpha")
+            original["v8_swing_state"] = swing.get("state")
+            original["v8_swing_eligible"] = swing.get("eligible")
+            original["v8_swing_day_location"] = swing.get("day_location")
+            original["v8_swing_persistence"] = swing.get("persistence")
+            original["v8_swing_late_session"] = swing.get("late_session")
     return results
 
 
@@ -1360,6 +1405,7 @@ def _run_loop():
                         sector_contexts=sector_contexts,
                     )
                     _apply_v6_basis(results, history=_v6_basis_history, now=now_ist())
+                    _apply_v8_dual_alpha(results, now=now_ist())
                     # First pass creates a bounded finalist ranking; only those names
                     # pay for 5-minute execution data. Unknown 5m remains neutral.
                     _apply_v6_shortlists(results)

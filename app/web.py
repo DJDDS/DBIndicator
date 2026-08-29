@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -148,6 +148,15 @@ def api_dashboard_state():
         "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
         "market_open": scanner.is_market_open(),
     })
+
+
+@app.route("/api/v8-dashboard")
+@require_dashboard_password
+def api_v8_dashboard():
+    payload = v8_dual.dashboard_payload(get_state())
+    payload["market_open"] = scanner.is_market_open()
+    payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
+    return jsonify(payload)
 
 
 @app.route("/quick-settings", methods=["POST"])

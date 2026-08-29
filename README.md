@@ -1,16 +1,19 @@
-# DBIndicator — NSE F&O Early-Movement Screener
-## Institutional V7 Frozen — one production-candidate decision
+# DBIndicator — NSE F&O Dual-Alpha Screener
+## Institutional V8 Dual Alpha — bullish and bearish as independent engines
 
-V7 freezes the only 15-minute subgroup that remained strong enough to justify spending the untouched final sample: **Bullish Recent-Range escape + Catalyst Score >= 60**. It uses the next executable 15-minute bar and evaluates the 1D net outcome. There is no V7 parameter grid.
+V8 replaces the bullish-only production-candidate framing with a two-sided architecture. A 15-minute Recent-Range escape determines direction, then the stock is ranked cross-sectionally on **Structure**, **Participation**, **Relative strength/weakness**, and **direction-aware Derivatives/OI** evidence. Bull and Bear are scored and validated separately; 4H is context only.
 
-The Backtest page has a dedicated **Run Frozen V7 Final Test** button. It forces the full NSE stock-F&O universe, 15-minute setup/execution, 180-day research window and the existing fixed trading-cost assumptions. The final 20% is revealed only for this fingerprinted rule; all legacy V6 final variants remain locked. See `FROZEN_RULE.md`.
+The dashboard is now a live decision console with independent Bullish Leaders and Bearish Leaders, TRADE/WATCH/NO EDGE states, Intraday/1–2D Swing tabs, evidence bars, OI state, extension/chase information and concise selection reasons. It polls `/api/v8-dashboard` and updates without a full-page reload.
 
+The Backtest page has a dedicated **Run V8 Dual Alpha Backtest** path. It uses the full live NSE stock-F&O universe, 15-minute signal path, the chosen history window, transaction costs/slippage, a fixed ablation list, and a 60/20/20 development/validation/locked-final protocol. There is no V8 parameter grid or fitted weighting model.
+
+See `V8_CHANGELOG.md` and `docs/superpowers/specs/2026-08-29-v8-dual-alpha-design.md`. V7/V6 remain in the codebase only as audit/legacy research surfaces.
 
 DBIndicator is a Zerodha Kite-connected research and screening dashboard for **NSE stock F&O only**. Its live objective is narrow: surface developing moves early enough to investigate without filling the screen with late, already-extended names.
 
 It does **not** place orders. Best Entries, alerts, stops/targets and research statistics are decision-support only.
 
-## Current live architecture (V6 remains live until V7 final verdict)
+## Legacy architecture retained below V8 for audit continuity
 
 The live path uses **15-minute setup detection** with an optional **5-minute execution check** only for the best bounded finalist set:
 
