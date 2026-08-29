@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F&O Research &amp; Backtest</title>
+<style>
+  :root {
+    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
+    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
+  header nav a:hover { background: rgba(255,255,255,0.28); }
+  .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px 26px; margin-bottom: 20px; }
+  .card h2 { margin: 0 0 10px; font-size: 15px; color: var(--navy); }
+  .card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  input[type=number], select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-family: inherit; }
+  .row { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 14px; align-items: end; }
+  .horizons label.chk { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; margin: 0 14px 0 0; font-size: 13px; }
+  .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
+         padding: 10px 20px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
+  .btn:disabled { background: #a9b8c9; cursor: not-allowed; }
+  .msg-err { background: #fbe7e7; border: 1px solid #f0b7b7; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .msg-warn { background: #fff6e0; border: 1px solid #f0dca0; color: #7a5b00; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .progress-wrap { margin-top: 16px; }
+  .progress-bar { height: 10px; background: #eef1f5; border-radius: 6px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
+  .progress-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .win-good { color: var(--green); font-weight: 700; }
+  .win-bad { color: var(--red); font-weight: 700; }
+  .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .tile .tv { font-size: 20px; font-weight: 700; color: var(--navy); }
+  .tile .tl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .skip-list { font-size: 12px; color: var(--muted); max-height: 140px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .trades-scroll { max-height: 320px; overflow-y: auto; }
+  #bt-results { display: none; }
+  .bull { color: var(--green); }
+  .bear { color: var(--red); }
+  .bt-group { margin-bottom: 22px; }
+  .bt-group-title { margin: 0 0 8px; font-size: 13.5px; color: var(--navy); }
+  .bt-group-count { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .bt-group-drawdown { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>F&amp;O Research &amp; Backtest</h1>
+  <nav><a href="/">&larr; Dashboard</a></nav>
+</header>
+<div class="wrap">
+
+  {% if not logged_in %}
+  <div class="msg-err">Log in to Kite on the dashboard first - the backtest needs a live Kite session to pull historical data.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>What this does</h2>
+    <p>
+      <strong>F&amp;O Stock-in-Play &amp; Breakout Research is the primary live-parity tool.</strong> It first finds Energy Building / Stock-in-Play conditions, then assigns direction only after price actually escapes a 15-minute opening, recent-range or compression range. Volume/OI sponsorship, VWAP and anti-chase rules then decide whether the breakout deserves an Intraday Best Entry or a Swing 1&ndash;2D classification. The latest 30% of events is kept as chronological holdout.
+    </p>
+    <p>
+      The older gate sweep and custom confluence replay remain below only as diagnostics for comparing legacy ideas. Threshold sensitivity changes one parameter at a time, so future improvements can be evidence-led without brute-force fitting thousands of combinations to the same history.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Scope</h2>
+    <p style="margin-top:-4px;"><strong>Days back</strong> is reused by Stock-in-Play Research. The primary research is intentionally fixed to the live NSE stock-F&amp;O universe and 15-minute execution. Its real outcomes are <strong>30m / 1h / 2h / 4h / EOD</strong> for intraday and <strong>1D / 2D</strong> for swing. The controls below remain only for the legacy diagnostic tools.</p>
+    <label>Universe</label>
+    <div class="horizons" id="scope-universe">
+      <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
+      <label class="chk"><input type="radio" name="universe" value="nifty50"> NIFTY 50</label>
+      <label class="chk"><input type="radio" name="universe" value="sensex"> SENSEX</label>
+    </div>
+    <div class="hint" style="margin-bottom:14px;">Your watchlist, or a single index on its own (kept separate so an index's result isn't diluted into a 100+-stock trade list). Indices have no traded volume in Kite, so the Relative Volume parameter never fires for them &mdash; expected, not a fault.</div>
+    <div class="row">
+      <div>
+        <label for="scope-timeframe">Timeframe</label>
+        <select id="scope-timeframe" name="timeframe">
+          {% for tf in valid_timeframes %}
+          <option value="{{ tf }}" {{ 'selected' if tf == default_timeframe else '' }}>{{ tf }}</option>
+          {% endfor %}
+        </select>
+        <div class="hint">Your live watchlist runs <strong>{{ default_timeframe }}</strong>.</div>
+      </div>
+      <div>
+        <label for="scope-days">Days back</label>
+        <input type="number" id="scope-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
+        <div class="hint">Calendar days. 90 days is the practical default for 15-minute research; up to {{ bt_days_max }} days is allowed for deeper runs and is fetched in chunks, so longer runs can take several minutes.</div>
+      </div>
+      <div>
+        <label>Return horizons (bars held)</label>
+        <div class="horizons">
+          <label class="chk"><input type="checkbox" name="horizon" value="1" checked> 1</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="2" checked> 2</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="3" checked> 3</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="5" checked> 5</label>
+          <label class="chk"><input type="checkbox" name="horizon" value="10" checked> 10</label>
+        </div>
+        <div class="hint">These bar-count horizons apply only to the legacy diagnostics below. The primary F&amp;O research uses clock/session-aware 30m / 1h / 2h / 4h / EOD and 1D / 2D exits.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-color:#9bc5e8;">
+    <h2>1 &middot; F&amp;O Stock-in-Play &amp; Breakout Research</h2>
+    <p style="margin-top:-4px;"><strong>This is the primary research tool for Intraday Best Entry and Swing 1&ndash;2D.</strong> Compression is treated as a directionless movement setup. Direction comes only from an actual 15-minute close outside the opening range, recent decision range or compression range; TOD RVOL, OI sponsorship, VWAP, 4H context and anti-chase then qualify the trade.</p>
+    <p class="hint"><strong>Three questions are kept separate:</strong> Does compression predict expansion versus the unconditional F&amp;O baseline? Does an actual breakout make money intraday? Does the same breakout retain enough sponsorship for a 1&ndash;2 day swing? Results include a 30% chronological holdout and only motivated interaction tests &mdash; no brute-force parameter grid.</p>
+    <button type="button" class="btn" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Stock-in-Play Research</button>
+    <span class="hint" id="er-form-hint" style="margin-left:10px;">15-minute execution &middot; Intraday 30m / 1h / 2h / 4h / EOD &middot; Swing 1D / 2D</span>
+    <div class="progress-wrap" id="er-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="er-progress-fill"></div></div>
+      <div class="progress-label" id="er-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="er-error" style="display:none; margin-top:16px;"></div>
+    <div id="er-results" style="display:none; margin-top:18px;">
+      <div class="stat-tiles" id="er-tiles"></div>
+      <h3 class="bt-group-title">Intraday holdout &mdash; actual breakout direction</h3>
+      <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-intraday"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Swing holdout &mdash; 1&ndash;2 sessions</h3>
+      <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-swing"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Compression lift vs unconditional F&amp;O baseline</h3>
+      <div id="er-lift"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Which sponsorship combination helps?</h3>
+      <table><thead><tr><th>Variant</th><th>Holdout N</th><th>Win</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-interactions"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Promotion Benchmark</h3>
+      <p class="hint">A live rule earns <strong>Benchmark</strong> only after positive net holdout expectancy, PF &ge; 1.25, adequate sample size, favorable MFE/MAE and stable chronological blocks. Otherwise it remains <strong>Promising</strong> or <strong>Research</strong>.</p>
+      <div id="er-promotion-benchmark"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Excursion / speed diagnostics</h3>
+      <div id="er-excursions"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Breakout source / direction diagnostics</h3>
+      <div id="er-diagnostics"></div>
+      <div class="hint" id="er-notes" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 &middot; Legacy gate audit</h2>
+    <p style="margin-top:-4px;">Runs a baseline with every gate off, then one pass per gate with only that gate on, and
+    reports what each did to expectancy and profit factor &mdash; net of costs, on your own watchlist. <strong>Start here:</strong> it
+    measures the filters you're actually running instead of assuming more filters are better.</p>
+    <p class="hint">Each gate is tested alone plus a few targeted OI combinations. A <strong>30% chronological holdout</strong>
+    is kept untouched and is the primary ranking column, so a gate that only looks good in-sample does not float to the top.
+    Gates that cannot apply to your scope are skipped rather than reported as "no change".</p>
+    <div style="margin-top:14px;">
+      <button type="button" class="btn" id="ab-run-btn" {{ 'disabled' if not logged_in else '' }}>Run gate sweep</button>
+      <span class="hint" id="ab-form-hint" style="margin-left:10px;"></span>
+    </div>
+    <div class="progress-wrap" id="ab-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="ab-progress-fill"></div></div>
+      <div class="progress-label" id="ab-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="ab-error" style="display:none; margin-top:16px;"></div>
+    <div id="ab-results" style="display:none; margin-top:18px;">
+      <p class="hint" id="ab-meta"></p>
+      <table>
+        <thead><tr>
+          <th>Gate</th><th>Full avg</th><th>&Delta; avg</th><th>PF</th>
+          <th>Holdout avg</th><th>Holdout PF</th><th>Win rate</th><th>Trades</th><th>Cut</th>
+        </tr></thead>
+        <tbody id="ab-table-body"></tbody>
+      </table>
+      <div id="ab-skipped" class="hint" style="margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3 &middot; Does the BTST/STBT premise hold?</h2>
+    <p style="margin-top:-4px;">The overnight panel picks stocks that closed at the extreme of their range on a day
+    that went their way, and holds them overnight. <strong>Nothing in this app could measure that trade until now</strong>
+    &mdash; the primary breakout research uses session-aware intraday/swing horizons and enters at the next executable bar, while an
+    overnight idea must enter at the signal close to measure the gap itself.</p>
+    <p style="margin-top:8px;">This enters at the <strong>signal bar's own close</strong> and exits at the next open and
+    the next close &mdash; the trade as you would actually take it. It applies only the two hard gates, not the soft
+    checks, and automatically compares the original <strong>continuation</strong> direction with the exact opposite
+    <strong>reversal</strong> direction. If the sign is wrong, the research says so instead of trying to rescue it with more gates.</p>
+    <p class="hint" style="margin-top:8px;">Worth knowing what you might find: this setup buys the most extended point
+    of the session, and short-horizon <em>reversal</em> is a well-documented effect &mdash; momentum tends to work over
+    months, while over one to five days strong recent returns often give back. If the win rate lands meaningfully
+    below 50%, the premise is inverted rather than merely weak, and no amount of tightening the other checks fixes it.
+    A result near 50% after costs means there is no edge here either way.</p>
+    <div style="margin-top:14px;">
+      <label class="chk" style="display:flex;">
+        <input type="checkbox" id="on-upday" checked> Require the day itself to have gone the signal's way
+      </label>
+    </div>
+    <button class="btn" id="on-run" style="margin-top:14px;">Run the overnight test</button>
+    <div class="hint" id="on-hint" style="margin-top:8px;"></div>
+    <div id="on-results" style="margin-top:16px;"></div>
+  </div>
+
+<details class="card">
+    <summary><strong>4 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
+    <p class="hint" style="margin-top:10px;">Exploratory. The tool above answers one specific question; this one lets you ask your own. Worth knowing it's also the easiest way to overfit &mdash; tune here, then confirm on a holdout.</p>
+    <form id="bt-form" style="margin-top:14px;">
+      <label>Parameters</label>
+      <div class="horizons" id="bt-params">
+        {% for p in param_defs %}
+        <label class="chk" style="display:flex; margin-bottom:6px;">
+          <input type="checkbox" name="param" value="{{ p.id }}" {{ 'checked' if p.id in default_params else '' }}> {{ p.label }}
+        </label>
+        {% endfor %}
+      </div>
+      <div style="margin-top:16px;">
+        <label>Live-parity filters (all off by default)</label>
+        <div class="horizons" id="bt-filters">
+          {% for f in filter_defs %}
+          <label class="chk" style="display:flex; margin-bottom:6px;">
+            <input type="checkbox" name="filter" value="{{ f.id }}"> {{ f.label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="row" style="grid-template-columns: 1fr 3fr; margin-top:6px;">
+        <div>
+          <label for="bt-required">Required (of selected)</label>
+          <input type="number" id="bt-required" name="required" value="{{ default_required }}" min="1" max="{{ param_defs|length }}">
+          <div class="hint" id="bt-required-hint"></div>
+        </div>
+      </div>
+      <div style="margin-top:18px;">
+        <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run backtest</button>
+        <span class="hint" id="bt-form-hint" style="margin-left:10px;"></span>
+      </div>
+    </form>
+    <div class="progress-wrap" id="bt-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="bt-progress-fill"></div></div>
+      <div class="progress-label" id="bt-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="bt-error" style="display:none; margin-top:16px;"></div>
+  </details>
+
+  <div class="card" id="bt-results">
+    <h2>Results</h2>
+    <div id="bt-target"></div>
+    <div id="bt-bands"></div>
+    <p class="hint" id="bt-signal-desc" style="margin:-4px 0 14px;"></p>
+    <div class="stat-tiles" id="bt-tiles"></div>
+    <div id="bt-groups"></div>
+
+    <div id="bt-skipped-wrap" style="margin-top:18px; display:none;">
+      <h2 style="font-size:13px;">Symbols skipped</h2>
+      <div class="skip-list" id="bt-skipped"></div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <h2 style="font-size:13px;">Individual trades</h2>
+      <div class="trades-scroll">
+        <table>
+          <thead>
+            <tr><th>Symbol</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th id="bt-trade-return-headers"></th><th>Worst drawdown</th></tr>
+          </thead>
+          <tbody id="bt-trades-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+
+// --- shared scope --------------------------------------------------------
+// One source of truth for universe / timeframe / days / horizons, read by all
+// three tools. Previously each form carried its own copy of these inputs,
+// which meant three chances to run a tool against a scope you didn't mean.
+const BACKTEST_DAY_BOUNDS = {{ backtest_day_bounds | tojson }};
+function applyDayBounds(resetValue) {
+  const tf = document.getElementById('scope-timeframe').value;
+  const days = document.getElementById('scope-days');
+  const b = BACKTEST_DAY_BOUNDS[tf] || [5, 365, 90];
+  days.min = b[0];
+  days.max = b[1];
+  if (resetValue || Number(days.value) < b[0] || Number(days.value) > b[1]) days.value = b[2];
+}
+document.getElementById('scope-timeframe').addEventListener('change', function () { applyDayBounds(true); });
+applyDayBounds(false);
+
+function readScope() {
+  const picked = document.querySelector('#scope-universe input[name=universe]:checked');
+  const horizons = Array.from(document.querySelectorAll('input[name=horizon]:checked')).map(el => el.value);
+  return {
+    universe: picked ? picked.value : 'watchlist',
+    timeframe: document.getElementById('scope-timeframe').value,
+    days: document.getElementById('scope-days').value,
+    horizons: horizons,
+    refHorizon: horizons.includes('3') ? 3 : (horizons.length ? Math.min.apply(null, horizons.map(Number)) : 3),
+  };
+}
+
+function startJob(url, scope, extra, hintId, onStarted) {
+  const body = new URLSearchParams();
+  body.set('universe', scope.universe);
+  body.set('timeframe', scope.timeframe);
+  body.set('days', scope.days);
+  Object.keys(extra || {}).forEach(k => body.set(k, extra[k]));
+  document.getElementById(hintId).textContent = '';
+  fetch(url, { method: 'POST', body: body })
+    .then(r => r.json())
+    .then(res => {
+      if (!res.started) document.getElementById(hintId).textContent = res.reason || 'Could not start.';
+      else onStarted();
+    })
+    .catch(() => { document.getElementById(hintId).textContent = 'Could not reach the server.'; });
+}
+
+const initialState = {{ state | tojson }};
+const PARAM_LABELS = {};
+{% for p in param_defs %}PARAM_LABELS['{{ p.id }}'] = {{ p.label | tojson }};
+{% endfor %}
+const FILTER_LABELS = {
+  require_oi_agreement: 'OI positioning agreement',
+  require_htf: 'HTF agreement',
+  require_regime_volume: 'Regime-adaptive volume',
+  exclude_opening_window: 'Opening-window excluded',
+  require_candle_pattern: 'Candlestick-pattern agreement',
+  require_macd_hist: 'MACD histogram momentum',
+  require_big_candle: 'Big-candle agreement',
+  require_strong_close: 'Strong-close agreement',
+  require_entry_location: 'Entry-location (not extended)',
+  require_atr_floor: 'Minimum-ATR floor',
+};
+
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+
+function renderGroup(label, groupSummary, horizons) {
+  groupSummary = groupSummary || {};
+  const ov = groupSummary.overall || {};
+  let rows = '';
+  horizons.forEach(h => {
+    const row = groupSummary[String(h)] || {};
+    const wr = row.win_rate_pct;
+    const wrClass = wr === undefined ? '' : (wr >= 50 ? 'win-good' : 'win-bad');
+    rows += `
+      <tr>
+        <td>${h}</td>
+        <td>${row.trade_count ?? 0}</td>
+        <td class="${wrClass}">${row.trade_count ? row.win_rate_pct.toFixed(1) + '%' : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.avg_return_pct) : '—'}</td>
+        <td>${row.trade_count && row.profit_factor != null ? (row.profit_factor === Infinity ? '∞' : row.profit_factor) : '—'}</td>
+        <td>${row.trade_count && row.payoff_ratio != null ? row.payoff_ratio : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.best_return_pct) : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.worst_return_pct) : '—'}</td>
+      </tr>`;
+  });
+  return `
+    <div class="bt-group">
+      <h3 class="bt-group-title">${label} <span class="bt-group-count">(${ov.total_trades ?? 0} trades)</span></h3>
+      <table>
+        <thead>
+          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Profit factor</th><th>Payoff</th><th>Best</th><th>Worst</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="bt-group-drawdown">Avg drawdown: ${fmtPct(ov.avg_drawdown_pct)} &middot; Worst drawdown: ${fmtPct(ov.worst_drawdown_pct)}</p>
+    </div>`;
+}
+
+// Does a higher Early Score actually win more often? This is the one thing
+// the score bands assert and nothing has ever checked. If win rate climbs
+// across the bands, the score ranks something real. If it is flat, the
+// score is ranking noise and the bands are decoration - which is a finding
+// worth having, not a failure, and the honest thing is to show it either
+// way rather than quietly dropping the table.
+// The one number that answers the question actually written down in
+// config.py. Everything else on this page reports "average return after N
+// bars", which is not how the trade is taken.
+function renderTarget(result) {
+  const el = document.getElementById('bt-target');
+  if (!el) return;
+  const t = result.vs_target;
+  if (!t) { el.innerHTML = ''; return; }
+  const good = t.hit_rate_pct != null && t.sample_sufficient && t.hit_rate_pct >= t.required_win_rate;
+  const colour = !t.sample_sufficient ? 'var(--muted)' : (good ? 'var(--green)' : 'var(--red)');
+  el.innerHTML = `
+    <h3 style="margin-top:22px;">Against your written target</h3>
+    <p class="hint" style="margin-top:-4px;">Reach +${t.target_atr} ATR before &minus;${t.stop_atr} ATR,
+      within ${t.horizon_bars} bars. Needs ${t.required_win_rate}% across ${t.min_sample}+ trades;
+      breakeven at this risk-reward is ${t.breakeven_win_rate}%.</p>
+    <table class="tbl"><tbody>
+      <tr><td>Resolved to a stop or target</td><td style="text-align:right;">${t.resolved_count}</td></tr>
+      <tr><td>Still open at the horizon</td><td style="text-align:right;">${t.unresolved_at_horizon}</td></tr>
+      <tr><td>Hit the target first</td><td style="text-align:right;color:${colour};font-weight:600;">${t.hit_rate_pct == null ? '\u2014' : t.hit_rate_pct + '%'}</td></tr>
+    </tbody></table>
+    <p style="margin-top:10px;color:${colour};"><strong>${t.verdict}</strong></p>`;
+}
+
+function renderBands(result) {
+  const el = document.getElementById('bt-bands');
+  if (!el) return;
+  const bands = (result.by_band || []).filter(b => b.trade_count > 0);
+  if (!bands.length) { el.innerHTML = ''; return; }
+  const hs = result.horizons || [];
+  const h = hs.includes(3) ? 3 : hs[0];
+  const rows = bands.map(b => {
+    const st = (b.by_horizon || {})[String(h)] || {};
+    const thin = (st.trade_count || 0) < 20;
+    return `<tr>
+      <td><strong>${b.band}</strong> <span class="hint">${b.min_score}-${b.max_score}</span></td>
+      <td style="text-align:right;">${b.trade_count}${thin ? ' <span class="hint" title="Under 20 trades - the confidence interval on this rate is too wide to act on.">thin</span>' : ''}</td>
+      <td style="text-align:right;">${st.win_rate_pct != null ? st.win_rate_pct + '%' : '—'}</td>
+      <td style="text-align:right;">${st.avg_return_pct != null ? st.avg_return_pct + '%' : '—'}</td>
+    </tr>`;
+  }).join('');
+  const rates = bands.map(b => ((b.by_horizon || {})[String(h)] || {}).win_rate_pct).filter(v => v != null);
+  let verdict = '';
+  if (rates.length >= 2) {
+    const rising = rates.every((v, i) => i === 0 || v <= rates[i - 1]);
+    verdict = rising
+      ? '<p class="hint">Win rate falls as the score falls, which is what the bands claim. Check the trade counts before leaning on it &mdash; a clean gradient across thin buckets is not yet evidence.</p>'
+      : '<p class="hint"><strong>Win rate does NOT fall consistently with the score.</strong> On this window the bands are not ranking outcomes, so treat the score as a filter rather than a ranking until a larger sample says otherwise.</p>';
+  }
+  el.innerHTML = `<h3 style="margin-top:22px;">Outcomes by Early Score band <span class="hint">(at ${h} bars)</span></h3>
+    <table class="tbl"><thead><tr><th>Band</th><th style="text-align:right;">Trades</th>
+    <th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return</th></tr></thead>
+    <tbody>${rows}</tbody></table>${verdict}`;
+}
+
+function renderResult(result) {
+  const wrap = document.getElementById('bt-results');
+  wrap.style.display = 'block';
+
+  const summary = result.summary || {};
+  const allOv = (summary.all || {}).overall || {};
+  const bullOv = (summary.bullish || {}).overall || {};
+  const bearOv = (summary.bearish || {}).overall || {};
+
+  const chosenParams = result.params || [];
+  const chosenLabels = chosenParams.map(p => PARAM_LABELS[p] || p);
+  const activeFilters = Object.keys(FILTER_LABELS)
+    .filter(k => result[k]).map(k => FILTER_LABELS[k] || k);
+  const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
+  document.getElementById('bt-signal-desc').textContent =
+    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}`;
+
+  renderTarget(result);
+  renderBands(result);
+
+  const tiles = document.getElementById('bt-tiles');
+  tiles.innerHTML = `
+    <div class="tile"><div class="tv">${allOv.total_trades ?? 0}</div><div class="tl">Total trades</div></div>
+    <div class="tile"><div class="tv">${bullOv.total_trades ?? 0}</div><div class="tl">Bullish</div></div>
+    <div class="tile"><div class="tv">${bearOv.total_trades ?? 0}</div><div class="tl">Bearish</div></div>
+    <div class="tile"><div class="tv">${result.symbols_with_trades ?? 0}/${result.symbols_scanned ?? 0}</div><div class="tl">Symbols w/ trades</div></div>
+  `;
+
+  const horizons = result.horizons || [];
+
+  document.getElementById('bt-groups').innerHTML =
+    renderGroup('All Trades', summary.all, horizons) +
+    renderGroup('▲ Bullish Only', summary.bullish, horizons) +
+    renderGroup('▼ Bearish Only', summary.bearish, horizons);
+
+  const skippedWrap = document.getElementById('bt-skipped-wrap');
+  const skipped = result.symbols_skipped || {};
+  const skipKeys = Object.keys(skipped);
+  if (skipKeys.length) {
+    skippedWrap.style.display = 'block';
+    document.getElementById('bt-skipped').textContent =
+      skipKeys.map(s => `${s}: ${skipped[s]}`).join('  •  ');
+  } else {
+    skippedWrap.style.display = 'none';
+  }
+
+  document.getElementById('bt-trade-return-headers').textContent =
+    horizons.map(h => h + 'b return').join(' / ');
+  const tradesBody = document.getElementById('bt-trades-body');
+  tradesBody.innerHTML = '';
+  const trades = (result.trades || []).slice(-200).reverse();
+  trades.forEach(t => {
+    const tr = document.createElement('tr');
+    const dirClass = t.direction === 'Bullish' ? 'bull' : 'bear';
+    const returnsText = horizons.map(h => fmtPct(t.returns_pct[h] ?? t.returns_pct[String(h)])).join(' / ');
+    tr.innerHTML = `
+      <td>${t.symbol}</td>
+      <td class="${dirClass}">${t.direction === 'Bullish' ? '▲' : '▼'}</td>
+      <td>${t.entry_time.replace('T', ' ')}</td>
+      <td>${t.entry_price}</td>
+      <td>${returnsText}</td>
+      <td>${fmtPct(t.mae_pct)}</td>
+    `;
+    tradesBody.appendChild(tr);
+  });
+  const totalCount = result.total_trade_count ?? (result.trades || []).length;
+  if (totalCount > 200) {
+    const note = document.createElement('tr');
+    note.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);">
+      showing the most recent 200 of ${totalCount} trades - win rate/return stats above use all of them</td>`;
+    tradesBody.appendChild(note);
+  }
+}
+
+function poll() {
+  fetch('/api/backtest/status').then(r => r.json()).then(state => {
+    updateUI(state);
+    if (state.status === 'running') {
+      setTimeout(poll, 2000);
+    }
+  }).catch(() => setTimeout(poll, 4000));
+}
+
+function updateUI(state) {
+  const progress = document.getElementById('bt-progress');
+  const errorBox = document.getElementById('bt-error');
+  const runBtn = document.getElementById('bt-run-btn');
+
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const p = state.progress || {};
+    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+    document.getElementById('bt-progress-fill').style.width = pct + '%';
+    document.getElementById('bt-progress-label').textContent =
+      p.symbol ? `Scanning ${p.symbol} (${p.done}/${p.total})…` : `${p.done}/${p.total} symbols done…`;
+  } else {
+    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+    progress.style.display = 'none';
+  }
+
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Backtest failed: ' + (state.error || 'unknown error');
+  }
+
+  if (state.status === 'done' && state.result) {
+    renderResult(state.result);
+  }
+}
+
+function selectedParamCheckboxes() {
+  return Array.from(document.querySelectorAll('input[name=param]'));
+}
+
+function syncRequiredMax() {
+  const checked = selectedParamCheckboxes().filter(el => el.checked);
+  const requiredInput = document.getElementById('bt-required');
+  const hint = document.getElementById('bt-required-hint');
+  requiredInput.max = Math.max(checked.length, 1);
+  if (checked.length && Number(requiredInput.value) > checked.length) {
+    requiredInput.value = checked.length;
+  }
+  hint.textContent = checked.length ? `1–${checked.length} (you've selected ${checked.length})` : 'Select at least one parameter above.';
+}
+selectedParamCheckboxes().forEach(el => el.addEventListener('change', syncRequiredMax));
+syncRequiredMax();
+
+document.getElementById('bt-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  const scope = readScope();
+  if (!scope.horizons.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one horizon in Scope above.';
+    return;
+  }
+  const params = selectedParamCheckboxes().filter(el => el.checked).map(el => el.value);
+  if (!params.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one parameter.';
+    return;
+  }
+  const required = Number(document.getElementById('bt-required').value) || 1;
+  if (required < 1 || required > params.length) {
+    document.getElementById('bt-form-hint').textContent =
+      `Required must be between 1 and ${params.length} (the number of parameters you selected).`;
+    return;
+  }
+  const filters = Array.from(document.querySelectorAll('input[name=filter]:checked')).map(el => el.value);
+  startJob('/api/backtest/start', scope, {
+    horizons: scope.horizons.join(','),
+    params: params.join(','),
+    required: String(required),
+    filters: filters.join(','),
+  }, 'bt-form-hint', poll);
+});
+
+updateUI(initialState);
+if (initialState.status === 'running') {
+  poll();
+} else if (initialState.status === 'done' && initialState.result) {
+  renderResult(initialState.result);
+}
+
+// --- F&O Early Movement Research ----------------------------------------
+function updateEarlyResearchUI(state) {
+  state = state || {};
+  const progress = document.getElementById('er-progress');
+  const fill = document.getElementById('er-progress-fill');
+  const label = document.getElementById('er-progress-label');
+  const errorBox = document.getElementById('er-error');
+  const runBtn = document.getElementById('er-run-btn');
+  const hint = document.getElementById('er-form-hint');
+  const p = state.progress || {};
+
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const total = Number(p.total || 0);
+    const done = Number(p.done || 0);
+    const pctDone = total ? Math.max(1, Math.min(100, Math.round(done / total * 100))) : 1;
+    fill.style.width = pctDone + '%';
+    label.textContent = `Research running · ${done}/${total || '?'}${p.symbol ? ' · ' + p.symbol : ''}`;
+    hint.textContent = 'Keep this page open or come back later — the server job continues while you browse other pages.';
+    return;
+  }
+
+  runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  progress.style.display = 'none';
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Research failed: ' + (state.error || 'unknown error');
+    hint.textContent = 'The error is preserved here instead of leaving the page looking frozen.';
+    return;
+  }
+  errorBox.style.display = 'none';
+  if (state.status === 'done' && state.result) {
+    hint.textContent = 'Research complete.';
+    renderEarlyResearch(state.result);
+  }
+}
+function renderEarlyResearch(result) {
+  const wrap = document.getElementById('er-results');
+  wrap.style.display = 'block';
+  const r = result.research || {};
+  const pf = v => (v === null || v === undefined) ? '—' : (v === Infinity ? '∞' : Number(v).toFixed(2));
+  const pct = v => (v === null || v === undefined) ? '—' : ((v > 0 ? '+' : '') + Number(v).toFixed(3) + '%');
+  const stat = (summary, horizon) => ((((summary || {}).holdout || {})[horizon])) || {};
+  const i2h = stat(r.intraday, '2h');
+  const s1d = stat(r.swing, '1D');
+  const oi = r.oi_coverage || {};
+  const oneAtr4 = (r.compression_lift || []).find(x => String(x.horizon) === '4' && Number(x.threshold_atr) === 1) || {};
+  document.getElementById('er-tiles').innerHTML = `
+    <div class="tile"><div class="tv">${oneAtr4.lift == null ? '—' : Number(oneAtr4.lift).toFixed(2) + '×'}</div><div class="tl">Coil 1h ≥1 ATR lift vs baseline</div></div>
+    <div class="tile"><div class="tv">${oi.coverage_pct == null ? '—' : oi.coverage_pct + '%'}</div><div class="tl">Historical OI velocity coverage</div></div>
+    <div class="tile"><div class="tv">${pct(i2h.avg_return_pct)}</div><div class="tl">Breakout 2h holdout avg · PF ${pf(i2h.profit_factor)}</div></div>
+    <div class="tile"><div class="tv">${pct(s1d.avg_return_pct)}</div><div class="tl">Breakout 1D holdout avg · PF ${pf(s1d.profit_factor)}</div></div>`;
+
+  const fillReturns = (id, stage, horizons) => {
+    const body = document.getElementById(id); body.innerHTML = '';
+    horizons.forEach(h => {
+      const x = stat(stage, h); const good = x.avg_return_pct != null && x.avg_return_pct > 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><strong>${h}</strong></td><td>${x.trade_count || 0}</td><td>${x.win_rate_pct == null ? '—' : x.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(x.avg_return_pct)}</td><td>${pf(x.profit_factor)}</td>`;
+      body.appendChild(tr);
+    });
+  };
+  fillReturns('er-intraday', r.intraday, ['30m','1h','2h','4h','eod']);
+  fillReturns('er-swing', r.swing, ['1D','2D']);
+
+  const lift = document.getElementById('er-lift');
+  const liftRows = (r.compression_lift || []).map(x => `<tr><td>${x.horizon_label || ({'4':'1h','8':'2h','16':'4h','25':'1D'}[String(x.horizon)] || x.horizon)}</td><td>${x.threshold_atr} ATR</td><td>${x.event_n || 0}</td><td>${x.event_hit_rate_pct == null ? '—' : x.event_hit_rate_pct + '%'}</td><td>${x.baseline_hit_rate_pct == null ? '—' : x.baseline_hit_rate_pct + '%'}</td><td><strong>${x.lift == null ? '—' : Number(x.lift).toFixed(2) + '×'}</strong></td></tr>`).join('');
+  lift.innerHTML = `<table><thead><tr><th>Window</th><th>Move</th><th>Coils</th><th>Coil hit</th><th>Baseline</th><th>Lift</th></tr></thead><tbody>${liftRows}</tbody></table>`;
+
+  const interactions = document.getElementById('er-interactions'); interactions.innerHTML = '';
+  Object.entries(r.interactions || {}).forEach(([name, x]) => {
+    const h = x.intraday_2h || {}; 
+    const tr = document.createElement('tr'); const good = h.avg_return_pct != null && h.avg_return_pct > 0;
+    tr.innerHTML = `<td>${name.replaceAll('_',' ')}</td><td>${h.trade_count || 0}</td><td>${h.win_rate_pct == null ? '—' : h.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(h.avg_return_pct)}</td><td>${pf(h.profit_factor)}</td>`;
+    interactions.appendChild(tr);
+  });
+
+  const promotion = r.promotion_benchmark || {};
+  const promo = document.getElementById('er-promotion-benchmark');
+  const promoRows = ['intraday','swing'].map(mode => {
+    const b = promotion[mode] || {}; const req = b.requirements || {}; const checks = b.checks || {};
+    const status = b.status || 'Research'; const good = status === 'Benchmark'; const mid = status === 'Promising';
+    const colour = good ? 'var(--green)' : (mid ? '#d9a441' : 'var(--red)');
+    const checkText = Object.entries(checks).map(([k,v]) => `${k.replaceAll('_',' ')} ${v ? '✓' : '✗'}`).join(' · ');
+    return `<tr><td><strong>${mode === 'intraday' ? 'Intraday 2h' : 'Swing 1D'}</strong></td><td style="color:${colour}"><strong>${status}</strong></td><td>${checkText || 'not enough data'}</td><td>N≥${req.min_trades ?? '—'} · avg≥${req.min_avg_return_pct ?? '—'}% · PF≥${req.min_profit_factor ?? '—'} · MFE/MAE≥${req.min_mfe_mae ?? '—'}</td></tr>`;
+  }).join('');
+  promo.innerHTML = `<table><thead><tr><th>Mode</th><th>Status</th><th>Checks</th><th>Promotion requirement</th></tr></thead><tbody>${promoRows}</tbody></table>`;
+
+  const ex = ((r.excursions || {}).holdout) || {};
+  document.getElementById('er-excursions').innerHTML = `<table><thead><tr><th>Holdout events</th><th>Avg MFE 1D</th><th>Avg MAE 1D</th><th>Avg MFE 2D</th><th>Avg MAE 2D</th><th>Hit +0.5 ATR</th><th>Hit +1 ATR</th><th>Median bars to +1 ATR</th></tr></thead><tbody><tr><td>${ex.events || 0}</td><td>${ex.avg_mfe_1D_atr == null ? '—' : ex.avg_mfe_1D_atr + ' ATR'}</td><td>${ex.avg_mae_1D_atr == null ? '—' : ex.avg_mae_1D_atr + ' ATR'}</td><td>${ex.avg_mfe_2D_atr == null ? '—' : ex.avg_mfe_2D_atr + ' ATR'}</td><td>${ex.avg_mae_2D_atr == null ? '—' : ex.avg_mae_2D_atr + ' ATR'}</td><td>${ex.hit_0_5atr_pct == null ? '—' : ex.hit_0_5atr_pct + '%'}</td><td>${ex.hit_1atr_pct == null ? '—' : ex.hit_1atr_pct + '%'}</td><td>${ex.median_bars_to_1atr == null ? '—' : ex.median_bars_to_1atr}</td></tr></tbody></table>`;
+
+  const diag = document.getElementById('er-diagnostics');
+  const chunks = [];
+  Object.entries(r.by_breakout_source || {}).forEach(([name, x]) => {
+    const i = (((x.intraday || {})['2h'])) || {}; const sw = (((x.swing || {})['1D'])) || {};
+    chunks.push(`<strong>${name}</strong>: N ${x.events || 0} · 2h ${pct(i.avg_return_pct)} PF ${pf(i.profit_factor)} · 1D ${pct(sw.avg_return_pct)} PF ${pf(sw.profit_factor)}`);
+  });
+  Object.entries(r.by_direction || {}).forEach(([name, x]) => {
+    const i = (((x.intraday || {})['2h'])) || {}; const sw = (((x.swing || {})['1D'])) || {};
+    chunks.push(`<strong>${name}</strong>: N ${x.events || 0} · 2h ${pct(i.avg_return_pct)} PF ${pf(i.profit_factor)} · 1D ${pct(sw.avg_return_pct)} PF ${pf(sw.profit_factor)}`);
+  });
+  diag.innerHTML = chunks.length ? chunks.join('<br>') : '<span class="hint">No diagnostic split available yet.</span>';
+
+  const notes = document.getElementById('er-notes');
+  const raw = r.confirmation_diagnostics || {};
+  const rawLine = `Raw confirmation diagnostics: OI 60m finite ${raw.oi_60m_finite || 0}/${raw.events || 0}, positive ${raw.oi_60m_positive || 0}, confirmed ${raw.oi_confirmed || 0}; ` +
+    `4H available ${raw.htf_available || 0}, agrees ${raw.htf_true || 0}; ` +
+    `VWAP available ${raw.vwap_available || 0}, agrees ${raw.vwap_true || 0}.`;
+  notes.innerHTML = `OI coverage: ${oi.available || 0}/${oi.total || 0} breakout events (${oi.coverage_pct || 0}%), confirmed ${oi.confirmed || 0}.<br>` +
+    rawLine + '<br>' +
+    (result.research_notes || []).map(x => '&bull; ' + x).join('<br>');
+}
+function pollEarlyResearch() {
+  fetch('/api/early-research/status').then(r => r.json()).then(st => { updateEarlyResearchUI(st); if (st.status === 'running') setTimeout(pollEarlyResearch, 2500); }).catch(() => setTimeout(pollEarlyResearch, 5000));
+}
+document.getElementById('er-run-btn').addEventListener('click', function () {
+  const scope = readScope();
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:scope.days, horizons:[]}, {}, 'er-form-hint', pollEarlyResearch);
+});
+const initialEarlyResearchState = {{ early_research_state | tojson }};
+updateEarlyResearchUI(initialEarlyResearchState);
+if (initialEarlyResearchState.status === 'running') pollEarlyResearch();
+
+// --- Gate ablation sweep -----------------------------------------------
+function renderAblation(result) {
+  const wrap = document.getElementById('ab-results');
+  wrap.style.display = 'block';
+  const b = result.baseline || {};
+  const pct = v => (v === null || v === undefined) ? '\u2014' : v + '%';
+  const signed = (v, suf) => (v === null || v === undefined) ? '\u2014' : (v > 0 ? '+' : '') + v + (suf || '');
+  const bh = b.holdout || {};
+  document.getElementById('ab-meta').textContent =
+    `Baseline: ${pct(b.avg_return_pct)} full avg \u00b7 PF ${b.profit_factor ?? '\u2014'} \u00b7 ` +
+    `${pct(bh.avg_return_pct)} holdout avg \u00b7 holdout PF ${bh.profit_factor ?? '\u2014'} \u00b7 ` +
+    `${b.trade_count || 0} trades \u2014 ${result.timeframe}, ${result.days} days, ${result.symbols_count} symbols, ` +
+    `${result.ref_horizon}-bar reference, 30% chronological holdout, net of ${result.cost_pct}% costs + ${result.slippage_pct}% slippage/side`;
+  const skipWrap = document.getElementById('ab-skipped');
+  const skipped = result.skipped || [];
+  skipWrap.innerHTML = skipped.length
+    ? '<strong>Not tested (' + skipped.length + '):</strong> ' +
+      skipped.map(sk => sk.label + ' \u2014 ' + sk.reason).join('<br>')
+    : '';
+  const body = document.getElementById('ab-table-body');
+  body.innerHTML = '';
+  (result.rows || []).forEach(r => {
+    const d = r.holdout_avg_return_delta;
+    const colour = (d === null || d === undefined) ? '' :
+      (d > 0 ? 'color:var(--green);font-weight:600;' : (d < 0 ? 'color:var(--red);' : ''));
+    const tr = document.createElement('tr');
+
+    // A gate that reported coverage and had NONE never actually ran. Its
+    // numbers are not a result, and showing them beside real ones invites
+    // exactly the wrong conclusion - that the gate was checked and found
+    // harmless. Strike the row and say why instead.
+    if (r.fired === false) {
+      tr.innerHTML = `
+        <td>${r.label}</td>
+        <td colspan="8" style="color:var(--amber);">
+          <strong>Did not run.</strong> The reading this gate depends on was unavailable for every
+          signal bar, so it passed everything through untested. Its 0% is not a finding &mdash; fix the
+          data path, then re-run. Nothing here tells you whether this gate helps.
+        </td>`;
+      body.appendChild(tr);
+      return;
+    }
+
+    // Two numbers, because they mean opposite things. Low DATA coverage is a
+    // broken gate. Low VERDICT coverage with good data is a working gate
+    // that is simply strict - a finding, not a fault.
+    let cov = '';
+    if (r.data_coverage !== null && r.data_coverage !== undefined) {
+      const dp = Math.round(r.data_coverage * 100);
+      const vp = Math.round((r.reading_coverage || 0) * 100);
+      if (dp < 50) {
+        cov = ` <span class="hint" style="color:var(--amber);" title="The reading this gate needs was missing on ${100 - dp}% of signal bars, so it passed those through untested. This is a data problem, not a result.">data on only ${dp}%</span>`;
+      } else if (vp < 10) {
+        cov = ` <span class="hint" title="The reading existed on ${dp}% of signal bars but was decisive on only ${vp}%. The gate is working and simply very strict - it rarely has an opinion, so it rarely changes anything.">decisive on ${vp}% of ${dp}%</span>`;
+      } else if (vp < 95) {
+        cov = ` <span class="hint" title="Decisive on ${vp}% of signal bars (data present on ${dp}%).">decisive ${vp}%</span>`;
+      }
+    } else if (r.reading_coverage !== null && r.reading_coverage !== undefined && r.reading_coverage < 0.95) {
+      cov = ` <span class="hint">${Math.round(r.reading_coverage * 100)}% read</span>`;
+    }
+
+    let oiCounts = '';
+    if (r.oi_passed !== null && r.oi_passed !== undefined) {
+      oiCounts = ` <span class="hint" title="OI verdicts among candidate bars">pass ${r.oi_passed} / fail ${r.oi_failed ?? 0} / missing ${r.oi_missing ?? 0}</span>`;
+    }
+    tr.innerHTML = `
+      <td>${r.kind === 'pair' ? '<strong>PAIR</strong> ' : ''}${r.label}${cov}${oiCounts}</td>
+      <td>${pct(r.avg_return_pct)}</td>
+      <td>${signed(r.avg_return_delta, '%')}</td>
+      <td>${r.profit_factor ?? '\u2014'}</td>
+      <td style="${colour}">${pct(r.holdout_avg_return_pct)}</td>
+      <td>${r.holdout_profit_factor ?? '\u2014'}</td>
+      <td>${pct(r.win_rate_pct)}</td>
+      <td>${r.trade_count ?? 0}</td>
+      <td>${r.trades_removed_pct === null || r.trades_removed_pct === undefined ? '\u2014' : r.trades_removed_pct + '%'}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function pollAblation() {
+  fetch('/api/ablation/status').then(r => r.json()).then(state => {
+    updateAblationUI(state);
+    if (state.status === 'running') setTimeout(pollAblation, 2500);
+  }).catch(() => setTimeout(pollAblation, 5000));
+}
+
+function updateAblationUI(state) {
+  const progress = document.getElementById('ab-progress');
+  const errorBox = document.getElementById('ab-error');
+  const runBtn = document.getElementById('ab-run-btn');
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const p = state.progress || {};
+    const phaseTotal = p.phase_total || 10;
+    const phaseIndex = p.phase_index || 0;
+    const withinPct = p.total ? (p.done / p.total) * (100 / phaseTotal) : 0;
+    const pctDone = Math.min(100, Math.round((phaseIndex / phaseTotal) * 100 + withinPct));
+    document.getElementById('ab-progress-fill').style.width = pctDone + '%';
+    document.getElementById('ab-progress-label').textContent =
+      `${p.phase_label || 'Starting'} (${phaseIndex + 1}/${phaseTotal}) - ${p.symbol ? p.symbol + ' ' : ''}${p.done ?? 0}/${p.total ?? 0}\u2026`;
+  } else {
+    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+    progress.style.display = 'none';
+  }
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Gate sweep failed: ' + (state.error || 'unknown error');
+  }
+  if (state.status === 'done' && state.result) renderAblation(state.result);
+}
+
+document.getElementById('ab-run-btn').addEventListener('click', function () {
+  const scope = readScope();
+  startJob('/api/ablation/start', scope, { ref_horizon: String(scope.refHorizon) }, 'ab-form-hint', pollAblation);
+});
+
+const initialAblationState = {{ ablation_state | tojson }};
+updateAblationUI(initialAblationState);
+if (initialAblationState.status === 'running') pollAblation();
+else if (initialAblationState.status === 'done' && initialAblationState.result) renderAblation(initialAblationState.result);
+
+
+// --- Overnight (BTST/STBT) premise test ----------------------------------
+// Enter at the SIGNAL BAR's close, exit next open and next close. The normal
+// backtest also reports short 1-3 bar horizons, but enters at the next open;
+// that still cannot measure the overnight gap captured from today's close.
+document.getElementById('on-run').addEventListener('click', function () {
+  const scope = readScope();
+  const hint = document.getElementById('on-hint');
+  hint.textContent = 'Starting\u2026';
+  const body = new URLSearchParams({
+    universe: scope.universe || 'watchlist',
+    days: String(scope.days || 365),
+    require_up_day: document.getElementById('on-upday').checked ? 'on' : 'off',
+  });
+  fetch('/api/overnight/start', { method: 'POST', body })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.started) { hint.textContent = 'Could not start: ' + (d.reason || 'unknown'); return; }
+      hint.textContent = 'Running\u2026';
+      pollOvernight();
+    })
+    .catch(e => { hint.textContent = 'Failed: ' + e; });
+});
+
+function pollOvernight() {
+  fetch('/api/overnight/status').then(r => r.json()).then(st => {
+    const hint = document.getElementById('on-hint');
+    if (st.status === 'running') {
+      const p = st.progress;
+      hint.textContent = p ? ('Running\u2026 ' + p.done + '/' + p.total + ' (' + p.symbol + ')') : 'Running\u2026';
+      setTimeout(pollOvernight, 2000);
+      return;
+    }
+    if (st.status === 'error') { hint.textContent = 'Error: ' + st.error; return; }
+    if (st.status !== 'done' || !st.result) { hint.textContent = ''; return; }
+    hint.textContent = 'Done.';
+    renderOvernight(st.result);
+  }).catch(function () { setTimeout(pollOvernight, 3000); });
+}
+
+function renderOvernight(res) {
+  const el = document.getElementById('on-results');
+  const s = res.summary || {};
+  function row(strategy, label, st) {
+    if (!st || !st.trade_count) return '<tr><td>' + strategy + '</td><td>' + label + '</td><td colspan="3">no trades</td></tr>';
+    const thin = st.trade_count < 30 ? ' <span class="hint">thin</span>' : '';
+    return '<tr><td><strong>' + strategy + '</strong></td><td><strong>' + label + '</strong></td>' +
+      '<td style="text-align:right;">' + st.trade_count + thin + '</td>' +
+      '<td style="text-align:right;">' + st.win_rate_pct + '%</td>' +
+      '<td style="text-align:right;">' + st.avg_return_pct + '%</td></tr>';
+  }
+  const cont = s.continuation || {};
+  const rev = s.reversal || {};
+  const c = cont.next_open || {}, r = rev.next_open || {};
+  let verdict = '';
+  if ((c.trade_count || 0) >= 100 && c.avg_return_pct != null && r.avg_return_pct != null) {
+    if (c.avg_return_pct <= 0 && r.avg_return_pct > 0) {
+      verdict = '<p class="hint"><strong>Reversal is stronger on this window.</strong> Do not force the old continuation BTST rule. Validate the reversal leg on a different/holdout period before using it live.</p>';
+    } else if (c.avg_return_pct > 0 && c.win_rate_pct >= 50) {
+      verdict = '<p class="hint"><strong>Continuation has positive expectancy on this window.</strong> Confirm it on a holdout period before enabling live BTST alerts.</p>';
+    } else {
+      verdict = '<p class="hint"><strong>No robust overnight edge is visible.</strong> Keep BTST alerts disabled and use the Intraday Best Entry / Swing 1–2D engines instead.</p>';
+    }
+  }
+  el.innerHTML = '<table class="tbl"><thead><tr><th>Strategy</th><th>Exit</th><th style="text-align:right;">Trades</th>'
+    + '<th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return (net)</th></tr></thead><tbody>'
+    + row('Continuation', 'Next open', cont.next_open) + row('Continuation', 'Next close', cont.next_close)
+    + row('Reversal', 'Next open', rev.next_open) + row('Reversal', 'Next close', rev.next_close)
+    + '</tbody></table>' + verdict;
+}
+
+</script>
+</body>
+</html>

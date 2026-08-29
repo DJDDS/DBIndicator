@@ -776,3 +776,44 @@ def test_numeric_zero_context_blocks_historical_swing_candidate():
     out = classify_live_candidate(row)
     assert out['oi_status'] == 'Confirmed'
     assert out['swing_eligible'] is False
+
+
+def test_nan_oi_values_are_unavailable_not_false_coverage():
+    from app.stock_in_play import classify_live_candidate
+    row = _live_row(
+        oi_chg_30m_pct=np.nan,
+        oi_chg_60m_pct=np.nan,
+        oi_acceleration=np.nan,
+        oi_recent_agrees=np.nan,
+    )
+    out = classify_live_candidate(row)
+    assert out['oi_status'] == 'Unavailable'
+
+
+def test_confirmation_diagnostics_distinguish_missing_false_and_true_flags():
+    from app.early_research import confirmation_diagnostics
+    events = [
+        {'oi_chg_60m_pct': 1.2, 'oi_acceleration': 0.1, 'oi_status': 'Confirmed', 'htf_agrees': 1.0,
+         'vwap_side_agrees': 1.0, 'entry_is_extended': 0.0},
+        {'oi_chg_60m_pct': -0.4, 'oi_acceleration': -0.3, 'oi_status': 'Not Confirming', 'htf_agrees': 0.0,
+         'vwap_side_agrees': 0.0, 'entry_is_extended': 1.0},
+        {'oi_chg_60m_pct': np.nan, 'oi_acceleration': np.nan, 'oi_status': 'Unavailable', 'htf_agrees': np.nan,
+         'vwap_side_agrees': np.nan, 'entry_is_extended': np.nan},
+    ]
+    d = confirmation_diagnostics(events)
+    assert d['oi_60m_finite'] == 2
+    assert d['oi_60m_positive'] == 1
+    assert d['oi_confirmed'] == 1
+    assert d['htf_available'] == 2
+    assert d['htf_true'] == 1
+    assert d['vwap_available'] == 2
+    assert d['vwap_true'] == 1
+    assert d['entry_extended_available'] == 2
+    assert d['entry_extended_true'] == 1
+
+
+def test_backtest_template_surfaces_raw_confirmation_diagnostics():
+    html = open('app/templates/backtest.html', encoding='utf-8').read()
+    assert 'confirmation_diagnostics' in html
+    assert 'OI 60m finite' in html
+    assert '4H available' in html

@@ -234,6 +234,16 @@ def _flag(value):
     return None
 
 
+def _is_finite_number(value):
+    """True only for real finite numeric observations; NaN is missing data."""
+    if value is None:
+        return False
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
 def _directional(value, direction):
     if value is None or (isinstance(value, float) and not np.isfinite(value)):
         return None
@@ -263,7 +273,10 @@ def classify_live_candidate(row: dict) -> dict:
     oi60 = row.get("oi_chg_60m_pct")
     oi30 = row.get("oi_chg_30m_pct")
     accel = row.get("oi_acceleration")
-    oi_available = any(v is not None for v in (oi60, oi30, accel, row.get("oi_recent_agrees")))
+    oi_available = (
+        any(_is_finite_number(v) for v in (oi60, oi30, accel))
+        or _flag(row.get("oi_recent_agrees")) is not None
+    )
     oi_confirmed = bool(
         _flag(row.get("oi_recent_agrees")) is True
         and oi60 is not None and oi60 > 0
