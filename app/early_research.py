@@ -4,6 +4,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+RESEARCH_BUILD_ID = "2026-08-29-DIAG-V4"
+
+
 
 def summarize_energy_events(events, horizons=(4, 8), move_atr=1.0):
     """How often a directionless Energy Building event produces expansion.
@@ -712,6 +715,43 @@ def _excursion_summary(events):
         "median_bars_to_1atr": round(float(np.median(t10)), 1) if t10 else None,
     }
 
+def confirmation_diagnostics(events):
+    """Expose raw research-data availability before strategy filtering."""
+    from . import stock_in_play
+    events = list(events or [])
+
+    def finite(v):
+        if v is None:
+            return False
+        try:
+            return bool(np.isfinite(float(v)))
+        except (TypeError, ValueError):
+            return False
+
+    def flag_counts(key):
+        vals = [stock_in_play._flag(e.get(key)) for e in events]
+        return (sum(v is not None for v in vals),
+                sum(v is True for v in vals),
+                sum(v is False for v in vals))
+
+    htf_avail, htf_true, htf_false = flag_counts("htf_agrees")
+    vwap_avail, vwap_true, vwap_false = flag_counts("vwap_side_agrees")
+    ext_avail, ext_true, ext_false = flag_counts("entry_is_extended")
+    oi60_vals = [e.get("oi_chg_60m_pct") for e in events]
+    accel_vals = [e.get("oi_acceleration") for e in events]
+    return {
+        "events": len(events),
+        "oi_60m_finite": sum(finite(v) for v in oi60_vals),
+        "oi_60m_positive": sum(finite(v) and float(v) > 0 for v in oi60_vals),
+        "oi_accel_finite": sum(finite(v) for v in accel_vals),
+        "oi_confirmed": sum(e.get("oi_status") == "Confirmed" for e in events),
+        "oi_unavailable": sum(e.get("oi_status") == "Unavailable" for e in events),
+        "htf_available": htf_avail, "htf_true": htf_true, "htf_false": htf_false,
+        "vwap_available": vwap_avail, "vwap_true": vwap_true, "vwap_false": vwap_false,
+        "entry_extended_available": ext_avail, "entry_extended_true": ext_true, "entry_extended_false": ext_false,
+    }
+
+
 def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2, 3, 5, 10)):
     """Aggregate many symbol replays into one improvement-oriented report."""
     energy, ignition, best = [], [], []
@@ -725,6 +765,7 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
 
     energy_train, energy_hold = chronological_split(energy, holdout_pct=holdout_pct)
     result = {
+        "research_build_id": RESEARCH_BUILD_ID,
         "ref_horizon": int(ref_horizon),
         "holdout_pct": float(holdout_pct),
         "energy": {
@@ -777,6 +818,7 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
             "unavailable": len(ignition) - available, "confirmed": confirmed,
             "coverage_pct": round(available / len(ignition) * 100.0, 1) if ignition else 0.0,
         }
+        result["confirmation_diagnostics"] = confirmation_diagnostics(ignition)
         _, excursion_hold = chronological_split(ignition, holdout_pct=holdout_pct)
         result["excursions"] = {
             "all": _excursion_summary(ignition),

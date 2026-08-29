@@ -43,3 +43,14 @@ def test_backtest_template_updates_day_bounds_when_timeframe_changes():
     assert 'const BACKTEST_DAY_BOUNDS' in text
     assert "document.getElementById('scope-timeframe').addEventListener('change'" in text
     assert 'applyDayBounds' in text
+
+def test_backtest_template_exposes_research_build_marker():
+    text = Path('app/templates/backtest.html').read_text(encoding='utf-8')
+    assert 'RESEARCH_BUILD_ID' in text
+    assert 'Research build' in text
+
+
+def test_aggregate_research_includes_build_id():
+    from app.early_research import aggregate_research
+    result = aggregate_research([])
+    assert result['research_build_id'].startswith('2026-08-29-')

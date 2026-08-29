@@ -1,0 +1,2 @@
+Research Build: 2026-08-29-DIAG-V4
+Purpose: verify Railway is serving the corrected historical OI/4H research diagnostics build.

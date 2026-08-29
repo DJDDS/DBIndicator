@@ -219,7 +219,29 @@ def _flag(value):
         pass
     if isinstance(value, (bool, np.bool_)):
         return bool(value)
+    # np.where(..., boolean, np.nan) promotes boolean research flags to
+    # floating 1.0/0.0. Treat only those exact numeric sentinels as booleans;
+    # arbitrary numeric values remain unknown.
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        try:
+            fv = float(value)
+        except (TypeError, ValueError):
+            return None
+        if fv == 1.0:
+            return True
+        if fv == 0.0:
+            return False
     return None
+
+
+def _is_finite_number(value):
+    """True only for real finite numeric observations; NaN is missing data."""
+    if value is None:
+        return False
+    try:
+        return bool(np.isfinite(float(value)))
+    except (TypeError, ValueError):
+        return False
 
 
 def _directional(value, direction):
@@ -251,7 +273,10 @@ def classify_live_candidate(row: dict) -> dict:
     oi60 = row.get("oi_chg_60m_pct")
     oi30 = row.get("oi_chg_30m_pct")
     accel = row.get("oi_acceleration")
-    oi_available = any(v is not None for v in (oi60, oi30, accel, row.get("oi_recent_agrees")))
+    oi_available = (
+        any(_is_finite_number(v) for v in (oi60, oi30, accel))
+        or _flag(row.get("oi_recent_agrees")) is not None
+    )
     oi_confirmed = bool(
         _flag(row.get("oi_recent_agrees")) is True
         and oi60 is not None and oi60 > 0
@@ -320,8 +345,8 @@ def classify_live_candidate(row: dict) -> dict:
         and _flag(row.get("vwap_side_agrees")) is True
         and tod is not None and tod >= tod_min
         and not (_flag(row.get("entry_is_extended")) is True or (ext is not None and ext > max_extension))
-        and row.get("htf_agrees") is not False
-        and row.get("sector_agrees") is not False
+        and _flag(row.get("htf_agrees")) is not False
+        and _flag(row.get("sector_agrees")) is not False
         and (oi_confirmed or strong_alt)
     )
     stage = "Swing 1-2D Candidate" if swing else ("Intraday Best Entry" if intraday else "Ignition")

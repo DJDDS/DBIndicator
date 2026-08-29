@@ -67,6 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-DIAG-V4</div>
     <p>
       <strong>F&amp;O Stock-in-Play &amp; Breakout Research is the primary live-parity tool.</strong> It first finds Energy Building / Stock-in-Play conditions, then assigns direction only after price actually escapes a 15-minute opening, recent-range or compression range. Volume/OI sponsorship, VWAP and anti-chase rules then decide whether the breakout deserves an Intraday Best Entry or a Swing 1&ndash;2D classification. The latest 30% of events is kept as chronological holdout.
     </p>
@@ -271,6 +272,7 @@
 </div>
 
 <script>
+const RESEARCH_BUILD_ID = "2026-08-29-DIAG-V4";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -628,7 +630,8 @@ function updateEarlyResearchUI(state) {
   }
   errorBox.style.display = 'none';
   if (state.status === 'done' && state.result) {
-    hint.textContent = 'Research complete.';
+    const buildId = ((state.result || {}).research || {}).research_build_id || RESEARCH_BUILD_ID;
+    hint.textContent = `Research complete · build ${buildId}`;
     renderEarlyResearch(state.result);
   }
 }
@@ -700,7 +703,12 @@ function renderEarlyResearch(result) {
   diag.innerHTML = chunks.length ? chunks.join('<br>') : '<span class="hint">No diagnostic split available yet.</span>';
 
   const notes = document.getElementById('er-notes');
+  const raw = r.confirmation_diagnostics || {};
+  const rawLine = `Raw confirmation diagnostics: OI 60m finite ${raw.oi_60m_finite || 0}/${raw.events || 0}, positive ${raw.oi_60m_positive || 0}, confirmed ${raw.oi_confirmed || 0}; ` +
+    `4H available ${raw.htf_available || 0}, agrees ${raw.htf_true || 0}; ` +
+    `VWAP available ${raw.vwap_available || 0}, agrees ${raw.vwap_true || 0}.`;
   notes.innerHTML = `OI coverage: ${oi.available || 0}/${oi.total || 0} breakout events (${oi.coverage_pct || 0}%), confirmed ${oi.confirmed || 0}.<br>` +
+    rawLine + '<br>' +
     (result.research_notes || []).map(x => '&bull; ' + x).join('<br>');
 }
 function pollEarlyResearch() {
