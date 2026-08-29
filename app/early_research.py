@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6"
+RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6.1-TF"
 
 
 
@@ -162,15 +162,29 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
     if comp is not None:
         out = out.join(comp)
 
-    tod = indicators.time_of_day_rvol(df, lookback_sessions=20) if timeframe == "15minute" else pd.Series(np.nan, index=df.index)
-    opening_rvol = indicators.opening_relative_volume(df, opening_bars=2, lookback_sessions=14) if timeframe == "15minute" else pd.Series(np.nan, index=df.index)
+    if timeframe in ("15minute", "4hour"):
+        interval_minutes = 15 if timeframe == "15minute" else 240
+        tod = indicators.time_of_day_rvol(
+            df, lookback_sessions=20, interval_minutes=interval_minutes
+        )
+        # On 4H this is deliberately the first completed 4H bucket versus the
+        # same bucket on prior sessions, not a pretend 30-minute opening read.
+        opening_bars = 2 if timeframe == "15minute" else 1
+        opening_rvol = indicators.opening_relative_volume(
+            df, opening_bars=opening_bars, lookback_sessions=14
+        )
+    else:
+        tod = pd.Series(np.nan, index=df.index)
+        opening_rvol = pd.Series(np.nan, index=df.index)
     out["tod_rvol"] = tod
     out["opening_rvol"] = opening_rvol
     prev_med = tod.shift(1).rolling(4, min_periods=2).median()
     out["tod_rvol_accel"] = tod / prev_med.replace(0, np.nan)
     out["vol_rising"] = (df["volume"] > df["volume"].shift(1)) & (df["volume"].shift(1) > df["volume"].shift(2))
 
-    price = stock_in_play.build_price_features(df, series["atr"], comp, tod, opening_rvol=opening_rvol)
+    price = stock_in_play.build_price_features(
+        df, series["atr"], comp, tod, opening_rvol=opening_rvol, timeframe=timeframe
+    )
     for col in price.columns:
         # compression_score / energy_building are already present from comp;
         # assigning again is harmless and guarantees live/research parity.
@@ -476,7 +490,66 @@ def _future_abs_move_atr(df, pos, atr, horizons=(4, 8, 16, 25)):
     return out
 
 
-def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage_pct=0.02):
+
+def _setup_bar_available_at(ts, setup_timeframe="15minute"):
+    """Timestamp when a completed setup candle can first be acted on."""
+    stamp = pd.Timestamp(ts)
+    if setup_timeframe == "4hour":
+        theoretical = stamp + pd.Timedelta(hours=4)
+        session_close = stamp.normalize() + pd.Timedelta(hours=15, minutes=30)
+        return min(theoretical, session_close)
+    if setup_timeframe == "15minute":
+        return stamp + pd.Timedelta(minutes=15)
+    if setup_timeframe == "60minute":
+        return stamp + pd.Timedelta(hours=1)
+    return stamp
+
+
+def _align_timestamp_to_index(ts, index):
+    stamp = pd.Timestamp(ts)
+    if not isinstance(index, pd.DatetimeIndex):
+        return stamp
+    try:
+        if index.tz is not None and stamp.tzinfo is None:
+            stamp = stamp.tz_localize(index.tz)
+        elif index.tz is None and stamp.tzinfo is not None:
+            stamp = stamp.tz_localize(None)
+        elif index.tz is not None and stamp.tzinfo is not None:
+            stamp = stamp.tz_convert(index.tz)
+    except Exception:
+        pass
+    return stamp
+
+
+def _first_execution_pos(execution_df, available_at):
+    if execution_df is None or execution_df.empty:
+        return None
+    target = _align_timestamp_to_index(available_at, execution_df.index)
+    pos = int(execution_df.index.searchsorted(target, side="left"))
+    return pos if 0 <= pos < len(execution_df) else None
+
+
+def _future_abs_move_atr_from_available(execution_df, available_at, ref_price, atr,
+                                        horizons=(4, 8, 16, 25)):
+    """Clock-consistent expansion path on the 15m execution stream."""
+    out = {}
+    if atr is None or not np.isfinite(atr) or atr <= 0:
+        return out
+    start = _first_execution_pos(execution_df, available_at)
+    if start is None:
+        return out
+    for h in horizons:
+        end = min(len(execution_df), start + int(h))
+        if end <= start:
+            continue
+        hi = float(execution_df["high"].iloc[start:end].max())
+        lo = float(execution_df["low"].iloc[start:end].min())
+        out[str(h)] = max(abs(hi - float(ref_price)), abs(lo - float(ref_price))) / float(atr)
+    return out
+
+
+def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage_pct=0.02,
+                                   execution_df=None, setup_timeframe="15minute"):
     """Replay actual price breakouts with intraday and 1–2D outcomes.
 
     Intraday entries are measured from the first fresh escape. Swing candidates
@@ -485,6 +558,8 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
     """
     from . import stock_in_play
 
+    execution = execution_df if execution_df is not None else df
+    execution_timeframe = "15minute" if execution_df is not None else setup_timeframe
     energy_events, baseline_events, ignition_events, best_events, swing_events, recent_range_confirmation_events = [], [], [], [], [], []
     energy = features.get("energy_building")
     if energy is None:
@@ -494,17 +569,32 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
 
     def _event_from_row(row, pos, direction, classified):
         atr = _py(features["atr"].iloc[pos]) if "atr" in features.columns else None
-        if atr is None or atr <= 0 or pos + 1 >= len(df):
+        if atr is None or atr <= 0:
             return None
-        outcomes = stock_in_play.compute_trade_outcomes(
-            df, signal_pos=pos, direction=direction, atr=float(atr),
-            cost_pct=cost_pct, slippage_pct=slippage_pct,
-        )
+        signal_available_at = _setup_bar_available_at(df.index[pos], setup_timeframe)
+        if execution_df is None:
+            if pos + 1 >= len(df):
+                return None
+            outcomes = stock_in_play.compute_trade_outcomes(
+                df, signal_pos=pos, direction=direction, atr=float(atr),
+                cost_pct=cost_pct, slippage_pct=slippage_pct,
+            )
+        else:
+            resolved_entry_pos = _first_execution_pos(execution, signal_available_at)
+            if resolved_entry_pos is None:
+                return None
+            outcomes = stock_in_play.compute_trade_outcomes_from_entry(
+                execution, entry_pos=resolved_entry_pos, direction=direction, atr=float(atr),
+                cost_pct=cost_pct, slippage_pct=slippage_pct,
+            )
         entry_pos = outcomes.get("entry_pos")
         event = {
             "symbol": symbol,
             "signal_time": df.index[pos].isoformat(),
-            "entry_time": df.index[entry_pos].isoformat() if entry_pos is not None else None,
+            "signal_available_at": signal_available_at.isoformat(),
+            "entry_time": execution.index[entry_pos].isoformat() if entry_pos is not None else None,
+            "setup_timeframe": setup_timeframe,
+            "execution_timeframe": execution_timeframe,
             "direction": direction,
             "breakout_source": row.get("breakout_source") or row.get("retained_breakout_source"),
             "breakout_level": row.get("breakout_level") if row.get("breakout_level") is not None else row.get("retained_breakout_level"),
@@ -573,7 +663,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             event["v6_sponsorship"] = {}
             event["v6_blockers"] = []
         if event.get("breakout_source") == "Recent Range":
-            attach_v6_path_exits(df, event, max_bars=50)
+            attach_v6_path_exits(execution, event, max_bars=50)
         return event
 
     # A sampled non-coil baseline is enough to estimate lift without storing
@@ -581,7 +671,13 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
     for pos in range(len(df)):
         atr = _py(features["atr"].iloc[pos]) if "atr" in features.columns else None
         if atr is not None and atr > 0:
-            future = _future_abs_move_atr(df, pos, atr)
+            if execution_df is None:
+                future = _future_abs_move_atr(df, pos, atr)
+            else:
+                available_at = _setup_bar_available_at(df.index[pos], setup_timeframe)
+                future = _future_abs_move_atr_from_available(
+                    execution, available_at, float(df["close"].iloc[pos]), atr
+                )
             if energy_rise.iloc[pos]:
                 energy_events.append({
                     "symbol": symbol, "entry_time": df.index[pos].isoformat(),
@@ -827,10 +923,12 @@ def _interaction_report(events, holdout_pct):
     return rows
 
 def replay_feature_frame(df, features, symbol, horizons=(1, 2, 3, 5, 10),
-                         cost_pct=0.05, slippage_pct=0.02):
+                         cost_pct=0.05, slippage_pct=0.02, execution_df=None,
+                         setup_timeframe="15minute"):
     if "fresh_breakout" in features.columns and "breakout_direction" in features.columns:
         return _replay_breakout_feature_frame(
-            df, features, symbol, cost_pct=cost_pct, slippage_pct=slippage_pct
+            df, features, symbol, cost_pct=cost_pct, slippage_pct=slippage_pct,
+            execution_df=execution_df, setup_timeframe=setup_timeframe,
         )
     """Replay Energy Building, Ignition and Best Entry on a prepared frame.
 

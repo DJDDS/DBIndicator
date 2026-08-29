@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-INSTITUTIONAL-V6</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-INSTITUTIONAL-V6.1-TF</div>
     <p>
       <strong>V6 is the primary evidence-led F&amp;O research tool.</strong> Recent-Range remains the directional setup, while Stock-in-Play participation, cross-sectional turnover, sector/stock leadership, price location, volume, OI or futures-basis sponsorship, 5-minute execution and path-aware exits are tested separately. OI is sponsorship, not a universal veto.
     </p>
@@ -78,7 +78,7 @@
 
   <div class="card">
     <h2>Scope</h2>
-    <p style="margin-top:-4px;"><strong>Days back</strong> is reused by Stock-in-Play Research. The primary research is intentionally fixed to the live NSE stock-F&amp;O universe and 15-minute execution. Its real outcomes are <strong>30m / 1h / 2h / 4h / EOD</strong> for intraday and <strong>1D / 2D</strong> for swing. The controls below remain only for the legacy diagnostic tools.</p>
+    <p style="margin-top:-4px;"><strong>Days back</strong> and <strong>Timeframe</strong> are reused by Stock-in-Play Research. Choose <strong>15minute</strong> for the intraday setup engine or <strong>4hour</strong> for a true 4H swing setup. A 4H signal is formed only after the 4H candle closes, then execution/outcomes use the first available <strong>15-minute</strong> bar. Primary outcomes remain <strong>30m / 1h / 2h / 4h / EOD</strong> and <strong>1D / 2D</strong>.</p>
     <label>Universe</label>
     <div class="horizons" id="scope-universe">
       <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
@@ -117,10 +117,10 @@
 
   <div class="card" style="border-color:#9bc5e8;">
     <h2>1 &middot; F&amp;O Stock-in-Play &amp; Breakout Research</h2>
-    <p style="margin-top:-4px;"><strong>This is the primary research tool for Intraday Best Entry and Swing 1&ndash;2D.</strong> Compression is treated as a directionless movement setup. Direction comes only from an actual 15-minute close outside the opening range, recent decision range or compression range; TOD RVOL, OI sponsorship, VWAP, 4H context and anti-chase then qualify the trade.</p>
+    <p style="margin-top:-4px;"><strong>This is the primary research tool for Intraday Best Entry and Swing 1&ndash;2D.</strong> Compression is treated as a directionless movement setup. Direction comes only from an actual close outside the selected setup timeframe's prior decision range. On 15m, Opening Range remains available; on 4H, Recent Range spans prior completed 4H candles across sessions and no 30-minute opening-range shortcut is used.</p>
     <p class="hint"><strong>Three questions are kept separate:</strong> Does compression predict expansion versus the unconditional F&amp;O baseline? Does an actual breakout make money intraday? Does the same breakout retain enough sponsorship for a 1&ndash;2 day swing? Results include a 30% chronological holdout and only motivated interaction tests &mdash; no brute-force parameter grid.</p>
     <button type="button" class="btn" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Stock-in-Play Research</button>
-    <span class="hint" id="er-form-hint" style="margin-left:10px;">15-minute execution &middot; Intraday 30m / 1h / 2h / 4h / EOD &middot; Swing 1D / 2D</span>
+    <span class="hint" id="er-form-hint" style="margin-left:10px;">Selected setup timeframe &middot; 4H uses 15-minute execution &middot; Intraday 30m / 1h / 2h / 4h / EOD &middot; Swing 1D / 2D</span>
     <div class="progress-wrap" id="er-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="er-progress-fill"></div></div>
       <div class="progress-label" id="er-progress-label">Starting…</div>
@@ -282,7 +282,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6";
+const RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6.1-TF";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -641,7 +641,9 @@ function updateEarlyResearchUI(state) {
   errorBox.style.display = 'none';
   if (state.status === 'done' && state.result) {
     const buildId = ((state.result || {}).research || {}).research_build_id || RESEARCH_BUILD_ID;
-    hint.textContent = `Research complete · build ${buildId}`;
+    const setupTf = state.result.setup_timeframe || state.result.timeframe || '15minute';
+    const execTf = state.result.execution_timeframe || setupTf;
+    hint.textContent = `Research complete · build ${buildId} · setup ${setupTf} · execution ${execTf}`;
     renderEarlyResearch(state.result);
   }
 }
@@ -768,7 +770,7 @@ function pollEarlyResearch() {
 }
 document.getElementById('er-run-btn').addEventListener('click', function () {
   const scope = readScope();
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:scope.days, horizons:[]}, {}, 'er-form-hint', pollEarlyResearch);
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:scope.timeframe, days:scope.days, horizons:[]}, {}, 'er-form-hint', pollEarlyResearch);
 });
 const initialEarlyResearchState = {{ early_research_state | tojson }};
 updateEarlyResearchUI(initialEarlyResearchState);

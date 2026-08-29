@@ -5,7 +5,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_backtest_ui_exposes_v6_edge_lab_and_locked_final_test_language():
     html = (ROOT / 'app/templates/backtest.html').read_text()
-    assert '2026-08-29-INSTITUTIONAL-V6' in html
+    build_id = '2026-08-29-INSTITUTIONAL-V6.1-TF'
+    assert build_id in html
+    assert build_id in (ROOT / 'app/early_research.py').read_text()
+    assert build_id in (ROOT / 'RESEARCH_BUILD.txt').read_text()
     assert 'V6 Institutional Edge Lab' in html
     assert 'Final 20% locked' in html
     assert 'Path-aware Exit Lab' in html

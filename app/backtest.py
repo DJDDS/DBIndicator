@@ -1831,17 +1831,19 @@ def _trim_replay_to_window(replay, window_start):
     return out
 
 
-def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
+def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                                 progress_cb=None) -> dict:
-    """Replay Energy Building -> Ignition -> Best Entry on 15-minute F&O data.
+    """Replay the primary V6 research on a real 15m or 4H setup timeframe.
 
-    This is deliberately separate from `run_backtest`, which remains the
-    legacy/custom indicator-combination laboratory.  The early-movement
-    report measures the exact evidence axes used by the new live shortlist
-    and exposes one-factor sensitivity tables for later calibration.
+    15-minute setups execute on the next 15-minute bar as before. 4-hour
+    setups are built from completed 4H candles but are executed and evaluated
+    on a separate 15-minute stream, so a 4H signal cannot accidentally enter
+    at the next 4H candle or peek inside an unfinished setup candle.
     """
-    timeframe = "15minute"
+    if timeframe not in ("15minute", "4hour"):
+        raise ValueError("Primary Stock-in-Play research supports only 15minute or 4hour setup timeframes")
+    execution_timeframe = "15minute"
     lo, hi, default = backtest_day_bounds(timeframe)
     days = max(lo, min(int(days or default), hi))
     symbols = list(symbols or settings.WATCHLIST)
@@ -1895,6 +1897,14 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
             if df is None or df.empty:
                 notes[symbol] = "no price history"
                 continue
+            execution_df = df
+            if timeframe == "4hour":
+                execution_df = _fetch_history(
+                    token, execution_timeframe, days + WARMUP_DAYS, kite
+                )
+                if execution_df is None or execution_df.empty:
+                    notes[symbol] = "no 15-minute execution history for 4-hour setup"
+                    continue
             oi = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
             sector_symbol = scanner_mod.SYMBOL_SECTOR_MAP.get(symbol)
             sector_df = sector_history.get(sector_symbol) if sector_symbol else None
@@ -1919,6 +1929,8 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
             replay = early_research.replay_feature_frame(
                 df, feat, symbol, horizons=horizons,
                 cost_pct=cost_pct, slippage_pct=slippage_pct,
+                execution_df=(execution_df if timeframe == "4hour" else None),
+                setup_timeframe=timeframe,
             )
             replay = _trim_replay_to_window(replay, window_start)
             replays.append(replay)
@@ -1967,6 +1979,8 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
         replays, holdout_pct=holdout_pct, ref_horizon=3, horizons=horizons)
     return {
         "timeframe": timeframe,
+        "setup_timeframe": timeframe,
+        "execution_timeframe": execution_timeframe,
         "days": days,
         "symbols_scanned": len(symbols),
         "symbols_completed": len(replays),
@@ -1976,7 +1990,9 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
         "research": research,
         "research_notes": [
             "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",
-            "4-hour context is replayed using only the previous fully closed higher-timeframe bucket to avoid look-ahead.",
+            ("4-hour setups are formed only from completed 4H candles and execute on the first "
+             "available 15-minute bar; 15-minute setups retain next-bar execution."),
+            "Higher-timeframe context is replayed using only fully closed buckets to avoid look-ahead.",
             "Sector context is replayed when the stock has a mapped NSE sector index and that index history is available.",
         ],
         "generated_at": now_ist().isoformat(timespec="seconds"),
@@ -1993,7 +2009,7 @@ def get_early_research_state():
     with _early_research_lock:
         return dict(_early_research_state, progress=dict(_early_research_state["progress"]))
 
-def start_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
+def start_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                   cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT):
     with _early_research_lock:
         if _early_research_state["status"] == "running":
@@ -2002,7 +2018,7 @@ def start_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
         _early_research_state.update({
             "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None},
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
-            "finished_at": None,
+            "finished_at": None, "params": {"timeframe": timeframe, "days": days},
         })
 
     def _progress(done, total, symbol):
@@ -2012,7 +2028,7 @@ def start_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
     def _job():
         try:
             result = run_early_movement_research(
-                kite, symbols=symbols, days=days, holdout_pct=holdout_pct,
+                kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
                 cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress)
             with _early_research_lock:
                 _early_research_state["status"] = "done"

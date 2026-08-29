@@ -1,6 +1,6 @@
 """NSE stock-F&O stock-in-play and breakout engine.
 
-Direction is assigned by an actual 15-minute price escape, not by RSI/MACD
+Direction is assigned by an actual price escape on the selected setup timeframe, not by RSI/MACD
 voting.  Compression and abnormal participation are directionless radar inputs;
 OI/volume/context sponsor the move after price reveals the side.
 """
@@ -95,12 +95,16 @@ def _gap_atr(df: pd.DataFrame, atr: pd.Series) -> pd.Series:
     return (session_open - prev_close) / atr.replace(0, np.nan)
 
 
-def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None, opening_rvol=None) -> pd.DataFrame:
-    """Vectorized, no-lookahead 15-minute breakout/radar features.
+def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None, opening_rvol=None, timeframe="15minute") -> pd.DataFrame:
+    """Vectorized, no-lookahead breakout/radar features for 15m or 4H setups.
 
-    The decision range always excludes the current bar. A compression breakout
-    means a coil existed in one of the preceding four bars; otherwise an opening
-    range or generic recent-range escape can still identify a stock-in-play move.
+    The decision range always excludes the current bar. On the 15-minute engine
+    the six-bar Recent Range resets each NSE session so an overnight gap cannot
+    masquerade as an intraday breakout. On the 4-hour swing engine the same
+    six completed setup bars intentionally span sessions; otherwise a two-bar
+    trading day could never accumulate enough history to form a Recent Range.
+    Opening Range remains a 15-minute-only source because a 4H candle is too
+    coarse to represent the first 30 minutes faithfully.
     """
     if df is None or df.empty:
         return pd.DataFrame(index=getattr(df, "index", None))
@@ -116,13 +120,23 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
         comp_score = pd.to_numeric(_series(compression, idx), errors="coerce")
 
     sessions = _session_keys(idx)
-    # The recent decision range is intraday-only. Overnight gaps belong to the
-    # gap/stock-in-play layer and must not masquerade as a six-bar breakout.
-    recent_hi = df["high"].groupby(sessions).transform(
-        lambda x: x.shift(1).rolling(RECENT_RANGE_BARS, min_periods=RECENT_RANGE_BARS).max())
-    recent_lo = df["low"].groupby(sessions).transform(
-        lambda x: x.shift(1).rolling(RECENT_RANGE_BARS, min_periods=RECENT_RANGE_BARS).min())
-    orb_hi, orb_lo = _opening_range(df)
+    if timeframe == "4hour":
+        # A 4H setup needs a cross-session decision range: NSE produces roughly
+        # two 4H buckets per day, so a same-session six-bar window is impossible.
+        recent_hi = df["high"].shift(1).rolling(
+            RECENT_RANGE_BARS, min_periods=RECENT_RANGE_BARS).max()
+        recent_lo = df["low"].shift(1).rolling(
+            RECENT_RANGE_BARS, min_periods=RECENT_RANGE_BARS).min()
+        orb_hi = pd.Series(np.nan, index=idx, dtype=float)
+        orb_lo = pd.Series(np.nan, index=idx, dtype=float)
+    else:
+        # Intraday Recent Range resets at each session boundary so overnight
+        # gaps stay in the gap/stock-in-play layer instead of becoming breakouts.
+        recent_hi = df["high"].groupby(sessions).transform(
+            lambda x: x.shift(1).rolling(RECENT_RANGE_BARS, min_periods=RECENT_RANGE_BARS).max())
+        recent_lo = df["low"].groupby(sessions).transform(
+            lambda x: x.shift(1).rolling(RECENT_RANGE_BARS, min_periods=RECENT_RANGE_BARS).min())
+        orb_hi, orb_lo = _opening_range(df)
 
     bull_recent = df["close"] > recent_hi
     bear_recent = df["close"] < recent_lo
@@ -156,7 +170,14 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
 
     # A breakout event fires only on the first escape in a run. Consecutive
     # new highs/lows are continuation of the same event, not fresh entries.
-    same_session_prev = sessions.eq(sessions.shift(1))
+    if timeframe == "4hour":
+        # Continuation/retention may legitimately cross an overnight boundary
+        # because the 4H setup itself is multi-session.
+        same_session_prev = pd.Series(True, index=idx)
+        if len(same_session_prev):
+            same_session_prev.iloc[0] = False
+    else:
+        same_session_prev = sessions.eq(sessions.shift(1))
     prev_dir = direction.shift(1).where(same_session_prev)
     fresh = direction.notna() & direction.fillna("").ne(prev_dir.fillna(""))
 
@@ -430,9 +451,23 @@ def _net_return(entry, exit_px, direction, cost_pct, slippage_pct):
 
 def compute_trade_outcomes(df: pd.DataFrame, signal_pos: int, direction: str, atr: float,
                            cost_pct=0.05, slippage_pct=0.02) -> dict:
-    """Return intraday and 1–2 session outcomes from next executable bar."""
-    entry_pos = int(signal_pos) + 1
-    if entry_pos >= len(df):
+    """Return intraday and 1–2 session outcomes from the next bar on ``df``."""
+    return compute_trade_outcomes_from_entry(
+        df, entry_pos=int(signal_pos) + 1, direction=direction, atr=atr,
+        cost_pct=cost_pct, slippage_pct=slippage_pct,
+    )
+
+
+def compute_trade_outcomes_from_entry(df: pd.DataFrame, entry_pos: int, direction: str, atr: float,
+                                      cost_pct=0.05, slippage_pct=0.02) -> dict:
+    """Return outcomes from an already resolved executable entry bar.
+
+    This is used by the true-4H research path: the setup is known only when the
+    completed 4H candle closes, then the entry is mapped to the first available
+    15-minute bar at or after that close.
+    """
+    entry_pos = int(entry_pos)
+    if entry_pos < 0 or entry_pos >= len(df):
         return {"entry_pos": None, "intraday": {}, "swing": {}}
     entry = float(df["open"].iloc[entry_pos])
     sessions = pd.Series(df.index.normalize(), index=df.index)

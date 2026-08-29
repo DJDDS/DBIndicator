@@ -479,11 +479,14 @@ def api_early_research_start():
     kite = kite_auth.get_kite_client()
     if kite is None:
         return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+    timeframe = request.form.get("timeframe", config.WATCHLIST_TIMEFRAME)
+    if timeframe not in ("15minute", "4hour"):
+        return jsonify({"started": False, "reason": "primary research supports only 15minute or 4hour"}), 400
     try:
         days = int(request.form.get("days", 30))
     except ValueError:
         return jsonify({"started": False, "reason": "days must be a number"}), 400
-    lo, hi, default = backtest.backtest_day_bounds("15minute")
+    lo, hi, default = backtest.backtest_day_bounds(timeframe)
     days = max(lo, min(days or default, hi))
     try:
         symbols = scanner.get_fno_stock_list(kite)
@@ -491,7 +494,9 @@ def api_early_research_start():
         return jsonify({"started": False, "reason": f"Could not load live F&O universe: {exc}"}), 400
     if not symbols:
         return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
-    return jsonify(backtest.start_early_movement_research(kite, symbols=symbols, days=days))
+    return jsonify(backtest.start_early_movement_research(
+        kite, symbols=symbols, timeframe=timeframe, days=days
+    ))
 
 
 @app.route("/api/early-research/status")
