@@ -495,7 +495,7 @@ def api_early_research_start():
     if not symbols:
         return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
     return jsonify(backtest.start_early_movement_research(
-        kite, symbols=symbols, timeframe=timeframe, days=days
+        kite, symbols=symbols, timeframe=timeframe, days=days, universe_is_full_fno=True
     ))
 
 

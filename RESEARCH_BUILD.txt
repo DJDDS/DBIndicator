@@ -1,2 +1,1 @@
-Research Build: 2026-08-29-INSTITUTIONAL-V6.1-TF
-Purpose: NSE stock-F&O V6.1 evidence engine with true 15-minute or 4-hour setup research; 4H setups use completed 4H candles and a separate 15-minute execution/outcome stream. Final 20% remains locked until the model is frozen.
+2026-08-29-INSTITUTIONAL-V7-FROZEN

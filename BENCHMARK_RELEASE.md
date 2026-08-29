@@ -1,36 +1,35 @@
-# DBIndicator Institutional V6 Release
+# DBIndicator Institutional V7 Frozen Release
 
-V6 is built for **NSE stock F&O only**, with two objectives: early intraday entries and 1–2 trading-day swing continuation. It replaces OI-heavy eligibility with an evidence stack and deliberately keeps the final 20% research sample locked while tuning.
+V7 is a **decision release**, not another parameter-search release. V6 found one subgroup that remained positive as the 15-minute history expanded: Bullish Recent-Range escapes with Catalyst Score >= 60. V7 freezes that exact rule and exposes only its previously locked final 20%.
 
-## Live hierarchy
+## Frozen candidate
 
-1. **Stock in Play / Energy Building** — abnormal participation or range energy; no forced direction.
-2. **Recent-Range Setup** — price reveals direction by escaping a recent decision range.
-3. **Sponsored Recent-Range** — TOD volume plus either OI confirmation or expanding futures basis; a strong catalyst proxy can substitute when sponsorship data is incomplete.
-4. **V6 Intraday Entry** — Recent-Range + Stock-in-Play/turnover + leadership/location + sponsorship + anti-chase, with a bounded 5-minute execution check for top finalists.
-5. **V6 Swing 1–2D** — long-only until the short model independently clears benchmark; requires retention/retest, 4H context and non-opposing sector context.
+Rule ID: `RR_LONG_CATALYST60_15M_NEXTBAR_1D`
 
-## V6 evidence axes
+- NSE stock-F&O universe only
+- 15-minute setup and execution
+- Bullish Recent-Range escape
+- Catalyst Score >= 60
+- next executable 15-minute-bar entry
+- 1D evaluation horizon
+- 180 calendar days
+- fixed 0.08% cost + 0.05% slippage per side
 
-- cross-sectional turnover percentile across the current F&O universe
-- catalyst proxy: gap/ATR, opening RVOL, TOD RVOL, range shock and turnover rank
-- sector rank and stock-vs-sector leadership
-- 20/50-session price location
-- futures basis and ~30-minute basis acceleration
-- OI as a soft sponsorship input, not a universal hard gate
-- 5-minute execution quality only for a bounded finalist set
-- order-book depth remains shadow/forward-test only
+The Catalyst Score formula is unchanged from V6 and uses observable participation/shock variables only: gap/ATR, opening RVOL, TOD RVOL, bar-range/ATR shock, and cross-sectional turnover percentile.
 
-## Research discipline
+## Final acceptance gate
 
-- chronological **60% development / 20% validation / 20% locked final test**
-- final test is hidden unless `V6_UNLOCK_FINAL_TEST=true`
-- no look-ahead; next-executable-bar entries
-- historical cross-sectional turnover ranks and sector ranks
-- partial futures-basis coverage is reported honestly around rolls
-- long and short models are evaluated separately
-- promotion requires positive validation expectancy after costs, PF >= 1.25, adequate sample, MFE/MAE quality and chronological stability
+PASS requires all four:
 
-## Exit research
+1. N >= 80
+2. average net return >= +0.15%
+3. profit factor >= 1.20
+4. at least 3 of 4 chronological final blocks positive
 
-V6 includes a conservative first-touch target/stop grid plus breakeven variants. If target and stop are both inside the same OHLC bar, the **stop wins**. This directly tests whether the prior fixed-horizon exits were giving favorable movement back.
+Otherwise the verdict is REJECT.
+
+## What is deliberately not optimized
+
+No final-test threshold controls are exposed. OI, futures basis, VWAP, 4H context, sector leadership, price location, retention/retest and high turnover are diagnostic/context fields, not extra hard gates for the frozen candidate. Legacy V6 final-test variants remain permanently locked in this build so the user cannot inspect many final answers and choose the prettiest one afterward.
+
+See `FROZEN_RULE.md` for the exact protocol and anti-fishing safeguards.

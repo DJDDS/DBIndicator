@@ -1833,7 +1833,7 @@ def _trim_replay_to_window(replay, window_start):
 
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
-                                progress_cb=None) -> dict:
+                                progress_cb=None, universe_is_full_fno=False) -> dict:
     """Replay the primary V6 research on a real 15m or 4H setup timeframe.
 
     15-minute setups execute on the next 15-minute bar as before. 4-hour
@@ -1976,7 +1976,15 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     if progress_cb:
         progress_cb(len(symbols), len(symbols), None)
     research = early_research.aggregate_research(
-        replays, holdout_pct=holdout_pct, ref_horizon=3, horizons=horizons)
+        replays, holdout_pct=holdout_pct, ref_horizon=3, horizons=horizons,
+        run_context={
+            "setup_timeframe": timeframe,
+            "execution_timeframe": execution_timeframe,
+            "days": days,
+            "cost_pct": float(cost_pct),
+            "slippage_pct": float(slippage_pct),
+            "universe_is_full_fno": bool(universe_is_full_fno),
+        })
     return {
         "timeframe": timeframe,
         "setup_timeframe": timeframe,
@@ -2010,7 +2018,8 @@ def get_early_research_state():
         return dict(_early_research_state, progress=dict(_early_research_state["progress"]))
 
 def start_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
-                                  cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT):
+                                  cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
+                                  universe_is_full_fno=False):
     with _early_research_lock:
         if _early_research_state["status"] == "running":
             return {"started": False, "reason": "Early Movement Research is already running."}
@@ -2029,7 +2038,8 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
         try:
             result = run_early_movement_research(
                 kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
-                cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress)
+                cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress,
+                universe_is_full_fno=universe_is_full_fno)
             with _early_research_lock:
                 _early_research_state["status"] = "done"
                 _early_research_state["result"] = result

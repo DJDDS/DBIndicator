@@ -8,7 +8,6 @@ then decide whether the move is worth trading.
 """
 from __future__ import annotations
 
-import os
 from typing import Iterable
 
 import numpy as np
@@ -413,10 +412,10 @@ def three_way_split(events: Iterable[dict], dev_pct: float = 60.0, validation_pc
 
 
 def final_test_payload(stats: dict) -> dict:
-    unlocked = os.getenv("V6_UNLOCK_FINAL_TEST", "false").strip().lower() in ("1", "true", "yes", "on")
-    if unlocked:
-        return {"locked": False, **dict(stats or {})}
-    return {"locked": True, "message": "Final 20% is locked until the V6 model is frozen."}
+    # V7 permanently locks every legacy V6 final-test surface.  The only final
+    # sample allowed to reveal is the separately fingerprinted frozen rule in
+    # app.v7_frozen; this prevents post-hoc fishing across old variants.
+    return {"locked": True, "message": "Legacy V6 final tests remain locked in V7; only the frozen V7 rule may reveal the final 20%."}
 
 
 def first_touch_grid(df: pd.DataFrame, *, entry_pos: int, direction: str, entry_price: float,

@@ -1,16 +1,16 @@
 # DBIndicator — NSE F&O Early-Movement Screener
-## Institutional V6 — current live/research architecture
+## Institutional V7 Frozen — one production-candidate decision
 
-V6 focuses on NSE stock-F&O intraday and 1–2D swing continuation. Direction comes from a real Recent-Range escape; Stock-in-Play participation, cross-sectional turnover, sector/stock leadership, price location, volume, OI **or** futures-basis sponsorship, 4H context and a bounded 5-minute finalist check determine whether the move deserves promotion. OI is a supporting sponsorship feature rather than a universal hard gate.
+V7 freezes the only 15-minute subgroup that remained strong enough to justify spending the untouched final sample: **Bullish Recent-Range escape + Catalyst Score >= 60**. It uses the next executable 15-minute bar and evaluates the 1D net outcome. There is no V7 parameter grid.
 
-Research uses a 60/20/20 chronological split, with the final 20% locked by default, and includes a path-aware first-touch target/stop lab. See `BENCHMARK_RELEASE.md` for the full release logic and promotion rules.
+The Backtest page has a dedicated **Run Frozen V7 Final Test** button. It forces the full NSE stock-F&O universe, 15-minute setup/execution, 180-day research window and the existing fixed trading-cost assumptions. The final 20% is revealed only for this fingerprinted rule; all legacy V6 final variants remain locked. See `FROZEN_RULE.md`.
 
 
 DBIndicator is a Zerodha Kite-connected research and screening dashboard for **NSE stock F&O only**. Its live objective is narrow: surface developing moves early enough to investigate without filling the screen with late, already-extended names.
 
 It does **not** place orders. Best Entries, alerts, stops/targets and research statistics are decision-support only.
 
-## Current live architecture
+## Current live architecture (V6 remains live until V7 final verdict)
 
 The live path uses **15-minute setup detection** with an optional **5-minute execution check** only for the best bounded finalist set:
 

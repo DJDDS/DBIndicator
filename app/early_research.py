@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6.1-TF"
+RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V7-FROZEN"
 
 
 
@@ -1131,7 +1131,7 @@ def confirmation_diagnostics(events):
     }
 
 
-def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2, 3, 5, 10)):
+def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2, 3, 5, 10), run_context=None):
     """Aggregate many symbol replays into one improvement-oriented report."""
     energy, ignition, best = [], [], []
     for replay in replays or []:
@@ -1197,6 +1197,8 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
             ignition, recent_range_confirmation_events, holdout_pct
         )
         result["v6_edge_lab"] = v6_edge_report(ignition)
+        from . import v7_frozen
+        result["v7_frozen"] = v7_frozen.frozen_candidate_report(ignition, run_context=run_context)
         available = sum(1 for e in ignition if e.get("oi_status") != "Unavailable")
         confirmed = sum(1 for e in ignition if e.get("oi_status") == "Confirmed")
         result["oi_coverage"] = {
