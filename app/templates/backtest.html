@@ -538,7 +538,6 @@ function updateUI(state) {
 
   if (state.status === 'running') {
     runBtn.disabled = true;
-    if (v7RunBtn) v7RunBtn.disabled = true;
     progress.style.display = 'block';
     errorBox.style.display = 'none';
     const p = state.progress || {};
@@ -548,7 +547,6 @@ function updateUI(state) {
       p.symbol ? `Scanning ${p.symbol} (${p.done}/${p.total})…` : `${p.done}/${p.total} symbols done…`;
   } else {
     runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
-  if (v7RunBtn) v7RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
     progress.style.display = 'none';
   }
 
@@ -627,6 +625,7 @@ function updateEarlyResearchUI(state) {
 
   if (state.status === 'running') {
     runBtn.disabled = true;
+    v7RunBtn.disabled = true;
     progress.style.display = 'block';
     errorBox.style.display = 'none';
     const total = Number(p.total || 0);
@@ -639,6 +638,7 @@ function updateEarlyResearchUI(state) {
   }
 
   runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v7RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
   progress.style.display = 'none';
   if (state.status === 'error') {
     errorBox.style.display = 'block';

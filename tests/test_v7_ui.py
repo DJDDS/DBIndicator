@@ -32,3 +32,34 @@ def test_v7_has_dedicated_one_click_frozen_protocol_runner():
     assert 'id="er-v7-run-btn"' in text
     assert "timeframe:'15minute', days:'180'" in text
     assert 'Run Frozen V7 Final Test' in text
+
+
+def _function_body(text: str, name: str) -> str:
+    marker = f'function {name}('
+    start = text.index(marker)
+    brace = text.index('{', start)
+    depth = 0
+    for i in range(brace, len(text)):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return text[brace + 1:i]
+    raise AssertionError(f'unclosed function {name}')
+
+
+def test_v7_button_controller_does_not_crash_backtest_initialization():
+    text = (ROOT / 'app' / 'templates' / 'backtest.html').read_text()
+    backtest_ui = _function_body(text, 'updateUI')
+    assert 'v7RunBtn' not in backtest_ui, (
+        'updateUI must not reference the V7 early-research button; an undeclared '
+        'v7RunBtn aborts the page script before the V7 click handler is registered.'
+    )
+
+
+def test_early_research_controller_manages_both_research_buttons():
+    text = (ROOT / 'app' / 'templates' / 'backtest.html').read_text()
+    early_ui = _function_body(text, 'updateEarlyResearchUI')
+    assert 'v7RunBtn.disabled = true' in early_ui
+    assert "v7RunBtn.disabled = {{ 'true' if not logged_in else 'false' }}" in early_ui
