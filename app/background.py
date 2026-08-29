@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, journal, kite_auth, scanner
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, journal, kite_auth, scanner
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -241,6 +241,96 @@ def _apply_early_movement_shortlist(results):
     for n, r in enumerate(eligible[: settings.SHORTLIST_MAX], start=1):
         r["shortlist_rank"] = n
     return eligible[: settings.SHORTLIST_MAX]
+
+
+def _apply_stock_in_play_shortlists(results):
+    """Rank actual 15-minute breakout candidates for intraday and 1–2D swing.
+
+    Legacy indicator alignment is intentionally ignored here.  Direction comes
+    from ``breakout_direction`` and sponsorship from TOD volume/OI/context.
+    """
+    intraday, swing, radar = [], [], []
+    for r in results:
+        r["shortlist_rank"] = None
+        r["swing_rank"] = None
+        r["radar_rank"] = None
+        r["movement_stage"] = None
+        r["movement_score"] = None
+        r["movement_blockers"] = []
+        r["oi_status"] = None
+        if r.get("error"):
+            continue
+
+        bdir = r.get("breakout_direction") or r.get("retained_breakout_direction")
+        if not r.get("breakout_direction") and r.get("retained_breakout_direction"):
+            if r.get("retained_breakout_source") is not None:
+                r["breakout_source"] = r.get("retained_breakout_source")
+            if r.get("retained_breakout_level") is not None:
+                r["breakout_level"] = r.get("retained_breakout_level")
+            if r.get("retained_breakout_extension_atr") is not None:
+                r["breakout_extension_atr"] = r.get("retained_breakout_extension_atr")
+        # Re-evaluate contextual agreement against the breakout direction, not
+        # the old RSI/MACD/CMF majority direction.
+        if bdir:
+            r["trade_direction"] = bdir
+            sector_dir = r.get("sector_direction")
+            r["sector_agrees"] = None if sector_dir is None else (sector_dir == bdir)
+            htf_dir = r.get("htf_direction")
+            r["htf_agrees"] = None if htf_dir is None else (htf_dir == bdir)
+            r["vwap_side_agrees"] = r.get("breakout_vwap_agrees")
+            r["entry_is_extended"] = r.get("breakout_entry_extended")
+
+            oi60 = r.get("oi_chg_60m_pct")
+            px_now, px_prev = r.get("close"), r.get("prev_close")
+            if oi60 is not None and px_now and px_prev:
+                px = (px_now / px_prev - 1.0) * 100.0
+                r["oi_recent_agrees"] = bool(oi60 > 0 and ((bdir == "Bullish" and px > 0) or (bdir == "Bearish" and px < 0)))
+            else:
+                r["oi_recent_agrees"] = None
+
+        if not bdir:
+            r["trade_direction"] = None
+        classified = stock_in_play.classify_live_candidate(r)
+        r["movement_stage"] = classified.get("stage")
+        r["movement_score"] = classified.get("score")
+        r["movement_blockers"] = classified.get("blockers", [])
+        r["oi_status"] = classified.get("oi_status")
+        r["intraday_eligible"] = classified.get("intraday_eligible", False)
+        r["swing_eligible"] = classified.get("swing_eligible", False)
+        if classified.get("stage") in ("Energy Building", "Stock in Play", "Ignition"):
+            radar.append(r)
+        if r["intraday_eligible"]:
+            intraday.append(r)
+        if r["swing_eligible"]:
+            swing.append(r)
+
+    radar.sort(key=lambda r: (
+        1 if r.get("movement_stage") == "Ignition" else 0,
+        r.get("movement_score") if r.get("movement_score") is not None else -1,
+        r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
+        r.get("compression_score") if r.get("compression_score") is not None else -1,
+    ), reverse=True)
+    for n, r in enumerate(radar[:10], 1):
+        r["radar_rank"] = n
+
+    intraday.sort(key=lambda r: (
+        r.get("movement_score") if r.get("movement_score") is not None else -1,
+        r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
+        r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
+    ), reverse=True)
+    intraday = intraday[: settings.SHORTLIST_MAX]
+    for n, r in enumerate(intraday, 1):
+        r["shortlist_rank"] = n
+
+    swing.sort(key=lambda r: (
+        r.get("movement_score") if r.get("movement_score") is not None else -1,
+        r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
+        r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
+    ), reverse=True)
+    swing = swing[: settings.SHORTLIST_MAX]
+    for n, r in enumerate(swing, 1):
+        r["swing_rank"] = n
+    return intraday, swing
 
 
 def _apply_shortlist(results):
@@ -991,7 +1081,7 @@ def _run_loop():
                         breadth = _compute_breadth(results)  # display-only market context
                         _apply_oi_trend(results)
                         _apply_oi_screener_fields(results)
-                        _apply_early_movement_shortlist(results)
+                        _apply_stock_in_play_shortlists(results)
                         oi_events = _detect_oi_accel_events(results)
                         _state["results"] = results
                         _state["index_direction"] = index_direction

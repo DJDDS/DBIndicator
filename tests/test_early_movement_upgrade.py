@@ -255,9 +255,12 @@ def test_settings_only_exposes_and_saves_live_engine_controls():
     tpl = open('app/templates/settings.html', encoding='utf-8').read()
     web = open('app/web.py', encoding='utf-8').read()
     assert 'Indicator internals' not in tpl
-    assert tpl.count('id="rsi_length"') == 1
-    assert tpl.count('id="rsi_smooth_length"') == 1
-    assert 'name="shortlist_max"' in tpl
-    assert 'name="scan_interval_seconds"' in tpl
+    assert 'id="rsi_length"' not in tpl
+    assert 'id="rsi_smooth_length"' not in tpl
+    for field in ('compression_radar_score', 'tod_rvol_min', 'tod_rvol_strong_no_oi',
+                  'max_entry_extension_atr', 'shortlist_max', 'scan_interval_seconds'):
+        assert f'name="{field}"' in tpl
+    assert '"COMPRESSION_RADAR_SCORE": form.get("compression_radar_score"' in web
+    assert '"TOD_RVOL_MIN": form.get("tod_rvol_min"' in web
     assert '"SHORTLIST_MAX": form.get("shortlist_max"' in web
     assert '"SCAN_INTERVAL_SECONDS": form.get("scan_interval_seconds"' in web

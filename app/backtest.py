@@ -1796,6 +1796,17 @@ def run_backtest(kite, symbols, timeframe="15minute", days=30, horizons=DEFAULT_
 # F&O Early Movement research - live-engine parity, not legacy vote counts.
 # --------------------------------------------------------------------------
 
+def _trim_replay_to_window(replay, window_start):
+    """Trim every research event family to the requested non-warmup window."""
+    out = dict(replay or {})
+    for key in ("energy_events", "baseline_energy_events", "ignition_events",
+                "best_entry_events", "swing_events"):
+        rows = list(out.get(key) or [])
+        out[key] = [e for e in rows
+                    if (e.get("signal_time") or e.get("entry_time") or "") >= window_start]
+    return out
+
+
 def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                                 progress_cb=None) -> dict:
@@ -1864,9 +1875,7 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
                 df, feat, symbol, horizons=horizons,
                 cost_pct=cost_pct, slippage_pct=slippage_pct,
             )
-            for key in ("energy_events", "ignition_events", "best_entry_events"):
-                replay[key] = [e for e in replay.get(key, [])
-                               if e.get("signal_time", e.get("entry_time", "")) >= window_start]
+            replay = _trim_replay_to_window(replay, window_start)
             replays.append(replay)
         except Exception as exc:  # noqa: BLE001
             log.exception("Early movement research failed for %s", symbol)

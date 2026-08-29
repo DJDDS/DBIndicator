@@ -68,7 +68,7 @@
   <div class="card">
     <h2>What this does</h2>
     <p>
-      <strong>F&amp;O Early Movement Research is the primary live-parity tool.</strong> It replays the same staged idea as the dashboard: Energy Building (compression/BB coil), Ignition (fresh momentum + participation), then Best Entry (OI, relative strength, VWAP/anti-chase and context). It reports 1/2/3/5/10-bar outcomes net of costs and keeps the latest 30% of events as chronological holdout.
+      <strong>F&amp;O Stock-in-Play &amp; Breakout Research is the primary live-parity tool.</strong> It first finds Energy Building / Stock-in-Play conditions, then assigns direction only after price actually escapes a 15-minute opening, recent-range or compression range. Volume/OI sponsorship, VWAP and anti-chase rules then decide whether the breakout deserves an Intraday Best Entry or a Swing 1&ndash;2D classification. The latest 30% of events is kept as chronological holdout.
     </p>
     <p>
       The older gate sweep and custom confluence replay remain below only as diagnostics for comparing legacy ideas. Threshold sensitivity changes one parameter at a time, so future improvements can be evidence-led without brute-force fitting thousands of combinations to the same history.
@@ -77,7 +77,7 @@
 
   <div class="card">
     <h2>Scope</h2>
-    <p style="margin-top:-4px;"><strong>Days back</strong> is reused by Early Movement Research. Universe/timeframe/horizon controls below apply to the legacy diagnostic tools; Early Movement Research is intentionally fixed to the live NSE stock-F&amp;O universe, 15-minute execution and 1/2/3/5/10-bar outcomes.</p>
+    <p style="margin-top:-4px;"><strong>Days back</strong> is reused by Stock-in-Play Research. The primary research is intentionally fixed to the live NSE stock-F&amp;O universe and 15-minute execution. Its real outcomes are <strong>30m / 1h / 2h / 4h / EOD</strong> for intraday and <strong>1D / 2D</strong> for swing. The controls below remain only for the legacy diagnostic tools.</p>
     <label>Universe</label>
     <div class="horizons" id="scope-universe">
       <label class="chk"><input type="radio" name="universe" value="watchlist" checked> F&amp;O Watchlist ({{ watchlist_count }} symbols)</label>
@@ -98,7 +98,7 @@
       <div>
         <label for="scope-days">Days back</label>
         <input type="number" id="scope-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
-        <div class="hint">Calendar days. Daily candles need at least {{ bt_days_min }} for the indicators to warm up.</div>
+        <div class="hint">Calendar days. For the primary 15-minute F&amp;O research, use 60&ndash;90 days when practical; Kite limits this intraday history to {{ bt_days_max }} days in this app.</div>
       </div>
       <div>
         <label>Return horizons (bars held)</label>
@@ -109,17 +109,17 @@
           <label class="chk"><input type="checkbox" name="horizon" value="5" checked> 5</label>
           <label class="chk"><input type="checkbox" name="horizon" value="10" checked> 10</label>
         </div>
-        <div class="hint">The research tools use <strong>3 bars</strong> as the primary 1&ndash;3 day reference; all selected horizons are still reported.</div>
+        <div class="hint">These bar-count horizons apply only to the legacy diagnostics below. The primary F&amp;O research uses clock/session-aware 30m / 1h / 2h / 4h / EOD and 1D / 2D exits.</div>
       </div>
     </div>
   </div>
 
   <div class="card" style="border-color:#9bc5e8;">
-    <h2>1 &middot; F&amp;O Early Movement Research</h2>
-    <p style="margin-top:-4px;"><strong>This is the primary research tool for Best Entries.</strong> It replays the actual 15-minute NSE stock-F&amp;O engine: BB/ATR compression, recent OI velocity, time-of-day volume, momentum inflection, relative-strength acceleration and VWAP/anti-chase entry quality.</p>
-    <p class="hint"><strong>Two targets are kept separate:</strong> Energy Building asks whether a coil produced a &ge;1 ATR expansion soon afterward (directionless). Ignition/Best Entry asks whether the directional trade made money after costs. The last 30% of events is chronological holdout and one-factor sensitivity tables let you improve thresholds without brute-force combination fitting.</p>
-    <button type="button" class="btn" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Early Movement Research</button>
-    <span class="hint" id="er-form-hint" style="margin-left:10px;">Fixed to live NSE F&amp;O universe &middot; 15-minute &middot; 3-bar primary</span>
+    <h2>1 &middot; F&amp;O Stock-in-Play &amp; Breakout Research</h2>
+    <p style="margin-top:-4px;"><strong>This is the primary research tool for Intraday Best Entry and Swing 1&ndash;2D.</strong> Compression is treated as a directionless movement setup. Direction comes only from an actual 15-minute close outside the opening range, recent decision range or compression range; TOD RVOL, OI sponsorship, VWAP, 4H context and anti-chase then qualify the trade.</p>
+    <p class="hint"><strong>Three questions are kept separate:</strong> Does compression predict expansion versus the unconditional F&amp;O baseline? Does an actual breakout make money intraday? Does the same breakout retain enough sponsorship for a 1&ndash;2 day swing? Results include a 30% chronological holdout and only motivated interaction tests &mdash; no brute-force parameter grid.</p>
+    <button type="button" class="btn" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Stock-in-Play Research</button>
+    <span class="hint" id="er-form-hint" style="margin-left:10px;">15-minute execution &middot; Intraday 30m / 1h / 2h / 4h / EOD &middot; Swing 1D / 2D</span>
     <div class="progress-wrap" id="er-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="er-progress-fill"></div></div>
       <div class="progress-label" id="er-progress-label">Starting…</div>
@@ -127,10 +127,21 @@
     <div class="msg-err" id="er-error" style="display:none; margin-top:16px;"></div>
     <div id="er-results" style="display:none; margin-top:18px;">
       <div class="stat-tiles" id="er-tiles"></div>
-      <h3 class="bt-group-title">Which component actually helps on holdout?</h3>
-      <table><thead><tr><th>Component</th><th>Holdout avg</th><th>PF</th><th>Win rate</th><th>Trades</th></tr></thead><tbody id="er-components"></tbody></table>
-      <h3 class="bt-group-title" style="margin-top:18px;">One-factor threshold sensitivity</h3>
-      <div id="er-sensitivity"></div>
+      <h3 class="bt-group-title">Intraday holdout &mdash; actual breakout direction</h3>
+      <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-intraday"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Swing holdout &mdash; 1&ndash;2 sessions</h3>
+      <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-swing"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Compression lift vs unconditional F&amp;O baseline</h3>
+      <div id="er-lift"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Which sponsorship combination helps?</h3>
+      <table><thead><tr><th>Variant</th><th>Holdout N</th><th>Win</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-interactions"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Promotion Benchmark</h3>
+      <p class="hint">A live rule earns <strong>Benchmark</strong> only after positive net holdout expectancy, PF &ge; 1.25, adequate sample size, favorable MFE/MAE and stable chronological blocks. Otherwise it remains <strong>Promising</strong> or <strong>Research</strong>.</p>
+      <div id="er-promotion-benchmark"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Excursion / speed diagnostics</h3>
+      <div id="er-excursions"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Breakout source / direction diagnostics</h3>
+      <div id="er-diagnostics"></div>
       <div class="hint" id="er-notes" style="margin-top:14px;"></div>
     </div>
   </div>
@@ -169,7 +180,7 @@
     <h2>3 &middot; Does the BTST/STBT premise hold?</h2>
     <p style="margin-top:-4px;">The overnight panel picks stocks that closed at the extreme of their range on a day
     that went their way, and holds them overnight. <strong>Nothing in this app could measure that trade until now</strong>
-    &mdash; the normal research tools measure 1/2/3/5/10-bar moves and enter at the next executable bar, while an
+    &mdash; the primary breakout research uses session-aware intraday/swing horizons and enters at the next executable bar, while an
     overnight idea must enter at the signal close to measure the gap itself.</p>
     <p style="margin-top:8px;">This enters at the <strong>signal bar's own close</strong> and exits at the next open and
     the next close &mdash; the trade as you would actually take it. It applies only the two hard gates, not the soft
@@ -576,56 +587,79 @@ function renderEarlyResearch(result) {
   const wrap = document.getElementById('er-results');
   wrap.style.display = 'block';
   const r = result.research || {};
-  const energy = (((r.energy || {}).holdout || {})['4']) || {};
-  const ign = ((((r.ignition || {}).holdout || {})['3'])) || {};
-  const best = ((((r.best_entry || {}).holdout || {})['3'])) || {};
-  const pf = v => (v === null || v === undefined) ? '—' : (v === Infinity ? '∞' : v);
+  const pf = v => (v === null || v === undefined) ? '—' : (v === Infinity ? '∞' : Number(v).toFixed(2));
   const pct = v => (v === null || v === undefined) ? '—' : ((v > 0 ? '+' : '') + Number(v).toFixed(3) + '%');
+  const stat = (summary, horizon) => ((((summary || {}).holdout || {})[horizon])) || {};
+  const i2h = stat(r.intraday, '2h');
+  const s1d = stat(r.swing, '1D');
+  const oi = r.oi_coverage || {};
+  const oneAtr4 = (r.compression_lift || []).find(x => String(x.horizon) === '4' && Number(x.threshold_atr) === 1) || {};
   document.getElementById('er-tiles').innerHTML = `
-    <div class="tile"><div class="tv">${energy.move_hit_rate_pct == null ? '—' : energy.move_hit_rate_pct + '%'}</div><div class="tl">Coil → ≥1 ATR in 4 bars</div></div>
-    <div class="tile"><div class="tv">${pct(ign.avg_return_pct)}</div><div class="tl">Ignition holdout avg · PF ${pf(ign.profit_factor)}</div></div>
-    <div class="tile"><div class="tv">${pct(best.avg_return_pct)}</div><div class="tl">Best Entry holdout avg · PF ${pf(best.profit_factor)}</div></div>
-    <div class="tile"><div class="tv">${best.trade_count || 0}</div><div class="tl">Best Entry holdout trades</div></div>`;
-  const comp = document.getElementById('er-components');
-  comp.innerHTML = '';
-  (r.component_lifts || []).forEach(x => {
-    const tr = document.createElement('tr');
-    const good = x.holdout_avg_return_pct != null && x.holdout_avg_return_pct > 0;
-    tr.innerHTML = `<td>${x.component.replaceAll('_',' ')}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(x.holdout_avg_return_pct)}</td><td>${pf(x.holdout_profit_factor)}</td><td>${x.holdout_win_rate_pct == null ? '—' : x.holdout_win_rate_pct + '%'}</td><td>${x.holdout_trade_count || 0}</td>`;
-    comp.appendChild(tr);
-  });
-  const sens = document.getElementById('er-sensitivity');
-  sens.innerHTML = '';
-  Object.entries(r.sensitivity || {}).forEach(([name, rows]) => {
-    const block = document.createElement('div');
-    block.style.marginBottom = '16px';
-    const body = (rows || []).map(x => `<tr><td>${x.threshold}</td><td>${x.holdout_trade_count || 0}</td><td>${x.holdout_win_rate_pct == null ? '—' : x.holdout_win_rate_pct + '%'}</td><td>${pct(x.holdout_avg_return_pct)}</td><td>${pf(x.holdout_profit_factor)}</td></tr>`).join('');
-    block.innerHTML = `<strong style="font-size:12px;">${name.replaceAll('_',' ')}</strong><table><thead><tr><th>Threshold</th><th>Holdout N</th><th>Win</th><th>Avg</th><th>PF</th></tr></thead><tbody>${body}</tbody></table>`;
-    sens.appendChild(block);
-  });
-  const notes = document.getElementById('er-notes');
-  notes.innerHTML = (result.research_notes || []).map(x => '&bull; ' + x).join('<br>');
-}
+    <div class="tile"><div class="tv">${oneAtr4.lift == null ? '—' : Number(oneAtr4.lift).toFixed(2) + '×'}</div><div class="tl">Coil 1h ≥1 ATR lift vs baseline</div></div>
+    <div class="tile"><div class="tv">${oi.coverage_pct == null ? '—' : oi.coverage_pct + '%'}</div><div class="tl">Historical OI velocity coverage</div></div>
+    <div class="tile"><div class="tv">${pct(i2h.avg_return_pct)}</div><div class="tl">Breakout 2h holdout avg · PF ${pf(i2h.profit_factor)}</div></div>
+    <div class="tile"><div class="tv">${pct(s1d.avg_return_pct)}</div><div class="tl">Breakout 1D holdout avg · PF ${pf(s1d.profit_factor)}</div></div>`;
 
-function updateEarlyResearchUI(state) {
-  const btn = document.getElementById('er-run-btn');
-  const progress = document.getElementById('er-progress');
-  const error = document.getElementById('er-error');
-  if (state.status === 'running') {
-    btn.disabled = true; progress.style.display = 'block'; error.style.display = 'none';
-    const p = state.progress || {}; const done = p.done || 0, total = p.total || 0;
-    document.getElementById('er-progress-fill').style.width = (total ? Math.round(done/total*100) : 0) + '%';
-    document.getElementById('er-progress-label').textContent = p.symbol ? `Researching ${p.symbol} (${done}/${total})…` : `${done}/${total} symbols…`;
-  } else { btn.disabled = {{ 'true' if not logged_in else 'false' }}; progress.style.display = 'none'; }
-  if (state.status === 'error') { error.style.display = 'block'; error.textContent = 'Early Movement Research failed: ' + (state.error || 'unknown'); }
-  if (state.status === 'done' && state.result) renderEarlyResearch(state.result);
+  const fillReturns = (id, stage, horizons) => {
+    const body = document.getElementById(id); body.innerHTML = '';
+    horizons.forEach(h => {
+      const x = stat(stage, h); const good = x.avg_return_pct != null && x.avg_return_pct > 0;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><strong>${h}</strong></td><td>${x.trade_count || 0}</td><td>${x.win_rate_pct == null ? '—' : x.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(x.avg_return_pct)}</td><td>${pf(x.profit_factor)}</td>`;
+      body.appendChild(tr);
+    });
+  };
+  fillReturns('er-intraday', r.intraday, ['30m','1h','2h','4h','eod']);
+  fillReturns('er-swing', r.swing, ['1D','2D']);
+
+  const lift = document.getElementById('er-lift');
+  const liftRows = (r.compression_lift || []).map(x => `<tr><td>${x.horizon_label || ({'4':'1h','8':'2h','16':'4h','25':'1D'}[String(x.horizon)] || x.horizon)}</td><td>${x.threshold_atr} ATR</td><td>${x.event_n || 0}</td><td>${x.event_hit_rate_pct == null ? '—' : x.event_hit_rate_pct + '%'}</td><td>${x.baseline_hit_rate_pct == null ? '—' : x.baseline_hit_rate_pct + '%'}</td><td><strong>${x.lift == null ? '—' : Number(x.lift).toFixed(2) + '×'}</strong></td></tr>`).join('');
+  lift.innerHTML = `<table><thead><tr><th>Window</th><th>Move</th><th>Coils</th><th>Coil hit</th><th>Baseline</th><th>Lift</th></tr></thead><tbody>${liftRows}</tbody></table>`;
+
+  const interactions = document.getElementById('er-interactions'); interactions.innerHTML = '';
+  Object.entries(r.interactions || {}).forEach(([name, x]) => {
+    const h = x.intraday_2h || {}; 
+    const tr = document.createElement('tr'); const good = h.avg_return_pct != null && h.avg_return_pct > 0;
+    tr.innerHTML = `<td>${name.replaceAll('_',' ')}</td><td>${h.trade_count || 0}</td><td>${h.win_rate_pct == null ? '—' : h.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(h.avg_return_pct)}</td><td>${pf(h.profit_factor)}</td>`;
+    interactions.appendChild(tr);
+  });
+
+  const promotion = r.promotion_benchmark || {};
+  const promo = document.getElementById('er-promotion-benchmark');
+  const promoRows = ['intraday','swing'].map(mode => {
+    const b = promotion[mode] || {}; const req = b.requirements || {}; const checks = b.checks || {};
+    const status = b.status || 'Research'; const good = status === 'Benchmark'; const mid = status === 'Promising';
+    const colour = good ? 'var(--green)' : (mid ? '#d9a441' : 'var(--red)');
+    const checkText = Object.entries(checks).map(([k,v]) => `${k.replaceAll('_',' ')} ${v ? '✓' : '✗'}`).join(' · ');
+    return `<tr><td><strong>${mode === 'intraday' ? 'Intraday 2h' : 'Swing 1D'}</strong></td><td style="color:${colour}"><strong>${status}</strong></td><td>${checkText || 'not enough data'}</td><td>N≥${req.min_trades ?? '—'} · avg≥${req.min_avg_return_pct ?? '—'}% · PF≥${req.min_profit_factor ?? '—'} · MFE/MAE≥${req.min_mfe_mae ?? '—'}</td></tr>`;
+  }).join('');
+  promo.innerHTML = `<table><thead><tr><th>Mode</th><th>Status</th><th>Checks</th><th>Promotion requirement</th></tr></thead><tbody>${promoRows}</tbody></table>`;
+
+  const ex = ((r.excursions || {}).holdout) || {};
+  document.getElementById('er-excursions').innerHTML = `<table><thead><tr><th>Holdout events</th><th>Avg MFE 1D</th><th>Avg MAE 1D</th><th>Avg MFE 2D</th><th>Avg MAE 2D</th><th>Hit +0.5 ATR</th><th>Hit +1 ATR</th><th>Median bars to +1 ATR</th></tr></thead><tbody><tr><td>${ex.events || 0}</td><td>${ex.avg_mfe_1D_atr == null ? '—' : ex.avg_mfe_1D_atr + ' ATR'}</td><td>${ex.avg_mae_1D_atr == null ? '—' : ex.avg_mae_1D_atr + ' ATR'}</td><td>${ex.avg_mfe_2D_atr == null ? '—' : ex.avg_mfe_2D_atr + ' ATR'}</td><td>${ex.avg_mae_2D_atr == null ? '—' : ex.avg_mae_2D_atr + ' ATR'}</td><td>${ex.hit_0_5atr_pct == null ? '—' : ex.hit_0_5atr_pct + '%'}</td><td>${ex.hit_1atr_pct == null ? '—' : ex.hit_1atr_pct + '%'}</td><td>${ex.median_bars_to_1atr == null ? '—' : ex.median_bars_to_1atr}</td></tr></tbody></table>`;
+
+  const diag = document.getElementById('er-diagnostics');
+  const chunks = [];
+  Object.entries(r.by_breakout_source || {}).forEach(([name, x]) => {
+    const i = (((x.intraday || {})['2h'])) || {}; const sw = (((x.swing || {})['1D'])) || {};
+    chunks.push(`<strong>${name}</strong>: N ${x.events || 0} · 2h ${pct(i.avg_return_pct)} PF ${pf(i.profit_factor)} · 1D ${pct(sw.avg_return_pct)} PF ${pf(sw.profit_factor)}`);
+  });
+  Object.entries(r.by_direction || {}).forEach(([name, x]) => {
+    const i = (((x.intraday || {})['2h'])) || {}; const sw = (((x.swing || {})['1D'])) || {};
+    chunks.push(`<strong>${name}</strong>: N ${x.events || 0} · 2h ${pct(i.avg_return_pct)} PF ${pf(i.profit_factor)} · 1D ${pct(sw.avg_return_pct)} PF ${pf(sw.profit_factor)}`);
+  });
+  diag.innerHTML = chunks.length ? chunks.join('<br>') : '<span class="hint">No diagnostic split available yet.</span>';
+
+  const notes = document.getElementById('er-notes');
+  notes.innerHTML = `OI coverage: ${oi.available || 0}/${oi.total || 0} breakout events (${oi.coverage_pct || 0}%), confirmed ${oi.confirmed || 0}.<br>` +
+    (result.research_notes || []).map(x => '&bull; ' + x).join('<br>');
 }
 function pollEarlyResearch() {
   fetch('/api/early-research/status').then(r => r.json()).then(st => { updateEarlyResearchUI(st); if (st.status === 'running') setTimeout(pollEarlyResearch, 2500); }).catch(() => setTimeout(pollEarlyResearch, 5000));
 }
 document.getElementById('er-run-btn').addEventListener('click', function () {
   const scope = readScope();
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:scope.days, horizons:['1','2','3','5','10']}, {}, 'er-form-hint', pollEarlyResearch);
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:scope.days, horizons:[]}, {}, 'er-form-hint', pollEarlyResearch);
 });
 const initialEarlyResearchState = {{ early_research_state | tojson }};
 updateEarlyResearchUI(initialEarlyResearchState);
@@ -817,7 +851,7 @@ function renderOvernight(res) {
     } else if (c.avg_return_pct > 0 && c.win_rate_pct >= 50) {
       verdict = '<p class="hint"><strong>Continuation has positive expectancy on this window.</strong> Confirm it on a holdout period before enabling live BTST alerts.</p>';
     } else {
-      verdict = '<p class="hint"><strong>No robust overnight edge is visible.</strong> Keep BTST alerts disabled and use the 1–3 day Best Entries shortlist instead.</p>';
+      verdict = '<p class="hint"><strong>No robust overnight edge is visible.</strong> Keep BTST alerts disabled and use the Intraday Best Entry / Swing 1–2D engines instead.</p>';
     }
   }
   el.innerHTML = '<table class="tbl"><thead><tr><th>Strategy</th><th>Exit</th><th style="text-align:right;">Trades</th>'

@@ -175,9 +175,10 @@ def settings_page():
         payload = {
             # Live F&O early-movement controls.
             "WATCHLIST": form.get("watchlist", ""),  # research/backtest universe only; live refreshes F&O from Kite
-            "RSI_LENGTH": form.get("rsi_length", settings.RSI_LENGTH),
-            "RSI_SMOOTH_LENGTH": form.get("rsi_smooth_length", settings.RSI_SMOOTH_LENGTH),
             "SCAN_INTERVAL_SECONDS": form.get("scan_interval_seconds", settings.SCAN_INTERVAL_SECONDS),
+            "COMPRESSION_RADAR_SCORE": form.get("compression_radar_score", settings.COMPRESSION_RADAR_SCORE),
+            "TOD_RVOL_MIN": form.get("tod_rvol_min", settings.TOD_RVOL_MIN),
+            "TOD_RVOL_STRONG_NO_OI": form.get("tod_rvol_strong_no_oi", settings.TOD_RVOL_STRONG_NO_OI),
             "MAX_ENTRY_EXTENSION_ATR": form.get("max_entry_extension_atr", settings.MAX_ENTRY_EXTENSION_ATR),
             "SHORTLIST_MAX": form.get("shortlist_max", settings.SHORTLIST_MAX),
             # Risk/position-sizing controls are display guidance only; they never decide shortlist membership.

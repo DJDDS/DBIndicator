@@ -86,7 +86,7 @@ TOKEN_CACHE_FILE = os.getenv("TOKEN_CACHE_FILE", "kite_token_cache.json")
 
 # Where live-editable scanner settings are persisted (also gitignored).
 SETTINGS_FILE = os.getenv("SETTINGS_FILE", "scanner_settings.json")
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 3
 
 # Where the most recent scan results are persisted (also gitignored), so
 # the dashboard still shows the last scan for analysis after market
@@ -255,6 +255,7 @@ _TUNABLE_FIELDS = [
     "REQUIRE_OI_AGREEMENT", "MIN_EARLY_SCORE", "MIN_SHORTLIST_COVERAGE", "SHORTLIST_MAX",
     "MIN_BTST_SCORE",
     "MAX_ENTRY_EXTENSION_ATR", "REQUIRE_ENTRY_LOCATION_AGREEMENT",
+    "COMPRESSION_RADAR_SCORE", "TOD_RVOL_MIN", "TOD_RVOL_STRONG_NO_OI",
     "MIN_ATR_PCT", "REQUIRE_ATR_FLOOR",
 ]
 
@@ -501,6 +502,12 @@ def _env_defaults():
         # loses its "Confirmed" status; off by default, same reasoning as
         # every other REQUIRE_* gate above.
         "MAX_ENTRY_EXTENSION_ATR": float(os.getenv("MAX_ENTRY_EXTENSION_ATR", 1.25)),
+        # Stock-in-Play thresholds are the small set of live decision controls
+        # that remain after retiring RSI/MACD voting. They are exposed on the
+        # Settings page because the primary research panel measures them.
+        "COMPRESSION_RADAR_SCORE": float(os.getenv("COMPRESSION_RADAR_SCORE", 60.0)),
+        "TOD_RVOL_MIN": float(os.getenv("TOD_RVOL_MIN", 1.30)),
+        "TOD_RVOL_STRONG_NO_OI": float(os.getenv("TOD_RVOL_STRONG_NO_OI", 1.60)),
         "REQUIRE_ENTRY_LOCATION_AGREEMENT": os.getenv("REQUIRE_ENTRY_LOCATION_AGREEMENT", "true").strip().lower() in ("1", "true", "on", "yes"),
         # Minimum-ATR volatility floor (PARAMETER_ANALYSIS_2.md Finding
         # #5 - "no volatility floor, in either engine"; see indicators.
@@ -870,6 +877,33 @@ class Settings:
                 clean["MAX_ENTRY_EXTENSION_ATR"] = mee
             except (TypeError, ValueError):
                 errors.append("Max entry extension (ATR) must be a positive number.")
+
+        if "COMPRESSION_RADAR_SCORE" in kwargs:
+            try:
+                val = float(kwargs["COMPRESSION_RADAR_SCORE"])
+                if not (0 <= val <= 100):
+                    raise ValueError
+                clean["COMPRESSION_RADAR_SCORE"] = val
+            except (TypeError, ValueError):
+                errors.append("Compression radar score must be between 0 and 100.")
+
+        if "TOD_RVOL_MIN" in kwargs:
+            try:
+                val = float(kwargs["TOD_RVOL_MIN"])
+                if not (0.5 <= val <= 5.0):
+                    raise ValueError
+                clean["TOD_RVOL_MIN"] = val
+            except (TypeError, ValueError):
+                errors.append("TOD RVOL minimum must be between 0.5 and 5.0.")
+
+        if "TOD_RVOL_STRONG_NO_OI" in kwargs:
+            try:
+                val = float(kwargs["TOD_RVOL_STRONG_NO_OI"])
+                if not (0.5 <= val <= 8.0):
+                    raise ValueError
+                clean["TOD_RVOL_STRONG_NO_OI"] = val
+            except (TypeError, ValueError):
+                errors.append("Strong no-OI TOD RVOL must be between 0.5 and 8.0.")
 
         if "MIN_ATR_PCT" in kwargs:
             try:

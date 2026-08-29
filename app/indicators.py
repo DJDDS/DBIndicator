@@ -83,6 +83,49 @@ def time_of_day_rvol(df: pd.DataFrame, lookback_sessions: int = 20, now=None, in
         out.loc[vals.index] = ratios
     return out
 
+def opening_relative_volume(df: pd.DataFrame, opening_bars: int = 2, lookback_sessions: int = 14) -> pd.Series:
+    """Cumulative opening-volume ratio versus the same opening window.
+
+    This mirrors the public *Stocks in Play* idea without assuming a fixed
+    absolute volume.  Bar 1 compares the first 15 minutes with prior first
+    15-minute windows; bar 2 compares cumulative first 30 minutes with prior
+    cumulative first 30-minute windows.  Once the opening window is complete,
+    its final reading is carried through the session as context.
+    """
+    if df is None or df.empty or "volume" not in df.columns or not isinstance(df.index, pd.DatetimeIndex):
+        return pd.Series(index=getattr(df, "index", None), dtype="float64")
+    opening_bars = max(1, int(opening_bars))
+    lookback_sessions = max(2, int(lookback_sessions))
+    out = pd.Series(np.nan, index=df.index, dtype="float64")
+    sessions = pd.Series(df.index.normalize(), index=df.index)
+    ordinals = sessions.groupby(sessions).cumcount()
+    vol = pd.to_numeric(df["volume"], errors="coerce")
+    cumulative = vol.groupby(sessions).cumsum()
+
+    for stage in range(opening_bars):
+        mask = ordinals.eq(stage)
+        vals = cumulative.loc[mask]
+        baseline = vals.shift(1).rolling(lookback_sessions, min_periods=min(3, lookback_sessions)).mean()
+        out.loc[vals.index] = vals / baseline.replace(0, np.nan)
+
+    # Preserve the completed opening-window ratio for the rest of each day.
+    final_stage = opening_bars - 1
+    for _session, idxs in sessions.groupby(sessions).groups.items():
+        idxs = list(idxs)
+        if not idxs:
+            continue
+        stage_rows = [i for i in idxs if ordinals.loc[i] == final_stage]
+        if not stage_rows:
+            continue
+        final_idx = stage_rows[-1]
+        final_val = out.loc[final_idx]
+        if pd.notna(final_val):
+            for i in idxs:
+                if ordinals.loc[i] >= final_stage:
+                    out.loc[i] = final_val
+    return out
+
+
 def _cross_up(a, b):
     return (a.shift(1) <= b.shift(1)) & (a > b)
 
@@ -884,12 +927,52 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     tod_rvol_series = time_of_day_rvol(df, lookback_sessions=20, now=now, interval_minutes=15) if timeframe == "15minute" else pd.Series(np.nan, index=df.index)
     _tod = tod_rvol_series.iloc[i] if len(tod_rvol_series) else np.nan
     tod_rvol = round(float(_tod), 2) if pd.notna(_tod) and np.isfinite(_tod) else None
+    opening_rvol_series = opening_relative_volume(df, opening_bars=2, lookback_sessions=14) if timeframe == "15minute" else pd.Series(np.nan, index=df.index)
+    _opening_rvol = opening_rvol_series.iloc[i] if len(opening_rvol_series) else np.nan
+    opening_rvol = round(float(_opening_rvol), 2) if pd.notna(_opening_rvol) and np.isfinite(_opening_rvol) else None
+
     tod_rvol_accel = None
     _prev_tod = tod_rvol_series.iloc[max(0, i - 4):i].dropna()
     if tod_rvol is not None and len(_prev_tod) >= 2:
         _base_tod = float(_prev_tod.median())
         if _base_tod > 0:
             tod_rvol_accel = round(tod_rvol / _base_tod, 2)
+
+    # Stock-in-play / actual price-breakout features.  These do NOT use the
+    # legacy RSI/MACD/CMF majority for direction: price earns a direction only
+    # after it closes outside a prior decision range.
+    from . import stock_in_play as _sip
+    _sip_frame = _sip.build_price_features(
+        df, series["atr"], series.get("compression"), tod_rvol_series, opening_rvol=opening_rvol_series
+    ) if timeframe == "15minute" else pd.DataFrame(index=df.index)
+    _sip_last = _sip_frame.iloc[i] if not _sip_frame.empty else None
+    breakout_direction = _sip_last.get("breakout_direction") if _sip_last is not None else None
+    fresh_breakout = bool(_sip_last.get("fresh_breakout")) if _sip_last is not None and pd.notna(_sip_last.get("fresh_breakout")) else False
+    breakout_retained = bool(_sip_last.get("breakout_retained")) if _sip_last is not None and pd.notna(_sip_last.get("breakout_retained")) else False
+    retained_breakout_direction = _sip_last.get("retained_breakout_direction") if _sip_last is not None else None
+    retained_breakout_source = _sip_last.get("retained_breakout_source") if _sip_last is not None else None
+    retained_level_raw = _sip_last.get("retained_breakout_level") if _sip_last is not None else np.nan
+    retained_breakout_level = round(float(retained_level_raw), 2) if pd.notna(retained_level_raw) else None
+    retained_ext_raw = _sip_last.get("retained_breakout_extension_atr") if _sip_last is not None else np.nan
+    retained_breakout_extension_atr = round(float(retained_ext_raw), 3) if pd.notna(retained_ext_raw) else None
+    breakout_source = _sip_last.get("breakout_source") if _sip_last is not None else None
+    breakout_level_raw = _sip_last.get("breakout_level") if _sip_last is not None else np.nan
+    breakout_level = round(float(breakout_level_raw), 2) if pd.notna(breakout_level_raw) else None
+    breakout_ext_raw = _sip_last.get("breakout_extension_atr") if _sip_last is not None else np.nan
+    breakout_extension_atr = round(float(breakout_ext_raw), 3) if pd.notna(breakout_ext_raw) else None
+    stock_in_play_now = bool(_sip_last.get("stock_in_play")) if _sip_last is not None and pd.notna(_sip_last.get("stock_in_play")) else False
+    gap_atr_raw = _sip_last.get("gap_atr") if _sip_last is not None else np.nan
+    gap_atr = round(float(gap_atr_raw), 3) if pd.notna(gap_atr_raw) else None
+    bar_range_atr_raw = _sip_last.get("bar_range_atr") if _sip_last is not None else np.nan
+    bar_range_atr = round(float(bar_range_atr_raw), 3) if pd.notna(bar_range_atr_raw) else None
+    active_breakout_direction = breakout_direction or retained_breakout_direction
+    active_breakout_extension_atr = breakout_extension_atr if breakout_extension_atr is not None else retained_breakout_extension_atr
+    breakout_vwap_agrees = None
+    if active_breakout_direction and vwap:
+        breakout_vwap_agrees = bool(close.iloc[i] > vwap) if active_breakout_direction == "Bullish" else bool(close.iloc[i] < vwap)
+    breakout_entry_extended = bool(
+        active_breakout_extension_atr is not None and active_breakout_extension_atr > settings.MAX_ENTRY_EXTENSION_ATR
+    )
 
     # Regime-adaptive volume bar: a choppy/Ranging market throws off a
     # lot more low-conviction volume spikes than a Trending one, so a
@@ -1278,6 +1361,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "rvol_accel": rvol_accel,
         "vol_rising": vol_rising,
         "tod_rvol": tod_rvol,
+        "opening_rvol": opening_rvol,
         "tod_rvol_accel": tod_rvol_accel,
         "trend_state": trend_state,
         "vwap_side_agrees": vwap_side_agrees,
@@ -1314,6 +1398,21 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "vs_avwap": vs_avwap,
         "avwap_anchor_time": avwap_anchor_time,
         "breakout_state": breakout_state,
+        "breakout_direction": breakout_direction,
+        "fresh_breakout": fresh_breakout,
+        "breakout_retained": breakout_retained,
+        "retained_breakout_direction": retained_breakout_direction,
+        "retained_breakout_source": retained_breakout_source,
+        "retained_breakout_level": retained_breakout_level,
+        "retained_breakout_extension_atr": retained_breakout_extension_atr,
+        "breakout_source": breakout_source,
+        "breakout_level": breakout_level,
+        "breakout_extension_atr": breakout_extension_atr,
+        "breakout_entry_extended": breakout_entry_extended,
+        "breakout_vwap_agrees": breakout_vwap_agrees,
+        "stock_in_play": stock_in_play_now,
+        "gap_atr": gap_atr,
+        "bar_range_atr": bar_range_atr,
         "vol_multiple": vol_multiple,
         "volume": volume,
         "vol_confirmed": vol_confirmed,

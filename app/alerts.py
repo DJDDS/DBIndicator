@@ -92,7 +92,7 @@ def discover_chat_id():
 
 
 def _format_message(r, timeframe):
-    alert_direction = r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
+    alert_direction = r.get("trade_direction") or r.get("breakout_direction") or r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
     arrow = "\U0001F53A" if alert_direction == "Bullish" else "\U0001F53B"
     score = r.get("movement_score")
     oi60 = r.get("oi_chg_60m_pct")
@@ -105,10 +105,17 @@ def _format_message(r, timeframe):
     tod_note = f"TOD RVOL {tod}x" if tod is not None else "TOD RVOL —"
     rs_note = f"RS {rs:+.2f}pp" if rs is not None else "RS —"
     htf_note = r.get("htf_direction") or "—"
+    source = r.get("breakout_source") or "15m range"
+    level = r.get("breakout_level")
+    oi_status = r.get("oi_status") or "—"
+    ext = r.get("breakout_extension_atr")
+    level_note = f" @ {level}" if level is not None else ""
+    ext_note = f" | Ext {ext:.2f} ATR" if isinstance(ext, (int, float)) else ""
     return (
-        f"{arrow} {r['symbol']} - {alert_direction} F&O Early-Movement Entry ({timeframe})\n"
-        f"Close {r['close']} | {score_note} | {oi_note} | {accel_note}\n"
-        f"{tod_note} | {rs_note} | HTF {htf_note} | fresh trigger + anti-chase passed"
+        f"{arrow} {r['symbol']} - {alert_direction} F&O Breakout Entry ({timeframe})\n"
+        f"{source} breakout{level_note} | Close {r['close']} | {score_note}\n"
+        f"{oi_note} | {accel_note} | OI {oi_status} | {tod_note}\n"
+        f"{rs_note} | HTF {htf_note}{ext_note} | VWAP + anti-chase passed"
     )
 
 
@@ -125,7 +132,7 @@ def process_scan_results(results, timeframe):
         # rejected as late, weak-OI or low-quality.
         if not r.get("shortlist_rank"):
             continue
-        alert_direction = r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
+        alert_direction = r.get("trade_direction") or r.get("breakout_direction") or r.get("entry_trigger") or r.get("fresh_signal") or r.get("direction")
         if alert_direction not in ("Bullish", "Bearish"):
             continue
         key = (r["symbol"], timeframe, str(r.get("timestamp")), alert_direction)
@@ -139,7 +146,7 @@ def process_scan_results(results, timeframe):
         text = _format_message(r, timeframe)
         entry = {
             "symbol": r["symbol"], "direction": alert_direction, "timeframe": timeframe,
-            "close": r["close"], "aligned": r["aligned"], "text": text,
+            "close": r["close"], "aligned": r.get("aligned"), "movement_score": r.get("movement_score"), "text": text,
             "candle_timestamp": str(r.get("timestamp")),
         }
         with _lock:

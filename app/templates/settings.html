@@ -86,37 +86,37 @@
 
     <div class="card">
       <h2>Live Early-Movement Engine</h2>
-      <p style="margin-top:-4px;">Best Entries is now a 15-minute F&amp;O execution screen. It does not count a large pile of indicators.
-      These are the only live controls worth tuning; OI, time-of-day RVOL, relative strength, higher-timeframe alignment and fresh trigger quality are evaluated automatically.</p>
+      <p style="margin-top:-4px;">Best Entries is a 15-minute NSE stock-F&amp;O breakout screen. Legacy momentum indicators remain chart diagnostics only and are not live eligibility controls. Tune only the parameters the new research panel actually measures.</p>
       <div class="row2">
         <div>
-          <label for="max_entry_extension_atr">Maximum entry extension (ATR past VWAP)</label>
+          <label for="compression_radar_score">Compression radar score</label>
+          <input type="number" id="compression_radar_score" name="compression_radar_score" min="0" max="100" step="5" value="{{ s.COMPRESSION_RADAR_SCORE }}">
+          <div class="hint">Default 60. Directionless radar threshold for BB/ATR/range compression. Higher = fewer, tighter coils.</div>
+        </div>
+        <div>
+          <label for="tod_rvol_min">Minimum time-of-day RVOL</label>
+          <input type="number" id="tod_rvol_min" name="tod_rvol_min" min="0.5" max="5" step="0.05" value="{{ s.TOD_RVOL_MIN }}">
+          <div class="hint">Default 1.30x. Participation confirmation after price actually breaks the range.</div>
+        </div>
+        <div>
+          <label for="tod_rvol_strong_no_oi">Strong TOD RVOL when OI unavailable</label>
+          <input type="number" id="tod_rvol_strong_no_oi" name="tod_rvol_strong_no_oi" min="0.5" max="8" step="0.05" value="{{ s.TOD_RVOL_STRONG_NO_OI }}">
+          <div class="hint">Default 1.60x. Missing OI never passes freely; this is only part of the stricter fallback sponsorship path.</div>
+        </div>
+        <div>
+          <label for="max_entry_extension_atr">Maximum breakout extension (ATR)</label>
           <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.25" max="3" step="0.05" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
-          <div class="hint">Default 1.25 ATR. Beyond this, the move is considered late/chasing and cannot enter Best Entries.</div>
+          <div class="hint">Default 1.25 ATR beyond the breakout level. Larger values allow more chasing.</div>
         </div>
         <div>
           <label for="shortlist_max">Maximum Best Entries</label>
           <input type="number" id="shortlist_max" name="shortlist_max" min="1" max="10" step="1" value="{{ s.SHORTLIST_MAX }}">
-          <div class="hint">A ceiling, not a target. The engine may return zero.</div>
+          <div class="hint">A ceiling, not a target. Zero is a valid result.</div>
         </div>
         <div>
           <label for="scan_interval_seconds">Scan interval (seconds)</label>
           <input type="number" id="scan_interval_seconds" name="scan_interval_seconds" min="60" max="900" step="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
           <div class="hint">180 seconds is responsive while staying respectful of Kite historical-data limits.</div>
-        </div>
-        <div>
-          <label for="rsi_length">RSI length</label>
-          <input type="number" id="rsi_length" name="rsi_length" min="2" max="50" value="{{ s.RSI_LENGTH }}">
-          <div class="hint">Default 14. The entry engine uses the RSI crossover as a fresh trigger, not as a separate vote.</div>
-        </div>
-        <div>
-          <label for="rsi_smooth_length">RSI smoothing SMA</label>
-          <input type="number" id="rsi_smooth_length" name="rsi_smooth_length" min="2" max="50" value="{{ s.RSI_SMOOTH_LENGTH }}">
-          <div class="hint">Default 9 for a responsive signal line around RSI(14).</div>
-        </div>
-        <div>
-          <label>15-minute MACD</label>
-          <div class="hint"><strong>8 / 17 / 9</strong> in Auto mode. MACD confirms momentum; it is not double-counted as another independent axis.</div>
         </div>
       </div>
     </div>

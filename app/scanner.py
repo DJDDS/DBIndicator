@@ -422,6 +422,17 @@ def fetch_oi_map(kite, symbols: list) -> dict:
         if not ordered or not ois:
             continue
         near = ordered[0]
+        # Historical order-book depth is not available from Kite.  Carry the
+        # *live* near-futures five-level depth only as shadow research fields;
+        # these must never make a candidate eligible until forward testing
+        # clears the promotion benchmark.
+        near_key = next((k for k, (sym, pos, _c) in owner.items() if sym == symbol and pos == 0), None)
+        near_quote = quotes.get(near_key) if near_key else None
+        try:
+            from .stock_in_play import depth_shadow_metrics
+            depth = depth_shadow_metrics(near_quote)
+        except Exception:  # pragma: no cover - defensive isolation of shadow metrics
+            depth = {"depth_imbalance": None, "spread_bps": None, "microprice_bias_bps": None}
         out[symbol] = {
             "oi": near.get("oi"),
             "oi_near": near.get("oi"),
@@ -431,6 +442,11 @@ def fetch_oi_map(kite, symbols: list) -> dict:
             "oi_day_high": near.get("oi_day_high"),
             "oi_day_low": near.get("oi_day_low"),
             "contracts": ordered,
+            "fut_depth_imbalance": depth.get("depth_imbalance"),
+            "fut_spread_bps": depth.get("spread_bps"),
+            "fut_microprice_bias_bps": depth.get("microprice_bias_bps"),
+            "fut_depth_shadow_only": True,
+            "microstructure_shadow_only": True,
         }
     return out
 
