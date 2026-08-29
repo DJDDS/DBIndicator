@@ -208,6 +208,20 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
     }, index=idx)
 
 
+def _flag(value):
+    """Normalize Python/pandas/NumPy boolean-like values to True/False/None."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return None
+
+
 def _directional(value, direction):
     if value is None or (isinstance(value, float) and not np.isfinite(value)):
         return None
@@ -239,7 +253,7 @@ def classify_live_candidate(row: dict) -> dict:
     accel = row.get("oi_acceleration")
     oi_available = any(v is not None for v in (oi60, oi30, accel, row.get("oi_recent_agrees")))
     oi_confirmed = bool(
-        row.get("oi_recent_agrees") is True
+        _flag(row.get("oi_recent_agrees")) is True
         and oi60 is not None and oi60 > 0
         and (accel is None or accel >= -0.15)
     )
@@ -251,7 +265,7 @@ def classify_live_candidate(row: dict) -> dict:
         not oi_available
         and tod is not None and tod >= tod_strong_no_oi
         and rs_dir is not None and rs_dir >= 0.50
-        and row.get("sector_agrees") is True
+        and _flag(row.get("sector_agrees")) is True
     )
 
     if not direction:
@@ -264,25 +278,25 @@ def classify_live_candidate(row: dict) -> dict:
 
     if not fresh:
         blockers.append("breakout not fresh")
-    if row.get("vwap_side_agrees") is not True:
+    if _flag(row.get("vwap_side_agrees")) is not True:
         blockers.append("wrong side of VWAP")
     if tod is None or tod < tod_min:
         blockers.append(f"time-of-day participation below {tod_min:.2f}x")
     ext = row.get("breakout_extension_atr")
-    if row.get("entry_is_extended") is True or (ext is not None and ext > max_extension):
+    if _flag(row.get("entry_is_extended")) is True or (ext is not None and ext > max_extension):
         blockers.append("breakout already extended")
     if oi_available and not oi_confirmed:
         blockers.append("OI not confirming")
     elif not oi_available and not strong_alt:
         blockers.append("OI unavailable and no strong alternate sponsorship")
-    if row.get("sector_agrees") is False and row.get("htf_agrees") is False:
+    if _flag(row.get("sector_agrees")) is False and _flag(row.get("htf_agrees")) is False:
         blockers.append("sector and 4H context both oppose")
 
     intraday = not blockers
     score = 0.0
     if fresh:
         score += 30
-    if row.get("vwap_side_agrees") is True:
+    if _flag(row.get("vwap_side_agrees")) is True:
         score += 10
     if tod is not None:
         score += 25 if tod >= tod_strong_no_oi else 20 if tod >= tod_min else 0
@@ -290,9 +304,9 @@ def classify_live_candidate(row: dict) -> dict:
         score += 25
     elif strong_alt:
         score += 15
-    if row.get("sector_agrees") is True:
+    if _flag(row.get("sector_agrees")) is True:
         score += 5
-    if row.get("htf_agrees") is True:
+    if _flag(row.get("htf_agrees")) is True:
         score += 5
     if ext is not None and ext <= 0.75:
         score += 5
@@ -301,11 +315,11 @@ def classify_live_candidate(row: dict) -> dict:
     timestamp_time = _parse_time(row.get("timestamp"))
     swing = bool(
         timestamp_time is not None and timestamp_time >= SWING_EARLIEST_TIME
-        and row.get("breakout_retained") is True
+        and _flag(row.get("breakout_retained")) is True
         and direction in ("Bullish", "Bearish")
-        and row.get("vwap_side_agrees") is True
+        and _flag(row.get("vwap_side_agrees")) is True
         and tod is not None and tod >= tod_min
-        and not (row.get("entry_is_extended") is True or (ext is not None and ext > max_extension))
+        and not (_flag(row.get("entry_is_extended")) is True or (ext is not None and ext > max_extension))
         and row.get("htf_agrees") is not False
         and row.get("sector_agrees") is not False
         and (oi_confirmed or strong_alt)
@@ -432,6 +446,6 @@ def interaction_variants(events):
         "breakout_plus_volume": [e for e in events if (e.get("tod_rvol") or 0) >= tod_min],
         "breakout_plus_oi": [e for e in events if e.get("oi_status") == "Confirmed"],
         "breakout_plus_volume_oi": [e for e in events if (e.get("tod_rvol") or 0) >= tod_min and e.get("oi_status") == "Confirmed"],
-        "breakout_plus_4h": [e for e in events if e.get("htf_agrees") is True],
-        "live_quality_stack": [e for e in events if e.get("vwap_side_agrees") is True and e.get("entry_is_extended") is False and (e.get("tod_rvol") or 0) >= tod_min],
+        "breakout_plus_4h": [e for e in events if _flag(e.get("htf_agrees")) is True],
+        "live_quality_stack": [e for e in events if _flag(e.get("vwap_side_agrees")) is True and _flag(e.get("entry_is_extended")) is False and (e.get("tod_rvol") or 0) >= tod_min],
     }

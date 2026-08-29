@@ -717,3 +717,36 @@ def test_early_research_window_trim_applies_to_energy_baseline_breakout_and_swin
     for key in replay:
         assert len(out[key]) == 1
         assert (out[key][0].get('signal_time') or out[key][0].get('entry_time')) == '2026-02-01'
+
+
+def test_numpy_boolean_flags_count_as_confirmed_in_live_classifier():
+    import numpy as np
+    from app.stock_in_play import classify_live_candidate
+    row = _live_row(
+        oi_recent_agrees=np.bool_(True),
+        vwap_side_agrees=np.bool_(True),
+        sector_agrees=np.bool_(True),
+        htf_agrees=np.bool_(True),
+        entry_is_extended=np.bool_(False),
+        breakout_retained=np.bool_(True),
+        timestamp='2026-08-28T14:45:00+05:30',
+    )
+    out = classify_live_candidate(row)
+    assert out['oi_status'] == 'Confirmed'
+    assert out['intraday_eligible'] is True
+    assert out['swing_eligible'] is True
+
+
+def test_interaction_variants_accept_numpy_boolean_research_flags():
+    import numpy as np
+    from app.stock_in_play import interaction_variants
+    event = {
+        'tod_rvol': 1.4,
+        'oi_status': 'Confirmed',
+        'htf_agrees': np.bool_(True),
+        'vwap_side_agrees': np.bool_(True),
+        'entry_is_extended': np.bool_(False),
+    }
+    variants = interaction_variants([event])
+    assert len(variants['breakout_plus_4h']) == 1
+    assert len(variants['live_quality_stack']) == 1
