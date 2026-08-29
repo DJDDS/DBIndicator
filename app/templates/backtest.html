@@ -98,7 +98,7 @@
       <div>
         <label for="scope-days">Days back</label>
         <input type="number" id="scope-days" name="days" value="{{ bt_days_default }}" min="{{ bt_days_min }}" max="{{ bt_days_max }}">
-        <div class="hint">Calendar days. For the primary 15-minute F&amp;O research, use 60&ndash;90 days when practical; Kite limits this intraday history to {{ bt_days_max }} days in this app.</div>
+        <div class="hint">Calendar days. 90 days is the practical default for 15-minute research; up to {{ bt_days_max }} days is allowed for deeper runs and is fetched in chunks, so longer runs can take several minutes.</div>
       </div>
       <div>
         <label>Return horizons (bars held)</label>
@@ -276,6 +276,18 @@
 // One source of truth for universe / timeframe / days / horizons, read by all
 // three tools. Previously each form carried its own copy of these inputs,
 // which meant three chances to run a tool against a scope you didn't mean.
+const BACKTEST_DAY_BOUNDS = {{ backtest_day_bounds | tojson }};
+function applyDayBounds(resetValue) {
+  const tf = document.getElementById('scope-timeframe').value;
+  const days = document.getElementById('scope-days');
+  const b = BACKTEST_DAY_BOUNDS[tf] || [5, 365, 90];
+  days.min = b[0];
+  days.max = b[1];
+  if (resetValue || Number(days.value) < b[0] || Number(days.value) > b[1]) days.value = b[2];
+}
+document.getElementById('scope-timeframe').addEventListener('change', function () { applyDayBounds(true); });
+applyDayBounds(false);
+
 function readScope() {
   const picked = document.querySelector('#scope-universe input[name=universe]:checked');
   const horizons = Array.from(document.querySelectorAll('input[name=horizon]:checked')).map(el => el.value);
@@ -583,6 +595,43 @@ if (initialState.status === 'running') {
 }
 
 // --- F&O Early Movement Research ----------------------------------------
+function updateEarlyResearchUI(state) {
+  state = state || {};
+  const progress = document.getElementById('er-progress');
+  const fill = document.getElementById('er-progress-fill');
+  const label = document.getElementById('er-progress-label');
+  const errorBox = document.getElementById('er-error');
+  const runBtn = document.getElementById('er-run-btn');
+  const hint = document.getElementById('er-form-hint');
+  const p = state.progress || {};
+
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const total = Number(p.total || 0);
+    const done = Number(p.done || 0);
+    const pctDone = total ? Math.max(1, Math.min(100, Math.round(done / total * 100))) : 1;
+    fill.style.width = pctDone + '%';
+    label.textContent = `Research running · ${done}/${total || '?'}${p.symbol ? ' · ' + p.symbol : ''}`;
+    hint.textContent = 'Keep this page open or come back later — the server job continues while you browse other pages.';
+    return;
+  }
+
+  runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  progress.style.display = 'none';
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Research failed: ' + (state.error || 'unknown error');
+    hint.textContent = 'The error is preserved here instead of leaving the page looking frozen.';
+    return;
+  }
+  errorBox.style.display = 'none';
+  if (state.status === 'done' && state.result) {
+    hint.textContent = 'Research complete.';
+    renderEarlyResearch(state.result);
+  }
+}
 function renderEarlyResearch(result) {
   const wrap = document.getElementById('er-results');
   wrap.style.display = 'block';
@@ -664,7 +713,6 @@ document.getElementById('er-run-btn').addEventListener('click', function () {
 const initialEarlyResearchState = {{ early_research_state | tojson }};
 updateEarlyResearchUI(initialEarlyResearchState);
 if (initialEarlyResearchState.status === 'running') pollEarlyResearch();
-else if (initialEarlyResearchState.status === 'done' && initialEarlyResearchState.result) renderEarlyResearch(initialEarlyResearchState.result);
 
 // --- Gate ablation sweep -----------------------------------------------
 function renderAblation(result) {

@@ -17,6 +17,17 @@ _scanner_started = False
 _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
 
+def _dashboard_counts(results):
+    rows = list(results or [])
+    return {
+        "radar": sum(1 for r in rows if r.get("radar_rank") is not None),
+        "intraday": sum(1 for r in rows if r.get("shortlist_rank") is not None),
+        "swing": sum(1 for r in rows if r.get("swing_rank") is not None),
+        "bullish": sum(1 for r in rows if (r.get("trade_direction") or r.get("direction")) == "Bullish"),
+        "bearish": sum(1 for r in rows if (r.get("trade_direction") or r.get("direction")) == "Bearish"),
+    }
+
+
 def _check_auth(username, password):
     # Single shared password, not a real user system - fine for a
     # personal single-user dashboard. Username is ignored.
@@ -70,6 +81,7 @@ def dashboard():
         login_url=login_url,
         results=all_results,
         total_scanned=len(all_results),
+        live_counts=_dashboard_counts(all_results),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
         timeframe=config.WATCHLIST_TIMEFRAME,
@@ -121,6 +133,21 @@ def dashboard():
         timeframe_label=config.TIMEFRAME_LABELS.get(config.WATCHLIST_TIMEFRAME, config.WATCHLIST_TIMEFRAME),
         is_btst_timeframe=config.WATCHLIST_TIMEFRAME in config.BTST_TIMEFRAMES,
     )
+
+
+@app.route("/api/dashboard-state")
+@require_dashboard_password
+def api_dashboard_state():
+    state = get_state()
+    rows = state.get("results") or []
+    return jsonify({
+        "last_scan": state.get("last_scan"),
+        "last_error": state.get("last_error"),
+        "total_scanned": len(rows),
+        "counts": _dashboard_counts(rows),
+        "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
+        "market_open": scanner.is_market_open(),
+    })
 
 
 @app.route("/quick-settings", methods=["POST"])
@@ -194,9 +221,24 @@ def settings_page():
         saved = not errors
         if saved:
             background.trigger_rescan()
+    scan_state = get_state()
+    live_scan_count = len(scan_state.get("results") or [])
+    research_watchlist_count = len(settings.WATCHLIST)
+    live_fno_count = None
+    if kite_auth.is_logged_in_today():
+        try:
+            kite = kite_auth.get_kite_client()
+            if kite is not None:
+                live_fno_count = len(scanner.get_fno_stock_list(kite))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Could not count live F&O universe on settings page: %s", exc)
     return render_template(
         "settings.html",
         s=settings.as_dict(),
+        research_watchlist_count=research_watchlist_count,
+        live_fno_count=live_fno_count,
+        last_scan_count=live_scan_count,
+        settings_last_scan=scan_state.get("last_scan"),
         errors=errors,
         saved=saved,
         fno_error=fno_error,
@@ -398,6 +440,7 @@ def backtest_page():
         filter_defs=backtest.FILTER_DEFS,
         state=backtest.get_backtest_state(),
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
+        backtest_day_bounds={tf: backtest.backtest_day_bounds(tf) for tf in config.VALID_TIMEFRAMES},
         weights_state=backtest.get_weights_state(),
         ablation_state=backtest.get_ablation_state(),
         early_research_state=backtest.get_early_research_state(),

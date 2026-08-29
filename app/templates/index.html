@@ -306,6 +306,10 @@
       <span class="tb-status" title="Live universe is refreshed from current NSE stock futures. Execution evidence uses 15-minute candles with a 4-hour higher-timeframe read.">
         F&amp;O universe: <strong>live</strong> &middot; execution: <strong>15m</strong> &middot; HTF: <strong>4h</strong>
       </span>
+      <span class="tb-status"><strong id="live-scan-count">{{ total_scanned }}</strong> scanned</span>
+      <span class="tb-status">Radar <strong id="radar-count">{{ live_counts.radar }}</strong></span>
+      <span class="tb-status">Intraday <strong id="intraday-count">{{ live_counts.intraday }}</strong></span>
+      <span class="tb-status">Swing <strong id="swing-count">{{ live_counts.swing }}</strong></span>
       <span class="tb-status" title="Legacy RSI/MACD/BB tuning no longer drives the live shortlist.">Stock-in-Play thresholds are validated on the Backtest page &middot; <a href="/backtest">Open research</a></span>
     </div>
   </div>
@@ -314,6 +318,7 @@
 
 
   <div class="card" style="border-color:#3a2f0f;">
+    <div id="early-radar-card">
     <h2>⚡ Early Radar <span class="sub">movement setup before full confirmation — Energy Building / Stock in Play / Ignition</span></h2>
     {% set radar_rows = results | selectattr('radar_rank', 'defined') | selectattr('radar_rank', 'ne', None) | sort(attribute='radar_rank') | list %}
     {% if radar_rows %}
@@ -339,9 +344,11 @@
     {% else %}
     <p class="sl-empty"><strong>No early setup is building right now.</strong> Radar is directionless until price escapes a real 15-minute decision range. It watches coils, opening-range pressure, abnormal TOD volume and F&amp;O positioning.</p>
     {% endif %}
+    </div>
   </div>
 
   <div class="card sl-card">
+    <div id="intraday-card">
     <h2>🎯 Intraday Best Entry <span class="sub">15-minute breakout + participation/OI sponsorship + VWAP + anti-chase</span></h2>
     {% set sl_rows = results | selectattr('shortlist_rank', 'defined') | selectattr('shortlist_rank', 'ne', None) | sort(attribute='shortlist_rank') | list %}
     {% if sl_rows %}
@@ -372,9 +379,11 @@
     {% else %}
     <p class="sl-empty"><strong>No Intraday Best Entry right now.</strong> Price must first break an actual 15-minute range; RSI/MACD voting no longer creates the direction. A valid entry then needs participation, VWAP acceptance, non-chasing location and OI or strong alternate sponsorship.</p>
     {% endif %}
+    </div>
   </div>
 
   <div class="card" style="border-color:#273d55;">
+    <div id="swing-card">
     <h2>📈 Swing 1-2D <span class="sub">late-session retained breakout suitable for one or two trading days</span></h2>
     {% set swing_rows = results | selectattr('swing_rank', 'defined') | selectattr('swing_rank', 'ne', None) | sort(attribute='swing_rank') | list %}
     {% if swing_rows %}
@@ -393,6 +402,7 @@
     {% else %}
     <p class="sl-empty"><strong>No Swing 1-2D candidate yet.</strong> Swing requires a retained late-session breakout and context that is not opposed; a good intraday trade is not automatically an overnight trade.</p>
     {% endif %}
+    </div>
   </div>
 
   <div class="card" style="border-color:#3a3424;">
@@ -909,14 +919,12 @@
 
   makeSortable();
 
-  var DASHBOARD_REFRESH_MS = 20000;
-  // Every live block re-syncs on this tick. A panel left out would silently
-  // freeze at whatever the last full page load showed, which is worse than
-  // useless for a list meant to be read live.
-  var SYNCED_IDS = ['sl-body', 'last-scan-text', 'last-error-wrap', 'main-tbody'];
+  var DASHBOARD_REFRESH_MS = 8000;
+  var lastRenderedScan = {{ (last_scan or '') | tojson }};
+  var SYNCED_IDS = ['early-radar-card', 'intraday-card', 'swing-card', 'last-error-wrap', 'main-tbody'];
 
-  function refreshDashboard() {
-    fetch(window.location.pathname + window.location.search).then(function (r) {
+  function syncDashboardHtml() {
+    return fetch(window.location.pathname + window.location.search).then(function (r) {
       if (!r.ok) throw new Error('refresh failed: ' + r.status);
       return r.text();
     }).then(function (html) {
@@ -929,9 +937,35 @@
       applyFilters();
       reapplySort();
       loadInsights();
-    }).catch(function () { /* transient network hiccup - next cycle will retry */ });
+    });
   }
-  setInterval(refreshDashboard, DASHBOARD_REFRESH_MS);
+
+  function pollDashboardState() {
+    fetch('/api/dashboard-state').then(function (r) {
+      if (!r.ok) throw new Error('state failed: ' + r.status);
+      return r.json();
+    }).then(function (state) {
+      var counts = state.counts || {};
+      var scanCount = document.getElementById('live-scan-count');
+      var radarCount = document.getElementById('radar-count');
+      var intradayCount = document.getElementById('intraday-count');
+      var swingCount = document.getElementById('swing-count');
+      var lastScan = document.getElementById('last-scan-text');
+      if (scanCount) scanCount.textContent = state.total_scanned ?? 0;
+      if (radarCount) radarCount.textContent = counts.radar ?? 0;
+      if (intradayCount) intradayCount.textContent = counts.intraday ?? 0;
+      if (swingCount) swingCount.textContent = counts.swing ?? 0;
+      if (lastScan) lastScan.textContent = state.last_scan || 'waiting for first scan...';
+
+      if (state.last_scan && state.last_scan !== lastRenderedScan) {
+        lastRenderedScan = state.last_scan;
+        syncDashboardHtml().catch(function () {});
+      }
+    }).catch(function () { /* transient network hiccup - retry next tick */ });
+  }
+
+  pollDashboardState();
+  setInterval(pollDashboardState, DASHBOARD_REFRESH_MS);
 </script>
 </body>
 </html>

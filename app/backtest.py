@@ -113,13 +113,13 @@ WARMUP_DAYS = 20          # extra calendar days fetched before the requested
 # The lower bounds are the point below which a run cannot produce a single
 # valid bar, and are ENFORCED with a clear error rather than a silent zero.
 MAX_BACKTEST_DAYS_BY_TF = {
-    "15minute": 90, "60minute": 180, "4hour": 365, "day": 1095, "week": 1825,
+    "15minute": 365, "60minute": 365, "4hour": 730, "day": 1095, "week": 1825,
 }
 MIN_BACKTEST_DAYS_BY_TF = {
     "15minute": 5, "60minute": 10, "4hour": 30, "day": 120, "week": 540,
 }
 DEFAULT_BACKTEST_DAYS_BY_TF = {
-    "15minute": 30, "60minute": 60, "4hour": 120, "day": 365, "week": 900,
+    "15minute": 90, "60minute": 90, "4hour": 180, "day": 365, "week": 900,
 }
 MAX_BACKTEST_DAYS = 1095  # absolute ceiling; the per-timeframe cap above is what actually applies
 

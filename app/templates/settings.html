@@ -26,6 +26,11 @@
   textarea { min-height: 90px; resize: vertical; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
   .row3 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .count-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+  .count-tile { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .count-value { font-size:24px; font-weight:750; color:var(--navy); }
+  .count-label { font-size:11px; color:var(--muted); margin-top:3px; }
+  @media (max-width:680px){ .count-grid{grid-template-columns:1fr;} }
   .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
          padding: 10px 20px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
   .btn.secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
@@ -69,10 +74,16 @@
   <div class="msg-err">Log in to Kite on the dashboard first, then come back here to load the live F&amp;O list.</div>
   {% endif %}
 
+  <div class="count-grid">
+    <div class="count-tile"><div class="count-value" id="live-fno-count">{{ live_fno_count if live_fno_count is not none else '—' }}</div><div class="count-label">Current NSE stock-F&amp;O universe</div></div>
+    <div class="count-tile"><div class="count-value" id="last-scan-count">{{ last_scan_count }}</div><div class="count-label">Stocks in latest live scan{% if settings_last_scan %} · {{ settings_last_scan }}{% endif %}</div></div>
+    <div class="count-tile"><div class="count-value" id="research-watchlist-count">{{ research_watchlist_count }}</div><div class="count-label">Symbols saved for research/backtests</div></div>
+  </div>
+
   <form method="post" action="/settings">
 
     <div class="card">
-      <h2>Watchlist</h2>
+      <h2>Watchlist <span class="hint">({{ research_watchlist_count }} symbols)</span></h2>
       <label for="watchlist">NSE trading symbols (comma or newline separated)</label>
       <textarea id="watchlist" name="watchlist">{{ s.WATCHLIST | join(', ') }}</textarea>
       <div class="hint">Live Best Entries ignores a stale manual list and refreshes the current NSE stock-F&amp;O universe from Kite each trading day. This list remains available for research/backtests.</div>
