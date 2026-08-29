@@ -731,6 +731,7 @@ def test_numpy_boolean_flags_count_as_confirmed_in_live_classifier():
         breakout_retained=np.bool_(True),
         timestamp='2026-08-28T14:45:00+05:30',
     )
+    from app.stock_in_play import classify_live_candidate
     out = classify_live_candidate(row)
     assert out['oi_status'] == 'Confirmed'
     assert out['intraday_eligible'] is True
@@ -750,3 +751,28 @@ def test_interaction_variants_accept_numpy_boolean_research_flags():
     variants = interaction_variants([event])
     assert len(variants['breakout_plus_4h']) == 1
     assert len(variants['live_quality_stack']) == 1
+
+
+def test_flag_normalizes_numeric_boolean_values_from_numpy_where():
+    """Research np.where(bool, np.nan) stores flags as 1.0/0.0 floats."""
+    from app.stock_in_play import _flag
+
+    assert _flag(1.0) is True
+    assert _flag(0.0) is False
+    assert _flag(float("nan")) is None
+
+
+def test_numeric_zero_context_blocks_historical_swing_candidate():
+    from app.stock_in_play import classify_live_candidate
+    row = _live_row(
+        timestamp='2026-08-28T14:45:00+05:30',
+        breakout_retained=True,
+        htf_agrees=0.0,
+        sector_agrees=1.0,
+        oi_recent_agrees=1.0,
+        vwap_side_agrees=1.0,
+        entry_is_extended=0.0,
+    )
+    out = classify_live_candidate(row)
+    assert out['oi_status'] == 'Confirmed'
+    assert out['swing_eligible'] is False
