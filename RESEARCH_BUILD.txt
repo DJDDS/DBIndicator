@@ -1,2 +1,2 @@
-Research Build: 2026-08-29-DIAG-V4
-Purpose: verify Railway is serving the corrected historical OI/4H research diagnostics build.
+Research Build: 2026-08-29-INSTITUTIONAL-V6
+Purpose: NSE stock-F&O V6 institutional-style evidence engine: Stock-in-Play + Recent-Range, cross-sectional turnover/leadership, price location, soft OI-or-basis sponsorship, bounded 5-minute execution, 60/20/20 research split and path-aware exit lab.

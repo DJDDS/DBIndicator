@@ -174,6 +174,24 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
     retained_ext = retained_ext.mask(retained_dir.eq("Bullish"), (df["close"] - retained_level) / atr.replace(0, np.nan))
     retained_ext = retained_ext.mask(retained_dir.eq("Bearish"), (retained_level - df["close"]) / atr.replace(0, np.nan))
 
+    # A retest is a one-bar-later confirmation, never a fact available on the
+    # breakout bar itself.  The confirmation bar must probe back to within
+    # 0.20 ATR of the escaped level and still CLOSE on the breakout side.
+    # This makes the research entry executable on the following bar without
+    # look-ahead and lets us compare first-escape vs retest entries honestly.
+    retest_tolerance = atr * 0.20
+    retest_confirmed = pd.Series(False, index=idx)
+    retest_confirmed |= (
+        retained & retained_dir.eq("Bullish")
+        & (df["low"] <= retained_level + retest_tolerance)
+        & (df["close"] > retained_level)
+    )
+    retest_confirmed |= (
+        retained & retained_dir.eq("Bearish")
+        & (df["high"] >= retained_level - retest_tolerance)
+        & (df["close"] < retained_level)
+    )
+
     gap_atr = _gap_atr(df, atr)
     bar_range_atr = (df["high"] - df["low"]) / atr.replace(0, np.nan)
     energy = comp_score.ge(compression_threshold)
@@ -196,6 +214,7 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
         "retained_breakout_source": retained_source,
         "retained_breakout_level": retained_level,
         "retained_breakout_extension_atr": retained_ext,
+        "breakout_retest_confirmed": retest_confirmed,
         "breakout_source": source,
         "breakout_level": level,
         "breakout_extension_atr": ext,
@@ -260,7 +279,15 @@ def _parse_time(value):
 
 
 def classify_live_candidate(row: dict) -> dict:
-    """Classify one latest live row into radar/ignition/intraday/swing stages."""
+    """Classify one latest live row using the evidence-led recent-range funnel.
+
+    Generic opening/compression escapes remain visible for research/radar, but
+    the strongest live labels are deliberately narrower because the current
+    holdout data shows Recent Range materially outperforming those sources.
+    Intraday Best Entry therefore requires a sponsored Recent-Range escape; a
+    1–2D Swing candidate additionally requires bullish retention and explicit
+    4H agreement.
+    """
     direction = row.get("breakout_direction") or row.get("retained_breakout_direction")
     energy = bool(row.get("energy_building"))
     in_play = bool(row.get("stock_in_play"))
@@ -279,16 +306,19 @@ def classify_live_candidate(row: dict) -> dict:
     )
     oi_confirmed = bool(
         _flag(row.get("oi_recent_agrees")) is True
-        and oi60 is not None and oi60 > 0
-        and (accel is None or accel >= -0.15)
+        and _is_finite_number(oi60) and float(oi60) > 0
+        and (not _is_finite_number(accel) or float(accel) >= -0.15)
     )
     oi_status = "Confirmed" if oi_confirmed else ("Not Confirming" if oi_available else "Unavailable")
 
     tod = row.get("tod_rvol")
+    tod_ok = _is_finite_number(tod) and float(tod) >= tod_min
+    source = row.get("breakout_source") or row.get("retained_breakout_source")
+    recent_range = source == "Recent Range"
     rs_dir = _directional(row.get("rs_pct"), direction) if direction else None
     strong_alt = bool(
         not oi_available
-        and tod is not None and tod >= tod_strong_no_oi
+        and _is_finite_number(tod) and float(tod) >= tod_strong_no_oi
         and rs_dir is not None and rs_dir >= 0.50
         and _flag(row.get("sector_agrees")) is True
     )
@@ -299,57 +329,85 @@ def classify_live_candidate(row: dict) -> dict:
             "direction": None, "stage": stage, "intraday_eligible": False,
             "swing_eligible": False, "oi_status": oi_status, "score": None,
             "blockers": ["waiting for price breakout"] if stage else [],
+            "edge_priority": 0,
         }
 
     if not fresh:
         blockers.append("breakout not fresh")
+    if not recent_range:
+        blockers.append("generic breakout kept in research only")
     if _flag(row.get("vwap_side_agrees")) is not True:
         blockers.append("wrong side of VWAP")
-    if tod is None or tod < tod_min:
+    if not tod_ok:
         blockers.append(f"time-of-day participation below {tod_min:.2f}x")
     ext = row.get("breakout_extension_atr")
-    if _flag(row.get("entry_is_extended")) is True or (ext is not None and ext > max_extension):
+    if _flag(row.get("entry_is_extended")) is True or (_is_finite_number(ext) and float(ext) > max_extension):
         blockers.append("breakout already extended")
-    if oi_available and not oi_confirmed:
-        blockers.append("OI not confirming")
-    elif not oi_available and not strong_alt:
-        blockers.append("OI unavailable and no strong alternate sponsorship")
+    # The validated interaction table shows volume + OI is the best current
+    # sponsorship combination.  Keep alternate sponsorship visible in score,
+    # but do not call it a Best Entry until the Recent-Range lab proves it.
+    if not oi_confirmed:
+        blockers.append("OI not confirming" if oi_available else "OI unavailable")
     if _flag(row.get("sector_agrees")) is False and _flag(row.get("htf_agrees")) is False:
         blockers.append("sector and 4H context both oppose")
 
-    intraday = not blockers
+    intraday = recent_range and not blockers
+    retest = _flag(row.get("breakout_retest_confirmed")) is True
+
     score = 0.0
     if fresh:
-        score += 30
+        score += 25
+    if recent_range:
+        score += 15
     if _flag(row.get("vwap_side_agrees")) is True:
         score += 10
-    if tod is not None:
-        score += 25 if tod >= tod_strong_no_oi else 20 if tod >= tod_min else 0
+    if _is_finite_number(tod):
+        score += 20 if float(tod) >= tod_min else 0
     if oi_confirmed:
-        score += 25
+        score += 20
     elif strong_alt:
-        score += 15
-    if _flag(row.get("sector_agrees")) is True:
-        score += 5
+        score += 8
     if _flag(row.get("htf_agrees")) is True:
         score += 5
-    if ext is not None and ext <= 0.75:
+    if _flag(row.get("sector_agrees")) is True:
+        score += 3
+    if _is_finite_number(ext) and float(ext) <= 0.75:
+        score += 2
+    if retest:
         score += 5
     score = min(100.0, score)
 
     timestamp_time = _parse_time(row.get("timestamp"))
     swing = bool(
         timestamp_time is not None and timestamp_time >= SWING_EARLIEST_TIME
+        and direction == "Bullish"
+        and recent_range
         and _flag(row.get("breakout_retained")) is True
-        and direction in ("Bullish", "Bearish")
         and _flag(row.get("vwap_side_agrees")) is True
-        and tod is not None and tod >= tod_min
-        and not (_flag(row.get("entry_is_extended")) is True or (ext is not None and ext > max_extension))
-        and _flag(row.get("htf_agrees")) is not False
+        and tod_ok
+        and not (_flag(row.get("entry_is_extended")) is True or (_is_finite_number(ext) and float(ext) > max_extension))
+        and _flag(row.get("htf_agrees")) is True
         and _flag(row.get("sector_agrees")) is not False
-        and (oi_confirmed or strong_alt)
+        and oi_confirmed
     )
-    stage = "Swing 1-2D Candidate" if swing else ("Intraday Best Entry" if intraday else "Ignition")
+
+    if swing:
+        stage = "High-Quality Swing 1-2D"
+    elif intraday:
+        stage = "Intraday Best Entry"
+    elif recent_range and tod_ok and oi_confirmed:
+        stage = "Sponsored Recent-Range"
+    elif recent_range:
+        stage = "Recent-Range Breakout"
+    else:
+        stage = "Breakout Research"
+
+    edge_priority = (
+        (4 if swing else 0)
+        + (3 if intraday else 0)
+        + (2 if recent_range and tod_ok and oi_confirmed else 0)
+        + (1 if retest else 0)
+    )
     return {
         "direction": direction,
         "stage": stage,
@@ -358,6 +416,8 @@ def classify_live_candidate(row: dict) -> dict:
         "oi_status": oi_status,
         "score": round(score, 1),
         "blockers": blockers,
+        "edge_priority": edge_priority,
+        "retest_confirmed": retest,
     }
 
 

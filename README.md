@@ -1,4 +1,10 @@
 # DBIndicator — NSE F&O Early-Movement Screener
+## Institutional V6 — current live/research architecture
+
+V6 focuses on NSE stock-F&O intraday and 1–2D swing continuation. Direction comes from a real Recent-Range escape; Stock-in-Play participation, cross-sectional turnover, sector/stock leadership, price location, volume, OI **or** futures-basis sponsorship, 4H context and a bounded 5-minute finalist check determine whether the move deserves promotion. OI is a supporting sponsorship feature rather than a universal hard gate.
+
+Research uses a 60/20/20 chronological split, with the final 20% locked by default, and includes a path-aware first-touch target/stop lab. See `BENCHMARK_RELEASE.md` for the full release logic and promotion rules.
+
 
 DBIndicator is a Zerodha Kite-connected research and screening dashboard for **NSE stock F&O only**. Its live objective is narrow: surface developing moves early enough to investigate without filling the screen with late, already-extended names.
 
@@ -6,29 +12,19 @@ It does **not** place orders. Best Entries, alerts, stops/targets and research s
 
 ## Current live architecture
 
-The old 4-of-4 indicator-voting model is no longer the Best Entries engine. The live path is fixed to **15-minute execution** with a small **4-hour context** check and ranks seven evidence groups:
+The live path uses **15-minute setup detection** with an optional **5-minute execution check** only for the best bounded finalist set:
 
-| Evidence | Weight | Purpose |
-|---|---:|---|
-| Futures OI velocity / acceleration | 25% | Is fresh positioning appearing now? |
-| Compression / BB coil | 20% | Is volatility/range energy stored before expansion? |
-| Time-of-day participation | 15% | Is volume accelerating versus the same clock slot historically? |
-| Momentum inflection | 15% | Has RSI-vs-RSI-SMA / MACD histogram momentum just turned? |
-| Relative-strength acceleration | 10% | Is the stock beginning to lead/lag NIFTY and its sector? |
-| Entry structure | 10% | VWAP acceptance, breakout context and anti-chase location |
-| Higher-timeframe context | 5% | Small confirmation, not a late-entry driver |
+1. **Stock in Play / Energy Building** — catalyst-like gap/range activity, time-of-day participation and cross-sectional turnover. Direction is optional.
+2. **Recent-Range Setup** — price itself reveals direction by escaping the recent six-bar decision range.
+3. **Sponsored Recent-Range** — TOD volume plus either OI confirmation or expanding futures basis. OI disagreement is not a universal veto.
+4. **V6 Intraday Entry** — Recent-Range + turnover/catalyst + sector/stock leadership + price location + sponsorship + anti-chase, refined by 5-minute execution quality when available.
+5. **V6 Swing 1–2D** — currently long-only until the short model clears its own benchmark; requires retention/retest, 4H context and non-opposing sector context.
 
-### Three live stages
-
-1. **Energy Building** — compression/BB coil plus evidence beginning to wake up; direction may not be executable yet.
-2. **Ignition** — a fresh directional momentum trigger is firing with participation/positioning evidence.
-3. **Best Entry** — Ignition plus OI confirmation, adequate evidence coverage, relative-strength/context checks, correct VWAP side and no excessive ATR extension.
-
-The screener may return **zero Best Entries**. That is preferable to manufacturing a shortlist from weak evidence.
+Opening-range and compression breakouts remain radar/research observations. RSI/MACD are diagnostics rather than live direction generators. The screener may legitimately return **zero entries**.
 
 ### F&O OI handling
 
-Live OI uses the first three stock-futures expiries (near / next / far) where available and tracks recent 15/30/60-minute change plus acceleration. OI is an important participation layer, but it is **not** used alone to predict direction.
+Live OI uses the first three stock-futures expiries (near / next / far) where available and tracks recent 15/30/60-minute change plus acceleration. In V6 it is a **soft sponsorship feature**: strong volume plus an expanding futures basis can sponsor a setup even when OI is missing or unhelpful.
 
 The OI Screener intentionally shows the current stock-F&O universe whenever valid live OI exists. “Unusual OI only” is optional; a z-score is supporting evidence rather than a hard requirement for the base radar.
 
@@ -50,23 +46,20 @@ BTST/STBT is research-only because the broad overnight tests did not demonstrate
 
 ## Backtesting and improvement workflow
 
-Open **Backtest → F&O Early Movement Research**. This is the primary live-parity research surface.
+Open **Backtest → F&O Stock-in-Play & Breakout Research**. The primary research uses 15-minute execution and reports real intraday horizons (**30m / 1h / 2h / 4h / EOD**) plus swing horizons (**1D / 2D**).
 
-It measures two different targets:
-
-- **Energy Building:** after a coil/compression event, did price expand by at least 1 ATR within the next 4 or 8 bars, regardless of direction?
-- **Ignition / Best Entry:** after direction appears, what are the net 1/2/3/5/10-bar outcomes when entering at the **next bar open**?
+The focused **Recent-Range Edge Lab** compares motivated variants only: bullish/bearish Recent Range, TOD volume, OI, 4H, no-chase, VWAP proximity, one-bar retention and retest entries. It does not brute-force thousands of combinations.
 
 Research includes:
 
 - brokerage/cost + slippage assumptions
-- Bullish/Bearish directional returns
-- win rate, average/median return, profit factor, average winner/loss
-- **30% chronological holdout** (latest events kept untouched)
-- component-ablation/lift ranking on holdout
-- one-factor threshold sensitivity for compression, 60m OI, TOD RVOL, movement score and RS acceleration
-- historical 4-hour context using only the previous fully closed HTF bucket (no look-ahead)
-- historical sector context when the mapped NSE sector-index history is available
+- **60% development / 20% validation / 20% locked final-test split** for V6
+- the older 30% holdout diagnostics remain visible for legacy comparison
+- profit factor and net expectancy
+- MFE / MAE and time-to-ATR diagnostics
+- OI/4H/VWAP raw coverage diagnostics
+- Research / Promising / Benchmark promotion status
+- next-executable-bar entries for both first-escape and confirmation-bar variants
 
 ### Historical OI limitation
 
@@ -81,8 +74,6 @@ Settings intentionally exposes only the controls that still matter to the live e
 - Maximum entry extension in ATR (default 1.25)
 - Maximum Best Entries (a ceiling, not a target)
 - Scan interval
-- RSI length and RSI smoothing
-- MACD live preset (8/17/9 in Auto)
 - risk/ATR stop and position-sizing display inputs
 
 BB/compression, OI acceleration, TOD RVOL, RS/context and fresh-trigger quality are calculated automatically.

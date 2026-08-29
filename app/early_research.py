@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-29-DIAG-V4"
+RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6"
 
 
 
@@ -112,7 +112,38 @@ def _session_pct_change(series, bars):
     return out
 
 
-def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None, sector_df=None):
+
+def _prior_session_ranges(df: pd.DataFrame):
+    """Prior-completed-session 20/50 day ranges, mapped to intraday bars."""
+    sessions = pd.Series(df.index.normalize(), index=df.index)
+    daily = df.groupby(df.index.normalize()).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"),
+        close=("close", "last"), volume=("volume", "sum"),
+    )
+    out = {}
+    for n in (20, 50):
+        minp = min(n, 10 if n == 20 else 20)
+        hi = daily["high"].shift(1).rolling(n, min_periods=minp).max()
+        lo = daily["low"].shift(1).rolling(n, min_periods=minp).min()
+        out[f"high{n}"] = sessions.map(hi)
+        out[f"low{n}"] = sessions.map(lo)
+    return out
+
+
+def _historical_market_regime(index_close: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
+    """Point-in-time research regime when breadth history is unavailable."""
+    idx = pd.to_numeric(index_close, errors="coerce").reindex(index, method="ffill", limit=2)
+    ret8 = idx.pct_change(8) * 100.0
+    vol = idx.pct_change().rolling(20, min_periods=10).std() * 100.0
+    return pd.Series(
+        np.where(ret8 >= 0.35, "Trend Up",
+                 np.where(ret8 <= -0.35, "Trend Down",
+                          np.where((ret8.abs() < 0.20) & (vol >= 0.20), "Rotation", "Chop"))),
+        index=index, dtype=object,
+    )
+
+
+def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None, sector_df=None, sector_rank_series=None, futures_df=None):
     """Build historical features with live breakout semantics and no look-ahead.
 
     RSI/MACD slopes remain available as diagnostics for old research panels, but
@@ -148,6 +179,10 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
     out["direction"] = direction
     out["entry_trigger"] = np.where(out["fresh_breakout"], direction, None)
     out["entry_trigger_bars_ago"] = np.where(out["fresh_breakout"], 0, np.nan)
+    # Context must follow the breakout currently being evaluated.  On the
+    # one-bar-later retention/retest bar there is no fresh breakout direction,
+    # so use the retained direction instead of turning OI/4H/VWAP into NaN.
+    context_direction = direction.where(direction.notna(), out.get("retained_breakout_direction"))
 
     # Momentum diagnostics only. They do not create direction or eligibility.
     rsi_spread = series["rsi_line"] - series["rsi_smooth"]
@@ -168,16 +203,29 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
         np.where(direction.eq("Bearish"), (rsi_slope < 0) & (hist_slope < 0), np.nan),
     )
 
-    # VWAP/anti-chase are evaluated relative to breakout direction.
+    # VWAP/anti-chase are evaluated relative to the fresh OR retained breakout
+    # direction.  Simple VWAP-side agreement was true for ~94% of historical
+    # events, so also measure directional distance in ATRs for a stricter,
+    # testable proximity condition rather than pretending all "above VWAP"
+    # observations are equally informative.
     vwap = indicators.session_vwap_series(df, timeframe)
+    atr_safe = pd.to_numeric(series["atr"], errors="coerce").replace(0, np.nan)
     out["vwap_side_agrees"] = np.where(
-        direction.eq("Bullish"), df["close"] > vwap,
-        np.where(direction.eq("Bearish"), df["close"] < vwap, np.nan),
+        context_direction.eq("Bullish"), df["close"] > vwap,
+        np.where(context_direction.eq("Bearish"), df["close"] < vwap, np.nan),
     )
+    out["vwap_distance_atr"] = np.where(
+        context_direction.eq("Bullish"), (df["close"] - vwap) / atr_safe,
+        np.where(context_direction.eq("Bearish"), (vwap - df["close"]) / atr_safe, np.nan),
+    )
+    out["vwap_proximity_quality"] = (pd.to_numeric(out["vwap_distance_atr"], errors="coerce") >= 0) & (pd.to_numeric(out["vwap_distance_atr"], errors="coerce") <= 0.75)
     out["breakout_vwap_agrees"] = out["vwap_side_agrees"]
-    out["entry_is_extended"] = out["breakout_extension_atr"] > stock_in_play._live_setting("MAX_ENTRY_EXTENSION_ATR", stock_in_play.MAX_BREAKOUT_EXTENSION_ATR)
+    effective_extension = pd.to_numeric(out["breakout_extension_atr"], errors="coerce").fillna(
+        pd.to_numeric(out.get("retained_breakout_extension_atr"), errors="coerce")
+    )
+    out["entry_is_extended"] = effective_extension > stock_in_play._live_setting("MAX_ENTRY_EXTENSION_ATR", stock_in_play.MAX_BREAKOUT_EXTENSION_ATR)
     out["breakout_entry_extended"] = out["entry_is_extended"]
-    out["breakout_state"] = np.where(direction.eq("Bullish"), "Breakout", np.where(direction.eq("Bearish"), "Breakdown", None))
+    out["breakout_state"] = np.where(context_direction.eq("Bullish"), "Breakout", np.where(context_direction.eq("Bearish"), "Breakdown", None))
 
     # Intraday OI. The timezone-safe _session_pct_change is critical: previous
     # code stripped timezone from one side of the same-session comparison and
@@ -191,7 +239,7 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
         out["oi_chg_30m_pct"] = oi30
         out["oi_chg_60m_pct"] = oi60
         out["oi_acceleration"] = oi30 - oi30.shift(2 if timeframe == "15minute" else 1)
-        out["oi_recent_agrees"] = np.where(direction.notna(), oi60 > 0, np.nan)
+        out["oi_recent_agrees"] = np.where(context_direction.notna(), oi60 > 0, np.nan)
 
         changes = _session_pct_change(oi, 1) if timeframe == "15minute" else oi.pct_change() * 100.0
         window = early_signal.INTRADAY_BASELINE_OBS if timeframe == "15minute" else early_signal.BASELINE_DAYS
@@ -228,8 +276,8 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
         sec_close = pd.Series(sector_df["close"]).reindex(df.index, method="ffill", limit=2)
         sec_ret = sec_close.pct_change(8)
         out["sector_agrees"] = pd.Series(
-            np.where(direction.eq("Bullish"), sec_ret > 0,
-                     np.where(direction.eq("Bearish"), sec_ret < 0, np.nan)),
+            np.where(context_direction.eq("Bullish"), sec_ret > 0,
+                     np.where(context_direction.eq("Bearish"), sec_ret < 0, np.nan)),
             index=df.index,
         )
     else:
@@ -251,14 +299,93 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
             aligned = pd.merge_asof(fine, lookup, on="ts", direction="backward")["htf_dir"]
             aligned.index = df.index
             out["htf_agrees"] = pd.Series(
-                np.where(direction.eq("Bullish"), aligned.eq("Bullish"),
-                         np.where(direction.eq("Bearish"), aligned.eq("Bearish"), np.nan)),
+                np.where(context_direction.eq("Bullish"), aligned.eq("Bullish"),
+                         np.where(context_direction.eq("Bearish"), aligned.eq("Bearish"), np.nan)),
                 index=df.index,
             )
         else:
             out["htf_agrees"] = np.nan
     else:
         out["htf_agrees"] = np.nan
+
+    # ------------------------------------------------------------------
+    # V6 research features. These are observable, point-in-time proxies for
+    # information-driven participation and continuation regime. OI is only one
+    # sponsorship input; it is not a universal veto.
+    # ------------------------------------------------------------------
+    from . import v6_edge
+    prior = _prior_session_ranges(df)
+    out["prior_high_20d"] = prior["high20"]
+    out["prior_low_20d"] = prior["low20"]
+    out["prior_high_50d"] = prior["high50"]
+    out["prior_low_50d"] = prior["low50"]
+
+    denom20 = (out["prior_high_20d"] - out["prior_low_20d"]).replace(0, np.nan)
+    denom50 = (out["prior_high_50d"] - out["prior_low_50d"]).replace(0, np.nan)
+    p20 = ((df["close"] - out["prior_low_20d"]) / denom20 * 100.0).clip(0, 100)
+    p50 = ((df["close"] - out["prior_low_50d"]) / denom50 * 100.0).clip(0, 100)
+    out["price_position_20d_pct"] = p20
+    out["price_position_50d_pct"] = p50
+    loc_mean = pd.concat([p20, p50], axis=1).mean(axis=1, skipna=True)
+    out["price_location_score"] = np.where(
+        context_direction.eq("Bullish"), loc_mean,
+        np.where(context_direction.eq("Bearish"), 100.0 - loc_mean, np.nan),
+    )
+    near_hi = out["prior_high_20d"].gt(0) & (df["close"] / out["prior_high_20d"] >= 0.985)
+    near_lo = out["prior_low_20d"].gt(0) & (df["close"] <= out["prior_low_20d"] * 1.015)
+    out["near_20d_high"] = near_hi
+    out["near_20d_low"] = near_lo
+    out.loc[context_direction.eq("Bullish") & near_hi, "price_location_score"] = out.loc[context_direction.eq("Bullish") & near_hi, "price_location_score"].clip(lower=90)
+    out.loc[context_direction.eq("Bearish") & near_lo, "price_location_score"] = out.loc[context_direction.eq("Bearish") & near_lo, "price_location_score"].clip(lower=90)
+
+    turnover = pd.to_numeric(df["close"], errors="coerce") * pd.to_numeric(df["volume"], errors="coerce")
+    out["turnover_notional"] = turnover
+    # Historical self-percentile is an initial stock-in-play proxy. Aggregate
+    # research later adds a cross-sectional candidate percentile at each signal.
+    out["turnover_percentile"] = _rolling_last_percentile(turnover, lookback=80, min_periods=20)
+
+    out["catalyst_score"] = [
+        v6_edge.catalyst_proxy_score(
+            gap_atr=g, opening_rvol=o, tod_rvol=t, bar_range_atr=r,
+            turnover_percentile=pct,
+        )
+        for g, o, t, r, pct in zip(
+            out.get("gap_atr"), out.get("opening_rvol"), out.get("tod_rvol"),
+            out.get("bar_range_atr"), out.get("turnover_percentile")
+        )
+    ]
+
+    if index_df is not None and not index_df.empty:
+        idx_close_v6 = pd.Series(index_df["close"]).reindex(df.index, method="ffill", limit=2)
+        out["market_regime"] = _historical_market_regime(idx_close_v6, df.index)
+        out["index_ret_8_pct"] = idx_close_v6.pct_change(8) * 100.0
+    else:
+        out["market_regime"] = "Unknown"
+        out["index_ret_8_pct"] = np.nan
+
+    if sector_df is not None and not sector_df.empty:
+        sec_close_v6 = pd.Series(sector_df["close"]).reindex(df.index, method="ffill", limit=2)
+        out["sector_ret_8_pct"] = sec_close_v6.pct_change(8) * 100.0
+        out["stock_sector_lead_pct"] = df["close"].pct_change(8) * 100.0 - out["sector_ret_8_pct"]
+    else:
+        out["sector_ret_8_pct"] = np.nan
+        out["stock_sector_lead_pct"] = np.nan
+
+    if sector_rank_series is not None:
+        out["sector_rank_percentile"] = pd.to_numeric(pd.Series(sector_rank_series), errors="coerce").reindex(df.index, method="ffill", limit=2)
+    else:
+        out["sector_rank_percentile"] = np.nan
+
+    # Intraday futures basis has necessarily partial historical coverage because
+    # Kite cannot reconstruct every expired single-stock futures contract at
+    # 15-minute granularity. Missing basis is therefore NaN, never a failed gate.
+    if futures_df is not None and not futures_df.empty and "close" in futures_df:
+        fut_close = pd.to_numeric(pd.Series(futures_df["close"]), errors="coerce").reindex(df.index, method="ffill", limit=2)
+        out["basis_pct"] = (fut_close / pd.to_numeric(df["close"], errors="coerce") - 1.0) * 100.0
+        out["basis_acceleration"] = out["basis_pct"] - out["basis_pct"].shift(2)
+    else:
+        out["basis_pct"] = np.nan
+        out["basis_acceleration"] = np.nan
 
     out["atr"] = series["atr"]
     return out
@@ -358,7 +485,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
     """
     from . import stock_in_play
 
-    energy_events, baseline_events, ignition_events, best_events, swing_events = [], [], [], [], []
+    energy_events, baseline_events, ignition_events, best_events, swing_events, recent_range_confirmation_events = [], [], [], [], [], []
     energy = features.get("energy_building")
     if energy is None:
         energy = pd.Series(False, index=features.index)
@@ -374,7 +501,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             cost_pct=cost_pct, slippage_pct=slippage_pct,
         )
         entry_pos = outcomes.get("entry_pos")
-        return {
+        event = {
             "symbol": symbol,
             "signal_time": df.index[pos].isoformat(),
             "entry_time": df.index[entry_pos].isoformat() if entry_pos is not None else None,
@@ -392,7 +519,11 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "sector_agrees": row.get("sector_agrees"),
             "rs_pct": row.get("rs_pct"),
             "vwap_side_agrees": row.get("vwap_side_agrees"),
+            "vwap_distance_atr": row.get("vwap_distance_atr"),
+            "vwap_proximity_quality": row.get("vwap_proximity_quality"),
             "entry_is_extended": row.get("entry_is_extended"),
+            "breakout_retained": row.get("breakout_retained"),
+            "retest_confirmed": row.get("breakout_retest_confirmed"),
             "intraday_returns": outcomes.get("intraday", {}),
             "swing_returns": outcomes.get("swing", {}),
             "mfe_atr": outcomes.get("mfe_atr", {}),
@@ -404,7 +535,46 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "stage": classified.get("stage"),
             "movement_score": classified.get("score"),
             "blockers": classified.get("blockers", []),
+            "entry_pos": entry_pos,
+            "entry_price": outcomes.get("entry_price"),
+            "atr_value": float(atr),
+            "turnover_notional": row.get("turnover_notional"),
+            "turnover_percentile": row.get("turnover_percentile"),
+            "gap_atr": row.get("gap_atr"),
+            "opening_rvol": row.get("opening_rvol"),
+            "bar_range_atr": row.get("bar_range_atr"),
+            "catalyst_score": row.get("catalyst_score"),
+            "market_regime": row.get("market_regime"),
+            "sector_rank_percentile": row.get("sector_rank_percentile"),
+            "stock_sector_lead_pct": row.get("stock_sector_lead_pct"),
+            "price_location_score": row.get("price_location_score"),
+            "basis_pct": row.get("basis_pct"),
+            "basis_acceleration": row.get("basis_acceleration"),
         }
+        # V6 keeps the older live-parity classifier visible for comparison,
+        # but research is promoted using the new evidence-weighted model.
+        try:
+            from . import v6_edge
+            v6_row = dict(row)
+            v6_row["direction"] = direction
+            v6_row["oi_confirmed"] = classified.get("oi_status") == "Confirmed"
+            v6_classified = v6_edge.classify_v6_candidate(v6_row)
+            event["v6_stage"] = v6_classified.get("stage")
+            event["v6_score"] = v6_classified.get("score")
+            event["v6_intraday_eligible"] = v6_classified.get("intraday_eligible", False)
+            event["v6_swing_eligible"] = v6_classified.get("swing_eligible", False)
+            event["v6_sponsorship"] = v6_classified.get("sponsorship")
+            event["v6_blockers"] = v6_classified.get("blockers", [])
+        except Exception:
+            event["v6_stage"] = None
+            event["v6_score"] = None
+            event["v6_intraday_eligible"] = False
+            event["v6_swing_eligible"] = False
+            event["v6_sponsorship"] = {}
+            event["v6_blockers"] = []
+        if event.get("breakout_source") == "Recent Range":
+            attach_v6_path_exits(df, event, max_bars=50)
+        return event
 
     # A sampled non-coil baseline is enough to estimate lift without storing
     # every bar from the entire 211-stock universe in memory.
@@ -455,10 +625,11 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             if row.get("breakout_extension_atr") is None:
                 row["breakout_extension_atr"] = row.get("retained_breakout_extension_atr")
             classified = stock_in_play.classify_live_candidate(row)
-            if classified.get("swing_eligible"):
-                event = _event_from_row(row, pos, retained_direction, classified)
-                if event is not None:
-                    swing_events.append(event)
+            event = _event_from_row(row, pos, retained_direction, classified)
+            if event is not None and event.get("breakout_source") == "Recent Range":
+                recent_range_confirmation_events.append(dict(event))
+            if classified.get("swing_eligible") and event is not None:
+                swing_events.append(event)
 
     return {
         "energy_events": energy_events,
@@ -466,6 +637,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
         "ignition_events": ignition_events,
         "best_entry_events": best_events,
         "swing_events": swing_events,
+        "recent_range_confirmation_events": recent_range_confirmation_events,
     }
 
 
@@ -531,6 +703,115 @@ def _promotion_benchmark(events, field, key, mode, holdout_pct):
     stats["avg_mae_atr"] = excursion.get("avg_mae_1D_atr")
     stats["walkforward"] = walkforward_named_returns(events, field, key, blocks=4)
     return institutional_benchmark(stats, mode=mode)
+
+
+def recent_range_edge_variants(events, confirmation_events=None):
+    """Motivated Recent-Range variants, not a Cartesian optimisation grid.
+
+    The current holdout evidence puts Recent Range materially ahead of Opening
+    Range and compression breakouts, with bullish 1D behavior also much less
+    negative than bearish.  This lab therefore asks a narrow sequence of
+    falsifiable questions: does volume help, does OI help, do they help
+    together, does 4H context help, and is a one-bar retention/retest entry
+    better than buying the first escape?
+    """
+    from . import stock_in_play
+
+    events = list(events or [])
+    confirmations = list(confirmation_events or [])
+    recent = [e for e in events if e.get("breakout_source") == "Recent Range"]
+    bull = [e for e in recent if e.get("direction") == "Bullish"]
+    bear = [e for e in recent if e.get("direction") == "Bearish"]
+    tod_min = stock_in_play._live_setting("TOD_RVOL_MIN", stock_in_play.TOD_RVOL_MIN)
+
+    def vol(e):
+        v = e.get("tod_rvol")
+        return stock_in_play._is_finite_number(v) and float(v) >= tod_min
+
+    def oi(e):
+        return e.get("oi_status") == "Confirmed"
+
+    def htf(e):
+        return stock_in_play._flag(e.get("htf_agrees")) is True
+
+    def no_chase(e):
+        return stock_in_play._flag(e.get("entry_is_extended")) is False
+
+    def vwap_proximity(e):
+        v = e.get("vwap_distance_atr")
+        return stock_in_play._is_finite_number(v) and 0 <= float(v) <= 0.75
+
+    retained = [e for e in confirmations
+                if e.get("breakout_source") == "Recent Range"
+                and e.get("direction") == "Bullish"
+                and stock_in_play._flag(e.get("breakout_retained")) is True]
+    retest = [e for e in retained if stock_in_play._flag(e.get("retest_confirmed")) is True]
+
+    return {
+        "recent_range_all": recent,
+        "recent_range_bullish": bull,
+        "recent_range_bearish": bear,
+        "recent_range_plus_volume_oi": [e for e in recent if vol(e) and oi(e)],
+        "bullish_plus_volume": [e for e in bull if vol(e)],
+        "bullish_plus_oi": [e for e in bull if oi(e)],
+        "bullish_plus_volume_oi": [e for e in bull if vol(e) and oi(e)],
+        "bearish_plus_volume_oi": [e for e in bear if vol(e) and oi(e)],
+        "bullish_plus_4h": [e for e in bull if htf(e)],
+        "bullish_plus_volume_oi_4h": [e for e in bull if vol(e) and oi(e) and htf(e)],
+        "bullish_plus_volume_oi_4h_no_chase": [e for e in bull if vol(e) and oi(e) and htf(e) and no_chase(e)],
+        "bullish_plus_volume_oi_vwap_proximity": [e for e in bull if vol(e) and oi(e) and vwap_proximity(e)],
+        "bullish_retained": retained,
+        "bullish_retest": retest,
+        "bullish_retained_volume_oi_4h": [e for e in retained if vol(e) and oi(e) and htf(e)],
+        "bullish_retest_volume_oi_4h": [e for e in retest if vol(e) and oi(e) and htf(e)],
+    }
+
+
+def _recent_range_edge_report(events, confirmation_events, holdout_pct):
+    from . import stock_in_play
+
+    variants = recent_range_edge_variants(events, confirmation_events)
+    confirmation_names = {
+        "bullish_retained", "bullish_retest",
+        "bullish_retained_volume_oi_4h", "bullish_retest_volume_oi_4h",
+    }
+    rows = []
+    for name, subset in variants.items():
+        subset = sorted(list(subset or []), key=lambda e: e.get("entry_time", ""))
+        _train, hold = chronological_split(subset, holdout_pct=holdout_pct)
+        i = summarize_named_returns(hold, "intraday_returns", ("2h", "eod"))
+        sw = summarize_named_returns(hold, "swing_returns", ("1D", "2D"))
+        primary = sw.get("1D", {})
+        rows.append({
+            "variant": name,
+            "entry_type": "1-bar confirmation" if name in confirmation_names else "first escape",
+            "total_events": len(subset),
+            "holdout_events": len(hold),
+            "intraday_2h": i.get("2h", {}),
+            "intraday_eod": i.get("eod", {}),
+            "swing_1D": sw.get("1D", {}),
+            "swing_2D": sw.get("2D", {}),
+            "holdout_1D_avg": primary.get("avg_return_pct"),
+            "holdout_1D_pf": primary.get("profit_factor"),
+            "promotion": _promotion_benchmark(
+                subset, "swing_returns", "1D", "swing", holdout_pct
+            ) if subset else {
+                "status": "Research", "passed": False,
+                "checks": {}, "requirements": {},
+            },
+        })
+    rows.sort(key=lambda r: (
+        r.get("holdout_1D_avg") is None,
+        -(r.get("holdout_1D_avg") or -999),
+        -(r.get("holdout_1D_pf") or 0),
+    ))
+    best = next((r for r in rows if (r.get("swing_1D") or {}).get("trade_count", 0) >= 30), None)
+    return {
+        "rows": rows,
+        "best_1D_variant": best,
+        "tod_rvol_threshold": stock_in_play._live_setting("TOD_RVOL_MIN", stock_in_play.TOD_RVOL_MIN),
+        "vwap_proximity_max_atr": 0.75,
+    }
 
 
 def _interaction_report(events, holdout_pct):
@@ -789,11 +1070,14 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
     # diagnostics/tests remain readable while the primary UI uses real horizons.
     baseline = []
     swing_events = []
+    recent_range_confirmation_events = []
     for replay in replays or []:
         baseline.extend(replay.get("baseline_energy_events") or [])
         swing_events.extend(replay.get("swing_events") or [])
+        recent_range_confirmation_events.extend(replay.get("recent_range_confirmation_events") or [])
     baseline.sort(key=lambda e: e.get("entry_time", ""))
     swing_events.sort(key=lambda e: e.get("entry_time", ""))
+    recent_range_confirmation_events.sort(key=lambda e: e.get("entry_time", ""))
 
     if ignition and any("intraday_returns" in e for e in ignition):
         from .stock_in_play import expansion_lift_table
@@ -811,6 +1095,10 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
         )
         result["compression_lift"] = expansion_lift_table(energy, baseline)
         result["interactions"] = _interaction_report(ignition, holdout_pct)
+        result["recent_range_edge_lab"] = _recent_range_edge_report(
+            ignition, recent_range_confirmation_events, holdout_pct
+        )
+        result["v6_edge_lab"] = v6_edge_report(ignition)
         available = sum(1 for e in ignition if e.get("oi_status") != "Unavailable")
         confirmed = sum(1 for e in ignition if e.get("oi_status") == "Confirmed")
         result["oi_coverage"] = {
@@ -845,3 +1133,142 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
                 "events": len(subset),
             }
     return result
+
+
+def attach_v6_path_exits(df: pd.DataFrame, event: dict, max_bars=50):
+    """Attach conservative target/stop and breakeven-path outcomes to one event."""
+    from . import v6_edge
+    entry_pos = event.get("entry_pos")
+    entry_price = event.get("entry_price")
+    atr = event.get("atr_value")
+    direction = event.get("direction")
+    if entry_pos is None or not all(v is not None for v in (entry_price, atr, direction)):
+        event["path_exits"] = {}
+        return event
+    grid = v6_edge.first_touch_grid(
+        df, entry_pos=int(entry_pos), direction=direction, entry_price=float(entry_price),
+        atr=float(atr), max_bars=max_bars,
+    )
+    grid["breakeven_0.50"] = v6_edge.breakeven_after_trigger_exit(
+        df, entry_pos=int(entry_pos), direction=direction, entry_price=float(entry_price),
+        atr=float(atr), trigger_atr=0.50, initial_stop_atr=0.50, target_atr=1.25,
+        max_bars=max_bars,
+    )
+    grid["breakeven_0.75"] = v6_edge.breakeven_after_trigger_exit(
+        df, entry_pos=int(entry_pos), direction=direction, entry_price=float(entry_price),
+        atr=float(atr), trigger_atr=0.75, initial_stop_atr=0.50, target_atr=1.50,
+        max_bars=max_bars,
+    )
+    event["path_exits"] = grid
+    return event
+
+
+def _v6_variant_report(events, predicate, field="swing_returns", key="1D"):
+    from . import v6_edge
+    subset = [e for e in (events or []) if predicate(e)]
+    return v6_edge.three_way_research_report(subset, field=field, key=key)
+
+
+def _v6_path_exit_report(events):
+    """60/20/20 validation for path-aware target/stop variants."""
+    from . import v6_edge
+    rows = list(events or [])
+    keys = sorted({
+        key for e in rows for key in (e.get("path_exits") or {}).keys()
+    })
+
+    def stats(subset, key):
+        vals = []
+        targets = stops = breakevens = timeouts = 0
+        for e in subset:
+            payload = (e.get("path_exits") or {}).get(key) or {}
+            v = payload.get("net_return_pct")
+            try:
+                if v is not None and np.isfinite(float(v)):
+                    vals.append(float(v))
+            except (TypeError, ValueError):
+                continue
+            outcome = payload.get("outcome")
+            targets += int(outcome == "target")
+            stops += int(outcome == "stop")
+            breakevens += int(outcome == "breakeven")
+            timeouts += int(outcome == "timeout")
+        if not vals:
+            return {"trade_count": 0, "win_rate_pct": None, "avg_return_pct": None, "profit_factor": None}
+        wins = [v for v in vals if v > 0]
+        losses = [v for v in vals if v < 0]
+        gp, gl = sum(wins), abs(sum(losses))
+        pf = gp / gl if gl > 0 else (float("inf") if gp > 0 else None)
+        return {
+            "trade_count": len(vals),
+            "win_rate_pct": round(len(wins) / len(vals) * 100.0, 1),
+            "avg_return_pct": round(float(np.mean(vals)), 3),
+            "median_return_pct": round(float(np.median(vals)), 3),
+            "profit_factor": round(float(pf), 2) if pf is not None and np.isfinite(pf) else pf,
+            "targets": targets, "stops": stops, "breakevens": breakevens, "timeouts": timeouts,
+        }
+
+    out = {}
+    for key in keys:
+        dev, val, final = v6_edge.three_way_split(rows)
+        out[key] = {
+            "development": stats(dev, key),
+            "validation": stats(val, key),
+            "final_test": v6_edge.final_test_payload(stats(final, key)),
+        }
+    return out
+
+
+def v6_edge_report(events):
+    """Focused 60/20/20 V6 variants; final 20% stays locked by default."""
+    from . import stock_in_play
+    recent = [e for e in (events or []) if e.get("breakout_source") == "Recent Range"]
+    long = [e for e in recent if e.get("direction") == "Bullish"]
+    short = [e for e in recent if e.get("direction") == "Bearish"]
+
+    def fin(e, key, default=None):
+        v = e.get(key, default)
+        try:
+            return float(v) if v is not None and np.isfinite(float(v)) else None
+        except (TypeError, ValueError):
+            return None
+
+    def high_turnover(e):
+        v = fin(e, "turnover_percentile")
+        return v is not None and v >= 80
+
+    def catalyst(e):
+        v = fin(e, "catalyst_score")
+        return v is not None and v >= 60
+
+    def leadership_location(e):
+        lead = fin(e, "stock_sector_lead_pct")
+        loc = fin(e, "price_location_score")
+        return lead is not None and lead >= 0.20 and loc is not None and loc >= 75
+
+    def sponsored(e):
+        s = e.get("v6_sponsorship") or {}
+        if isinstance(s, dict):
+            return bool(s.get("sponsored"))
+        return False
+
+    def retained_or_retest(e):
+        return stock_in_play._flag(e.get("breakout_retained")) is True or stock_in_play._flag(e.get("retest_confirmed")) is True
+
+    report = {
+        "recent_range_all": _v6_variant_report(recent, lambda _e: True),
+        "recent_range_long": _v6_variant_report(long, lambda _e: True),
+        "recent_range_short_research": _v6_variant_report(short, lambda _e: True),
+        "long_high_turnover": _v6_variant_report(long, high_turnover),
+        "long_catalyst": _v6_variant_report(long, catalyst),
+        "long_leadership_location": _v6_variant_report(long, leadership_location),
+        "long_sponsored": _v6_variant_report(long, sponsored),
+        "long_retained_or_retest": _v6_variant_report(long, retained_or_retest),
+        "long_full_v6": _v6_variant_report(
+            long,
+            lambda e: high_turnover(e) and catalyst(e) and leadership_location(e)
+                      and sponsored(e) and retained_or_retest(e),
+        ),
+    }
+    report["path_exit_lab"] = _v6_path_exit_report(long)
+    return report

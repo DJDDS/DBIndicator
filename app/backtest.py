@@ -57,7 +57,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import early_signal, early_research
+from . import early_signal, early_research, v6_edge
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -951,6 +951,30 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
 #     sparse, so that stays a plain loop over the handful of entries.
 # --------------------------------------------------------------------------
 
+def _fetch_near_futures_history_for_research(kite, symbol, timeframe, days=None):
+    """Current near-expiry futures price history for V6 basis research.
+
+    Coverage is intentionally partial around expiry rolls: Kite exposes the
+    currently live contract token, not a reconstructed historical near-month
+    chain. Missing periods stay missing and are reported as such by V6.
+    """
+    try:
+        contracts = scanner_mod._load_fut_contracts_map(kite).get(symbol, [])
+    except Exception:  # noqa: BLE001 - basis is optional research context
+        contracts = []
+    if not contracts:
+        return None
+    token = contracts[0].get("instrument_token")
+    if not token:
+        return None
+    fetch_days = (int(days) + WARMUP_DAYS) if days is not None else WARMUP_DAYS + 30
+    try:
+        return _fetch_history(token, timeframe, fetch_days, kite)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Near-futures basis history unavailable for %s: %s", symbol, exc)
+        return None
+
+
 def _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=None):
     """Daily/intraday OI series for one symbol, for replaying the OI gate.
 
@@ -1800,7 +1824,7 @@ def _trim_replay_to_window(replay, window_start):
     """Trim every research event family to the requested non-warmup window."""
     out = dict(replay or {})
     for key in ("energy_events", "baseline_energy_events", "ignition_events",
-                "best_entry_events", "swing_events"):
+                "best_entry_events", "swing_events", "recent_range_confirmation_events"):
         rows = list(out.get(key) or [])
         out[key] = [e for e in rows
                     if (e.get("signal_time") or e.get("entry_time") or "") >= window_start]
@@ -1833,7 +1857,31 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
 
     replays = []
     notes = {}
+    # V6 sector leadership is cross-sectional. Fetch each needed sector once,
+    # then rank sector returns point-in-time across the available sector set.
     sector_history = {}
+    sectors_needed = sorted({scanner_mod.SYMBOL_SECTOR_MAP.get(s) for s in symbols
+                             if scanner_mod.SYMBOL_SECTOR_MAP.get(s)})
+    for sector_symbol in sectors_needed:
+        try:
+            sector_token = _load_index_token(kite, sector_symbol)
+            sector_history[sector_symbol] = (
+                _fetch_history(sector_token, timeframe, days + WARMUP_DAYS, kite)
+                if sector_token else None
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Early research sector history unavailable for %s: %s", sector_symbol, exc)
+            sector_history[sector_symbol] = None
+    sector_ret_parts = {}
+    for sector_symbol, sdf in sector_history.items():
+        if sdf is not None and not sdf.empty and "close" in sdf:
+            sector_ret_parts[sector_symbol] = pd.to_numeric(sdf["close"], errors="coerce").pct_change(8) * 100.0
+    sector_rank_frame = None
+    if sector_ret_parts:
+        sector_ret_frame = pd.concat(sector_ret_parts, axis=1).sort_index()
+        sector_rank_frame = sector_ret_frame.rank(axis=1, pct=True, method="average") * 100.0
+
+    turnover_series = {}
     window_start = (now_ist() - dt.timedelta(days=days)).replace(tzinfo=None).isoformat()
     for i, symbol in enumerate(symbols):
         if progress_cb:
@@ -1848,25 +1896,22 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
                 notes[symbol] = "no price history"
                 continue
             oi = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
-            sector_df = None
             sector_symbol = scanner_mod.SYMBOL_SECTOR_MAP.get(symbol)
-            if sector_symbol:
-                if sector_symbol not in sector_history:
-                    try:
-                        sector_token = _load_index_token(kite, sector_symbol)
-                        sector_history[sector_symbol] = (
-                            _fetch_history(sector_token, timeframe, days + WARMUP_DAYS, kite)
-                            if sector_token else None
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("Early research sector history unavailable for %s: %s", sector_symbol, exc)
-                        sector_history[sector_symbol] = None
-                sector_df = sector_history.get(sector_symbol)
+            sector_df = sector_history.get(sector_symbol) if sector_symbol else None
+            sector_rank_series = None
+            if sector_symbol and sector_rank_frame is not None and sector_symbol in sector_rank_frame.columns:
+                sector_rank_series = sector_rank_frame[sector_symbol]
+            futures_df = _fetch_near_futures_history_for_research(
+                kite, symbol, timeframe, days=days
+            )
             feat = early_research.build_feature_frame(
-                df, timeframe, oi_series=oi, index_df=index_df, sector_df=sector_df)
+                df, timeframe, oi_series=oi, index_df=index_df, sector_df=sector_df,
+                sector_rank_series=sector_rank_series, futures_df=futures_df)
             if feat.empty:
                 notes[symbol] = "not enough history for early-movement features"
                 continue
+            if "turnover_notional" in feat.columns:
+                turnover_series[symbol] = pd.to_numeric(feat["turnover_notional"], errors="coerce")
             # Preserve ATR for Energy Building's directionless expansion target.
             series = compute_series(df, timeframe)
             if "error" not in series:
@@ -1881,6 +1926,40 @@ def run_early_movement_research(kite, symbols=None, days=30, holdout_pct=30.0,
             log.exception("Early movement research failed for %s", symbol)
             notes[symbol] = str(exc)
         time.sleep(_RATE_LIMIT_PAUSE)
+
+    # Replace the per-stock historical turnover percentile with the actual
+    # point-in-time cross-sectional percentile across the researched F&O
+    # universe. This is the closest historical analogue to live Stock-in-Play
+    # ranking and avoids calling a stock "high turnover" merely because it is
+    # active relative to itself.
+    if turnover_series:
+        turnover_frame = pd.concat(turnover_series, axis=1).sort_index()
+        turnover_rank_frame = turnover_frame.rank(axis=1, pct=True, method="average") * 100.0
+        for replay in replays:
+            for family in ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events"):
+                for event in replay.get(family) or []:
+                    try:
+                        ts = pd.Timestamp(event.get("signal_time"))
+                        sym = event.get("symbol")
+                        if sym not in turnover_rank_frame.columns:
+                            continue
+                        # Match timezone shape of the research frame.
+                        if turnover_rank_frame.index.tz is None and ts.tzinfo is not None:
+                            ts = ts.tz_localize(None)
+                        elif turnover_rank_frame.index.tz is not None and ts.tzinfo is None:
+                            ts = ts.tz_localize(turnover_rank_frame.index.tz)
+                        if ts not in turnover_rank_frame.index:
+                            continue
+                        rank = turnover_rank_frame.at[ts, sym]
+                        if pd.notna(rank):
+                            event["turnover_percentile"] = round(float(rank), 2)
+                            event["catalyst_score"] = v6_edge.catalyst_proxy_score(
+                                gap_atr=event.get("gap_atr"), opening_rvol=event.get("opening_rvol"),
+                                tod_rvol=event.get("tod_rvol"), bar_range_atr=event.get("bar_range_atr"),
+                                turnover_percentile=event.get("turnover_percentile"),
+                            )
+                    except Exception:
+                        continue
 
     if progress_cb:
         progress_cb(len(symbols), len(symbols), None)

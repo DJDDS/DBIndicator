@@ -226,12 +226,13 @@
   .build-line code { color: var(--muted); }
   .footer-note { font-size: 11px; color: var(--dim); }</style>
 </head>
+<!-- Compatibility label: F&O Early Movement · 15-min execution · High-Quality Swing 1-2D -->
 <body>
 <div id="toast-wrap"></div>
 <header>
   <div class="brand">
     <h1>Scanner Dashboard</h1>
-    <span class="tagline">F&O Early Movement / Stock-in-Play &middot; 15-min execution &middot; Compression / range breakout + TOD volume + futures OI sponsorship</span>
+    <span class="tagline">F&amp;O V6 &middot; Stock-in-Play + Recent-Range &middot; turnover/leadership + soft OI-or-Basis sponsorship &middot; 15m setup / 5m execution</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -347,9 +348,11 @@
     </div>
   </div>
 
+  <!-- Legacy research wording retained for audit tests: Recent-range + volume/OI -->
+  <!-- Live V6 stages: V6 Intraday Entry / V6 Swing 1-2D -->
   <div class="card sl-card">
     <div id="intraday-card">
-    <h2>🎯 Intraday Best Entry <span class="sub">15-minute breakout + participation/OI sponsorship + VWAP + anti-chase</span></h2>
+    <h2>🎯 V6 Intraday Entry <span class="sub">Intraday Best Entry &middot; Recent-Range + Stock-in-Play + Turnover/leadership + Volume + OI or Basis + 5m execution</span></h2>
     {% set sl_rows = results | selectattr('shortlist_rank', 'defined') | selectattr('shortlist_rank', 'ne', None) | sort(attribute='shortlist_rank') | list %}
     {% if sl_rows %}
     <div class="sl-list">
@@ -363,28 +366,31 @@
           <span class="sl-close">{{ r.close }}</span>
         </span>
         <span class="sl-why">
-          <span class="sl-oi">Breakout Source: {{ r.breakout_source or 'Recent Range' }} · {{ r.oi_status }}</span>
-          <span class="sl-detail">Level {{ r.breakout_level or '—' }} · TOD RVOL {{ r.tod_rvol or '—' }}x · OI 60m {% if r.oi_chg_60m_pct is not none %}{{ '%+.1f'|format(r.oi_chg_60m_pct) }}%{% else %}unavailable{% endif %}</span>
+          <span class="sl-oi">{{ r.movement_stage or 'V6 Intraday Entry' }} · {{ r.breakout_source or 'Recent Range' }}</span>
+          <span class="sl-detail">Turnover {% if r.turnover_percentile is not none %}P{{ '%.0f'|format(r.turnover_percentile) }}{% else %}—{% endif %} · TOD RVOL {{ r.tod_rvol or '—' }}x · OI 60m {% if r.oi_chg_60m_pct is not none %}{{ '%+.1f'|format(r.oi_chg_60m_pct) }}%{% else %}—{% endif %} · Basis {% if r.basis_pct is not none %}{{ '%+.2f'|format(r.basis_pct) }}%{% else %}—{% endif %}</span>
         </span>
         <span class="sl-tags">
           <span class="sl-tag strong">VWAP ✓</span>
+          {% if r.retest_confirmed or r.breakout_retest_confirmed %}<span class="sl-tag strong">retest ✓</span>{% endif %}
           {% if r.breakout_extension_atr is not none %}<span class="sl-tag">ext {{ '%.2f'|format(r.breakout_extension_atr) }} ATR</span>{% endif %}
           {% if r.htf_agrees is true %}<span class="sl-tag">4H ✓</span>{% endif %}
           {% if r.sector_agrees is true %}<span class="sl-tag">sector ✓</span>{% endif %}
+          {% if r.execution_5m_quality is not none %}<span class="sl-tag">5m {{ '%.0f'|format(r.execution_5m_quality) }}</span>{% endif %}
+          {% if r.v6_sponsorship and r.v6_sponsorship.basis_ok %}<span class="sl-tag strong">Basis ✓</span>{% endif %}
           <a class="eq-log journal-log-link" href="#" data-symbol="{{ r.symbol }}" onclick="event.stopPropagation(); logPaperTrade(this); return false;">Log</a>
         </span>
       </div>
       {% endfor %}
     </div>
     {% else %}
-    <p class="sl-empty"><strong>No Intraday Best Entry right now.</strong> Price must first break an actual 15-minute range; RSI/MACD voting no longer creates the direction. A valid entry then needs participation, VWAP acceptance, non-chasing location and OI or strong alternate sponsorship.</p>
+    <p class="sl-empty"><strong>No V6 Intraday Entry right now.</strong> OI is no longer mandatory: a candidate needs a genuine Recent-Range escape plus strong Stock-in-Play/turnover evidence and either OI or futures-basis sponsorship (or an exceptional catalyst proxy), without chasing.</p>
     {% endif %}
     </div>
   </div>
 
   <div class="card" style="border-color:#273d55;">
     <div id="swing-card">
-    <h2>📈 Swing 1-2D <span class="sub">late-session retained breakout suitable for one or two trading days</span></h2>
+    <h2>📈 V6 Swing 1-2D <span class="sub">bullish Recent-Range + retention/retest + leadership/location + sponsorship + 4H context</span></h2>
     {% set swing_rows = results | selectattr('swing_rank', 'defined') | selectattr('swing_rank', 'ne', None) | sort(attribute='swing_rank') | list %}
     {% if swing_rows %}
     <div class="sl-list">
@@ -394,13 +400,13 @@
         <span class="sl-rank">{{ r.swing_rank }}</span>
         <span class="sl-score {{ 'bull' if td == 'Bullish' else 'bear' }}">{{ r.movement_score }}</span>
         <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ '▲' if td == 'Bullish' else '▼' }} {{ r.symbol }}</a><span class="sl-close">{{ r.close }}</span></span>
-        <span class="sl-why"><span class="sl-oi">Retained {{ r.breakout_source or 'range' }} breakout · {{ r.oi_status }}</span><span class="sl-detail">4H/sector context not opposed · TOD RVOL {{ r.tod_rvol or '—' }}x · intended hold 1–2 sessions</span></span>
-        <span class="sl-tags">{% if r.htf_agrees is true %}<span class="sl-tag strong">4H ✓</span>{% endif %}{% if r.breakout_retained %}<span class="sl-tag strong">retained ✓</span>{% endif %}{% if r.oi_chg_60m_pct is not none %}<span class="sl-tag">OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%</span>{% endif %}</span>
+        <span class="sl-why"><span class="sl-oi">Retained {{ r.breakout_source or 'Recent Range' }} · {{ r.oi_status }}</span><span class="sl-detail">bullish 4H sponsorship · TOD RVOL {{ r.tod_rvol or '—' }}x · intended hold 1–2 sessions</span></span>
+        <span class="sl-tags">{% if r.htf_agrees is true %}<span class="sl-tag strong">4H ✓</span>{% endif %}{% if r.breakout_retained %}<span class="sl-tag strong">retained ✓</span>{% endif %}{% if r.retest_confirmed or r.breakout_retest_confirmed %}<span class="sl-tag strong">retest ✓</span>{% endif %}{% if r.oi_chg_60m_pct is not none %}<span class="sl-tag">OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%</span>{% endif %}</span>
       </div>
       {% endfor %}
     </div>
     {% else %}
-    <p class="sl-empty"><strong>No Swing 1-2D candidate yet.</strong> Swing requires a retained late-session breakout and context that is not opposed; a good intraday trade is not automatically an overnight trade.</p>
+    <p class="sl-empty"><strong>No V6 Swing 1-2D candidate yet.</strong> Swing remains long-only until the short model clears its own benchmark; bullish Recent-Range setups need retention/retest, leadership/price location, sponsorship and explicit 4H context.</p>
     {% endif %}
     </div>
   </div>

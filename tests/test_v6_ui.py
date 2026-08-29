@@ -1,0 +1,25 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_backtest_ui_exposes_v6_edge_lab_and_locked_final_test_language():
+    html = (ROOT / 'app/templates/backtest.html').read_text()
+    assert '2026-08-29-INSTITUTIONAL-V6' in html
+    assert 'V6 Institutional Edge Lab' in html
+    assert 'Final 20% locked' in html
+    assert 'Path-aware Exit Lab' in html
+
+
+def test_dashboard_uses_v6_stage_language_not_oi_hard_gate_language():
+    html = (ROOT / 'app/templates/index.html').read_text()
+    assert 'V6 Intraday Entry' in html
+    assert 'V6 Swing 1-2D' in html
+    assert 'Turnover' in html
+    assert 'Basis' in html
+
+
+def test_settings_explains_oi_is_sponsorship_not_mandatory():
+    html = (ROOT / 'app/templates/settings.html').read_text()
+    assert 'OI is sponsorship' in html
+    assert 'not a universal hard gate' in html

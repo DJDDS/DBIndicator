@@ -101,7 +101,7 @@ def test_stock_in_play_can_trigger_without_compression_from_abnormal_participati
 def _live_row(**overrides):
     row = {
         'symbol': 'AAA', 'breakout_direction': 'Bullish', 'fresh_breakout': True,
-        'breakout_source': 'Compression', 'breakout_level': 100.0,
+        'breakout_source': 'Recent Range', 'breakout_level': 100.0,
         'breakout_extension_atr': 0.4, 'entry_is_extended': False,
         'vwap_side_agrees': True, 'tod_rvol': 1.5, 'stock_in_play': True,
         'compression_score': 70.0, 'energy_building': True,
@@ -124,7 +124,7 @@ def test_intraday_best_entry_uses_breakout_participation_location_and_sponsorshi
     assert 'MACD' not in ' '.join(out['blockers'])
 
 
-def test_missing_oi_is_explicit_and_requires_stronger_non_oi_sponsorship():
+def test_missing_oi_is_explicit_and_cannot_be_promoted_to_best_entry():
     from app.stock_in_play import classify_live_candidate
     weak = classify_live_candidate(_live_row(
         oi_chg_30m_pct=None, oi_chg_60m_pct=None, oi_acceleration=None,
@@ -138,7 +138,8 @@ def test_missing_oi_is_explicit_and_requires_stronger_non_oi_sponsorship():
         oi_recent_agrees=None, tod_rvol=1.8, rs_pct=0.8, sector_agrees=True,
     ))
     assert strong['oi_status'] == 'Unavailable'
-    assert strong['intraday_eligible'] is True
+    assert strong['intraday_eligible'] is False
+    assert 'OI unavailable' in strong['blockers']
 
 
 def test_swing_candidate_is_separate_and_requires_late_session_persistence_and_htf():
@@ -149,7 +150,7 @@ def test_swing_candidate_is_separate_and_requires_late_session_persistence_and_h
 
     late = classify_live_candidate(_live_row(timestamp='2026-08-28T14:45:00+05:30', breakout_retained=True))
     assert late['swing_eligible'] is True
-    assert late['stage'] in ('Intraday Best Entry', 'Swing 1-2D Candidate')
+    assert late['stage'] == 'High-Quality Swing 1-2D'
 
     opposed = classify_live_candidate(_live_row(timestamp='2026-08-28T14:45:00+05:30', breakout_retained=True, htf_agrees=False))
     assert opposed['swing_eligible'] is False
@@ -817,3 +818,133 @@ def test_backtest_template_surfaces_raw_confirmation_diagnostics():
     assert 'confirmation_diagnostics' in html
     assert 'OI 60m finite' in html
     assert '4H available' in html
+
+
+def test_retest_confirmation_requires_probe_of_breakout_level_and_close_beyond_it():
+    from app.stock_in_play import build_price_features
+    # Build a clean recent-range breakout at bar 8, then a one-bar retest that
+    # probes back toward the old range high and closes above it.
+    df = _bars(10)
+    df.iloc[:8, df.columns.get_loc('high')] = 100.60
+    df.iloc[:2, df.columns.get_loc('high')] = 102.00  # keep ORB above the later recent-range break
+    df.iloc[:8, df.columns.get_loc('low')] = 99.80
+    df.iloc[:8, df.columns.get_loc('close')] = 100.20
+    df.iloc[8] = [100.25, 101.10, 100.15, 100.95, 1800]
+    df.iloc[9] = [100.90, 101.00, 100.68, 100.82, 1600]
+    atr = pd.Series(0.8, index=df.index)
+    comp = pd.DataFrame({'compression_score': [20.0] * len(df)}, index=df.index)
+    tod = pd.Series([1.0] * 8 + [1.5, 1.4], index=df.index)
+    feat = build_price_features(df, atr, comp, tod)
+    assert feat.iloc[8]['breakout_source'] == 'Recent Range'
+    assert bool(feat.iloc[9]['breakout_retained']) is True
+    assert bool(feat.iloc[9]['breakout_retest_confirmed']) is True
+
+
+def test_recent_range_edge_variants_focus_on_bullish_sponsorship_and_confirmation():
+    from app.early_research import recent_range_edge_variants
+
+    base = {
+        'breakout_source': 'Recent Range', 'direction': 'Bullish',
+        'tod_rvol': 1.5, 'oi_status': 'Confirmed', 'htf_agrees': True,
+        'entry_is_extended': False, 'vwap_distance_atr': 0.35,
+        'intraday_returns': {'2h': 0.25, 'eod': 0.30},
+        'swing_returns': {'1D': 0.45, '2D': 0.55},
+        'entry_time': '2026-01-01T10:00:00+05:30',
+    }
+    bearish = dict(base, direction='Bearish', entry_time='2026-01-02T10:00:00+05:30')
+    opening = dict(base, breakout_source='Opening Range', entry_time='2026-01-03T10:00:00+05:30')
+    variants = recent_range_edge_variants([base, bearish, opening], confirmation_events=[])
+    assert len(variants['recent_range_all']) == 2
+    assert len(variants['recent_range_bullish']) == 1
+    assert len(variants['bullish_plus_volume_oi']) == 1
+    assert len(variants['bullish_plus_volume_oi_4h_no_chase']) == 1
+    assert len(variants['bullish_plus_volume_oi_vwap_proximity']) == 1
+
+    retained = dict(base, breakout_retained=True, retest_confirmed=False)
+    retest = dict(base, breakout_retained=True, retest_confirmed=True,
+                  entry_time='2026-01-04T10:15:00+05:30')
+    variants = recent_range_edge_variants([base], confirmation_events=[retained, retest])
+    assert len(variants['bullish_retained']) == 2
+    assert len(variants['bullish_retest']) == 1
+    assert len(variants['bullish_retest_volume_oi_4h']) == 1
+
+
+def test_live_best_entry_is_restricted_to_sponsored_recent_range_breakout():
+    from app.stock_in_play import classify_live_candidate
+    recent = classify_live_candidate(_live_row(breakout_source='Recent Range'))
+    assert recent['intraday_eligible'] is True
+    assert recent['stage'] == 'Intraday Best Entry'
+
+    opening = classify_live_candidate(_live_row(breakout_source='Opening Range'))
+    assert opening['intraday_eligible'] is False
+    assert opening['stage'] == 'Breakout Research'
+
+    no_oi = classify_live_candidate(_live_row(
+        breakout_source='Recent Range', oi_recent_agrees=False,
+        oi_chg_60m_pct=1.2, oi_chg_30m_pct=0.6, oi_acceleration=0.2,
+    ))
+    assert no_oi['intraday_eligible'] is False
+    assert 'OI not confirming' in no_oi['blockers']
+
+
+def test_swing_best_entry_requires_bullish_recent_range_retention_and_true_4h_agreement():
+    from app.stock_in_play import classify_live_candidate
+    good = classify_live_candidate(_live_row(
+        breakout_source='Recent Range', breakout_retained=True,
+        timestamp='2026-08-28T14:45:00+05:30',
+    ))
+    assert good['swing_eligible'] is True
+    assert good['stage'] == 'High-Quality Swing 1-2D'
+
+    bearish = classify_live_candidate(_live_row(
+        direction='Bearish', breakout_direction='Bearish', breakout_source='Recent Range',
+        breakout_retained=True, timestamp='2026-08-28T14:45:00+05:30',
+    ))
+    assert bearish['swing_eligible'] is False
+
+    neutral_4h = classify_live_candidate(_live_row(
+        breakout_source='Recent Range', breakout_retained=True, htf_agrees=None,
+        timestamp='2026-08-28T14:45:00+05:30',
+    ))
+    assert neutral_4h['swing_eligible'] is False
+
+
+def test_aggregate_research_exposes_recent_range_edge_lab():
+    from app.early_research import aggregate_research
+    base_time = pd.Timestamp('2026-01-01 10:00', tz='Asia/Kolkata')
+    events = []
+    confirms = []
+    for i in range(80):
+        e = {
+            'entry_time': (base_time + pd.Timedelta(days=i)).isoformat(),
+            'direction': 'Bullish', 'breakout_source': 'Recent Range',
+            'tod_rvol': 1.5, 'oi_status': 'Confirmed', 'htf_agrees': True,
+            'entry_is_extended': False, 'vwap_distance_atr': 0.4,
+            'intraday_returns': {'2h': 0.20, 'eod': 0.25},
+            'swing_returns': {'1D': 0.35, '2D': 0.45},
+            'mfe_atr': {'1D': 1.2, '2D': 1.5}, 'mae_atr': {'1D': 0.5, '2D': 0.6},
+            'time_to_0_5atr_bars': 3, 'time_to_1atr_bars': 6,
+            'vwap_side_agrees': True,
+        }
+        events.append(e)
+        confirms.append(dict(e, breakout_retained=True, retest_confirmed=(i % 2 == 0)))
+    replay = {
+        'energy_events': [], 'baseline_energy_events': [],
+        'ignition_events': events, 'best_entry_events': events,
+        'swing_events': confirms, 'recent_range_confirmation_events': confirms,
+    }
+    out = aggregate_research([replay], holdout_pct=30.0)
+    lab = out['recent_range_edge_lab']
+    assert 'rows' in lab and lab['rows']
+    names = {r['variant'] for r in lab['rows']}
+    assert 'bullish_plus_volume_oi_4h_no_chase' in names
+    assert 'bullish_retest_volume_oi_4h' in names
+
+
+def test_backtest_page_surfaces_recent_range_edge_lab_and_live_dashboard_copy_is_focused():
+    backtest = open('app/templates/backtest.html', encoding='utf-8').read()
+    index = open('app/templates/index.html', encoding='utf-8').read()
+    assert 'Recent-Range Edge Lab' in backtest
+    assert 'er-recent-range-lab' in backtest
+    assert 'Recent-range + volume/OI' in index
+    assert 'High-Quality Swing 1-2D' in index

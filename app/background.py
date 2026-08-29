@@ -10,13 +10,13 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, journal, kite_auth, scanner
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, journal, kite_auth, scanner
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
 from .scanner import (
     scan_watchlist, is_market_open, now_ist, compute_oi_acceleration,
-    classify_oi_structure, fetch_index_direction, fetch_sector_directions,
+    classify_oi_structure, fetch_index_direction, fetch_sector_directions, fetch_sector_contexts,
     SYMBOL_SECTOR_MAP,
 )
 
@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 # - unlike a fixed sample-count cap, this stays correct whether scans
 # run every 60s or every 5 minutes.
 OI_HISTORY_MAX_MINUTES = 150
+
+# Rolling near-futures basis samples for V6 sponsorship acceleration.
+_v6_basis_history = {}
 
 # --------------------------------------------------------------------------
 # The screener's fixed 4-parameter confluence check: RSI (vs its
@@ -278,6 +281,7 @@ def _apply_stock_in_play_shortlists(results):
             htf_dir = r.get("htf_direction")
             r["htf_agrees"] = None if htf_dir is None else (htf_dir == bdir)
             r["vwap_side_agrees"] = r.get("breakout_vwap_agrees")
+            r["vwap_distance_atr"] = r.get("breakout_vwap_distance_atr")
             r["entry_is_extended"] = r.get("breakout_entry_extended")
 
             oi60 = r.get("oi_chg_60m_pct")
@@ -297,7 +301,12 @@ def _apply_stock_in_play_shortlists(results):
         r["oi_status"] = classified.get("oi_status")
         r["intraday_eligible"] = classified.get("intraday_eligible", False)
         r["swing_eligible"] = classified.get("swing_eligible", False)
-        if classified.get("stage") in ("Energy Building", "Stock in Play", "Ignition"):
+        r["edge_priority"] = classified.get("edge_priority", 0)
+        r["retest_confirmed"] = classified.get("retest_confirmed", False)
+        if classified.get("stage") in (
+            "Energy Building", "Stock in Play", "Ignition",
+            "Recent-Range Breakout", "Sponsored Recent-Range",
+        ):
             radar.append(r)
         if r["intraday_eligible"]:
             intraday.append(r)
@@ -305,7 +314,7 @@ def _apply_stock_in_play_shortlists(results):
             swing.append(r)
 
     radar.sort(key=lambda r: (
-        1 if r.get("movement_stage") == "Ignition" else 0,
+        r.get("edge_priority") if r.get("edge_priority") is not None else 0,
         r.get("movement_score") if r.get("movement_score") is not None else -1,
         r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
         r.get("compression_score") if r.get("compression_score") is not None else -1,
@@ -314,6 +323,7 @@ def _apply_stock_in_play_shortlists(results):
         r["radar_rank"] = n
 
     intraday.sort(key=lambda r: (
+        r.get("edge_priority") if r.get("edge_priority") is not None else 0,
         r.get("movement_score") if r.get("movement_score") is not None else -1,
         r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
         r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
@@ -323,6 +333,7 @@ def _apply_stock_in_play_shortlists(results):
         r["shortlist_rank"] = n
 
     swing.sort(key=lambda r: (
+        r.get("edge_priority") if r.get("edge_priority") is not None else 0,
         r.get("movement_score") if r.get("movement_score") is not None else -1,
         r.get("oi_chg_60m_pct") if r.get("oi_chg_60m_pct") is not None else -999,
         r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
@@ -332,6 +343,270 @@ def _apply_stock_in_play_shortlists(results):
         r["swing_rank"] = n
     return intraday, swing
 
+
+
+
+def _apply_v6_cross_sectional_context(results, *, index_chg_pct=None, breadth=None, sector_contexts=None):
+    """Attach V6 cross-sectional participation, leadership and regime fields.
+
+    These are *ranking* features, not universal vetoes.  The important
+    difference from the legacy screener is that a stock is compared with the
+    rest of the current F&O universe and with its own sector rather than only
+    with fixed absolute thresholds.
+    """
+    import pandas as pd
+
+    rows = [r for r in (results or []) if not r.get("error")]
+    if not rows:
+        return results
+
+    turnover = pd.Series({
+        r.get("symbol"): (
+            float(r.get("close")) * float(r.get("volume"))
+            if r.get("close") not in (None, 0) and r.get("volume") is not None
+            else float("nan")
+        )
+        for r in rows
+    }, dtype="float64")
+    turn_rank = v6_edge.percentile_rank(turnover)
+
+    sector_contexts = sector_contexts or {}
+    sector_changes = pd.Series({
+        sector: ctx.get("chg_pct") if isinstance(ctx, dict) else None
+        for sector, ctx in sector_contexts.items()
+    }, dtype="float64")
+    sector_ranks = v6_edge.percentile_rank(sector_changes) if not sector_changes.empty else pd.Series(dtype="float64")
+
+    chgs = []
+    for r in rows:
+        c, p = r.get("close"), r.get("prev_close")
+        if c not in (None, 0) and p not in (None, 0):
+            try:
+                chgs.append((float(c) / float(p) - 1.0) * 100.0)
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+    dispersion = float(pd.Series(chgs, dtype="float64").std(ddof=0)) if chgs else 0.0
+    breadth = breadth or {}
+    regime = v6_edge.classify_market_regime(
+        index_chg_pct=index_chg_pct,
+        bullish_pct=breadth.get("bullish_pct"),
+        bearish_pct=breadth.get("bearish_pct"),
+        dispersion_pct=dispersion,
+    )
+
+    for r in rows:
+        symbol = r.get("symbol")
+        tp = turn_rank.get(symbol) if symbol in turn_rank.index else None
+        r["turnover_percentile"] = round(float(tp), 1) if tp is not None and pd.notna(tp) else None
+        r["market_regime"] = regime
+        r["market_dispersion_pct"] = round(dispersion, 3)
+
+        sector = r.get("sector") or SYMBOL_SECTOR_MAP.get(symbol)
+        r["sector"] = sector
+        ctx = sector_contexts.get(sector) if sector else None
+        if isinstance(ctx, dict):
+            if ctx.get("direction") is not None:
+                r["sector_direction"] = ctx.get("direction")
+            sr = sector_ranks.get(sector) if sector in sector_ranks.index else None
+            r["sector_rank_percentile"] = round(float(sr), 1) if sr is not None and pd.notna(sr) else None
+            c, p = r.get("close"), r.get("prev_close")
+            try:
+                stock_chg = (float(c) / float(p) - 1.0) * 100.0 if c not in (None, 0) and p not in (None, 0) else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                stock_chg = None
+            sec_chg = ctx.get("chg_pct")
+            r["stock_sector_lead_pct"] = (
+                round(float(stock_chg) - float(sec_chg), 3)
+                if stock_chg is not None and sec_chg is not None else None
+            )
+        else:
+            r["sector_rank_percentile"] = None
+            r["stock_sector_lead_pct"] = None
+
+        direction = r.get("breakout_direction") or r.get("retained_breakout_direction") or r.get("direction")
+        loc = v6_edge.price_location_score(
+            direction=direction if direction in ("Bullish", "Bearish") else "Bullish",
+            close=r.get("close"), high20=r.get("prior_high_20d"), low20=r.get("prior_low_20d"),
+            high50=r.get("prior_high_50d"), low50=r.get("prior_low_50d"),
+        )
+        r["price_location_score"] = loc.get("score")
+        r["price_position_20d_pct"] = loc.get("position_20d_pct")
+        r["price_position_50d_pct"] = loc.get("position_50d_pct")
+        r["near_20d_high"] = loc.get("near_20d_high")
+        r["near_20d_low"] = loc.get("near_20d_low")
+        r["catalyst_score"] = v6_edge.catalyst_proxy_score(
+            gap_atr=r.get("gap_atr"), opening_rvol=r.get("opening_rvol"),
+            tod_rvol=r.get("tod_rvol"), bar_range_atr=r.get("bar_range_atr"),
+            turnover_percentile=r.get("turnover_percentile"),
+        )
+    return results
+
+
+def _apply_v6_basis(results, *, history=None, now=None):
+    """Attach live near-futures basis and ~30-minute basis acceleration.
+
+    Basis is deliberately independent of OI.  V6 allows an expanding futures
+    premium/discount plus real volume to sponsor a breakout even when OI is
+    unavailable or disagrees, subject to the other quality checks.
+    """
+    import pandas as pd
+
+    if history is None:
+        history = {}
+    now = pd.Timestamp(now if now is not None else now_ist())
+    for r in results or []:
+        r["basis_pct"] = None
+        r["basis_acceleration"] = None
+        if r.get("error"):
+            continue
+        spot, fut = r.get("close"), r.get("fut_price_near")
+        try:
+            if spot is None or fut is None or float(spot) == 0:
+                continue
+            basis = (float(fut) / float(spot) - 1.0) * 100.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        r["basis_pct"] = round(basis, 4)
+        sym = r.get("symbol")
+        samples = history.setdefault(sym, []) if sym else []
+        cutoff = now - pd.Timedelta(minutes=25)
+        prior = None
+        for sample in reversed(samples):
+            try:
+                ts = pd.Timestamp(sample.get("ts"))
+                if ts.tzinfo is not None and now.tzinfo is None:
+                    ts = ts.tz_localize(None)
+                elif ts.tzinfo is None and now.tzinfo is not None:
+                    ts = ts.tz_localize(now.tzinfo)
+                if ts <= cutoff:
+                    prior = sample.get("basis_pct")
+                    break
+            except Exception:
+                continue
+        if prior is not None:
+            try:
+                r["basis_acceleration"] = round(basis - float(prior), 4)
+            except (TypeError, ValueError):
+                pass
+        if sym:
+            samples.append({"ts": now.isoformat(), "basis_pct": basis})
+            trim_before = now - pd.Timedelta(hours=3)
+            kept = []
+            for x in samples:
+                try:
+                    ts = pd.Timestamp(x.get("ts"))
+                    if ts.tzinfo is not None and now.tzinfo is None:
+                        ts = ts.tz_localize(None)
+                    elif ts.tzinfo is None and now.tzinfo is not None:
+                        ts = ts.tz_localize(now.tzinfo)
+                    if ts >= trim_before:
+                        kept.append(x)
+                except Exception:
+                    continue
+            history[sym] = kept
+    return results
+
+
+def _enrich_v6_execution_5m(kite, results, *, max_candidates=5, signal_time=None):
+    """Fetch 5-minute data only for the best bounded Recent-Range finalists."""
+    candidates = [r for r in (results or []) if not r.get("error")
+                  and (r.get("breakout_source") or r.get("retained_breakout_source")) == "Recent Range"
+                  and (r.get("breakout_direction") or r.get("retained_breakout_direction")) in ("Bullish", "Bearish")]
+    candidates.sort(key=lambda r: (
+        r.get("v6_score") if r.get("v6_score") is not None else (r.get("movement_score") or -1),
+        r.get("catalyst_score") if r.get("catalyst_score") is not None else -1,
+        r.get("turnover_percentile") if r.get("turnover_percentile") is not None else -1,
+    ), reverse=True)
+    finalists = candidates[:max(0, int(max_candidates))]
+    if not finalists:
+        return results
+    instruments = scanner._load_instrument_map(kite)
+    for r in finalists:
+        r["execution_5m_quality"] = None
+        r["execution_5m_available"] = False
+        token = instruments.get(r.get("symbol"))
+        if not token:
+            continue
+        try:
+            df = scanner.fetch_candles(kite, token, "5minute")
+            q = v6_edge.five_minute_execution_quality(
+                df,
+                direction=r.get("breakout_direction") or r.get("retained_breakout_direction"),
+                breakout_level=r.get("breakout_level") or r.get("retained_breakout_level"),
+                atr=r.get("atr"),
+                signal_time=signal_time or r.get("timestamp") or now_ist(),
+            )
+            r["execution_5m_available"] = q.get("available", False)
+            r["execution_5m_quality"] = q.get("quality")
+            r["execution_5m_retained"] = q.get("retained")
+            r["execution_5m_retest"] = q.get("retest")
+            r["execution_5m_volume_burst"] = q.get("volume_burst")
+            r["execution_5m_extended"] = q.get("extended")
+            r["execution_5m_extension_atr"] = q.get("extension_atr")
+        except Exception as exc:  # noqa: BLE001 - one finalist cannot break the cycle
+            log.debug("V6 5-minute enrichment failed for %s: %s", r.get("symbol"), exc)
+    return results
+
+
+def _apply_v6_shortlists(results):
+    """Apply the V6 evidence model and return ranked intraday/swing lists.
+
+    ``radar_rank`` remains broader than an executable entry: it keeps Stock in
+    Play / Recent-Range setups visible while only evidence-rich names graduate
+    to Intraday or Swing.
+    """
+    intraday, swing, radar = [], [], []
+    for r in results or []:
+        if r.get("error"):
+            continue
+        bdir = r.get("breakout_direction") or r.get("retained_breakout_direction")
+        if bdir:
+            r["direction"] = bdir
+            r["trade_direction"] = bdir
+            r["vwap_side_agrees"] = r.get("breakout_vwap_agrees", r.get("vwap_side_agrees"))
+            r["entry_is_extended"] = r.get("breakout_entry_extended", r.get("entry_is_extended"))
+            htf = r.get("htf_direction")
+            r["htf_agrees"] = None if htf is None else (htf == bdir)
+            sec = r.get("sector_direction")
+            r["sector_agrees"] = None if sec is None else (sec == bdir)
+        result = v6_edge.classify_v6_candidate(r)
+        r["v6_score"] = result.get("score")
+        r["movement_score"] = result.get("score")
+        r["movement_stage"] = result.get("stage")
+        r["movement_blockers"] = result.get("blockers", [])
+        r["intraday_eligible"] = result.get("intraday_eligible", False)
+        r["swing_eligible"] = result.get("swing_eligible", False)
+        r["short_research_only"] = result.get("short_research_only", False)
+        r["v6_sponsorship"] = result.get("sponsorship")
+        r["edge_priority"] = result.get("edge_priority", 0)
+        if r.get("movement_stage") in (
+            "Energy Building", "Stock in Play", "Recent-Range Setup",
+            "Sponsored Recent-Range", "V6 Intraday Entry", "V6 Swing 1-2D",
+        ):
+            radar.append(r)
+        if r["intraday_eligible"]:
+            intraday.append(r)
+        if r["swing_eligible"]:
+            swing.append(r)
+
+    key = lambda r: (
+        r.get("edge_priority") or 0,
+        r.get("v6_score") if r.get("v6_score") is not None else -1,
+        r.get("execution_5m_quality") if r.get("execution_5m_quality") is not None else -1,
+        r.get("turnover_percentile") if r.get("turnover_percentile") is not None else -1,
+    )
+    radar.sort(key=key, reverse=True)
+    for i, r in enumerate(radar[:10], 1):
+        r["radar_rank"] = i
+    intraday.sort(key=key, reverse=True)
+    swing.sort(key=key, reverse=True)
+    intraday = intraday[: settings.SHORTLIST_MAX]
+    swing = swing[: settings.SHORTLIST_MAX]
+    for i, r in enumerate(intraday, 1):
+        r["shortlist_rank"] = i
+    for i, r in enumerate(swing, 1):
+        r["swing_rank"] = i
+    return intraday, swing
 
 def _apply_shortlist(results):
     """The single ranked output: `shortlist_rank`, 1 = best, None = not on it.
@@ -780,6 +1055,7 @@ _state = {
     "last_scan": None,
     "last_error": None,
     "oi_history": {},
+    "basis_history": {},
     "oi_day_baseline": {},
     "oi_structure_prev": {},
     "oi_label_prev": {},
@@ -787,6 +1063,7 @@ _state = {
     "index_close": None,
     "index_chg_pct": None,
     "breadth": None,
+    "market_regime": None,
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -981,6 +1258,7 @@ def _load_persisted_state():
                 _state["results"] = saved.get("results", [])
                 _state["last_scan"] = saved.get("last_scan")
                 _state["oi_history"] = saved.get("oi_history", {})
+                _state["basis_history"] = saved.get("basis_history", {})
                 _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["oi_label_prev"] = saved.get("oi_label_prev", {})
@@ -995,6 +1273,7 @@ def _save_persisted_state():
             "results": _state["results"],
             "last_scan": _state["last_scan"],
             "oi_history": _state["oi_history"],
+            "basis_history": _state["basis_history"],
             "oi_day_baseline": _state["oi_day_baseline"],
             "oi_structure_prev": _state["oi_structure_prev"],
             "oi_label_prev": _state["oi_label_prev"],
@@ -1049,8 +1328,9 @@ def _run_loop():
                     # failures contract as the index fetch above.
                     sectors_needed = {SYMBOL_SECTOR_MAP[r["symbol"]] for r in results
                                        if r.get("symbol") in SYMBOL_SECTOR_MAP}
-                    sector_directions = fetch_sector_directions(kite, sectors_needed, WATCHLIST_TIMEFRAME) \
+                    sector_contexts = fetch_sector_contexts(kite, sectors_needed, WATCHLIST_TIMEFRAME) \
                         if sectors_needed else {}
+                    sector_directions = {k: (v or {}).get("direction") for k, v in sector_contexts.items()}
                     # OI history and index returns feed the early-signal
                     # layer. Both are fetched OUTSIDE the state lock - the
                     # OI sweep is throttled and can take a minute on a full
@@ -1064,25 +1344,32 @@ def _run_loop():
                         oi_history = {}
                     index_returns = scanner.fetch_index_returns(kite)
 
+                    # Build V6 evidence outside the state lock so 5-minute finalist
+                    # fetches never freeze dashboard requests. Legacy research fields
+                    # remain attached for diagnostics, but live ranking is V6-only.
+                    _apply_early_signal(results, oi_history,
+                                        index_ret_20=index_returns.get(20),
+                                        index_ret_10=index_returns.get(10),
+                                        intraday=scanner.oi_is_intraday(WATCHLIST_TIMEFRAME))
+                    _apply_sector_filter(results, sector_directions)
+                    breadth = _compute_breadth(results)
+                    _apply_oi_trend(results)
+                    _apply_oi_screener_fields(results)
+                    _apply_v6_cross_sectional_context(
+                        results, index_chg_pct=index_chg_pct, breadth=breadth,
+                        sector_contexts=sector_contexts,
+                    )
+                    _apply_v6_basis(results, history=_v6_basis_history, now=now_ist())
+                    # First pass creates a bounded finalist ranking; only those names
+                    # pay for 5-minute execution data. Unknown 5m remains neutral.
+                    _apply_v6_shortlists(results)
+                    _enrich_v6_execution_5m(
+                        kite, results, max_candidates=max(5, settings.SHORTLIST_MAX),
+                        signal_time=now_ist(),
+                    )
+                    _apply_v6_shortlists(results)
+                    oi_events = _detect_oi_accel_events(results)
                     with _state_lock:
-                        # Live Best Entries deliberately bypass the legacy
-                        # 4-vote/gate stack.  Only the evidence the new F&O
-                        # early-movement engine consumes is attached here:
-                        # historical OI context + relative strength, sector
-                        # context, rolling live OI, then the independent
-                        # movement score.  Legacy gates remain callable by
-                        # old research/backtest code but cannot suppress or
-                        # flatter the live shortlist.
-                        _apply_early_signal(results, oi_history,
-                                            index_ret_20=index_returns.get(20),
-                                            index_ret_10=index_returns.get(10),
-                                            intraday=scanner.oi_is_intraday(WATCHLIST_TIMEFRAME))
-                        _apply_sector_filter(results, sector_directions)
-                        breadth = _compute_breadth(results)  # display-only market context
-                        _apply_oi_trend(results)
-                        _apply_oi_screener_fields(results)
-                        _apply_stock_in_play_shortlists(results)
-                        oi_events = _detect_oi_accel_events(results)
                         _state["results"] = results
                         _state["index_direction"] = index_direction
                         _state["index_close"] = index_close

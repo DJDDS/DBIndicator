@@ -413,6 +413,7 @@ def fetch_oi_map(kite, symbols: list) -> dict:
         item = {
             "expiry": c.get("expiry"), "tradingsymbol": c.get("tradingsymbol"),
             "oi": q.get("oi"), "oi_day_high": q.get("oi_day_high"), "oi_day_low": q.get("oi_day_low"),
+            "last_price": q.get("last_price"),
         }
         d["contracts"].append((pos, item))
     out = {}
@@ -439,6 +440,9 @@ def fetch_oi_map(kite, symbols: list) -> dict:
             "oi_next": ordered[1].get("oi") if len(ordered) > 1 else None,
             "oi_far": ordered[2].get("oi") if len(ordered) > 2 else None,
             "oi_total": sum(ois),
+            "fut_price_near": near.get("last_price"),
+            "fut_price_next": ordered[1].get("last_price") if len(ordered) > 1 else None,
+            "fut_price_far": ordered[2].get("last_price") if len(ordered) > 2 else None,
             "oi_day_high": near.get("oi_day_high"),
             "oi_day_low": near.get("oi_day_low"),
             "contracts": ordered,
@@ -754,6 +758,13 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True, symbols=No
             signal["oi_far"] = oi.get("oi_far") if oi else None
             signal["oi_total"] = oi.get("oi_total") if oi else None
             signal["oi_contracts"] = oi.get("contracts") if oi else None
+            signal["fut_price_near"] = oi.get("fut_price_near") if oi else None
+            signal["fut_price_next"] = oi.get("fut_price_next") if oi else None
+            signal["fut_price_far"] = oi.get("fut_price_far") if oi else None
+            signal["fut_depth_imbalance"] = oi.get("fut_depth_imbalance") if oi else None
+            signal["fut_spread_bps"] = oi.get("fut_spread_bps") if oi else None
+            signal["fut_microprice_bias_bps"] = oi.get("fut_microprice_bias_bps") if oi else None
+            signal["fut_depth_shadow_only"] = True
             results.append(signal)
         except Exception as exc:  # noqa: BLE001 - keep scanning the rest of the watchlist
             log.warning("Scan failed for %s: %s", symbol, exc)
@@ -1028,6 +1039,20 @@ def fetch_sector_directions(kite, sector_symbols, timeframe: str) -> dict:
     for sector in sector_symbols:
         direction, _close, _chg = fetch_instrument_direction(kite, sector, timeframe)
         out[sector] = direction
+    return out
+
+
+def fetch_sector_contexts(kite, sector_symbols, timeframe: str) -> dict:
+    """Fetch direction plus current percentage change for each needed sector.
+
+    This is the V6 live context equivalent of ``fetch_sector_directions``.
+    It deliberately uses the same one-call-per-sector path so richer ranking
+    does not double the API load.
+    """
+    out = {}
+    for sector in sector_symbols:
+        direction, close, chg_pct = fetch_instrument_direction(kite, sector, timeframe)
+        out[sector] = {"direction": direction, "close": close, "chg_pct": chg_pct}
     return out
 
 

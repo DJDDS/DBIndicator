@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-DIAG-V4</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-29-INSTITUTIONAL-V6</div>
     <p>
-      <strong>F&amp;O Stock-in-Play &amp; Breakout Research is the primary live-parity tool.</strong> It first finds Energy Building / Stock-in-Play conditions, then assigns direction only after price actually escapes a 15-minute opening, recent-range or compression range. Volume/OI sponsorship, VWAP and anti-chase rules then decide whether the breakout deserves an Intraday Best Entry or a Swing 1&ndash;2D classification. The latest 30% of events is kept as chronological holdout.
+      <strong>V6 is the primary evidence-led F&amp;O research tool.</strong> Recent-Range remains the directional setup, while Stock-in-Play participation, cross-sectional turnover, sector/stock leadership, price location, volume, OI or futures-basis sponsorship, 5-minute execution and path-aware exits are tested separately. OI is sponsorship, not a universal veto.
     </p>
     <p>
       The older gate sweep and custom confluence replay remain below only as diagnostics for comparing legacy ideas. Threshold sensitivity changes one parameter at a time, so future improvements can be evidence-led without brute-force fitting thousands of combinations to the same history.
@@ -136,6 +136,16 @@
       <div id="er-lift"></div>
       <h3 class="bt-group-title" style="margin-top:18px;">Which sponsorship combination helps?</h3>
       <table><thead><tr><th>Variant</th><th>Holdout N</th><th>Win</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-interactions"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Recent-Range Edge Lab</h3>
+      <p class="hint">Focused research only: Recent Range vs bullish/bearish, TOD volume, OI, 4H, no-chase, VWAP proximity, one-bar retention and retest. It is intentionally <strong>not</strong> a Cartesian parameter grid. The live Best Entry is now restricted to sponsored Recent-Range escapes while this table decides which confirmation sequence deserves promotion.</p>
+      <div class="hint" id="er-recent-range-note" style="margin-bottom:8px;"></div>
+      <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">V6 Institutional Edge Lab</h3>
+      <p class="hint">Development 60% &middot; validation 20% &middot; <strong>Final 20% locked</strong> until the model is frozen. V6 asks whether high turnover, catalyst-like participation, leadership/price location and soft OI-or-basis sponsorship improve the strongest Recent-Range long subgroup without repeatedly peeking at the final sample.</p>
+      <table><thead><tr><th>V6 variant</th><th>Validation N</th><th>Validation win</th><th>Avg net</th><th>PF</th><th>Final test</th></tr></thead><tbody id="er-v6-edge-lab"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Path-aware Exit Lab</h3>
+      <p class="hint">Conservative first-touch simulation: if target and stop are both inside the same OHLC bar, the stop wins. This tests whether the old fixed-horizon exits were giving favorable movement back.</p>
+      <table><thead><tr><th>Exit rule</th><th>Validation N</th><th>Win</th><th>Avg net</th><th>PF</th><th>Final test</th></tr></thead><tbody id="er-v6-exit-lab"></tbody></table>
       <h3 class="bt-group-title" style="margin-top:18px;">Promotion Benchmark</h3>
       <p class="hint">A live rule earns <strong>Benchmark</strong> only after positive net holdout expectancy, PF &ge; 1.25, adequate sample size, favorable MFE/MAE and stable chronological blocks. Otherwise it remains <strong>Promising</strong> or <strong>Research</strong>.</p>
       <div id="er-promotion-benchmark"></div>
@@ -272,7 +282,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-29-DIAG-V4";
+const RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V6";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -674,6 +684,48 @@ function renderEarlyResearch(result) {
     const tr = document.createElement('tr'); const good = h.avg_return_pct != null && h.avg_return_pct > 0;
     tr.innerHTML = `<td>${name.replaceAll('_',' ')}</td><td>${h.trade_count || 0}</td><td>${h.win_rate_pct == null ? '—' : h.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(h.avg_return_pct)}</td><td>${pf(h.profit_factor)}</td>`;
     interactions.appendChild(tr);
+  });
+
+  const lab = r.recent_range_edge_lab || {};
+  const labBody = document.getElementById('er-recent-range-lab'); labBody.innerHTML = '';
+  (lab.rows || []).forEach(x => {
+    const i = x.intraday_2h || {}; const sw = x.swing_1D || {}; const promo = x.promotion || {};
+    const good2h = i.avg_return_pct != null && i.avg_return_pct > 0;
+    const good1d = sw.avg_return_pct != null && sw.avg_return_pct > 0;
+    const status = promo.status || 'Research';
+    const statusColour = status === 'Benchmark' ? 'var(--green)' : (status === 'Promising' ? '#d9a441' : 'var(--muted)');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${String(x.variant || '').replaceAll('_',' ')}</strong></td>` +
+      `<td>${x.entry_type || 'first escape'}</td><td>${(sw.trade_count || x.holdout_events || 0)}</td>` +
+      `<td style="color:${good2h ? 'var(--green)' : 'var(--red)'}">${pct(i.avg_return_pct)} / ${pf(i.profit_factor)}</td>` +
+      `<td style="color:${good1d ? 'var(--green)' : 'var(--red)'}">${pct(sw.avg_return_pct)} / ${pf(sw.profit_factor)}</td>` +
+      `<td style="color:${statusColour}"><strong>${status}</strong></td>`;
+    labBody.appendChild(tr);
+  });
+  const labBest = lab.best_1D_variant || {};
+  document.getElementById('er-recent-range-note').textContent = labBest.variant
+    ? `Best 1D variant with at least 30 holdout trades: ${String(labBest.variant).replaceAll('_',' ')} · avg ${pct(labBest.holdout_1D_avg)} · PF ${pf(labBest.holdout_1D_pf)}. TOD RVOL test floor ${lab.tod_rvol_threshold ?? '—'}x; VWAP proximity research ≤ ${lab.vwap_proximity_max_atr ?? '—'} ATR.`
+    : 'No Recent-Range variant has at least 30 holdout trades yet.';
+
+  const v6 = r.v6_edge_lab || {};
+  const v6Body = document.getElementById('er-v6-edge-lab'); v6Body.innerHTML = '';
+  const v6Order = ['recent_range_long','long_high_turnover','long_catalyst','long_leadership_location','long_sponsored','long_retained_or_retest','long_full_v6','recent_range_short_research'];
+  v6Order.forEach(name => {
+    const x = v6[name]; if (!x) return;
+    const val = x.validation || {}; const final = x.final_test || {};
+    const good = val.avg_return_pct != null && val.avg_return_pct > 0;
+    const finalText = final.locked ? 'Locked' : `${pct(final.avg_return_pct)} / PF ${pf(final.profit_factor)}`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${name.replaceAll('_',' ')}</strong></td><td>${val.trade_count || 0}</td><td>${val.win_rate_pct == null ? '—' : val.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(val.avg_return_pct)}</td><td>${pf(val.profit_factor)}</td><td>${finalText}</td>`;
+    v6Body.appendChild(tr);
+  });
+  const exitBody = document.getElementById('er-v6-exit-lab'); exitBody.innerHTML = '';
+  Object.entries(v6.path_exit_lab || {}).forEach(([name, x]) => {
+    const val = x.validation || {}; const final = x.final_test || {}; const good = val.avg_return_pct != null && val.avg_return_pct > 0;
+    const finalText = final.locked ? 'Locked' : `${pct(final.avg_return_pct)} / PF ${pf(final.profit_factor)}`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><strong>${name.replaceAll('_',' ')}</strong></td><td>${val.trade_count || 0}</td><td>${val.win_rate_pct == null ? '—' : val.win_rate_pct + '%'}</td><td style="color:${good ? 'var(--green)' : 'var(--red)'}">${pct(val.avg_return_pct)}</td><td>${pf(val.profit_factor)}</td><td>${finalText}</td>`;
+    exitBody.appendChild(tr);
   });
 
   const promotion = r.promotion_benchmark || {};

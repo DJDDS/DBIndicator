@@ -949,6 +949,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     breakout_direction = _sip_last.get("breakout_direction") if _sip_last is not None else None
     fresh_breakout = bool(_sip_last.get("fresh_breakout")) if _sip_last is not None and pd.notna(_sip_last.get("fresh_breakout")) else False
     breakout_retained = bool(_sip_last.get("breakout_retained")) if _sip_last is not None and pd.notna(_sip_last.get("breakout_retained")) else False
+    breakout_retest_confirmed = bool(_sip_last.get("breakout_retest_confirmed")) if _sip_last is not None and pd.notna(_sip_last.get("breakout_retest_confirmed")) else False
     retained_breakout_direction = _sip_last.get("retained_breakout_direction") if _sip_last is not None else None
     retained_breakout_source = _sip_last.get("retained_breakout_source") if _sip_last is not None else None
     retained_level_raw = _sip_last.get("retained_breakout_level") if _sip_last is not None else np.nan
@@ -968,8 +969,14 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     active_breakout_direction = breakout_direction or retained_breakout_direction
     active_breakout_extension_atr = breakout_extension_atr if breakout_extension_atr is not None else retained_breakout_extension_atr
     breakout_vwap_agrees = None
+    breakout_vwap_distance_atr = None
     if active_breakout_direction and vwap:
         breakout_vwap_agrees = bool(close.iloc[i] > vwap) if active_breakout_direction == "Bullish" else bool(close.iloc[i] < vwap)
+        atr_value = series["atr"].iloc[i]
+        atr_now = float(atr_value) if pd.notna(atr_value) and float(atr_value) > 0 else None
+        if atr_now:
+            dist = (float(close.iloc[i]) - float(vwap)) if active_breakout_direction == "Bullish" else (float(vwap) - float(close.iloc[i]))
+            breakout_vwap_distance_atr = round(dist / atr_now, 3)
     breakout_entry_extended = bool(
         active_breakout_extension_atr is not None and active_breakout_extension_atr > settings.MAX_ENTRY_EXTENSION_ATR
     )
@@ -1353,9 +1360,33 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     open_val = float(df["open"].iloc[i]) if "open" in df.columns else None
     prev_close_val = float(close.iloc[i - 1]) if i >= 1 else None
 
+    # V6 price-location context. Use only PRIOR completed sessions so a new
+    # intraday high cannot improve its own historical-location score.
+    prior_high_20d = prior_low_20d = prior_high_50d = prior_low_50d = None
+    if isinstance(df.index, pd.DatetimeIndex) and {"high", "low"}.issubset(df.columns):
+        try:
+            session_key = df.index.normalize()
+            daily = df.groupby(session_key).agg({"high": "max", "low": "min"})
+            current_session = session_key[i]
+            prior_daily = daily.loc[daily.index < current_session]
+            if len(prior_daily) >= 10:
+                tail20 = prior_daily.tail(20)
+                prior_high_20d = float(tail20["high"].max())
+                prior_low_20d = float(tail20["low"].min())
+            if len(prior_daily) >= 20:
+                tail50 = prior_daily.tail(50)
+                prior_high_50d = float(tail50["high"].max())
+                prior_low_50d = float(tail50["low"].min())
+        except Exception:
+            prior_high_20d = prior_low_20d = prior_high_50d = prior_low_50d = None
+
     return {
         "open": round(open_val, 2) if open_val is not None else None,
         "prev_close": round(prev_close_val, 2) if prev_close_val is not None else None,
+        "prior_high_20d": round(prior_high_20d, 2) if prior_high_20d is not None else None,
+        "prior_low_20d": round(prior_low_20d, 2) if prior_low_20d is not None else None,
+        "prior_high_50d": round(prior_high_50d, 2) if prior_high_50d is not None else None,
+        "prior_low_50d": round(prior_low_50d, 2) if prior_low_50d is not None else None,
         "ret_20": _ret_n(20),
         "ret_10": _ret_n(10),
         "rvol_accel": rvol_accel,
@@ -1401,6 +1432,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "breakout_direction": breakout_direction,
         "fresh_breakout": fresh_breakout,
         "breakout_retained": breakout_retained,
+        "breakout_retest_confirmed": breakout_retest_confirmed,
         "retained_breakout_direction": retained_breakout_direction,
         "retained_breakout_source": retained_breakout_source,
         "retained_breakout_level": retained_breakout_level,
@@ -1410,6 +1442,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "breakout_extension_atr": breakout_extension_atr,
         "breakout_entry_extended": breakout_entry_extended,
         "breakout_vwap_agrees": breakout_vwap_agrees,
+        "breakout_vwap_distance_atr": breakout_vwap_distance_atr,
         "stock_in_play": stock_in_play_now,
         "gap_atr": gap_atr,
         "bar_range_atr": bar_range_atr,
