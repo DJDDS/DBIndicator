@@ -156,8 +156,9 @@ def test_primary_research_respects_4hour_setup_and_fetches_15minute_execution(mo
     assert replay_seen['execution_rows'] == len(execution)
 
 
-def test_diagnostic_research_uses_selected_scope_while_frozen_v7_is_fixed_15m():
+def test_diagnostic_research_uses_selected_scope_while_v81_primary_is_fixed_15m():
     text = open('app/templates/backtest.html', encoding='utf-8').read().replace(' ', '')
     assert "timeframe:scope.timeframe" in text
-    assert "timeframe:'15minute',days:'180'" in text
-    assert 'er-v7-run-btn' in text
+    assert "timeframe:'15minute'" in text
+    assert 'er-v8-run-btn' in text
+    assert 'er-v7-run-btn' not in text

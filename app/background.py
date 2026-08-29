@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, journal, kite_auth, scanner
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, derivative_intelligence, journal, kite_auth, scanner
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -469,12 +469,13 @@ def _apply_v8_dual_alpha(results, now=None):
     clock = now if now is not None else now_ist()
     for original, scored in zip(rows, ranked):
         for key, value in scored.items():
-            if key.startswith("v8_"):
+            if key.startswith("v8_") or key.startswith("v81_"):
                 original[key] = value
         direction = original.get("v8_direction")
         if direction in ("Bullish", "Bearish"):
+            decision_score = original.get("v8_alpha") if direction == "Bullish" else original.get("v81_bear_pressure")
             swing = v8_dual.classify_swing_opportunity(
-                original, direction=direction, alpha=original.get("v8_alpha"),
+                original, direction=direction, alpha=decision_score,
                 participation=original.get("v8_participation"),
                 derivatives=original.get("v8_derivatives"), now_time=clock,
             )
@@ -486,6 +487,77 @@ def _apply_v8_dual_alpha(results, now=None):
             original["v8_swing_late_session"] = swing.get("late_session")
     return results
 
+
+
+def _apply_derivative_intelligence(kite, results, now=None):
+    """Attach live option-expression evidence to the strongest V8.1 names.
+
+    Option data never changes the underlying Bull/Bear rank.  It answers the
+    second question: whether the shortlisted underlying is sensibly expressed
+    through a liquid option at current IV/spread, or should be left as an
+    underlying-only/watch idea.
+    """
+    clock = now or now_ist()
+    try:
+        derivative_intelligence.resolve_shadow_outcomes(kite, now=clock)
+    except Exception:  # noqa: BLE001 - forward validation must never stop stock scan
+        log.exception("Derivative shadow outcome resolution failed")
+    try:
+        return derivative_intelligence.enrich_shortlisted_options(
+            kite, results, now=clock, max_candidates=6
+        )
+    except Exception:  # noqa: BLE001 - option layer must never stop stock scan
+        log.exception("Derivative intelligence enrichment failed")
+        return results
+
+
+def _apply_v81_operational_shortlists(results):
+    """Project V8.1 decisions onto the legacy shortlist fields used by alerts/UI.
+
+    This is the production bridge: no V6 classification is consulted. Bull and
+    Bear TRADE CANDIDATE states come from the V8.1 point-in-time Top-3 engine.
+    """
+    intraday, swing, radar = [], [], []
+    for r in results or []:
+        r["shortlist_rank"] = None
+        r["swing_rank"] = None
+        r["radar_rank"] = None
+        r["intraday_eligible"] = False
+        r["swing_eligible"] = False
+        if r.get("error"):
+            continue
+        direction = r.get("v8_direction")
+        if direction not in ("Bullish", "Bearish"):
+            continue
+        r["trade_direction"] = direction
+        decision = r.get("v8_decision_score")
+        r["movement_score"] = decision
+        r["movement_stage"] = (
+            "V8.1 Bull Top-3" if direction == "Bullish"
+            else "V8.1 Bear Pressure Top-3"
+        ) if r.get("v8_state") == "TRADE CANDIDATE" else "V8.1 Watch"
+        if r.get("v8_state") in ("TRADE CANDIDATE", "WATCH"):
+            radar.append(r)
+        if r.get("v8_state") == "TRADE CANDIDATE":
+            r["intraday_eligible"] = True
+            intraday.append(r)
+        if r.get("v8_swing_state") == "TRADE CANDIDATE":
+            r["swing_eligible"] = True
+            swing.append(r)
+
+    intraday.sort(key=lambda r: float(r.get("v8_decision_score") or -1), reverse=True)
+    swing.sort(key=lambda r: float(r.get("v8_swing_alpha") or -1), reverse=True)
+    radar.sort(key=lambda r: (
+        1 if r.get("v8_state") == "TRADE CANDIDATE" else 0,
+        float(r.get("v8_decision_score") or -1),
+    ), reverse=True)
+    for i, r in enumerate(intraday, 1):
+        r["shortlist_rank"] = i
+    for i, r in enumerate(swing, 1):
+        r["swing_rank"] = i
+    for i, r in enumerate(radar[:10], 1):
+        r["radar_rank"] = i
+    return intraday, swing
 
 def _apply_v6_basis(results, *, history=None, now=None):
     """Attach live near-futures basis and ~30-minute basis acceleration.
@@ -1406,14 +1478,13 @@ def _run_loop():
                     )
                     _apply_v6_basis(results, history=_v6_basis_history, now=now_ist())
                     _apply_v8_dual_alpha(results, now=now_ist())
-                    # First pass creates a bounded finalist ranking; only those names
-                    # pay for 5-minute execution data. Unknown 5m remains neutral.
-                    _apply_v6_shortlists(results)
-                    _enrich_v6_execution_5m(
-                        kite, results, max_candidates=max(5, settings.SHORTLIST_MAX),
-                        signal_time=now_ist(),
-                    )
-                    _apply_v6_shortlists(results)
+                    # V8.1 is the single production shortlist/alert source.  V6
+                    # classifiers stay available only for historical diagnostics.
+                    _apply_v81_operational_shortlists(results)
+                    # V8.2: option intelligence is an expression layer AFTER the
+                    # underlying shortlist is frozen. It cannot promote/demote the
+                    # stock alpha; it only labels option-buy / expensive / wait.
+                    _apply_derivative_intelligence(kite, results, now=now_ist())
                     oi_events = _detect_oi_accel_events(results)
                     with _state_lock:
                         _state["results"] = results

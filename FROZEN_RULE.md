@@ -1,41 +1,54 @@
-# V7 Frozen Production Candidate
+# V8.2 Operational / Research Lock
 
-**Build:** `2026-08-29-INSTITUTIONAL-V7-FROZEN`  
-**Rule ID:** `RR_LONG_CATALYST60_15M_NEXTBAR_1D`
+**Production build:** `2026-08-29-INSTITUTIONAL-V8.2-DERIVATIVE-INTELLIGENCE`
 
-This build does not search for a better combination. It spends the previously locked final 20% on one pre-declared rule only.
+## Underlying screener — evidence locked from V8.1
 
-## Frozen trade rule
+V8.2 does not retune the stock-selection model after seeing the 90/180-day results.
 
-- Universe: full live NSE stock-F&O universe returned by Kite.
-- Setup timeframe: 15 minute.
-- Direction: Bullish only.
-- Structural trigger: actual Recent-Range escape.
-- Participation trigger: Catalyst Score **>= 60**.
-- Catalyst Score inputs are unchanged from V6: gap/ATR, opening RVOL, time-of-day RVOL, bar-range/ATR shock, and cross-sectional turnover percentile.
-- Entry: next executable 15-minute bar after the confirmed escape.
-- Evaluation horizon: 1 trading day.
-- Research window: exactly 180 calendar days.
-- Costs: 0.08% round-trip cost assumption plus 0.05% slippage per side, unchanged from the validated V6 research.
-- Split: 60% development / 20% validation / 20% final.
+- Universe: current NSE stock-F&O universe from Kite.
+- Signal timeframe: 15 minute. 4H is context only.
+- Bull pool: genuine 15m Recent-Range upside escapes.
+- Bull ranking: cross-sectional Bull Alpha with the pre-existing Participation quality floor.
+- Bear pool: genuine bearish breakout events.
+- Bear ranking: Bear Pressure = median(Participation, Relative Weakness, direction-aware Derivatives, close-near-low acceptance). Bullish Structure is not mirrored into the bear formula.
+- Operational breadth: Top 3 Bull + Top 3 Bear at each point in time.
+- Anti-chase: 1.25 ATR extension guard.
+- OI/futures basis: supporting evidence, never a universal veto.
+- Intraday and 1–2D swing states remain separate.
 
-OI, futures basis, VWAP, 4H context, sector leadership, price location, retention/retest and high turnover are **not eligibility gates** for this frozen final test. They remain diagnostics/context only.
+## V8.2 derivative-expression layer — live/shadow, not historically promoted
 
-## One-shot acceptance rule
+The option layer is deliberately downstream of the stock rank. It **cannot promote or demote the underlying candidate**.
 
-The final 20% receives exactly one verdict.
+For the strongest three bullish and strongest three bearish candidates it reads the live NFO stock-option chain and evaluates:
 
-**PASS** requires all of the following:
+- nearest live expiry for intraday expression;
+- first expiry with at least 3 calendar DTE for 1–2D swing expression;
+- near-ATM contracts only (no lottery-OTM promotion);
+- live bid/ask midpoint and spread;
+- model-estimated IV, delta, gamma, theta and vega;
+- 20-session annualized realized volatility and IV/RV ratio;
+- ATM-straddle priced move to expiry;
+- ATM call/put IV spread;
+- ATM volume PCR and OI PCR as **unsigned context only**;
+- approximate put/call skew from nearby quoted strikes;
+- option volume/OI and liquidity.
 
-- Final sample N >= 80.
-- Final average net return >= +0.15%.
-- Final profit factor >= 1.20.
-- At least 3 of 4 chronological final-sample blocks have positive average net return.
+Expression labels are decision-support only:
 
-If any check fails, the verdict is **REJECT**. The threshold is not moved afterward to rescue the result.
+- `OPTION BUYER EDGE`
+- `UNDERLYING GOOD - OPTION EXPENSIVE`
+- `PREMIUM RICH - DEFINED-RISK SELLING BIAS`
+- `UNDERLYING ONLY / WAIT`
+- `OPTION DATA INSUFFICIENT`
 
-## Anti-fishing safeguards
+Kite's normal historical interface does not provide an honest point-in-time historical stock-option chain with the bid/ask/IV surface/signed trade flow required for a true option P&L backtest. Therefore V8.2 **does not fabricate one**.
 
-The final sample is only revealed when the run matches the frozen protocol: full F&O universe, 15-minute setup/execution, 180 days, and fixed cost/slippage assumptions. All legacy V6 final-test surfaces stay locked, even if the old `V6_UNLOCK_FINAL_TEST` environment variable is set.
+Instead, every live analyzed option is written to `option_shadow.jsonl`, and registered contracts are forward-marked at 30m / 2h / EOD / 1D in `option_shadow_state.json`. The dashboard shows forward 30m sample/win-rate as evidence accumulates. Export `/api/option-shadow/export` before redeploying if the Railway container has no persistent volume.
 
-The Backtest page includes a dedicated **Run Frozen V7 Final Test** button that automatically launches the correct protocol. The normal diagnostic research button remains available, but non-protocol runs cannot reveal the V7 final sample.
+No V8.2 option label should be called a validated edge until the forward sample is large and stable enough to justify promotion.
+
+## Retired V7
+
+The former V7 `RR_LONG_CATALYST60_15M_NEXTBAR_1D` final sample was consumed and rejected. It is audit history only and must not be rerun or tuned against the already-seen final data.

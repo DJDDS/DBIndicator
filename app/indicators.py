@@ -1266,6 +1266,21 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     # vol_contracting above (which is about a coiling stock about to
     # expand - deliberately not gated for exactly that reason). None
     # whenever ATR hasn't warmed up; treated as agreeing.
+    # 20-session realized volatility for the derivative-intelligence layer.
+    # This is annualized from close-to-close log returns using the selected
+    # bar frequency; it is descriptive context for IV-vs-RV, never a signal
+    # gate.  15m has ~25 bars/session, 60m ~7, 4h ~2, daily 1.
+    bars_per_session = {"15minute": 25, "60minute": 7, "4hour": 2, "day": 1, "week": 1}.get(timeframe, 25)
+    rv_lookback = max(20, int(20 * bars_per_session))
+    realized_vol_20d = None
+    try:
+        log_ret = np.log(close.astype(float)).diff()
+        recent = log_ret.iloc[-rv_lookback:].dropna()
+        if len(recent) >= max(20, int(rv_lookback * 0.5)):
+            realized_vol_20d = round(float(recent.std(ddof=1) * np.sqrt(bars_per_session * 252) * 100.0), 2)
+    except Exception:
+        realized_vol_20d = None
+
     atr_pct = None
     atr_floor_agrees = True
     if atr_value and close.iloc[i]:
@@ -1489,6 +1504,7 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "entry_reference": entry_reference,
         "entry_location_agrees": entry_location_agrees,
         "atr_pct": atr_pct,
+        "realized_vol_20d": realized_vol_20d,
         "atr_floor_agrees": atr_floor_agrees,
         "adx": adx_value,
         "regime": regime,

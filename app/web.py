@@ -1,10 +1,11 @@
 import functools
 import logging
+import json
 
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual, derivative_intelligence
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -156,7 +157,19 @@ def api_v8_dashboard():
     payload = v8_dual.dashboard_payload(get_state())
     payload["market_open"] = scanner.is_market_open()
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
+    payload["option_forward"] = derivative_intelligence.get_shadow_stats()
+    payload["option_forward_swing"] = derivative_intelligence.get_shadow_stats("swing")
     return jsonify(payload)
+
+
+@app.route("/api/option-shadow/export")
+@require_dashboard_password
+def api_option_shadow_export():
+    """Download forward option-validation state before a Railway redeploy."""
+    state = derivative_intelligence.load_shadow_state()
+    body = json.dumps(state, indent=2, default=str)
+    headers = {"Content-Disposition": "attachment; filename=v82_option_forward_validation.json"}
+    return Response(body, mimetype="application/json", headers=headers)
 
 
 @app.route("/quick-settings", methods=["POST"])

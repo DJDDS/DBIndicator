@@ -11,3 +11,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+option_shadow.jsonl
+option_shadow_state.json

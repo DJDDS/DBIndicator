@@ -138,6 +138,11 @@ DELIVERY_DATA_FILE = os.getenv("DELIVERY_DATA_FILE", "delivery_data.json")
 # deploy if you have trades you don't want to risk.
 JOURNAL_FILE = os.getenv("JOURNAL_FILE", "signal_journal.json")
 
+# Live V8.2 option-chain snapshots for honest future walk-forward validation.
+OPTION_SHADOW_FILE = os.getenv("OPTION_SHADOW_FILE", "option_shadow.jsonl")
+OPTION_SHADOW_STATE_FILE = os.getenv("OPTION_SHADOW_STATE_FILE", "option_shadow_state.json")
+OPTION_RISK_FREE_RATE = float(os.getenv("OPTION_RISK_FREE_RATE", "0.06"))
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

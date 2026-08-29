@@ -80,3 +80,19 @@ def test_live_v8_attaches_separate_swing_state_after_1415():
     assert "v8_swing_alpha" in rows[0]
     assert rows[0]["v8_swing_state"] in ("TRADE CANDIDATE", "WATCH")
     assert rows[0]["v8_swing_late_session"] is True
+
+
+def test_compute_signal_exposes_20d_realized_vol_for_option_intelligence():
+    idx = pd.date_range("2026-07-01 09:15", periods=520, freq="15min")
+    rets = np.sin(np.arange(len(idx)) / 7.0) * 0.0015
+    close = pd.Series(100 * np.exp(np.cumsum(rets)), index=idx)
+    df = pd.DataFrame({
+        "open": close.shift(1).fillna(close.iloc[0]),
+        "high": close * 1.002,
+        "low": close * 0.998,
+        "close": close,
+        "volume": 1000,
+    }, index=idx)
+    result = indicators.compute_signal(df, "15minute")
+    assert result["realized_vol_20d"] is not None
+    assert result["realized_vol_20d"] > 0

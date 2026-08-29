@@ -1,21 +1,32 @@
-# DBIndicator — NSE F&O Dual-Alpha Screener
-## Institutional V8 Dual Alpha — bullish and bearish as independent engines
+# DBIndicator — NSE F&O Evidence-Locked Screener
+## Institutional V8.2 — Dual Alpha + Derivative Intelligence
 
-V8 replaces the bullish-only production-candidate framing with a two-sided architecture. A 15-minute Recent-Range escape determines direction, then the stock is ranked cross-sectionally on **Structure**, **Participation**, **Relative strength/weakness**, and **direction-aware Derivatives/OI** evidence. Bull and Bear are scored and validated separately; 4H is context only.
+V8.2 keeps V8.1's evidence-locked Bull Top-3 / Bear Pressure Top-3 underlying selection unchanged and adds a **live derivative-expression layer** after selection. The option layer never changes the stock rank. For the strongest bullish and bearish names it inspects the nearest live stock-option chain, chooses a liquid near-ATM CE/PE, estimates IV and Greeks, compares IV with 20-session realized volatility, measures ATM-straddle priced move, bid/ask spread, DTE and option liquidity, then labels the expression as **OPTION BUYER EDGE / UNDERLYING GOOD - OPTION EXPENSIVE / PREMIUM RICH - DEFINED-RISK SELLING BIAS / UNDERLYING ONLY-WAIT**.
 
-The dashboard is now a live decision console with independent Bullish Leaders and Bearish Leaders, TRADE/WATCH/NO EDGE states, Intraday/1–2D Swing tabs, evidence bars, OI state, extension/chase information and concise selection reasons. It polls `/api/v8-dashboard` and updates without a full-page reload.
+Historical option-chain claims are deliberately avoided: Kite does not supply the point-in-time historical chain needed for an honest options replay. V8.2 therefore writes live option evidence to `option_shadow.jsonl` for forward validation while the existing Backtest page continues to validate the underlying Bull/Bear engine. IV/Greeks are Black-Scholes estimates from live quotes and should be read as decision-support, not exchange-provided Greeks.
 
-The Backtest page has a dedicated **Run V8 Dual Alpha Backtest** path. It uses the full live NSE stock-F&O universe, 15-minute signal path, the chosen history window, transaction costs/slippage, a fixed ablation list, and a 60/20/20 development/validation/locked-final protocol. There is no V8 parameter grid or fitted weighting model.
 
-See `V8_CHANGELOG.md` and `docs/superpowers/specs/2026-08-29-v8-dual-alpha-design.md`. V7/V6 remain in the codebase only as audit/legacy research surfaces.
+V8.1 is the production-candidate architecture derived from the 90/180-day evidence review. It deliberately removes the sparse `Alpha >= 85` trade gate and does not mirror the bullish formula into bearish trades.
+
+**Bull engine:** 15-minute Recent-Range upside escape, fixed Participation quality floor, then point-in-time cross-sectional ranking by Bull Alpha. Predeclared breadth is Top 1 / Top 3 / Top 5 for research; **Top 3 is the operational live candidate set**.
+
+**Bear engine:** any genuine bearish breakout source can enter the candidate pool. Ranking is by **Bear Pressure = median(Participation, Relative Weakness, direction-aware Derivatives, close-near-low acceptance)**. Bullish Structure is intentionally excluded. The same predefined Top 1 / Top 3 / Top 5 breadth is reported, with **Pressure Top 3** as the operational live set.
+
+Both sides keep the fixed 70 WATCH-quality / participation floor and the existing 1.25 ATR anti-chase guard. These are not re-optimized from the 180-day result. 4H remains context only.
+
+The Backtest page now reports full four-block chronological validation tables for every primary Top-K variant and keeps the final 20% locked. The rejected V7 one-shot final is retired from the UI and is no longer recomputed by normal V8.1 research runs.
+
+The live dashboard, `shortlist_rank`, swing ranks and alerts now use the same V8.1 operational decisions. Old V6 shortlist cards are removed from the production dashboard; V6 code remains only for legacy research/audit compatibility.
+
+See `V8_1_CHANGELOG.md`.
 
 DBIndicator is a Zerodha Kite-connected research and screening dashboard for **NSE stock F&O only**. Its live objective is narrow: surface developing moves early enough to investigate without filling the screen with late, already-extended names.
 
 It does **not** place orders. Best Entries, alerts, stops/targets and research statistics are decision-support only.
 
-## Legacy architecture retained below V8 for audit continuity
+## Legacy V6/V7 research retained for audit compatibility only
 
-The live path uses **15-minute setup detection** with an optional **5-minute execution check** only for the best bounded finalist set:
+The items below describe older V6 research fields that remain in the codebase for diagnostics. They no longer populate the production shortlist or alert path:
 
 1. **Stock in Play / Energy Building** — catalyst-like gap/range activity, time-of-day participation and cross-sectional turnover. Direction is optional.
 2. **Recent-Range Setup** — price itself reveals direction by escaping the recent six-bar decision range.

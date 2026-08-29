@@ -214,9 +214,9 @@ def test_research_interactions_are_motivated_not_cartesian_grid():
 def test_dashboard_and_backtest_copy_use_new_stages_and_real_horizons():
     index = open('app/templates/index.html', encoding='utf-8').read()
     backtest = open('app/templates/backtest.html', encoding='utf-8').read()
-    assert 'Intraday Best Entry' in index
-    assert 'Swing 1-2D' in index
-    assert 'breakout source' in index.lower() or 'Breakout Source' in index
+    assert 'Live Decision Console' in index
+    assert '1–2D Swing' in index
+    assert 'Bullish Leaders' in index and 'Bearish Leaders' in index
     assert '3-bar primary' not in backtest
     for label in ('30m', '1h', '2h', '4h', '1D', '2D'):
         assert label in backtest
@@ -946,5 +946,5 @@ def test_backtest_page_surfaces_recent_range_edge_lab_and_live_dashboard_copy_is
     index = open('app/templates/index.html', encoding='utf-8').read()
     assert 'Recent-Range Edge Lab' in backtest
     assert 'er-recent-range-lab' in backtest
-    assert 'Recent-range + volume/OI' in index
-    assert 'High-Quality Swing 1-2D' in index
+    assert 'V8.1 Evidence-Locked' in index
+    assert 'Production model status' in index

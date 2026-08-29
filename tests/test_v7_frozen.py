@@ -152,9 +152,9 @@ def test_aggregate_research_exposes_frozen_report_with_run_context():
             'universe_is_full_fno': True,
         },
     )
-    assert out['research_build_id'] == '2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA'
-    assert out['v7_frozen']['rule']['rule_id'] == 'RR_LONG_CATALYST60_15M_NEXTBAR_1D'
-    assert out['v7_frozen']['final_test']['locked'] is False
+    assert out['research_build_id'] == '2026-08-29-INSTITUTIONAL-V8.1-EVIDENCE-LOCKED'
+    assert 'v7_frozen' not in out
+    assert 'v8_dual' in out
 
 
 def test_v7_keeps_legacy_v6_final_locked_even_if_old_unlock_env_is_set(monkeypatch):

@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V8-DUAL-ALPHA"
+RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V8.1-EVIDENCE-LOCKED"
 
 
 
@@ -1214,8 +1214,6 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
         )
         result["v8_dual"] = v8_dual_report(ignition)
         result["v6_edge_lab"] = v6_edge_report(ignition)
-        from . import v7_frozen
-        result["v7_frozen"] = v7_frozen.frozen_candidate_report(ignition, run_context=run_context)
         available = sum(1 for e in ignition if e.get("oi_status") != "Unavailable")
         confirmed = sum(1 for e in ignition if e.get("oi_status") == "Confirmed")
         result["oi_coverage"] = {
@@ -1368,9 +1366,10 @@ def _v8_three_way(events, field, key):
     return {
         "development": _v8_return_stats(dev, field, key),
         "validation": _v8_return_stats(validation, field, key),
+        "validation_blocks": _v8_validation_blocks(events, field, key),
         "final_test": {
             "locked": True,
-            "message": "V8 final 20% is locked until the dual Bull/Bear model is frozen.",
+            "message": "V8.1 final 20% is locked until Bull Top-3 and Bear Pressure Top-3 are frozen.",
         },
         "split": {"development_pct": 60, "validation_pct": 20, "final_pct": 20},
     }
@@ -1459,18 +1458,27 @@ def _ensure_v8_event_scores(events):
         groups.setdefault(rows[i].get("signal_time") or rows[i].get("entry_time") or "", []).append(i)
     for idxs in groups.values():
         scored = v8_dual.rank_cross_section([rows[i] for i in idxs])
-        for i, s in zip(idxs, scored):
-            for key, value in s.items():
-                if key.startswith("v8_"):
+        for i, scored_row in zip(idxs, scored):
+            for key, value in scored_row.items():
+                if key.startswith("v8_") or key.startswith("v81_"):
                     rows[i][key] = value
+    for row in rows:
+        if row.get("direction") == "Bearish" and row.get("v81_bear_pressure") is None:
+            row["v81_bear_pressure"] = v8_dual.bear_pressure_score(row)
     return rows
 
 
 def v8_dual_report(events):
-    """Fixed, non-grid V8 Bull/Bear research report with locked final 20%."""
+    """Evidence-locked V8.1 Bull/Bear report with predefined Top-K breadth.
+
+    Bull keeps the validated 15-minute Recent-Range mechanism but chooses the
+    strongest point-in-time names instead of requiring Alpha >= 85. Bear is
+    independent: it ranks selling pressure across all bearish breakout sources
+    using participation, relative weakness, derivatives and close-near-low
+    acceptance. K=1/3/5 is declared portfolio breadth, not a score grid.
+    """
     from . import v8_dual
     rows = _ensure_v8_event_scores(events)
-    recent = [e for e in rows if e.get("breakout_source") == "Recent Range"]
 
     def fin(e, key):
         try:
@@ -1483,7 +1491,12 @@ def v8_dual_report(events):
         ext = fin(e, "breakout_extension_atr")
         return ext is None or ext <= v8_dual.MAX_EXTENSION_ATR
 
-    variants = {
+    bull_base = [e for e in rows if e.get("direction") == "Bullish" and e.get("breakout_source") == "Recent Range" and not_chased(e)]
+    bear_base = [e for e in rows if e.get("direction") == "Bearish" and not_chased(e)]
+
+    # Old fixed-cutoff ablations remain machine-readable for audit continuity,
+    # but they are no longer the primary selection surface.
+    legacy_variants = {
         "raw_recent_range": lambda e: not_chased(e),
         "structure_only": lambda e: not_chased(e) and (fin(e, "v8_structure") or -1) >= 85,
         "participation_only": lambda e: not_chased(e) and (fin(e, "v8_participation") or -1) >= 85,
@@ -1499,23 +1512,68 @@ def v8_dual_report(events):
             "weights_fitted": False,
             "parameter_grid": False,
             "final_locked": True,
-            "trade_alpha_min": v8_dual.TRADE_ALPHA_MIN,
-            "participation_min": v8_dual.PARTICIPATION_MIN,
+            "selection": "point-in-time Top-K, predefined K=1/3/5",
+            "operational_breadth": 3,
+            "watch_quality_floor": 70.0,
+            "participation_floor": 70.0,
             "max_extension_atr": v8_dual.MAX_EXTENSION_ATR,
+            "bull_origin": "Bullish Recent-Range escape",
+            "bear_origin": "Any bearish breakout source; pressure-led ranking",
+            "bear_pressure": "median(Participation, Relative Weakness, Derivatives, Bear CLV)",
         }
     }
-    side_status = []
+
+    # Bull primary: top names among Recent-Range bullish escapes.
+    bull_primary = {}
+    for k in (1, 3, 5):
+        subset = v8_dual.select_top_k(
+            bull_base, score_field="v8_alpha", k=k, direction="Bullish",
+            participation_floor=70.0, score_floor=70.0, allowed_sources={"Recent Range"},
+        )
+        bull_primary[f"top{k}"] = {
+            "2h": _v8_three_way(subset, "intraday_returns", "2h"),
+            "1D": _v8_three_way(subset, "swing_returns", "1D"),
+        }
+
+    # Bear primary: independent selling-pressure ranking; Recent Range is not
+    # a mandatory origin and mirrored bullish Structure is not in the score.
+    bear_primary = {}
+    for k in (1, 3, 5):
+        subset = v8_dual.select_top_k(
+            bear_base, score_field="v81_bear_pressure", k=k, direction="Bearish",
+            participation_floor=70.0, score_floor=70.0, allowed_sources=None,
+        )
+        bear_primary[f"pressure_top{k}"] = {
+            "2h": _v8_three_way(subset, "intraday_returns", "2h"),
+            "1D": _v8_three_way(subset, "swing_returns", "1D"),
+        }
+
+    report["bullish"] = {"primary_variants": bull_primary, "legacy_ablations": {}}
+    report["bearish"] = {"primary_variants": bear_primary, "legacy_ablations": {}}
+
+    recent = [e for e in rows if e.get("breakout_source") == "Recent Range"]
     for direction, name in (("Bullish", "bullish"), ("Bearish", "bearish")):
-        side = [e for e in recent if e.get("direction") == direction]
-        payload = {}
-        for variant_name, pred in variants.items():
-            subset = [e for e in side if pred(e)]
-            payload[variant_name] = {
+        side_recent = [e for e in recent if e.get("direction") == direction]
+        for variant_name, pred in legacy_variants.items():
+            subset = [e for e in side_recent if pred(e)]
+            payload = {
                 "2h": _v8_three_way(subset, "intraday_returns", "2h"),
                 "1D": _v8_three_way(subset, "swing_returns", "1D"),
             }
-        full = [e for e in side if variants["full_consensus"](e)]
-        payload["full_horizons"] = {
+            report[name]["legacy_ablations"][variant_name] = payload
+            # Backward-compatible aliases for existing API consumers/tests.
+            report[name][variant_name] = payload
+
+    bull_operational = v8_dual.select_top_k(
+        bull_base, score_field="v8_alpha", k=3, direction="Bullish",
+        participation_floor=70.0, score_floor=70.0, allowed_sources={"Recent Range"},
+    )
+    bear_operational = v8_dual.select_top_k(
+        bear_base, score_field="v81_bear_pressure", k=3, direction="Bearish",
+        participation_floor=70.0, score_floor=70.0, allowed_sources=None,
+    )
+    for name, full in (("bullish", bull_operational), ("bearish", bear_operational)):
+        report[name]["full_horizons"] = {
             "30m": _v8_three_way(full, "intraday_returns", "30m"),
             "1h": _v8_three_way(full, "intraday_returns", "1h"),
             "2h": _v8_three_way(full, "intraday_returns", "2h"),
@@ -1523,15 +1581,16 @@ def v8_dual_report(events):
             "1D": _v8_three_way(full, "swing_returns", "1D"),
             "2D": _v8_three_way(full, "swing_returns", "2D"),
         }
-        payload["benchmark"] = {
+        report[name]["benchmark"] = {
             "intraday_2h": _v8_benchmark(full, "intraday_returns", "2h"),
             "swing_1D": _v8_benchmark(full, "swing_returns", "1D"),
         }
-        report[name] = payload
-        side_status.append(payload["benchmark"]["intraday_2h"]["status"] == "PROMOTABLE")
-        side_status.append(payload["benchmark"]["swing_1D"]["status"] == "PROMOTABLE")
-    report["combined_status"] = "PROMOTABLE" if all(side_status) else "RESEARCH"
+
+    bull_ok = report["bullish"]["benchmark"]["swing_1D"]["status"] == "PROMOTABLE"
+    bear_ok = report["bearish"]["benchmark"]["swing_1D"]["status"] == "PROMOTABLE"
+    report["combined_status"] = "PROMOTABLE" if bull_ok and bear_ok else "RESEARCH"
     report["total_recent_range_events"] = len(recent)
+    report["total_bearish_breakout_events"] = len(bear_base)
     return report
 
 def v6_edge_report(events):

@@ -1,4 +1,4 @@
-"""V8 Dual Alpha cross-sectional scanner helpers.
+"""V8.1 Evidence-Locked cross-sectional scanner helpers.
 
 V8 deliberately separates bullish and bearish opportunity engines. Price reveals
 side through a 15-minute Recent-Range escape; cross-sectional structure,
@@ -213,16 +213,18 @@ def classify_swing_opportunity(row: dict, *, direction: str, alpha, participatio
     source = row.get("breakout_source") or row.get("retained_breakout_source")
     ext = _float(row.get("breakout_extension_atr"), _float(row.get("retained_breakout_extension_atr")))
     not_chased = ext is None or ext <= MAX_EXTENSION_ATR
+    source_ok = source == RECENT_RANGE_SOURCE if direction == "Bullish" else bool(source)
+    operational = row.get("v8_state") in (None, "TRADE CANDIDATE")
     eligible = bool(
-        late and source == RECENT_RANGE_SOURCE and not_chased
-        and a is not None and a >= 80.0
-        and swing_alpha is not None and swing_alpha >= TRADE_ALPHA_MIN
+        late and operational and source_ok and not_chased
+        and a is not None and a >= WATCH_ALPHA_MIN
+        and swing_alpha is not None and swing_alpha >= WATCH_ALPHA_MIN
         and p is not None and p >= PARTICIPATION_MIN
         and (retained or retest)
     )
     if eligible:
         state = "TRADE CANDIDATE"
-    elif swing_alpha is not None and swing_alpha >= WATCH_ALPHA_MIN:
+    elif operational and swing_alpha is not None and swing_alpha >= WATCH_ALPHA_MIN:
         state = "WATCH"
     else:
         state = "NO EDGE"
@@ -299,6 +301,7 @@ def score_preranked_row(row: dict) -> dict:
     r["v8_derivatives"] = derivatives.get("score")
     r["v8_oi_state"] = derivatives.get("oi_state")
     r["v8_alpha"] = alpha
+    r["v81_bear_pressure"] = bear_pressure_score(r) if direction == "Bearish" else None
     r["v8_state"] = classification["state"]
     r["v8_eligible"] = classification["eligible"]
     r["v8_chased"] = classification["chased"]
@@ -374,6 +377,7 @@ def rank_cross_section(rows: Iterable[dict]) -> list[dict]:
         r["v8_derivatives"] = derivatives.get("score")
         r["v8_oi_state"] = derivatives.get("oi_state")
         r["v8_alpha"] = alpha
+        r["v81_bear_pressure"] = bear_pressure_score(r) if direction == "Bearish" else None
         r["v8_state"] = classification["state"] if direction else "NO EDGE"
         r["v8_eligible"] = classification["eligible"] if direction else False
         r["v8_chased"] = classification["chased"] if direction else False
@@ -387,27 +391,120 @@ def rank_cross_section(rows: Iterable[dict]) -> list[dict]:
             reasons.append(derivatives.get("oi_state"))
         r["v8_reasons"] = reasons[:5]
 
-    # Alpha percentile/rank is itself useful for deterministic display order.
+    # Operational live selection is evidence-locked Top-3, not Alpha >= 85.
+    # Bull requires Recent-Range origin; Bear is pressure-led across any bearish
+    # breakout source.  The fixed 70 floor is the pre-existing WATCH-quality
+    # guard, not a tuned trade threshold.
     for direction in ("Bullish", "Bearish"):
-        idxs = [i for i, r in enumerate(out) if r.get("v8_direction") == direction and _finite(r.get("v8_alpha"))]
-        ordered = sorted(idxs, key=lambda i: float(out[i]["v8_alpha"]), reverse=True)
+        score_field = "v8_alpha" if direction == "Bullish" else "v81_bear_pressure"
+        eligible_idxs = []
+        for i, r in enumerate(out):
+            if r.get("v8_direction") != direction:
+                continue
+            score = _float(r.get(score_field))
+            part = _float(r.get("v8_participation"))
+            source = r.get("breakout_source") or r.get("retained_breakout_source")
+            ext = _float(r.get("breakout_extension_atr"), _float(r.get("retained_breakout_extension_atr")))
+            source_ok = source == RECENT_RANGE_SOURCE if direction == "Bullish" else bool(source)
+            candidate_quality = bool(
+                source_ok and score is not None and score >= WATCH_ALPHA_MIN
+                and part is not None and part >= PARTICIPATION_MIN
+                and not (ext is not None and ext > MAX_EXTENSION_ATR)
+            )
+            r["v8_decision_score"] = score
+            if candidate_quality:
+                eligible_idxs.append(i)
+            else:
+                r["v8_state"] = "WATCH" if score is not None and score >= WATCH_ALPHA_MIN else "NO EDGE"
+                r["v8_eligible"] = False
+        ordered = sorted(eligible_idxs, key=lambda i: (float(out[i].get(score_field) or -1), float(out[i].get("v8_participation") or -1)), reverse=True)
+        top3 = set(ordered[:3])
         for rank, i in enumerate(ordered, 1):
             out[i]["v8_rank"] = rank
+            out[i]["v8_state"] = "TRADE CANDIDATE" if i in top3 else "WATCH"
+            out[i]["v8_eligible"] = i in top3
+            reasons = list(out[i].get("v8_reasons") or [])
+            if i in top3:
+                reasons.insert(0, f"Top {rank} current {direction.lower()} cross-section")
+            if direction == "Bearish" and _finite(out[i].get("v81_bear_pressure")):
+                reasons.append(f"Bear pressure P{float(out[i]['v81_bear_pressure']):.0f}")
+            out[i]["v8_reasons"] = reasons[:5]
     return out
 
 
 def build_live_leaderboards(rows: Iterable[dict], *, limit: int = 8) -> dict:
-    """Return independently sorted bullish and bearish leaderboards."""
-    usable = [dict(r) for r in (rows or []) if _finite(r.get("v8_alpha"))]
+    """Return independently sorted bullish and bearish V8.1 leaderboards."""
+    usable = [dict(r) for r in (rows or []) if _finite(r.get("v8_decision_score", r.get("v8_alpha")))]
     priority = {"TRADE CANDIDATE": 2, "WATCH": 1, "NO EDGE": 0}
 
     def side(direction):
         candidates = [r for r in usable if r.get("v8_direction") == direction]
-        candidates.sort(key=lambda r: (priority.get(r.get("v8_state"), 0), float(r.get("v8_alpha") or 0)), reverse=True)
+        candidates.sort(key=lambda r: (priority.get(r.get("v8_state"), 0), float(r.get("v8_decision_score") or r.get("v8_alpha") or 0)), reverse=True)
         return candidates[: max(0, int(limit))]
 
     return {"bullish": side("Bullish"), "bearish": side("Bearish")}
 
+
+
+
+def bear_pressure_score(row: dict) -> float | None:
+    """Bear-specific selling-pressure score; structure is intentionally excluded.
+
+    The bearish research uses abnormal participation, relative weakness,
+    direction-aware derivatives and close-near-low acceptance.  A mirrored
+    bullish structure score is deliberately not part of this consensus.
+    """
+    if _direction(row) != "Bearish":
+        return None
+    return consensus_score([
+        row.get("v8_participation"),
+        row.get("v8_relative"),
+        row.get("v8_derivatives"),
+        directional_clv(row, "Bearish"),
+    ])
+
+
+def select_top_k(
+    rows: Iterable[dict], *, score_field: str, k: int, direction: str,
+    participation_floor: float = 70.0, score_floor: float = 70.0,
+    allowed_sources: set[str] | None = None,
+) -> list[dict]:
+    """Select predefined point-in-time Top-K candidates without an 85 score gate.
+
+    K is portfolio breadth (1/3/5 in V8.1), not a searched threshold.  A fixed
+    WATCH-quality floor and anti-chase guard prevent the only mediocre name in a
+    quiet timestamp from becoming a trade merely because it ranks first.
+    """
+    groups: dict[str, list[dict]] = {}
+    for raw in rows or []:
+        row = dict(raw)
+        if _direction(row) != direction:
+            continue
+        if allowed_sources is not None:
+            source = row.get("breakout_source") or row.get("retained_breakout_source")
+            if source not in allowed_sources:
+                continue
+        participation = _float(row.get("v8_participation"))
+        score = _float(row.get(score_field))
+        ext = _float(row.get("breakout_extension_atr"), _float(row.get("retained_breakout_extension_atr")))
+        if participation is None or participation < participation_floor:
+            continue
+        if score is None or score < score_floor:
+            continue
+        if ext is not None and ext > MAX_EXTENSION_ATR:
+            continue
+        ts = str(row.get("signal_time") or row.get("entry_time") or "")
+        groups.setdefault(ts, []).append(row)
+
+    out: list[dict] = []
+    for ts in sorted(groups):
+        ranked = sorted(
+            groups[ts],
+            key=lambda r: (float(r.get(score_field) or -1), float(r.get("v8_participation") or -1), str(r.get("symbol") or "")),
+            reverse=True,
+        )
+        out.extend(ranked[:max(0, int(k))])
+    return sorted(out, key=lambda r: (str(r.get("entry_time") or r.get("signal_time") or ""), -float(r.get(score_field) or -1)))
 
 def _json_number(value):
     if not _finite(value):
@@ -419,15 +516,19 @@ def _compact_dashboard_row(row: dict, *, swing: bool = False) -> dict:
     direction = row.get("v8_direction")
     alpha_key = "v8_swing_alpha" if swing else "v8_alpha"
     state_key = "v8_swing_state" if swing else "v8_state"
+    option_prefix = "option_swing_" if swing else "option_"
+    def opt(name):
+        return row.get(option_prefix + name)
     return {
         "symbol": row.get("symbol"),
         "direction": direction,
-        "alpha": _json_number(row.get(alpha_key)),
+        "alpha": _json_number(row.get(alpha_key) if swing else row.get("v8_decision_score", row.get("v8_alpha"))),
         "state": row.get(state_key) or "NO EDGE",
         "structure": _json_number(row.get("v8_structure")),
         "participation": _json_number(row.get("v8_participation")),
         "relative": _json_number(row.get("v8_relative")),
         "derivatives": _json_number(row.get("v8_derivatives")),
+        "bear_pressure": _json_number(row.get("v81_bear_pressure")),
         "oi_state": row.get("v8_oi_state") or "OI Neutral/Unavailable",
         "extension_atr": _json_number(row.get("breakout_extension_atr")),
         "close": _json_number(row.get("close")),
@@ -435,6 +536,18 @@ def _compact_dashboard_row(row: dict, *, swing: bool = False) -> dict:
         "oi_chg_60m_pct": _json_number(row.get("oi_chg_60m_pct")),
         "swing_persistence": _json_number(row.get("v8_swing_persistence")) if swing else None,
         "reasons": [str(x) for x in (row.get("v8_reasons") or [])[:5]],
+        "option_action": opt("action"),
+        "option_edge": opt("edge"),
+        "option_buyer_score": _json_number(opt("buyer_score")),
+        "option_contract": opt("contract"),
+        "option_iv_pct": _json_number(opt("iv_pct")),
+        "option_spread_pct": _json_number(opt("spread_pct")),
+        "option_delta": _json_number(opt("delta")),
+        "option_theta_day": _json_number(opt("theta_day")),
+        "option_iv_rv_ratio": _json_number(opt("iv_rv_ratio")),
+        "option_dte": opt("dte"),
+        "option_straddle_move_pct": _json_number(opt("straddle_move_pct")),
+        "realized_vol_20d": _json_number(row.get("realized_vol_20d")),
     }
 
 
@@ -466,6 +579,7 @@ def dashboard_payload(state: dict, *, limit: int = 8) -> dict:
     return {
         "last_scan": state.get("last_scan"),
         "last_error": state.get("last_error"),
+        "market_open": bool(state.get("market_open")),
         "market": {
             "index_direction": state.get("index_direction"),
             "index_chg_pct": _json_number(state.get("index_chg_pct")),

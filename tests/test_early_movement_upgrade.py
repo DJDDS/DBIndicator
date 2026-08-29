@@ -161,10 +161,10 @@ def test_best_entry_rejects_missing_or_fading_oi():
 def test_live_dashboard_retires_btst_candidates_and_legacy_best_entry_drivers():
     text = open('app/templates/index.html', encoding='utf-8').read()
     assert 'BTST / STBT' not in text
-    assert 'Overnight research' in text
-    best_section = text[text.index('Best Entries'):text.index('Overnight research')]
-    for legacy in ('strong_close', 'big_candle', 'delivery_pct', 'candle_pattern'):
-        assert legacy not in best_section
+    assert 'Production model status' in text
+    assert 'V8.1 Evidence-Locked' in text
+    for legacy in ('V6 Intraday Entry', 'V6 Swing 1-2D', 'Swing remains long-only'):
+        assert legacy not in text
 
 
 def test_live_loop_no_longer_publishes_btst_candidates():
@@ -264,3 +264,17 @@ def test_settings_only_exposes_and_saves_live_engine_controls():
     assert '"TOD_RVOL_MIN": form.get("tod_rvol_min"' in web
     assert '"SHORTLIST_MAX": form.get("shortlist_max"' in web
     assert '"SCAN_INTERVAL_SECONDS": form.get("scan_interval_seconds"' in web
+
+
+def test_alert_message_includes_v82_option_expression_when_available():
+    from app.alerts import _format_message
+    row = {
+        'symbol':'ABC','trade_direction':'Bullish','close':100,'movement_score':92,
+        'breakout_source':'Recent Range','option_action':'OPTION BUYER EDGE','option_edge':'HIGH',
+        'option_contract':'ABCSEP100CE','option_iv_rv_ratio':0.94,'option_spread_pct':1.2,
+        'option_dte':12,
+    }
+    msg = _format_message(row, '15minute')
+    assert 'OPTION BUYER EDGE' in msg
+    assert 'ABCSEP100CE' in msg
+    assert 'IV/RV 0.94x' in msg

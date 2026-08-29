@@ -1925,7 +1925,7 @@ def _attach_v8_full_universe_scores(replays, feature_frames):
     for event in event_refs:
         scored = v8_dual.score_preranked_row(event)
         for key, value in scored.items():
-            if key.startswith("v8_"):
+            if key.startswith("v8_") or key.startswith("v81_"):
                 event[key] = value
     return replays
 

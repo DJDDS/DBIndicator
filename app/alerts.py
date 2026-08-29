@@ -111,11 +111,23 @@ def _format_message(r, timeframe):
     ext = r.get("breakout_extension_atr")
     level_note = f" @ {level}" if level is not None else ""
     ext_note = f" | Ext {ext:.2f} ATR" if isinstance(ext, (int, float)) else ""
+    option_line = ""
+    if r.get("option_action"):
+        contract = r.get("option_contract") or "option —"
+        ratio = r.get("option_iv_rv_ratio")
+        spread = r.get("option_spread_pct")
+        dte = r.get("option_dte")
+        edge = r.get("option_edge") or ""
+        ratio_note = f"IV/RV {float(ratio):.2f}x" if isinstance(ratio, (int, float)) else "IV/RV —"
+        spread_note = f"Spread {float(spread):.1f}%" if isinstance(spread, (int, float)) else "Spread —"
+        dte_note = f"DTE {dte}" if dte is not None else "DTE —"
+        option_line = f"\nOption: {r.get('option_action')} {edge} | {contract} | {ratio_note} | {spread_note} | {dte_note}"
     return (
         f"{arrow} {r['symbol']} - {alert_direction} F&O Breakout Entry ({timeframe})\n"
         f"{source} breakout{level_note} | Close {r['close']} | {score_note}\n"
         f"{oi_note} | {accel_note} | OI {oi_status} | {tod_note}\n"
         f"{rs_note} | HTF {htf_note}{ext_note} | VWAP + anti-chase passed"
+        f"{option_line}"
     )
 
 
