@@ -757,7 +757,7 @@ function renderEarlyResearch(result) {
     const blockSummary = x => {
       const blocks = ((x || {}).validation_blocks || []);
       if (!blocks.length) return '—';
-      return blocks.map(b => `${b.block}:${b.avg_return_pct == null ? '—' : (b.avg_return_pct > 0 ? '+' : '') + Number(b.avg_return_pct).toFixed(2) + '%}/PF${b.profit_factor == null ? '—' : Number(b.profit_factor).toFixed(2)}`).join(' · ');
+      return blocks.map(b => `${b.block}:${b.avg_return_pct == null ? '—' : (b.avg_return_pct > 0 ? '+' : '') + Number(b.avg_return_pct).toFixed(2) + '%'}/PF${b.profit_factor == null ? '—' : Number(b.profit_factor).toFixed(2)}`).join(' · ');
     };
     const rows = order.map(name => {
       const p = (v9.playbooks || {})[name] || {};

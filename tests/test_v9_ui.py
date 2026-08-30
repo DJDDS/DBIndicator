@@ -51,3 +51,32 @@ def test_v9_dashboard_payload_surfaces_playbook_and_option_expression():
     assert got["playbook"] == v9_playbooks.BULL_OPENING_DRIVE
     assert got["score"] == 91.0
     assert got["option_action"] == "OPTION BUYER EDGE"
+
+
+
+def test_v9_backtest_block_summary_template_literal_is_valid_javascript(tmp_path):
+    import re
+    import shutil
+    import subprocess
+    import pytest
+    from jinja2 import Environment, FileSystemLoader
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required for rendered-JavaScript syntax regression check")
+
+    env = Environment(loader=FileSystemLoader(ROOT / "app/templates"))
+    html = env.get_template("backtest.html").render(
+        logged_in=True, watchlist_count=211,
+        valid_timeframes=["15minute", "4hour"], default_timeframe="15minute",
+        bt_days_default=180, bt_days_min=5, bt_days_max=365,
+        param_defs=[], filter_defs=[], default_params=[], default_required=1,
+        backtest_day_bounds={"15minute": [5, 365, 90], "4hour": [5, 365, 180]},
+        state={"status": "idle"}, early_research_state={"status": "idle", "progress": {}},
+        ablation_state={"status": "idle"},
+    )
+    scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+    js_path = tmp_path / "backtest-rendered.js"
+    js_path.write_text("\n".join(scripts), encoding="utf-8")
+    result = subprocess.run([node, "--check", str(js_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
