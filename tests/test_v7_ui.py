@@ -12,7 +12,7 @@ def test_v7_final_is_retired_from_primary_backtest_ui():
 
 
 def test_current_build_marker_is_v9():
-    build_id = '2026-08-30-INSTITUTIONAL-V9.1.1-RESUMABLE-BACKTEST'
+    build_id = '2026-08-30-INSTITUTIONAL-V9.1.2-STREAMING-BACKTEST'
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text()
     assert build_id in (ROOT / 'RESEARCH_BUILD.txt').read_text()
 

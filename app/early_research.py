@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1.1-RESUMABLE-BACKTEST"
+RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1.2-STREAMING-BACKTEST"
 
 
 
@@ -1357,6 +1357,43 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
     else:
         result["v9_playbooks"] = v9_playbook_report(v9_candidates)
     return result
+
+
+def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=30.0, run_context=None):
+    """Aggregate the streaming V9.1 candidate checkpoint directly.
+
+    This deliberately bypasses replay-family reconstruction.  The candidate
+    rows already carry point-in-time V8 ranks from Stage 2, while confirmation
+    diagnostics are merged as counters during Stage 1.
+    """
+    rows = sorted(list(events or []), key=lambda e: e.get("entry_time", ""))
+    diag = dict(confirmation_summary or {})
+    total = int(diag.get("events") or 0)
+    unavailable = int(diag.get("oi_unavailable") or 0)
+    confirmed = int(diag.get("oi_confirmed") or 0)
+    available = max(0, total - unavailable)
+    mode = (run_context or {}).get("research_mode") or "v91_fast"
+    return {
+        "research_build_id": RESEARCH_BUILD_ID,
+        "holdout_pct": float(holdout_pct),
+        "fast_v8": True,
+        "fast_v9": True,
+        "streaming_v91": True,
+        "run_context": dict(run_context or {}),
+        "oi_coverage": {
+            "total": total,
+            "available": available,
+            "unavailable": unavailable,
+            "confirmed": confirmed,
+            "coverage_pct": round(available / total * 100.0, 1) if total else 0.0,
+        },
+        "confirmation_diagnostics": diag,
+        "v91_goal": v91_goal_report(
+            rows,
+            run_context=run_context,
+            reveal_bear_final=(mode == "v91_bear_final"),
+        ),
+    }
 
 
 def _v9_three_way(events, field, key):

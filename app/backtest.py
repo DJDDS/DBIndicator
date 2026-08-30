@@ -1976,13 +1976,19 @@ def _attach_v8_full_universe_scores_from_shards(replays, shard_map, stage_cb=Non
         except Exception:
             return None
 
+    def _column(frame, name, *, absolute=False):
+        if name not in frame:
+            return pd.Series(np.nan, index=frame.index, dtype="float32")
+        ser = pd.to_numeric(frame[name], errors="coerce")
+        return ser.abs() if absolute else ser
+
     rank_specs = [
-        ("v8_tod_rvol_percentile", lambda f: f.get("tod_rvol"), False),
-        ("v8_opening_rvol_percentile", lambda f: f.get("opening_rvol"), False),
-        ("v8_range_shock_percentile", lambda f: f.get("bar_range_atr"), False),
-        ("v8_gap_shock_percentile", lambda f: pd.to_numeric(f.get("gap_atr"), errors="coerce").abs(), False),
-        ("v8_turnover_percentile", lambda f: f.get("turnover_notional"), False),
-        ("v8_oi_strength_percentile", lambda f: pd.to_numeric(f.get("oi_chg_60m_pct"), errors="coerce").abs(), False),
+        ("v8_tod_rvol_percentile", lambda f: _column(f, "tod_rvol"), False),
+        ("v8_opening_rvol_percentile", lambda f: _column(f, "opening_rvol"), False),
+        ("v8_range_shock_percentile", lambda f: _column(f, "bar_range_atr"), False),
+        ("v8_gap_shock_percentile", lambda f: _column(f, "gap_atr", absolute=True), False),
+        ("v8_turnover_percentile", lambda f: _column(f, "turnover_notional"), False),
+        ("v8_oi_strength_percentile", lambda f: _column(f, "oi_chg_60m_pct", absolute=True), False),
     ]
 
     def _relative(frame):
@@ -2054,6 +2060,75 @@ _V8_COMPACT_FEATURE_COLUMNS = (
     "turnover_notional", "oi_chg_60m_pct", "rs_pct", "stock_sector_lead_pct",
 )
 
+_V91_COMPACT_EVENT_KEYS = (
+    "symbol", "signal_time", "entry_time", "timestamp", "direction", "v8_direction",
+    "v91_accumulation_probe", "v91_accumulation_seed_direction",
+    "fresh_breakout", "breakout_source", "breakout_direction", "breakout_extension_atr",
+    "price_chg_60m_pct", "oi_chg_60m_pct", "oi_chg_30m_pct", "basis_acceleration",
+    "vwap_side_agrees", "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
+    "turnover_notional", "rs_pct", "stock_sector_lead_pct", "stock_index_lead_pct",
+    "close_position_pct", "high", "low", "close",
+    "intraday_returns", "swing_returns", "mfe_atr", "mae_atr",
+)
+
+
+def _compact_v91_events(replay):
+    """Extract only rows needed by V9.1 Bull Accumulation / frozen Bear FSB.
+
+    V9.1 deliberately ignores the retired V9 playbooks.  Keeping only scalar
+    evidence plus the small return/excursion dictionaries prevents each symbol
+    checkpoint from carrying the full replay object into Stage 2.
+    """
+    out = []
+    for raw in (replay or {}).get("v9_playbook_events") or []:
+        keep = False
+        if raw.get("v91_accumulation_probe") is True:
+            keep = True
+            try:
+                basis = raw.get("basis_acceleration")
+                if basis is not None and np.isfinite(float(basis)) and float(basis) < -0.02:
+                    keep = False
+                cp = raw.get("close_position_pct")
+                if cp is not None and np.isfinite(float(cp)) and float(cp) < 60.0:
+                    keep = False
+            except (TypeError, ValueError):
+                pass
+        elif raw.get("direction") == "Bearish" and raw.get("fresh_breakout") is True:
+            try:
+                price_60 = float(raw.get("price_chg_60m_pct"))
+                oi_60 = float(raw.get("oi_chg_60m_pct"))
+                keep = bool(np.isfinite(price_60) and np.isfinite(oi_60) and price_60 < 0 and oi_60 > 0)
+                ext = raw.get("breakout_extension_atr")
+                if keep and ext is not None and np.isfinite(float(ext)) and float(ext) > 1.25:
+                    keep = False
+                basis = raw.get("basis_acceleration")
+                if keep and basis is not None and np.isfinite(float(basis)) and float(basis) > 0.02:
+                    keep = False
+                cp = raw.get("close_position_pct")
+                if keep and cp is not None and np.isfinite(float(cp)) and float(cp) > 35.0:
+                    keep = False
+            except (TypeError, ValueError):
+                keep = False
+        if not keep:
+            continue
+        row = {key: raw.get(key) for key in _V91_COMPACT_EVENT_KEYS if key in raw}
+        out.append(row)
+    return out
+
+
+def _v91_confirmation_summary(replay):
+    """Compact the audit counters V9.1 still exposes without retaining events."""
+    return early_research.confirmation_diagnostics((replay or {}).get("ignition_events") or [])
+
+
+def _merge_v91_confirmation_summaries(summaries):
+    merged = {}
+    for summary in summaries or []:
+        for key, value in (summary or {}).items():
+            if isinstance(value, (int, np.integer)):
+                merged[key] = int(merged.get(key, 0)) + int(value)
+    return merged
+
 
 def _compact_v8_feature_frame(frame):
     """Keep only cross-sectional V9 inputs in float32 to cap full-universe RAM."""
@@ -2084,12 +2159,63 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     days = max(lo, min(int(days or default), hi))
     symbols = list(symbols or settings.WATCHLIST)
     horizons = DEFAULT_HORIZONS
+    streaming_v91 = bool(fast_v8 and research_mode in ("v91_fast", "v91_bear_final"))
     run_dir = (Path(resume_run_dir) if resume_run_dir is not None else
         _early_research_run_dir(
             symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
             cost_pct=cost_pct, slippage_pct=slippage_pct, research_mode=research_mode,
         )) if fast_v8 else None
     completed_shards = _completed_research_symbol_shards(run_dir) if run_dir is not None else {}
+    if streaming_v91 and run_dir is not None and _v91_ranked_events_path(run_dir).exists():
+        try:
+            ranked_v91_payload = _load_v91_ranked_events_checkpoint(_v91_ranked_events_path(run_dir))
+            if progress_cb:
+                progress_cb(len(symbols), len(symbols), None)
+            if stage_cb:
+                stage_cb(2, 4, "Stage 2 checkpoint available — loading ranked events", 84)
+            run_context = {
+                "setup_timeframe": timeframe,
+                "execution_timeframe": execution_timeframe,
+                "days": days,
+                "cost_pct": float(cost_pct),
+                "slippage_pct": float(slippage_pct),
+                "universe_is_full_fno": bool(universe_is_full_fno),
+                "fast_v8": True,
+                "research_mode": research_mode,
+            }
+            if stage_cb:
+                stage_cb(3, 4, "Running frozen Bear FSB final test" if research_mode == "v91_bear_final" else "Validating V9.1 goal-focused models", 86)
+            research = early_research.aggregate_v91_compact_events(
+                ranked_v91_payload.get("events") or [],
+                ranked_v91_payload.get("confirmation") or {},
+                holdout_pct=holdout_pct,
+                run_context=run_context,
+            )
+            if stage_cb:
+                stage_cb(4, 4, "Preparing report", 98)
+            return {
+                "timeframe": timeframe,
+                "setup_timeframe": timeframe,
+                "execution_timeframe": execution_timeframe,
+                "days": days,
+                "symbols_scanned": len(symbols),
+                "symbols_completed": int(ranked_v91_payload.get("symbols_completed") or len(completed_shards)),
+                "symbols_skipped": dict(ranked_v91_payload.get("notes") or {}),
+                "cost_pct": float(cost_pct),
+                "slippage_pct": float(slippage_pct),
+                "research": research,
+                "fast_v8": True,
+                "research_notes": [
+                    "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",
+                    "15-minute setups retain next-bar execution; V9.1 streaming reuses the same point-in-time event logic.",
+                    "Cross-sectional ranks are built one feature at a time from compact symbol shards to avoid full-universe replay memory spikes.",
+                    "A completed Stage-2 ranked-events checkpoint can resume directly at validation after a worker restart.",
+                ],
+                "generated_at": now_ist().isoformat(timespec="seconds"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("V9.1 Stage-2 checkpoint unusable; rebuilding from symbol shards: %s", exc)
+            _v91_ranked_events_path(run_dir).unlink(missing_ok=True)
     instruments = _load_instrument_map(kite)
     index_token = _load_index_token(kite, "NIFTY 50")
     index_df = None
@@ -2196,13 +2322,17 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             )
             replay = _trim_replay_to_window(replay, window_start)
             if fast_v8:
+                v91_events = _compact_v91_events(replay) if streaming_v91 else None
+                v91_confirmation = _v91_confirmation_summary(replay) if streaming_v91 else None
                 path = _write_research_symbol_shard(
-                    run_dir, i, symbol, compact_frame=compact_v8, replay=replay, note=None
+                    run_dir, i, symbol, compact_frame=compact_v8,
+                    replay=(None if streaming_v91 else replay), note=None,
+                    v91_events=v91_events, v91_confirmation=v91_confirmation,
                 )
                 completed_shards[symbol] = path
                 # The shard owns the compact feature/replay payload now; keep the
                 # 211-stock fetch stage essentially constant-memory.
-                del replay, compact_v8, feat, df, execution_df, oi, futures_df
+                del replay, compact_v8, feat, df, execution_df, oi, futures_df, v91_events, v91_confirmation
                 if (i + 1) % 10 == 0:
                     gc.collect()
             else:
@@ -2218,7 +2348,24 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                     log.warning("Could not checkpoint failed symbol %s: %s", symbol, shard_exc)
         time.sleep(_RATE_LIMIT_PAUSE)
 
-    if fast_v8:
+    ranked_v91_payload = None
+    if streaming_v91:
+        # Stage 1 is complete.  Drop index/sector history before Stage 2 so the
+        # cross-sectional ranking matrices do not overlap with the fetch-stage
+        # memory footprint on constrained Railway workers.
+        v8_feature_frames.clear()
+        turnover_series.clear()
+        sector_history.clear()
+        sector_ret_parts.clear()
+        sector_rank_frame = None
+        index_df = None
+        gc.collect()
+        completed_shards = _completed_research_symbol_shards(run_dir)
+        checkpoint_path = _build_v91_ranked_events_checkpoint(run_dir, completed_shards, stage_cb=stage_cb)
+        ranked_v91_payload = _load_v91_ranked_events_checkpoint(checkpoint_path)
+        notes.update(ranked_v91_payload.get("notes") or {})
+        usable_shards = {}
+    elif fast_v8:
         completed_shards = _completed_research_symbol_shards(run_dir)
         replays, shard_notes, usable_shards = _load_research_replays_from_shards(completed_shards, symbols)
         notes.update(shard_notes)
@@ -2260,15 +2407,17 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                         except Exception:
                             continue
 
-    if stage_cb:
+    if stage_cb and not streaming_v91:
         stage_cb(2, 4, "Building cross-sectional ranks", 72)
-    if fast_v8:
+    if streaming_v91:
+        pass
+    elif fast_v8:
         _attach_v8_full_universe_scores_from_shards(replays, usable_shards, stage_cb=stage_cb)
     else:
         _attach_v8_full_universe_scores(replays, v8_feature_frames)
     # Cross-sectional ranks are now attached to the compact event rows; release
     # the full-universe feature/index history before Stage 3 aggregation.
-    if fast_v8:
+    if fast_v8 and not streaming_v91:
         v8_feature_frames.clear()
         turnover_series.clear()
         sector_history.clear()
@@ -2294,7 +2443,14 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             "Running frozen Bear FSB final test" if research_mode == "v91_bear_final"
             else ("Validating V9.1 goal-focused models" if research_mode == "v91_fast" else "Validating V9 professional playbooks")
         ), 86)
-    if fast_v8:
+    if streaming_v91:
+        research = early_research.aggregate_v91_compact_events(
+            ranked_v91_payload.get("events") or [],
+            ranked_v91_payload.get("confirmation") or {},
+            holdout_pct=holdout_pct,
+            run_context=run_context,
+        )
+    elif fast_v8:
         research = early_research.aggregate_v8_research_fast(
             replays, holdout_pct=holdout_pct, run_context=run_context
         )
@@ -2304,8 +2460,12 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             run_context=run_context)
     if stage_cb:
         stage_cb(4, 4, "Preparing report", 98)
-    symbols_completed_count = len(replays)
-    if fast_v8:
+    symbols_completed_count = len(completed_shards) if streaming_v91 else len(replays)
+    if streaming_v91:
+        if ranked_v91_payload is not None:
+            ranked_v91_payload.clear()
+        gc.collect()
+    elif fast_v8:
         replays.clear()
         gc.collect()
     return {
@@ -2374,7 +2534,8 @@ def _research_symbol_shard_path(run_dir, index, symbol):
     return Path(run_dir) / f"{int(index):04d}-{safe}.pkl"
 
 
-def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, replay, note):
+def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, replay, note,
+                                 v91_events=None, v91_confirmation=None):
     """Atomically persist one completed symbol so a worker restart can resume."""
     path = _research_symbol_shard_path(run_dir, index, symbol)
     payload = {
@@ -2382,6 +2543,8 @@ def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, repla
         "compact_frame": compact_frame,
         "replay": replay,
         "note": note,
+        "v91_events": v91_events,
+        "v91_confirmation": v91_confirmation,
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("wb") as fh:
@@ -2410,6 +2573,19 @@ def _completed_research_symbol_shards(run_dir):
     return out
 
 
+def _research_resume_summary(run_dir, total_symbols):
+    if run_dir is None:
+        return None
+    saved = len(_completed_research_symbol_shards(run_dir))
+    ranked = _v91_ranked_events_path(run_dir).exists()
+    if saved <= 0 and not ranked:
+        return None
+    text = f"{saved}/{int(total_symbols or 0)} symbols saved"
+    if ranked:
+        text += " · Stage 2 checkpoint available"
+    return text
+
+
 def _load_research_replays_from_shards(shard_map, symbols):
     replays = []
     notes = {}
@@ -2429,6 +2605,172 @@ def _load_research_replays_from_shards(shard_map, symbols):
         if compact is not None and getattr(compact, "empty", True) is False:
             usable[symbol] = path
     return replays, notes, usable
+
+
+_V91_RANKED_EVENTS_SCHEMA = "v91-ranked-events-1"
+
+
+def _v91_ranked_events_path(run_dir):
+    return Path(run_dir) / "ranked-events.pkl"
+
+
+def _atomic_pickle(path, payload):
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("wb") as fh:
+        pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+    return path
+
+
+def _load_v91_ranked_events_checkpoint(path):
+    with Path(path).open("rb") as fh:
+        payload = pickle.load(fh)
+    if payload.get("schema") != _V91_RANKED_EVENTS_SCHEMA:
+        raise ValueError("incompatible V9.1 ranked-events checkpoint")
+    return payload
+
+
+def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
+    """Build/reuse the compact Stage-2 checkpoint for V9.1.
+
+    Only candidate rows are kept in memory.  Each cross-sectional feature is
+    materialized across symbols one at a time, ranked, attached to those rows,
+    and immediately released before the next feature.
+    """
+    path = _v91_ranked_events_path(run_dir)
+    if path.exists():
+        try:
+            _load_v91_ranked_events_checkpoint(path)
+            if stage_cb:
+                stage_cb(2, 4, "Stage 2 checkpoint available — loading ranked events", 84)
+            return path
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Ignoring unreadable V9.1 ranked checkpoint %s: %s", path, exc)
+            path.unlink(missing_ok=True)
+
+    rows = []
+    confirmations = []
+    notes = {}
+    usable = {}
+    for symbol, shard_path in dict(shard_map or {}).items():
+        payload = _load_research_symbol_shard(shard_path)
+        if payload.get("note"):
+            notes[symbol] = str(payload["note"])
+        shard_events = payload.get("v91_events")
+        shard_confirmation = payload.get("v91_confirmation")
+        # Compatibility with same-day V9.1.1 shards created before the streaming
+        # upgrade: compact one legacy replay at a time, never all of them.
+        if shard_events is None and payload.get("replay") is not None:
+            shard_events = _compact_v91_events(payload.get("replay"))
+        if shard_confirmation is None and payload.get("replay") is not None:
+            shard_confirmation = _v91_confirmation_summary(payload.get("replay"))
+        rows.extend(shard_events or [])
+        confirmations.append(shard_confirmation or {})
+        compact = payload.get("compact_frame")
+        if compact is not None and getattr(compact, "empty", True) is False:
+            usable[symbol] = shard_path
+
+    def _norm_ts(frame, raw):
+        try:
+            ts = pd.Timestamp(raw)
+            if frame.index.tz is None and ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            elif frame.index.tz is not None and ts.tzinfo is None:
+                ts = ts.tz_localize(frame.index.tz)
+            return ts
+        except Exception:
+            return None
+
+    def _column(frame, name, *, absolute=False):
+        if name not in frame:
+            return pd.Series(np.nan, index=frame.index, dtype="float32")
+        ser = pd.to_numeric(frame[name], errors="coerce")
+        return ser.abs() if absolute else ser
+
+    rank_specs = [
+        ("v8_tod_rvol_percentile", lambda f: _column(f, "tod_rvol"), False),
+        ("v8_opening_rvol_percentile", lambda f: _column(f, "opening_rvol"), False),
+        ("v8_range_shock_percentile", lambda f: _column(f, "bar_range_atr"), False),
+        ("v8_gap_shock_percentile", lambda f: _column(f, "gap_atr", absolute=True), False),
+        ("v8_turnover_percentile", lambda f: _column(f, "turnover_notional"), False),
+        ("v8_oi_strength_percentile", lambda f: _column(f, "oi_chg_60m_pct", absolute=True), False),
+    ]
+
+    def _relative(frame):
+        cols = []
+        for col in ("rs_pct", "stock_sector_lead_pct"):
+            if col in frame:
+                cols.append(pd.to_numeric(frame[col], errors="coerce"))
+        if not cols:
+            return pd.Series(np.nan, index=frame.index)
+        return pd.concat(cols, axis=1).median(axis=1, skipna=True)
+
+    rank_specs.append(("v8_relative_percentile", _relative, True))
+
+    for pos, (output_key, extractor, inverse_for_bear) in enumerate(rank_specs, start=1):
+        if stage_cb:
+            stage_cb(2, 4, f"Building cross-sectional ranks ({pos}/{len(rank_specs)})", 71 + round((pos / len(rank_specs)) * 13))
+        parts = {}
+        for symbol, shard_path in usable.items():
+            payload = _load_research_symbol_shard(shard_path)
+            frame = payload.get("compact_frame")
+            if frame is None or frame.empty:
+                continue
+            extracted = extractor(frame)
+            if isinstance(extracted, pd.Series):
+                ser = pd.to_numeric(extracted, errors="coerce")
+            elif extracted is None or (isinstance(extracted, float) and np.isnan(extracted)):
+                ser = pd.Series(np.nan, index=frame.index, dtype="float32")
+            else:
+                ser = pd.Series(extracted, index=frame.index)
+                ser = pd.to_numeric(ser, errors="coerce")
+            ser.name = symbol
+            parts[symbol] = ser
+        if not parts:
+            continue
+        raw = pd.concat(parts, axis=1).sort_index()
+        bull_rank = raw.rank(axis=1, pct=True, method="average") * 100.0
+        bear_rank = (-raw).rank(axis=1, pct=True, method="average") * 100.0 if inverse_for_bear else None
+        for event in rows:
+            symbol = event.get("symbol")
+            if symbol not in bull_rank.columns:
+                continue
+            ts = _norm_ts(bull_rank, event.get("signal_time"))
+            if ts is None or ts not in bull_rank.index:
+                continue
+            use = bear_rank if inverse_for_bear and event.get("direction") == "Bearish" else bull_rank
+            value = use.at[ts, symbol]
+            if pd.notna(value):
+                event[output_key] = round(float(value), 2)
+        del parts, raw, bull_rank, bear_rank
+        gc.collect()
+
+    by_time = {}
+    for event in rows:
+        if event.get("breakout_source") != "Recent Range":
+            continue
+        by_time.setdefault(event.get("signal_time"), []).append(event)
+    for group in by_time.values():
+        ranks = v8_dual.percentile_rank([e.get("breakout_extension_atr") for e in group])
+        for event, rank in zip(group, ranks):
+            event["v8_breakout_strength_percentile"] = rank
+
+    # Replace rows in place so Stage 2 never holds both the unscored and scored
+    # candidate universes at once. score_preranked_row returns a copy by design;
+    # assigning it back immediately lets the previous dict be reclaimed.
+    for idx, event in enumerate(rows):
+        rows[idx] = v8_dual.score_preranked_row(event)
+
+    return _atomic_pickle(path, {
+        "schema": _V91_RANKED_EVENTS_SCHEMA,
+        "events": rows,
+        "confirmation": _merge_v91_confirmation_summaries(confirmations),
+        "notes": notes,
+        "symbols_completed": len(shard_map or {}),
+    })
 
 
 def _default_early_research_state():
@@ -2523,8 +2865,15 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 cost_pct=cost_pct, slippage_pct=slippage_pct, research_mode=research_mode,
             ) if fast_v8 else None
         )
+        resume_summary = _research_resume_summary(job_run_dir, len(symbols)) if job_run_dir is not None else None
+        resumed_done = len(_completed_research_symbol_shards(job_run_dir)) if job_run_dir is not None else 0
         _early_research_state.update({
-            "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None, "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4, "overall_pct": 1},
+            "status": "running", "progress": {
+                "done": resumed_done, "total": len(symbols), "symbol": None,
+                "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4,
+                "overall_pct": max(1, min(70, round((resumed_done / len(symbols)) * 70))) if symbols else 1,
+                "resume_summary": resume_summary,
+            },
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
             "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8), "research_mode": research_mode},
         })
@@ -2533,10 +2882,12 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
     def _progress(done, total, symbol):
         with _early_research_lock:
             pct = 1 if not total else max(1, min(70, round((done / total) * 70)))
+            current_resume = (_early_research_state.get("progress") or {}).get("resume_summary")
             _early_research_state["progress"] = {
                 "done": done, "total": total, "symbol": symbol,
                 "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4,
                 "overall_pct": pct,
+                "resume_summary": current_resume,
             }
         # Checkpoint periodically; do not turn every Kite symbol into a disk fsync.
         if done == 0 or done == total or done % 5 == 0:
@@ -2549,6 +2900,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 "done": current.get("done", len(symbols)), "total": current.get("total", len(symbols)),
                 "symbol": None, "stage": stage, "stage_index": stage_index,
                 "stage_total": stage_total, "overall_pct": overall_pct,
+                "resume_summary": current.get("resume_summary"),
             }
         _persist_early_research_state()
 
