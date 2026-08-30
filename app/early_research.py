@@ -558,7 +558,7 @@ def _future_abs_move_atr_from_available(execution_df, available_at, ref_price, a
 
 
 def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage_pct=0.02,
-                                   execution_df=None, setup_timeframe="15minute"):
+                                   execution_df=None, setup_timeframe="15minute", fast_v8=False):
     """Replay actual price breakouts with intraday and 1–2D outcomes.
 
     Intraday entries are measured from the first fresh escape. Swing candidates
@@ -657,55 +657,59 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "basis_pct": row.get("basis_pct"),
             "basis_acceleration": row.get("basis_acceleration"),
         }
-        # V6 keeps the older live-parity classifier visible for comparison,
-        # but research is promoted using the new evidence-weighted model.
-        try:
-            from . import v6_edge
-            v6_row = dict(row)
-            v6_row["direction"] = direction
-            v6_row["oi_confirmed"] = classified.get("oi_status") == "Confirmed"
-            v6_classified = v6_edge.classify_v6_candidate(v6_row)
-            event["v6_stage"] = v6_classified.get("stage")
-            event["v6_score"] = v6_classified.get("score")
-            event["v6_intraday_eligible"] = v6_classified.get("intraday_eligible", False)
-            event["v6_swing_eligible"] = v6_classified.get("swing_eligible", False)
-            event["v6_sponsorship"] = v6_classified.get("sponsorship")
-            event["v6_blockers"] = v6_classified.get("blockers", [])
-        except Exception:
-            event["v6_stage"] = None
-            event["v6_score"] = None
-            event["v6_intraday_eligible"] = False
-            event["v6_swing_eligible"] = False
-            event["v6_sponsorship"] = {}
-            event["v6_blockers"] = []
-        if event.get("breakout_source") == "Recent Range":
-            attach_v6_path_exits(execution, event, max_bars=50)
+        # Legacy V6 classification and path-exit grids are intentionally
+        # bypassed by the V8 fast path. They are expensive and have no role in
+        # V8.1/V8.2 Top-K selection; the Legacy / 4H Diagnostic button still
+        # runs them through the full research path.
+        if not fast_v8:
+            try:
+                from . import v6_edge
+                v6_row = dict(row)
+                v6_row["direction"] = direction
+                v6_row["oi_confirmed"] = classified.get("oi_status") == "Confirmed"
+                v6_classified = v6_edge.classify_v6_candidate(v6_row)
+                event["v6_stage"] = v6_classified.get("stage")
+                event["v6_score"] = v6_classified.get("score")
+                event["v6_intraday_eligible"] = v6_classified.get("intraday_eligible", False)
+                event["v6_swing_eligible"] = v6_classified.get("swing_eligible", False)
+                event["v6_sponsorship"] = v6_classified.get("sponsorship")
+                event["v6_blockers"] = v6_classified.get("blockers", [])
+            except Exception:
+                event["v6_stage"] = None
+                event["v6_score"] = None
+                event["v6_intraday_eligible"] = False
+                event["v6_swing_eligible"] = False
+                event["v6_sponsorship"] = {}
+                event["v6_blockers"] = []
+            if event.get("breakout_source") == "Recent Range":
+                attach_v6_path_exits(execution, event, max_bars=50)
         return event
 
     # A sampled non-coil baseline is enough to estimate lift without storing
     # every bar from the entire 211-stock universe in memory.
     for pos in range(len(df)):
-        atr = _py(features["atr"].iloc[pos]) if "atr" in features.columns else None
-        if atr is not None and atr > 0:
-            if execution_df is None:
-                future = _future_abs_move_atr(df, pos, atr)
-            else:
-                available_at = _setup_bar_available_at(df.index[pos], setup_timeframe)
-                future = _future_abs_move_atr_from_available(
-                    execution, available_at, float(df["close"].iloc[pos]), atr
-                )
-            if energy_rise.iloc[pos]:
-                energy_events.append({
-                    "symbol": symbol, "entry_time": df.index[pos].isoformat(),
-                    "signal_time": df.index[pos].isoformat(),
-                    "compression_score": _py(features.get("compression_score", pd.Series(index=features.index)).iloc[pos]) if "compression_score" in features.columns else None,
-                    "future_abs_move_atr": future,
-                })
-            elif pos % 8 == 0 and future:
-                baseline_events.append({
-                    "symbol": symbol, "entry_time": df.index[pos].isoformat(),
-                    "future_abs_move_atr": future,
-                })
+        if not fast_v8:
+            atr = _py(features["atr"].iloc[pos]) if "atr" in features.columns else None
+            if atr is not None and atr > 0:
+                if execution_df is None:
+                    future = _future_abs_move_atr(df, pos, atr)
+                else:
+                    available_at = _setup_bar_available_at(df.index[pos], setup_timeframe)
+                    future = _future_abs_move_atr_from_available(
+                        execution, available_at, float(df["close"].iloc[pos]), atr
+                    )
+                if energy_rise.iloc[pos]:
+                    energy_events.append({
+                        "symbol": symbol, "entry_time": df.index[pos].isoformat(),
+                        "signal_time": df.index[pos].isoformat(),
+                        "compression_score": _py(features.get("compression_score", pd.Series(index=features.index)).iloc[pos]) if "compression_score" in features.columns else None,
+                        "future_abs_move_atr": future,
+                    })
+                elif pos % 8 == 0 and future:
+                    baseline_events.append({
+                        "symbol": symbol, "entry_time": df.index[pos].isoformat(),
+                        "future_abs_move_atr": future,
+                    })
 
         row = {k: _py(v) for k, v in features.iloc[pos].to_dict().items()}
         row["timestamp"] = df.index[pos].isoformat()
@@ -726,7 +730,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
 
         # One-bar-later retention: this is the live swing confirmation point.
         retained_direction = row.get("retained_breakout_direction")
-        if (row.get("breakout_retained") is True and retained_direction in ("Bullish", "Bearish")
+        if (not fast_v8 and row.get("breakout_retained") is True and retained_direction in ("Bullish", "Bearish")
                 and pos + 1 < len(df)):
             row["breakout_direction"] = None
             row["retained_breakout_direction"] = retained_direction
@@ -940,11 +944,11 @@ def _interaction_report(events, holdout_pct):
 
 def replay_feature_frame(df, features, symbol, horizons=(1, 2, 3, 5, 10),
                          cost_pct=0.05, slippage_pct=0.02, execution_df=None,
-                         setup_timeframe="15minute"):
+                         setup_timeframe="15minute", fast_v8=False):
     if "fresh_breakout" in features.columns and "breakout_direction" in features.columns:
         return _replay_breakout_feature_frame(
             df, features, symbol, cost_pct=cost_pct, slippage_pct=slippage_pct,
-            execution_df=execution_df, setup_timeframe=setup_timeframe,
+            execution_df=execution_df, setup_timeframe=setup_timeframe, fast_v8=fast_v8,
         )
     """Replay Energy Building, Ignition and Best Entry on a prepared frame.
 
@@ -1249,6 +1253,38 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
             }
     return result
 
+
+
+def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
+    """Minimal evidence-locked V8 aggregation for the primary backtest button.
+
+    This path intentionally excludes every legacy V6 lab, compression baseline,
+    interaction sweep, exit grid and promotion diagnostic.  It computes only
+    the Bull/Bear Top-K report plus lightweight coverage metadata required to
+    audit the data path.  The full legacy research remains available from the
+    explicit Legacy / 4H Diagnostic action.
+    """
+    ignition = []
+    for replay in replays or []:
+        ignition.extend(replay.get("ignition_events") or [])
+    ignition.sort(key=lambda e: e.get("entry_time", ""))
+    available = sum(1 for e in ignition if e.get("oi_status") != "Unavailable")
+    confirmed = sum(1 for e in ignition if e.get("oi_status") == "Confirmed")
+    return {
+        "research_build_id": RESEARCH_BUILD_ID,
+        "holdout_pct": float(holdout_pct),
+        "fast_v8": True,
+        "run_context": dict(run_context or {}),
+        "v8_dual": v8_dual_report(ignition),
+        "oi_coverage": {
+            "total": len(ignition),
+            "available": available,
+            "unavailable": len(ignition) - available,
+            "confirmed": confirmed,
+            "coverage_pct": round(available / len(ignition) * 100.0, 1) if ignition else 0.0,
+        },
+        "confirmation_diagnostics": confirmation_diagnostics(ignition),
+    }
 
 def attach_v6_path_exits(df: pd.DataFrame, event: dict, max_bars=50):
     """Attach conservative target/stop and breakeven-path outcomes to one event."""

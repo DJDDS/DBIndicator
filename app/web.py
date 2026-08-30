@@ -516,8 +516,12 @@ def api_early_research_start():
         return jsonify({"started": False, "reason": f"Could not load live F&O universe: {exc}"}), 400
     if not symbols:
         return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
+    mode = request.form.get("mode", "legacy")
+    if mode not in ("legacy", "v8_fast"):
+        return jsonify({"started": False, "reason": "mode must be legacy or v8_fast"}), 400
     return jsonify(backtest.start_early_movement_research(
-        kite, symbols=symbols, timeframe=timeframe, days=days, universe_is_full_fno=True
+        kite, symbols=symbols, timeframe=timeframe, days=days, universe_is_full_fno=True,
+        fast_v8=(mode == "v8_fast"),
     ))
 
 

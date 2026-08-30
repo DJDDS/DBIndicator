@@ -1931,7 +1931,8 @@ def _attach_v8_full_universe_scores(replays, feature_frames):
 
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
-                                progress_cb=None, universe_is_full_fno=False) -> dict:
+                                progress_cb=None, stage_cb=None, universe_is_full_fno=False,
+                                fast_v8=False) -> dict:
     """Replay the primary V6 research on a real 15m or 4H setup timeframe.
 
     15-minute setups execute on the next 15-minute bar as before. 4-hour
@@ -2035,7 +2036,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 df, feat, symbol, horizons=horizons,
                 cost_pct=cost_pct, slippage_pct=slippage_pct,
                 execution_df=(execution_df if timeframe == "4hour" else None),
-                setup_timeframe=timeframe,
+                setup_timeframe=timeframe, fast_v8=fast_v8,
             )
             replay = _trim_replay_to_window(replay, window_start)
             replays.append(replay)
@@ -2049,49 +2050,63 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     # universe. This is the closest historical analogue to live Stock-in-Play
     # ranking and avoids calling a stock "high turnover" merely because it is
     # active relative to itself.
-    if turnover_series:
-        turnover_frame = pd.concat(turnover_series, axis=1).sort_index()
-        turnover_rank_frame = turnover_frame.rank(axis=1, pct=True, method="average") * 100.0
-        for replay in replays:
-            for family in ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events"):
-                for event in replay.get(family) or []:
-                    try:
-                        ts = pd.Timestamp(event.get("signal_time"))
-                        sym = event.get("symbol")
-                        if sym not in turnover_rank_frame.columns:
+    if not fast_v8:
+        if turnover_series:
+            turnover_frame = pd.concat(turnover_series, axis=1).sort_index()
+            turnover_rank_frame = turnover_frame.rank(axis=1, pct=True, method="average") * 100.0
+            for replay in replays:
+                for family in ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events"):
+                    for event in replay.get(family) or []:
+                        try:
+                            ts = pd.Timestamp(event.get("signal_time"))
+                            sym = event.get("symbol")
+                            if sym not in turnover_rank_frame.columns:
+                                continue
+                            # Match timezone shape of the research frame.
+                            if turnover_rank_frame.index.tz is None and ts.tzinfo is not None:
+                                ts = ts.tz_localize(None)
+                            elif turnover_rank_frame.index.tz is not None and ts.tzinfo is None:
+                                ts = ts.tz_localize(turnover_rank_frame.index.tz)
+                            if ts not in turnover_rank_frame.index:
+                                continue
+                            rank = turnover_rank_frame.at[ts, sym]
+                            if pd.notna(rank):
+                                event["turnover_percentile"] = round(float(rank), 2)
+                                event["catalyst_score"] = v6_edge.catalyst_proxy_score(
+                                    gap_atr=event.get("gap_atr"), opening_rvol=event.get("opening_rvol"),
+                                    tod_rvol=event.get("tod_rvol"), bar_range_atr=event.get("bar_range_atr"),
+                                    turnover_percentile=event.get("turnover_percentile"),
+                                )
+                        except Exception:
                             continue
-                        # Match timezone shape of the research frame.
-                        if turnover_rank_frame.index.tz is None and ts.tzinfo is not None:
-                            ts = ts.tz_localize(None)
-                        elif turnover_rank_frame.index.tz is not None and ts.tzinfo is None:
-                            ts = ts.tz_localize(turnover_rank_frame.index.tz)
-                        if ts not in turnover_rank_frame.index:
-                            continue
-                        rank = turnover_rank_frame.at[ts, sym]
-                        if pd.notna(rank):
-                            event["turnover_percentile"] = round(float(rank), 2)
-                            event["catalyst_score"] = v6_edge.catalyst_proxy_score(
-                                gap_atr=event.get("gap_atr"), opening_rvol=event.get("opening_rvol"),
-                                tod_rvol=event.get("tod_rvol"), bar_range_atr=event.get("bar_range_atr"),
-                                turnover_percentile=event.get("turnover_percentile"),
-                            )
-                    except Exception:
-                        continue
 
+    if stage_cb:
+        stage_cb(2, 4, "Building cross-sectional ranks", 72)
     _attach_v8_full_universe_scores(replays, v8_feature_frames)
 
     if progress_cb:
         progress_cb(len(symbols), len(symbols), None)
-    research = early_research.aggregate_research(
-        replays, holdout_pct=holdout_pct, ref_horizon=3, horizons=horizons,
-        run_context={
-            "setup_timeframe": timeframe,
-            "execution_timeframe": execution_timeframe,
-            "days": days,
-            "cost_pct": float(cost_pct),
-            "slippage_pct": float(slippage_pct),
-            "universe_is_full_fno": bool(universe_is_full_fno),
-        })
+    run_context = {
+        "setup_timeframe": timeframe,
+        "execution_timeframe": execution_timeframe,
+        "days": days,
+        "cost_pct": float(cost_pct),
+        "slippage_pct": float(slippage_pct),
+        "universe_is_full_fno": bool(universe_is_full_fno),
+        "fast_v8": bool(fast_v8),
+    }
+    if stage_cb:
+        stage_cb(3, 4, "Validating Bull/Bear Top-K", 86)
+    if fast_v8:
+        research = early_research.aggregate_v8_research_fast(
+            replays, holdout_pct=holdout_pct, run_context=run_context
+        )
+    else:
+        research = early_research.aggregate_research(
+            replays, holdout_pct=holdout_pct, ref_horizon=3, horizons=horizons,
+            run_context=run_context)
+    if stage_cb:
+        stage_cb(4, 4, "Preparing report", 98)
     return {
         "timeframe": timeframe,
         "setup_timeframe": timeframe,
@@ -2103,6 +2118,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "cost_pct": float(cost_pct),
         "slippage_pct": float(slippage_pct),
         "research": research,
+        "fast_v8": bool(fast_v8),
         "research_notes": [
             "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",
             ("4-hour setups are formed only from completed 4H candles and execute on the first "
@@ -2116,7 +2132,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
 
 _early_research_lock = threading.Lock()
 _early_research_state = {
-    "status": "idle", "progress": {"done": 0, "total": 0, "symbol": None},
+    "status": "idle", "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 4, "overall_pct": 0},
     "result": None, "error": None, "started_at": None, "finished_at": None,
 }
 
@@ -2126,28 +2142,43 @@ def get_early_research_state():
 
 def start_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                   cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
-                                  universe_is_full_fno=False):
+                                  universe_is_full_fno=False, fast_v8=False):
     with _early_research_lock:
         if _early_research_state["status"] == "running":
             return {"started": False, "reason": "Early Movement Research is already running."}
         symbols = list(symbols or settings.WATCHLIST)
         _early_research_state.update({
-            "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None},
+            "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None, "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4, "overall_pct": 1},
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
-            "finished_at": None, "params": {"timeframe": timeframe, "days": days},
+            "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8)},
         })
 
     def _progress(done, total, symbol):
         with _early_research_lock:
-            _early_research_state["progress"] = {"done": done, "total": total, "symbol": symbol}
+            pct = 1 if not total else max(1, min(70, round((done / total) * 70)))
+            _early_research_state["progress"] = {
+                "done": done, "total": total, "symbol": symbol,
+                "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4,
+                "overall_pct": pct,
+            }
+
+    def _stage(stage_index, stage_total, stage, overall_pct):
+        with _early_research_lock:
+            current = _early_research_state.get("progress") or {}
+            _early_research_state["progress"] = {
+                "done": current.get("done", len(symbols)), "total": current.get("total", len(symbols)),
+                "symbol": None, "stage": stage, "stage_index": stage_index,
+                "stage_total": stage_total, "overall_pct": overall_pct,
+            }
 
     def _job():
         try:
             result = run_early_movement_research(
                 kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
-                cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress,
-                universe_is_full_fno=universe_is_full_fno)
+                cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress, stage_cb=_stage,
+                universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8)
             with _early_research_lock:
+                _early_research_state["progress"] = {"done": len(symbols), "total": len(symbols), "symbol": None, "stage": "Complete", "stage_index": 4, "stage_total": 4, "overall_pct": 100}
                 _early_research_state["status"] = "done"
                 _early_research_state["result"] = result
         except Exception as exc:  # noqa: BLE001
