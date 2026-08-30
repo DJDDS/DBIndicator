@@ -1,7 +1,12 @@
-# V9 Benchmark Release Notes
+# V9.1 Benchmark Release Notes
 
-Build: `2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS`
+Build: `2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED`
 
-V9 is a research candidate, not a declared profitable system. A playbook may be promoted only after positive net validation expectancy after costs, adequate sample size, profit factor consistent with the benchmark policy, favorable excursion quality, and chronological stability. Bull and Bear are judged independently.
+V9.1 is goal-focused rather than a new parameter-search surface.
 
-The V9 primary backtest is the evidence source. Live Catalyst Continuation and option-expression labels remain forward-validation/shadow evidence until their datasets are sufficiently mature.
+- **Bear Fresh Short Buildup** is validation-qualified and frozen. Only the dedicated final-test path may reveal its final 20%, using the fingerprinted rule in `FROZEN_RULE.md`.
+- **Bull Institutional Accumulation** is development/validation research only. Its final 20% remains locked.
+- **Bull Catalyst Continuation** and Derivative Intelligence remain live/shadow until point-in-time historical datasets exist.
+- Retired V9 playbooks are not allowed back into the primary live shortlist merely by changing thresholds.
+
+Bull and Bear are judged independently. No combined score can hide a weak side.

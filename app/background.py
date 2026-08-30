@@ -465,6 +465,19 @@ def _apply_v8_dual_alpha(results, now=None):
                     r["price_chg_60m_pct"] = round((float(c) / float(p) - 1.0) * 100.0, 3) if c and p else None
                 except (TypeError, ValueError, ZeroDivisionError):
                     r["price_chg_60m_pct"] = None
+        # V9.1 accumulation does not require a breakout. Seed Bullish direction
+        # only when new long positioning is already visible in raw point-in-time
+        # facts; the later cross-sectional ranks still decide whether it is good.
+        try:
+            p60 = float(r.get("price_chg_60m_pct")) if r.get("price_chg_60m_pct") is not None else None
+            oi60 = float(r.get("oi_chg_60m_pct")) if r.get("oi_chg_60m_pct") is not None else None
+            tod = float(r.get("tod_rvol")) if r.get("tod_rvol") is not None else None
+        except (TypeError, ValueError):
+            p60 = oi60 = tod = None
+        if (not (r.get("breakout_direction") or r.get("retained_breakout_direction") or r.get("direction"))
+                and p60 is not None and p60 > 0 and oi60 is not None and oi60 > 0
+                and tod is not None and tod >= 1.0 and r.get("vwap_side_agrees") is True):
+            r["v91_accumulation_seed_direction"] = "Bullish"
     ranked = v8_dual.rank_cross_section(rows)
     clock = now if now is not None else now_ist()
     for original, scored in zip(rows, ranked):
@@ -522,7 +535,7 @@ def _apply_v9_playbooks(results, now=None):
         plays = v9_playbooks.evaluate_row(r, now=clock, news_articles=articles)
         r["v9_playbooks"] = plays
         for mode in ("intraday", "swing"):
-            matches = [p for p in plays if mode in (p.get("modes") or []) and p.get("state") in ("TRADE CANDIDATE", "WATCH")]
+            matches = [p for p in plays if p.get("playbook") in v9_playbooks.ACTIVE_PLAYBOOKS and mode in (p.get("modes") or []) and p.get("state") in ("TRADE CANDIDATE", "WATCH")]
             matches.sort(key=lambda p: (1 if p.get("state") == "TRADE CANDIDATE" else 0, float(p.get("score") or 0)), reverse=True)
             best = matches[0] if matches else {}
             prefix = f"v9_{mode}_"
@@ -566,7 +579,7 @@ def _apply_v9_operational_shortlists(results):
         sstate = r.get("v9_swing_state") or "NO EDGE"
         score = r.get("v9_intraday_score")
         r["movement_score"] = score
-        r["movement_stage"] = f"V9 {r.get('v9_intraday_playbook')}" if r.get("v9_intraday_playbook") else "V9 No Playbook"
+        r["movement_stage"] = f"V9.1 {r.get('v9_intraday_playbook')}" if r.get("v9_intraday_playbook") else "V9.1 No Playbook"
         if istate in ("TRADE CANDIDATE", "WATCH"):
             radar.append(r)
         if istate == "TRADE CANDIDATE":

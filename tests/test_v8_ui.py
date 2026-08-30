@@ -11,7 +11,7 @@ def test_dashboard_has_v9_professional_playbook_console():
     assert 'id="v8-dashboard-status"' in text
     assert 'id="v8-view-intraday"' in text
     assert 'id="v8-view-swing"' in text
-    assert 'Bull Opening Drive' in text
+    assert 'Bull Institutional Accumulation' in text
     assert 'Bear Fresh Short Buildup' in text
 
 
@@ -32,13 +32,13 @@ def test_dashboard_v8_cards_show_evidence_components_and_trade_state():
 
 def test_backtest_template_has_v9_playbook_result_section():
     text = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
-    assert 'V9 Professional Playbooks' in text
-    assert 'v9_playbooks' in text
-    assert 'Bull Opening Drive' in text
+    assert 'V9.1 Goal-Focused Evidence' in text
+    assert 'v91_goal' in text
+    assert 'Bull Institutional Accumulation' in text
     assert 'Bear Fresh Short Buildup' in text
-    assert 'Bull Pullback/Reclaim' in text
-    assert 'Bear Failed Breakout' in text
-    assert 'Bear VWAP Retest Failure' in text
+    assert 'Bull Pullback/Reclaim' not in text
+    assert 'Bear Failed Breakout' not in text
+    assert 'Bear VWAP Retest Failure' not in text
 
 
 def test_backtest_v81_renderer_reads_primary_variant_shape_and_blocks():
@@ -49,15 +49,15 @@ def test_backtest_v81_renderer_reads_primary_variant_shape_and_blocks():
 
 def test_v9_has_dedicated_one_click_15m_backtest_runner():
     text = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
-    assert 'id="er-v9-run-btn"' in text
-    assert 'Run V9 Professional Playbook Backtest' in text
+    assert 'id="er-v91-run-btn"' in text
+    assert 'Run V9.1 Goal-Focused Backtest' in text
     assert "timeframe:'15minute'" in text
-    body = text[text.index("document.getElementById('er-v9-run-btn')"):]
+    body = text[text.index("document.getElementById('er-v91-run-btn')"):]
     assert "startJob('/api/early-research/start'" in body
 
 
 def test_v9_build_marker_is_current_research_build():
-    build_id = '2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS'
+    build_id = '2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == build_id
     assert build_id in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text(encoding='utf-8')

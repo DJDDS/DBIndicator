@@ -312,8 +312,8 @@
 <div id="toast-wrap"></div>
 <header>
   <div class="brand">
-    <h1>V9 Professional Playbook Scanner</h1>
-    <span class="tagline">NSE F&amp;O &middot; Bull + Bear professional playbooks &middot; derivative intelligence &middot; 15m signal / 4H context</span>
+    <h1>V9.1 Goal-Focused Scanner</h1>
+    <span class="tagline">NSE F&amp;O &middot; Bull accumulation + Bear fresh-shorts &middot; derivative intelligence &middot; 15m signal / 4H context</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -396,11 +396,11 @@
     </div>
   </div>
 
-  <section id="v8-decision-console" class="card v8-console" aria-label="V9 Professional Playbook Scanner live decision console">
+  <section id="v8-decision-console" class="card v8-console" aria-label="V9.1 Goal-Focused Scanner live decision console">
     <div class="v8-console-head">
       <div>
-        <div class="v8-kicker">V9 Professional Playbook Scanner + Derivative Intelligence · NSE F&amp;O</div>
-        <h2>Live Decision Console <span class="sub">Bull Opening Drive · Bull Pullback/Reclaim · Bull Catalyst Continuation · Bear Fresh Short Buildup · Bear Failed Breakout · Bear VWAP Retest Failure</span></h2>
+        <div class="v8-kicker">V9.1 Goal-Focused Scanner + Derivative Intelligence · NSE F&amp;O</div>
+        <h2>Live Decision Console <span class="sub">Bull Institutional Accumulation · Bull Catalyst Continuation · Bear Fresh Short Buildup</span></h2>
       </div>
       <div class="v8-tabs" role="tablist" aria-label="V9 horizon">
         <button type="button" class="v8-tab active" id="v8-view-intraday" role="tab" aria-selected="true">Intraday</button>
@@ -417,15 +417,15 @@
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
-        <div class="v8-side-head">Bullish Playbooks <span>best current professional setups</span></div>
+        <div class="v8-side-head">Bullish Models <span>institutional accumulation / real catalyst</span></div>
         <div id="v8-bull-leaders" class="v8-leader-list"><div class="v8-empty">Loading bullish evidence…</div></div>
       </section>
       <section class="v8-side bear" aria-label="Bearish leaders">
-        <div class="v8-side-head">Bearish Playbooks <span>fresh shorts / failures / retests</span></div>
+        <div class="v8-side-head">Bearish Model <span>frozen Fresh Short Buildup</span></div>
         <div id="v8-bear-leaders" class="v8-leader-list"><div class="v8-empty">Loading bearish evidence…</div></div>
       </section>
     </div>
-    <div class="v8-method"><strong>V9 Playbook logic:</strong> the scanner first identifies a specific repeatable setup instead of a universal composite score. Bull playbooks: <strong>Bull Opening Drive</strong>, <strong>Bull Pullback/Reclaim</strong>, <strong>Bull Catalyst Continuation</strong>. Bear playbooks: <strong>Bear Fresh Short Buildup</strong>, <strong>Bear Failed Breakout</strong>, <strong>Bear VWAP Retest Failure</strong>. <strong>Derivative Intelligence:</strong> IV/RV, ATM move, spread, DTE, Greeks and liquidity decide option expression only after the underlying playbook qualifies. <strong>Execution:</strong> 1.25 ATR chase guard; 4H is context, never a veto. <a href="/api/option-shadow/export" style="margin-left:8px;">Export option forward data</a>.</div>
+    <div class="v8-method"><strong>V9.1 goal logic:</strong> failed V9 playbooks are retired rather than retuned. Bull: <strong>Institutional Accumulation</strong> (price up + OI up, participation, relative leadership, VWAP acceptance) plus <strong>real Catalyst Continuation</strong> in live/shadow. Bear: the frozen <strong>Fresh Short Buildup</strong> model only. <strong>Derivative Intelligence:</strong> IV/RV, ATM move, spread, DTE, Greeks and liquidity decide option expression only after the underlying playbook qualifies. <strong>Execution:</strong> 1.25 ATR chase guard; 4H is context, never a veto. <a href="/api/option-shadow/export" style="margin-left:8px;">Export option forward data</a>.</div>
   </section>
 
 
@@ -1021,7 +1021,7 @@
   pollDashboardState();
   setInterval(pollDashboardState, DASHBOARD_REFRESH_MS);
 
-  // V9 Professional Playbooks: independent JSON polling keeps the decision console live
+  // V9.1 Goal-Focused models: independent JSON polling keeps the decision console live
   // without reloading the page or disturbing the watchlist and research radar.
   var v8View = 'intraday';
   var lastV8Payload = null;
@@ -1074,7 +1074,7 @@
       '<div class="v8-evidence">' +
         (side === 'bear'
           ? v8Component('Participation', row.participation) + v8Component('Relative Weakness', row.relative) + v8Component('Derivatives', row.derivatives) + v8Component('Playbook Score', row.score)
-          : v8Component('Structure', row.structure) + v8Component('Participation', row.participation) + v8Component('Relative Strength', row.relative) + v8Component('Playbook Score', row.score)) +
+          : v8Component('Participation', row.participation) + v8Component('Relative Strength', row.relative) + v8Component('Derivatives', row.derivatives) + v8Component('Model Score', row.score)) +
       '</div>' +
       '<div class="v8-scorebox"><div class="v8-alpha">' + v8Num(row.score, 0) + '<small>/100</small></div><span class="v8-state ' + stateClass + '">' + v8Esc(state) + '</span></div>' +
       renderV82Option(row) +

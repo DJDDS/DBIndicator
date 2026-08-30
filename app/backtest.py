@@ -1957,7 +1957,7 @@ def _compact_v8_feature_frame(frame):
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                                 progress_cb=None, stage_cb=None, universe_is_full_fno=False,
-                                fast_v8=False) -> dict:
+                                fast_v8=False, research_mode=None) -> dict:
     """Replay the primary V6 research on a real 15m or 4H setup timeframe.
 
     15-minute setups execute on the next 15-minute bar as before. 4-hour
@@ -2131,9 +2131,13 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "slippage_pct": float(slippage_pct),
         "universe_is_full_fno": bool(universe_is_full_fno),
         "fast_v8": bool(fast_v8),
+        "research_mode": research_mode or ("v9_fast" if fast_v8 else "legacy"),
     }
     if stage_cb:
-        stage_cb(3, 4, "Validating V9 professional playbooks", 86)
+        stage_cb(3, 4, (
+            "Running frozen Bear FSB final test" if research_mode == "v91_bear_final"
+            else ("Validating V9.1 goal-focused models" if research_mode == "v91_fast" else "Validating V9 professional playbooks")
+        ), 86)
     if fast_v8:
         research = early_research.aggregate_v8_research_fast(
             replays, holdout_pct=holdout_pct, run_context=run_context
@@ -2256,7 +2260,7 @@ def get_early_research_state():
 
 def start_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                   cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
-                                  universe_is_full_fno=False, fast_v8=False):
+                                  universe_is_full_fno=False, fast_v8=False, research_mode=None):
     with _early_research_lock:
         if _early_research_state["status"] == "running":
             return {"started": False, "reason": "Early Movement Research is already running."}
@@ -2264,7 +2268,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
         _early_research_state.update({
             "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None, "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4, "overall_pct": 1},
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
-            "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8)},
+            "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8), "research_mode": research_mode},
         })
     _persist_early_research_state()
 
@@ -2295,7 +2299,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             result = run_early_movement_research(
                 kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
                 cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress, stage_cb=_stage,
-                universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8)
+                universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8, research_mode=research_mode)
             with _early_research_lock:
                 _early_research_state["progress"] = {"done": len(symbols), "total": len(symbols), "symbol": None, "stage": "Complete", "stage_index": 4, "stage_total": 4, "overall_pct": 100}
                 _early_research_state["result"] = result

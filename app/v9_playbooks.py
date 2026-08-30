@@ -13,8 +13,9 @@ from typing import Iterable
 
 import numpy as np
 
-V9_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS"
+V9_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED"
 
+BULL_INSTITUTIONAL_ACCUMULATION = "Bull Institutional Accumulation"
 BULL_OPENING_DRIVE = "Bull Opening Drive"
 BULL_PULLBACK_RECLAIM = "Bull Pullback/Reclaim"
 BULL_CATALYST_CONTINUATION = "Bull Catalyst Continuation"
@@ -23,10 +24,23 @@ BEAR_FAILED_BREAKOUT = "Bear Failed Breakout"
 BEAR_VWAP_RETEST_FAILURE = "Bear VWAP Retest Failure"
 
 PLAYBOOKS = (
+    BULL_INSTITUTIONAL_ACCUMULATION,
     BULL_OPENING_DRIVE,
     BULL_PULLBACK_RECLAIM,
     BULL_CATALYST_CONTINUATION,
     BEAR_FRESH_SHORT_BUILDUP,
+    BEAR_FAILED_BREAKOUT,
+    BEAR_VWAP_RETEST_FAILURE,
+)
+
+ACTIVE_PLAYBOOKS = (
+    BULL_INSTITUTIONAL_ACCUMULATION,
+    BULL_CATALYST_CONTINUATION,
+    BEAR_FRESH_SHORT_BUILDUP,
+)
+RETIRED_PLAYBOOKS = (
+    BULL_OPENING_DRIVE,
+    BULL_PULLBACK_RECLAIM,
     BEAR_FAILED_BREAKOUT,
     BEAR_VWAP_RETEST_FAILURE,
 )
@@ -181,6 +195,36 @@ def evaluate_row(row: dict, *, now=None, news_articles=None) -> list[dict]:
     bear_clv = _directional_clv(r, "Bearish")
     not_chased = _not_chased(r)
 
+    # V9.1 Bull Institutional Accumulation: new committed long positioning,
+    # not a generic upside breakout. The historical replay creates a probe only
+    # after price + OI are both positive and price is accepted above VWAP; the
+    # cross-sectional ranks below decide whether that activity is exceptional.
+    basis = _f(r.get("basis_acceleration"))
+    accumulation_basis_ok = basis is None or basis >= -0.02
+    price_60 = _f(r.get("price_chg_60m_pct"))
+    oi_60 = _f(r.get("oi_chg_60m_pct"))
+    tod = _f(r.get("tod_rvol"))
+    accumulation_seed = bool(r.get("v91_accumulation_probe")) or bool(
+        price_60 is not None and price_60 > 0
+        and oi_60 is not None and oi_60 > 0
+        and tod is not None and tod >= 1.0
+    )
+    if (accumulation_seed and r.get("v8_oi_state") == "Long Buildup"
+            and r.get("vwap_side_agrees") is True and accumulation_basis_ok):
+        score = _consensus([part, relative, deriv, bull_clv])
+        quality = bool(
+            part is not None and part >= 70
+            and relative is not None and relative >= 70
+            and deriv is not None and deriv >= 65
+            and bull_clv is not None and bull_clv >= 60
+        )
+        plays.append(_play(
+            BULL_INSTITUTIONAL_ACCUMULATION, "Bullish", score,
+            ["Price up + OI up", "Long buildup", "Above VWAP",
+             "Relative leadership", "Abnormal participation"],
+            modes=("intraday", "swing"), eligible=quality,
+        ))
+
     # 1) Early-session bullish opening drive.
     if direction == "Bullish" and source == "Opening Range" and bool(r.get("fresh_breakout")):
         in_window = clock is None or clock <= OPENING_DRIVE_END
@@ -250,7 +294,7 @@ def best_play(rows: Iterable[dict], *, side: str, mode: str) -> list[dict]:
     """Rank live rows by their best eligible V9 playbook for one side/mode."""
     out = []
     for row in rows or []:
-        matches = [p for p in (row.get("v9_playbooks") or []) if p.get("side") == side and mode in (p.get("modes") or []) and p.get("state") in ("TRADE CANDIDATE", "WATCH")]
+        matches = [p for p in (row.get("v9_playbooks") or []) if p.get("playbook") in ACTIVE_PLAYBOOKS and p.get("side") == side and mode in (p.get("modes") or []) and p.get("state") in ("TRADE CANDIDATE", "WATCH")]
         if not matches:
             continue
         matches.sort(key=lambda p: (1 if p.get("state") == "TRADE CANDIDATE" else 0, float(p.get("score") or 0)), reverse=True)

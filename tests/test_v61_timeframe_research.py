@@ -160,5 +160,5 @@ def test_diagnostic_research_uses_selected_scope_while_v81_primary_is_fixed_15m(
     text = open('app/templates/backtest.html', encoding='utf-8').read().replace(' ', '')
     assert "timeframe:scope.timeframe" in text
     assert "timeframe:'15minute'" in text
-    assert 'er-v9-run-btn' in text
+    assert 'er-v91-run-btn' in text
     assert 'er-v7-run-btn' not in text

@@ -34,6 +34,7 @@ def _float(value, default=None):
 def _direction(row: dict) -> str | None:
     value = (
         row.get("v8_direction")
+        or row.get("v91_accumulation_seed_direction")
         or row.get("breakout_direction")
         or row.get("retained_breakout_direction")
         or row.get("direction")

@@ -7,23 +7,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_dashboard_is_v9_professional_playbook_console():
     text = (ROOT / "app/templates/index.html").read_text(encoding="utf-8")
-    assert "V9 Professional Playbook Scanner" in text
-    assert "Bull Opening Drive" in text
-    assert "Bull Pullback/Reclaim" in text
+    assert "V9.1 Goal-Focused Scanner" in text
+    assert "Bull Institutional Accumulation" in text
     assert "Bear Fresh Short Buildup" in text
-    assert "Bear Failed Breakout" in text
-    assert "Bear VWAP Retest Failure" in text
+    assert "Bull Pullback/Reclaim" not in text
+    assert "Bear Failed Breakout" not in text
+    assert "Bear VWAP Retest Failure" not in text
     assert "Derivative Intelligence" in text
 
 
 def test_backtest_has_dedicated_v9_one_click_runner_and_playbook_report():
     text = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
-    assert 'id="er-v9-run-btn"' in text
-    assert "Run V9 Professional Playbook Backtest" in text
-    assert "v9_playbooks" in text
-    assert "Bull Opening Drive" in text
+    assert 'id="er-v91-run-btn"' in text
+    assert "Run V9.1 Goal-Focused Backtest" in text
+    assert "v91_goal" in text
+    assert "Bull Institutional Accumulation" in text
     assert "Bear Fresh Short Buildup" in text
-    assert "mode:'v9_fast'" in text
+    assert "mode:'v91_fast'" in text
     assert "timeframe:'15minute'" in text
     assert "days:'180'" in text
 
@@ -37,9 +37,9 @@ def test_web_accepts_v9_fast_and_v9_dashboard_payload():
 def test_v9_dashboard_payload_surfaces_playbook_and_option_expression():
     row = {
         "symbol": "ABC", "v8_direction": "Bullish",
-        "v9_intraday_playbook": v9_playbooks.BULL_OPENING_DRIVE,
+        "v9_intraday_playbook": v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION,
         "v9_intraday_score": 91, "v9_intraday_state": "TRADE CANDIDATE",
-        "v9_intraday_reasons": ["Opening-range escape"],
+        "v9_intraday_reasons": ["Long buildup"],
         "v8_participation": 93, "v8_relative": 88, "v8_derivatives": 75,
         "v8_oi_state": "Long Buildup", "breakout_extension_atr": 0.4,
         "option_action": "OPTION BUYER EDGE", "option_edge": "HIGH",
@@ -48,7 +48,7 @@ def test_v9_dashboard_payload_surfaces_playbook_and_option_expression():
     }
     payload = v9_playbooks.dashboard_payload({"results": [row]})
     got = payload["intraday"]["bullish"][0]
-    assert got["playbook"] == v9_playbooks.BULL_OPENING_DRIVE
+    assert got["playbook"] == v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION
     assert got["score"] == 91.0
     assert got["option_action"] == "OPTION BUYER EDGE"
 

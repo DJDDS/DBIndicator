@@ -67,12 +67,12 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED</div>
     <p>
-      <strong>V9 Professional Playbook Scanner is the primary research architecture.</strong> Instead of one universal Bull/Bear composite score, V9 evaluates six explicit professional-style setups independently: Bull Opening Drive, Bull Pullback/Reclaim, Bull Catalyst Continuation, Bear Fresh Short Buildup, Bear Failed Breakout and Bear VWAP Retest Failure. 15-minute generates entries; 4H is context only; OI/basis are evidence rather than universal vetoes.
+      <strong>V9.1 Goal-Focused Scanner is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.1 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
     </p>
     <p>
-      Use <strong>Run V9 Professional Playbook Backtest</strong> for the full F&amp;O, 15-minute, 180-day research path. Every backtestable playbook reports 30m / 1h / 2h / EOD / 1D / 2D, four chronological validation blocks and a locked final 20%. Bull Catalyst Continuation is intentionally live/shadow until point-in-time historical event/news data exists; V9 does not fabricate a catalyst backtest.
+      Use <strong>Run V9.1 Goal-Focused Backtest</strong> to validate Bull Institutional Accumulation while keeping its final 20% locked. Use <strong>Run Frozen Bear FSB Final Test</strong> only for the exact Bear Fresh Short Buildup rule that already qualified in validation. Bull Catalyst Continuation remains live/shadow until point-in-time historical event/news data exists.
     </p>
     <p class="hint" style="border-left:3px solid #f0b90b;padding-left:10px;">
       <strong>V8.2 Derivative Intelligence is live/shadow only.</strong> Kite's normal historical interface does not provide a point-in-time stock-option chain with the bid/ask, IV surface and signed flow needed for an honest historical option-P&amp;L replay. The backtest below therefore validates the <em>underlying Bull/Bear screener</em>; live V8.2 records option-chain snapshots separately for forward validation instead of fabricating historical option data.
@@ -119,12 +119,13 @@
   </div>
 
   <div class="card" style="border-color:#9bc5e8;">
-    <h2>1 &middot; V9 Professional Playbook Research</h2>
-    <p style="margin-top:-4px;"><strong>This is the primary V9 research tool for both bullish and bearish Intraday and Swing 1&ndash;2D opportunities.</strong> Each professional playbook is evaluated independently so a weak Bear model cannot hide behind a strong Bull model. 15-minute is the signal timeframe; 4H remains context only.</p>
-    <p class="hint"><strong>Goal-focused validation:</strong> Bull Opening Drive, Bull Pullback/Reclaim, Bear Fresh Short Buildup, Bear Failed Breakout and Bear VWAP Retest Failure are backtested separately at 30m / 1h / 2h / EOD / 1D / 2D with 60/20/20 chronology and four validation blocks. Bull Catalyst Continuation stays live/shadow until real historical event data exists.</p>
-    <button type="button" class="btn" id="er-v9-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9 Professional Playbook Backtest</button>
+    <h2>1 &middot; V9.1 Goal-Focused Research</h2>
+    <p style="margin-top:-4px;"><strong>This is the primary V9.1 research path for the actual objective: Bull + Bear F&amp;O opportunities for intraday and 1&ndash;2D swing.</strong> The weak V9 playbooks are retired instead of retuned.</p>
+    <p class="hint"><strong>Bull:</strong> Institutional Accumulation = price up + OI up, above-VWAP acceptance, abnormal participation, relative leadership and non-deteriorating basis. Its final 20% stays locked. <strong>Bear:</strong> Fresh Short Buildup is frozen exactly as validated; its dedicated final button reveals only that rule's untouched final 20%.</p>
+    <button type="button" class="btn" id="er-v91-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.1 Goal-Focused Backtest</button>
+    <button type="button" class="btn" id="er-v91-bear-final-btn" {{ 'disabled' if not logged_in else '' }} style="background:#9b1c1c;">Run Frozen Bear FSB Final Test</button>
     <button type="button" class="btn secondary" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Legacy / 4H Diagnostic</button>
-    <span class="hint" id="er-form-hint" style="margin-left:10px;">V9 primary evidence is locked to the full F&amp;O universe, 15-minute signals and 180 calendar days. The six playbooks are tested separately; the legacy diagnostic button remains available for older 4H/V6 research only.</span>
+    <span class="hint" id="er-form-hint" style="margin-left:10px;">Both V9.1 buttons lock the run to full F&amp;O, 15-minute signals and 180 calendar days. The Bear final button cannot change the frozen rule or thresholds.</span>
     <div class="progress-wrap" id="er-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="er-progress-fill"></div></div>
       <div class="progress-label" id="er-progress-label">Starting…</div>
@@ -147,9 +148,9 @@
       <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
       </div>
 
-      <h3 class="bt-group-title" style="margin-top:18px;">V9 Professional Playbooks <span class="hint">Bull and Bear tested independently · final 20% locked</span></h3>
-      <p class="hint">The primary report tests repeatable playbooks rather than a universal score. Real Catalyst Continuation stays LIVE/SHADOW until a point-in-time historical event archive exists.</p>
-      <div id="er-v9-playbooks"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">V9.1 Goal-Focused Evidence</h3>
+      <p class="hint">Bull Institutional Accumulation remains development/validation only. Bear Fresh Short Buildup is frozen; only the dedicated final-test run can reveal its final 20%.</p>
+      <div id="er-v91-goal"></div>
       <div id="er-v8-audit" style="display:none;">
       <h3 class="bt-group-title" style="margin-top:18px;">V8.1 Evidence-Locked <span class="hint">Bull Top-K + Bear Pressure Top-K · final 20% locked</span></h3>
       <p class="hint">No fitted weights and no score-threshold hunt. Bull: Recent-Range + participation floor, ranked Top 1/3/5 by Bull Alpha. Bear: any bearish breakout source + participation floor, ranked Top 1/3/5 by selling pressure = Participation + Relative Weakness + Derivatives + Bear CLV. Top 3 is the predeclared operational breadth.</p>
@@ -299,7 +300,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS";
+const RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -631,13 +632,15 @@ function updateEarlyResearchUI(state) {
   const label = document.getElementById('er-progress-label');
   const errorBox = document.getElementById('er-error');
   const runBtn = document.getElementById('er-run-btn');
-  const v9RunBtn = document.getElementById('er-v9-run-btn');
+  const v91RunBtn = document.getElementById('er-v91-run-btn');
+  const v91FinalBtn = document.getElementById('er-v91-bear-final-btn');
   const hint = document.getElementById('er-form-hint');
   const p = state.progress || {};
 
   if (state.status === 'running') {
     runBtn.disabled = true;
-    v9RunBtn.disabled = true;
+    v91RunBtn.disabled = true;
+    v91FinalBtn.disabled = true;
     progress.style.display = 'block';
     errorBox.style.display = 'none';
     const total = Number(p.total || 0);
@@ -645,7 +648,7 @@ function updateEarlyResearchUI(state) {
     const stageLabels = {
       1: 'Fetching F&O history',
       2: 'Building cross-sectional ranks',
-      3: 'Validating V9 professional playbooks',
+      3: 'Validating V9.1 goal-focused models',
       4: 'Preparing report',
     };
     const stageIndex = Number(p.stage_index || 1);
@@ -661,7 +664,8 @@ function updateEarlyResearchUI(state) {
   }
 
   runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
-  v9RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v91RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v91FinalBtn.disabled = {{ 'true' if not logged_in else 'false' }};
   progress.style.display = 'none';
   if (state.status === 'error') {
     errorBox.style.display = 'block';
@@ -747,46 +751,36 @@ function renderEarlyResearch(result) {
 
 
 
-  const v9 = r.v9_playbooks || {};
-  const v9Box = document.getElementById('er-v9-playbooks');
-  if (v9Box) {
-    const order = [
-      'Bull Opening Drive', 'Bull Pullback/Reclaim', 'Bull Catalyst Continuation',
-      'Bear Fresh Short Buildup', 'Bear Failed Breakout', 'Bear VWAP Retest Failure'
-    ];
+  const v91 = r.v91_goal || {};
+  const v91Box = document.getElementById('er-v91-goal');
+  if (v91Box) {
     const blockSummary = x => {
       const blocks = ((x || {}).validation_blocks || []);
       if (!blocks.length) return '—';
       return blocks.map(b => `${b.block}:${b.avg_return_pct == null ? '—' : (b.avg_return_pct > 0 ? '+' : '') + Number(b.avg_return_pct).toFixed(2) + '%'}/PF${b.profit_factor == null ? '—' : Number(b.profit_factor).toFixed(2)}`).join(' · ');
     };
-    const rows = order.map(name => {
-      const p = (v9.playbooks || {})[name] || {};
-      if (p.historical_status === 'LIVE_SHADOW') {
-        return `<tr><td><strong>${name}</strong><div class="hint">Real catalyst/news only</div></td><td colspan="6"><span style="color:#d9a441"><strong>LIVE / SHADOW</strong></span> · ${p.message || 'Historical event archive unavailable; no fabricated backtest.'}</td></tr>`;
-      }
-      const h30 = ((p['30m'] || {}).validation || {});
-      const h1 = ((p['1h'] || {}).validation || {});
-      const h2 = ((p['2h'] || {}).validation || {});
-      const eod = ((p['eod'] || {}).validation || {});
-      const d1 = ((p['1D'] || {}).validation || {});
-      const d2 = ((p['2D'] || {}).validation || {});
-      const b2 = p.benchmark_2h || {}; const b1d = p.benchmark_1D || {};
-      const status = (b2.status === 'PROMOTABLE' || b1d.status === 'PROMOTABLE') ? 'PROMOTABLE' : 'RESEARCH';
-      const colour = status === 'PROMOTABLE' ? 'var(--green)' : 'var(--red)';
-      const detail = `30m ${pct(h30.avg_return_pct)}/PF ${pf(h30.profit_factor)} · 1h ${pct(h1.avg_return_pct)}/PF ${pf(h1.profit_factor)} · EOD ${pct(eod.avg_return_pct)}/PF ${pf(eod.profit_factor)} · 2D ${pct(d2.avg_return_pct)}/PF ${pf(d2.profit_factor)}`;
-      return `<tr><td><strong>${name}</strong><div class="hint">${detail}</div></td>` +
-        `<td>${h2.trade_count || 0}</td><td>${pct(h2.avg_return_pct)} / ${pf(h2.profit_factor)}</td>` +
-        `<td>${d1.trade_count || 0}</td><td>${pct(d1.avg_return_pct)} / ${pf(d1.profit_factor)}</td>` +
-        `<td><div class="hint">2H ${blockSummary(p['2h'])}<br>1D ${blockSummary(p['1D'])}</div></td>` +
-        `<td style="color:${colour}"><strong>${status}</strong></td></tr>`;
-    }).join('');
-    if (!(v9.playbooks)) {
-      v9Box.innerHTML = '<p class="hint">Run V9 Professional Playbook Backtest to generate independent playbook evidence.</p>';
+    if (!v91.build_id) {
+      v91Box.innerHTML = '<p class="hint">Run V9.1 Goal-Focused Backtest to validate Bull Accumulation, or run the frozen Bear FSB final test.</p>';
     } else {
-      const bull = (v9.promotable_bull || []).join(', ') || 'none';
-      const bear = (v9.promotable_bear || []).join(', ') || 'none';
-      v9Box.innerHTML = `<div class="hint"><strong>Protocol:</strong> 15minute · 60/20/20 · final 20% locked · <strong>Promotable Bull:</strong> ${bull} · <strong>Promotable Bear:</strong> ${bear}</div>` +
-        `<table style="margin-top:8px;"><thead><tr><th>Playbook</th><th>2H N</th><th>2H Avg / PF</th><th>1D N</th><th>1D Avg / PF</th><th>Validation blocks</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+      const bull = v91.bull_institutional_accumulation || {};
+      const b2 = ((bull['2h'] || {}).validation || {});
+      const b1 = ((bull['1D'] || {}).validation || {});
+      const bear = v91.bear_fresh_short_buildup || {};
+      const s2 = ((bear['2h'] || {}).validation || {});
+      const s1 = ((bear['1D'] || {}).validation || {});
+      const final = v91.bear_final || {};
+      const finalStats = final.final_test || {};
+      const verdict = ((final.verdict || {}).verdict) || 'NOT_RUN';
+      const verdictColour = verdict === 'PASS' ? 'var(--green)' : (verdict === 'REJECT' ? 'var(--red)' : '#d9a441');
+      const finalText = finalStats.locked ? '<strong>LOCKED</strong>' : `${finalStats.trade_count || 0} trades · ${pct(finalStats.avg_return_pct)} · PF ${pf(finalStats.profit_factor)} · <strong style="color:${verdictColour}">${verdict}</strong>`;
+      v91Box.innerHTML = `
+        <div class="hint"><strong>Build:</strong> ${v91.build_id} · Bull final locked · Bear fingerprint ${(v91.protocol || {}).bear_rule_fingerprint || '—'}</div>
+        <table style="margin-top:8px;"><thead><tr><th>Model</th><th>2H Validation N</th><th>2H Avg / PF</th><th>1D Validation N</th><th>1D Avg / PF</th><th>Chronological blocks</th><th>Status</th></tr></thead><tbody>
+          <tr><td><strong>Bull Institutional Accumulation</strong><div class="hint">Long buildup + VWAP acceptance + participation + relative leadership</div></td><td>${b2.trade_count || 0}</td><td>${pct(b2.avg_return_pct)} / ${pf(b2.profit_factor)}</td><td>${b1.trade_count || 0}</td><td>${pct(b1.avg_return_pct)} / ${pf(b1.profit_factor)}</td><td><div class="hint">2H ${blockSummary(bull['2h'])}<br>1D ${blockSummary(bull['1D'])}</div></td><td>RESEARCH · FINAL LOCKED</td></tr>
+          <tr><td><strong>Bear Fresh Short Buildup</strong><div class="hint">Frozen rule · price down + OI up</div></td><td>${s2.trade_count || 0}</td><td>${pct(s2.avg_return_pct)} / ${pf(s2.profit_factor)}</td><td>${s1.trade_count || 0}</td><td>${pct(s1.avg_return_pct)} / ${pf(s1.profit_factor)}</td><td><div class="hint">2H ${blockSummary(bear['2h'])}<br>1D ${blockSummary(bear['1D'])}</div></td><td><strong>${bear.validation_status || 'RESEARCH'}</strong></td></tr>
+          <tr><td><strong>Bear FSB Final 20%</strong></td><td colspan="5">${finalText}</td><td style="color:${verdictColour}"><strong>${verdict}</strong></td></tr>
+          <tr><td><strong>Bull Catalyst Continuation</strong></td><td colspan="6"><span style="color:#d9a441"><strong>LIVE / SHADOW</strong></span> · Real point-in-time event history unavailable; no fabricated backtest.</td></tr>
+        </tbody></table>`;
     }
   }
 
@@ -900,12 +894,16 @@ function renderEarlyResearch(result) {
 function pollEarlyResearch() {
   fetch('/api/early-research/status').then(r => r.json()).then(st => { updateEarlyResearchUI(st); if (st.status === 'running') setTimeout(pollEarlyResearch, 2500); }).catch(() => setTimeout(pollEarlyResearch, 5000));
 }
-document.getElementById('er-v9-run-btn').addEventListener('click', function () {
-  // V9 professional-playbook protocol is locked to 15m / 180 days. 4H remains
-  // context/legacy diagnostic only and every playbook final 20% remains withheld.
+document.getElementById('er-v91-run-btn').addEventListener('click', function () {
   document.getElementById('scope-timeframe').value = '15minute';
   document.getElementById('scope-days').value = '180';
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v9_fast'}, 'er-form-hint', pollEarlyResearch);
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v91_fast'}, 'er-form-hint', pollEarlyResearch);
+});
+document.getElementById('er-v91-bear-final-btn').addEventListener('click', function () {
+  if (!window.confirm('This reveals the untouched final 20% for the frozen Bear Fresh Short Buildup rule. The rule and thresholds cannot be changed on this path. Continue?')) return;
+  document.getElementById('scope-timeframe').value = '15minute';
+  document.getElementById('scope-days').value = '180';
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v91_bear_final'}, 'er-form-hint', pollEarlyResearch);
 });
 document.getElementById('er-run-btn').addEventListener('click', function () {
   const scope = readScope();

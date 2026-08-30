@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS"
+RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED"
 
 
 
@@ -730,6 +730,26 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
         row = {k: _py(v) for k, v in features.iloc[pos].to_dict().items()}
         row["timestamp"] = df.index[pos].isoformat()
 
+        # V9.1 Bull Institutional Accumulation probe. This is intentionally
+        # independent of a price-range breakout: it starts from new long futures
+        # positioning (price up + OI up), above-VWAP acceptance and at least normal
+        # time-of-day participation. Cross-sectional ranks attached later decide
+        # whether the activity is exceptional enough to become a trade candidate.
+        price_60 = row.get("price_chg_60m_pct")
+        oi_60 = row.get("oi_chg_60m_pct")
+        tod = row.get("tod_rvol")
+        if (fast_v8 and setup_timeframe == "15minute" and pos + 1 < len(df)
+                and price_60 is not None and np.isfinite(price_60) and float(price_60) > 0
+                and oi_60 is not None and np.isfinite(oi_60) and float(oi_60) > 0
+                and row.get("vwap_side_agrees") is True
+                and tod is not None and np.isfinite(tod) and float(tod) >= 1.0):
+            accumulation_event = _event_from_row(row, pos, "Bullish", {})
+            if accumulation_event is not None:
+                accumulation_event["v91_accumulation_probe"] = True
+                accumulation_event["fresh_breakout"] = False
+                accumulation_event["breakout_source"] = None
+                v9_playbook_events.append(accumulation_event)
+
         # First escape: research the actual directional breakout and intraday
         # Best Entry eligibility.
         direction = row.get("breakout_direction") or row.get("direction")
@@ -1312,13 +1332,13 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
     v9_candidates.sort(key=lambda e: e.get("entry_time", ""))
     available = sum(1 for e in ignition if e.get("oi_status") != "Unavailable")
     confirmed = sum(1 for e in ignition if e.get("oi_status") == "Confirmed")
-    return {
+    mode = (run_context or {}).get("research_mode") or "v9_fast"
+    result = {
         "research_build_id": RESEARCH_BUILD_ID,
         "holdout_pct": float(holdout_pct),
         "fast_v8": True,
         "fast_v9": True,
         "run_context": dict(run_context or {}),
-        "v9_playbooks": v9_playbook_report(v9_candidates),
         "oi_coverage": {
             "total": len(ignition),
             "available": available,
@@ -1328,6 +1348,15 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
         },
         "confirmation_diagnostics": confirmation_diagnostics(ignition),
     }
+    if mode in ("v91_fast", "v91_bear_final"):
+        result["v91_goal"] = v91_goal_report(
+            v9_candidates,
+            run_context=run_context,
+            reveal_bear_final=(mode == "v91_bear_final"),
+        )
+    else:
+        result["v9_playbooks"] = v9_playbook_report(v9_candidates)
+    return result
 
 
 def _v9_three_way(events, field, key):
@@ -1901,3 +1930,93 @@ def v6_edge_report(events):
     }
     report["path_exit_lab"] = _v6_path_exit_report(long)
     return report
+
+
+def v91_goal_report(events, run_context=None, *, reveal_bear_final=False):
+    """V9.1 goal-focused report: one new Bull research play + frozen Bear final."""
+    from . import v9_playbooks, v91_goal
+
+    rows = _ensure_v8_event_scores(events)
+
+    bull = []
+    for row in rows:
+        if not row.get("v91_accumulation_probe"):
+            continue
+        try:
+            now = pd.Timestamp(row.get("signal_time") or row.get("entry_time")).to_pydatetime()
+        except Exception:
+            now = None
+        for play in v9_playbooks.evaluate_row(row, now=now):
+            if play.get("playbook") != v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION:
+                continue
+            if play.get("state") != "TRADE CANDIDATE":
+                continue
+            item = dict(row)
+            item["v9_playbook"] = play.get("playbook")
+            item["v9_score"] = play.get("score")
+            item["v9_reasons"] = play.get("reasons") or []
+            bull.append(item)
+
+    bull_report = {
+        "historical_status": "BACKTESTABLE",
+        "trade_count": len(bull),
+        "30m": _v9_three_way(bull, "intraday_returns", "30m"),
+        "1h": _v9_three_way(bull, "intraday_returns", "1h"),
+        "2h": _v9_three_way(bull, "intraday_returns", "2h"),
+        "eod": _v9_three_way(bull, "intraday_returns", "eod"),
+        "1D": _v9_three_way(bull, "swing_returns", "1D"),
+        "2D": _v9_three_way(bull, "swing_returns", "2D"),
+        "benchmark_2h": _v8_benchmark(bull, "intraday_returns", "2h"),
+        "benchmark_1D": _v8_benchmark(bull, "swing_returns", "1D"),
+    }
+
+    bear_final = v91_goal.bear_fsb_final_report(
+        rows, run_context or {}, reveal_final=bool(reveal_bear_final)
+    )
+    bear_candidates = v91_goal.select_frozen_bear_fsb(rows)
+    bear_1d = _v9_three_way(bear_candidates, "swing_returns", "1D")
+    bear_2h = _v9_three_way(bear_candidates, "intraday_returns", "2h")
+    val = bear_1d.get("validation") or {}
+    blocks = bear_1d.get("validation_blocks") or []
+    positive_blocks = sum(1 for b in blocks if b.get("positive"))
+    pf = val.get("profit_factor")
+    validation_qualified = bool(
+        int(val.get("trade_count") or 0) >= 80
+        and val.get("avg_return_pct") is not None and float(val["avg_return_pct"]) >= 0.18
+        and pf is not None and (pf == float("inf") or float(pf) >= 1.25)
+        and len(blocks) == 4 and positive_blocks >= 3
+    )
+    bear_report = {
+        "historical_status": "FROZEN_FINAL_CANDIDATE",
+        "trade_count": len(bear_candidates),
+        "2h": bear_2h,
+        "1D": bear_1d,
+        "validation_status": (
+            "VALIDATION QUALIFIED — FINAL TEST LOCKED"
+            if validation_qualified and not reveal_bear_final
+            else ("FINAL TEST RUN" if reveal_bear_final else "RESEARCH")
+        ),
+        "validation_qualified": validation_qualified,
+    }
+
+    return {
+        "build_id": v91_goal.BUILD_ID,
+        "protocol": {
+            "setup_timeframe": "15minute",
+            "days": 180,
+            "final_20_locked_for_bull": True,
+            "bear_rule_fingerprint": v91_goal.frozen_bear_fsb_spec()["fingerprint"],
+            "bear_final_revealed": bool(reveal_bear_final),
+        },
+        "bull_institutional_accumulation": bull_report,
+        "bull_catalyst_continuation": {
+            "historical_status": "LIVE_SHADOW",
+            "message": "Real point-in-time catalyst/news history is unavailable; V9.1 keeps this live/shadow only.",
+        },
+        "bear_fresh_short_buildup": bear_report,
+        "bear_final": bear_final,
+        "retired_playbooks": [
+            "Bull Opening Drive", "Bull Pullback/Reclaim",
+            "Bear Failed Breakout", "Bear VWAP Retest Failure",
+        ],
+    }

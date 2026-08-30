@@ -29,6 +29,9 @@ def row(symbol, direction="Bullish", source="Opening Range", score=80):
         "basis_acceleration": 0.0,
         "vwap_side_agrees": True,
         "vwap_distance_atr": 0.2,
+        "price_chg_60m_pct": 1.0 if direction == "Bullish" else -1.0,
+        "oi_chg_60m_pct": 5.0,
+        "tod_rvol": 2.0,
     }
 
 
@@ -38,9 +41,9 @@ def test_v9_live_attaches_playbook_and_replaces_v81_operational_stage(monkeypatc
     background._apply_v9_playbooks(rows, now=dt.datetime(2026, 8, 30, 10, 0))
     intraday, _swing = background._apply_v9_operational_shortlists(rows)
     assert len(intraday) == 3
-    assert all(r.get("movement_stage", "").startswith("V9 ") for r in intraday)
+    assert all(r.get("movement_stage", "").startswith("V9.1 ") for r in intraday)
     assert all("V8.1" not in r.get("movement_stage", "") for r in intraday)
-    assert intraday[0]["v9_intraday_playbook"] == v9_playbooks.BULL_OPENING_DRIVE
+    assert intraday[0]["v9_intraday_playbook"] == v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION
 
 
 def test_v9_live_uses_real_cached_catalyst_headline(monkeypatch):

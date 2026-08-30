@@ -54,12 +54,12 @@ def test_fast_v9_aggregate_only_builds_playbook_report_and_skips_legacy_labs(mon
 
 def test_primary_v8_button_requests_fast_mode_and_ui_has_staged_progress():
     template = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
-    body = template[template.index("document.getElementById('er-v9-run-btn')"):]
-    assert "mode:'v9_fast'" in body.replace(" ", "")
+    body = template[template.index("document.getElementById('er-v91-run-btn')"):]
+    assert "mode:'v91_fast'" in body.replace(" ", "")
     assert "p.stage" in template
     assert "p.overall_pct" in template
     assert "Building cross-sectional ranks" in template
-    assert "Validating V9 professional playbooks" in template
+    assert "Validating V9.1 goal-focused models" in template
 
 
 def test_legacy_diagnostic_button_explicitly_requests_full_mode():
