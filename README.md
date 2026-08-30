@@ -76,3 +76,6 @@ python -m compileall -q app run.py
 
 ## Deployment
 Railway can auto-deploy from your GitHub branch. After deployment, log in to Kite, verify the dashboard build marker, and run **V9 Professional Playbook Backtest** before promoting any individual playbook.
+
+## V9 research reliability
+The V9 backtest checkpoints progress/result state to `EARLY_RESEARCH_STATE_PATH` and uses a lower-memory full-universe feature representation. For recovery across a full Railway container replacement, configure `EARLY_RESEARCH_STATE_PATH` on a mounted persistent volume; the default `/tmp` path is best-effort process-restart recovery only.

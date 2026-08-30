@@ -48,8 +48,11 @@ take a while, well past what a web request should block on. Poll
 get_backtest_state() from the dashboard to show progress.
 """
 import datetime as dt
+import gc
 import json
 import logging
+import os
+from pathlib import Path
 import threading
 import time
 
@@ -1846,10 +1849,15 @@ def _attach_v8_full_universe_scores(replays, feature_frames):
         return replays
 
     event_refs = []
+    seen_event_ids = set()
     families = ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events", "v9_playbook_events")
     for replay in replays or []:
         for family in families:
             for event in replay.get(family) or []:
+                marker = id(event)
+                if marker in seen_event_ids:
+                    continue
+                seen_event_ids.add(marker)
                 event_refs.append(event)
     if not event_refs:
         return replays
@@ -1928,6 +1936,23 @@ def _attach_v8_full_universe_scores(replays, feature_frames):
             if key.startswith("v8_") or key.startswith("v81_"):
                 event[key] = value
     return replays
+
+_V8_COMPACT_FEATURE_COLUMNS = (
+    "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
+    "turnover_notional", "oi_chg_60m_pct", "rs_pct", "stock_sector_lead_pct",
+)
+
+
+def _compact_v8_feature_frame(frame):
+    """Keep only cross-sectional V9 inputs in float32 to cap full-universe RAM."""
+    if frame is None or frame.empty:
+        return pd.DataFrame(index=getattr(frame, "index", None))
+    cols = [c for c in _V8_COMPACT_FEATURE_COLUMNS if c in frame.columns]
+    if not cols:
+        return pd.DataFrame(index=frame.index)
+    compact = frame.loc[:, cols].apply(pd.to_numeric, errors="coerce")
+    return compact.astype(np.float32, copy=False)
+
 
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
@@ -2020,14 +2045,11 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             if feat.empty:
                 notes[symbol] = "not enough history for early-movement features"
                 continue
-            if "turnover_notional" in feat.columns:
+            if not fast_v8 and "turnover_notional" in feat.columns:
                 turnover_series[symbol] = pd.to_numeric(feat["turnover_notional"], errors="coerce")
-            v8_cols = [c for c in (
-                "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
-                "turnover_notional", "oi_chg_60m_pct", "rs_pct", "stock_sector_lead_pct"
-            ) if c in feat.columns]
-            if v8_cols:
-                v8_feature_frames[symbol] = feat[v8_cols].copy()
+            compact_v8 = _compact_v8_feature_frame(feat)
+            if not compact_v8.empty:
+                v8_feature_frames[symbol] = compact_v8
             # Preserve ATR for Energy Building's directionless expansion target.
             series = compute_series(df, timeframe)
             if "error" not in series:
@@ -2040,6 +2062,11 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             )
             replay = _trim_replay_to_window(replay, window_start)
             replays.append(replay)
+            # Large pandas objects are no longer needed once this symbol has
+            # been reduced to compact V9 ranks + replay events. Periodic GC
+            # prevents a 211-stock / 180-day run from accumulating old frames.
+            if fast_v8 and (i + 1) % 20 == 0:
+                gc.collect()
         except Exception as exc:  # noqa: BLE001
             log.exception("Early movement research failed for %s", symbol)
             notes[symbol] = str(exc)
@@ -2083,6 +2110,16 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     if stage_cb:
         stage_cb(2, 4, "Building cross-sectional ranks", 72)
     _attach_v8_full_universe_scores(replays, v8_feature_frames)
+    # Cross-sectional ranks are now attached to the compact event rows; release
+    # the full-universe feature/index history before Stage 3 aggregation.
+    if fast_v8:
+        v8_feature_frames.clear()
+        turnover_series.clear()
+        sector_history.clear()
+        sector_ret_parts.clear()
+        sector_rank_frame = None
+        index_df = None
+        gc.collect()
 
     if progress_cb:
         progress_cb(len(symbols), len(symbols), None)
@@ -2107,6 +2144,9 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             run_context=run_context)
     if stage_cb:
         stage_cb(4, 4, "Preparing report", 98)
+    if fast_v8:
+        replays.clear()
+        gc.collect()
     return {
         "timeframe": timeframe,
         "setup_timeframe": timeframe,
@@ -2130,15 +2170,89 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     }
 
 
+_EARLY_RESEARCH_STATE_PATH = Path(
+    os.environ.get("EARLY_RESEARCH_STATE_PATH", "/tmp/dbindicator-early-research-state.json")
+)
+
+
+def _default_early_research_state():
+    return {
+        "status": "idle",
+        "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 4, "overall_pct": 0},
+        "result": None, "error": None, "started_at": None, "finished_at": None,
+    }
+
+
+def _research_json_default(value):
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if isinstance(value, (pd.Timestamp, dt.datetime, dt.date)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _atomic_write_early_research_state(state):
+    """Stream a complete checkpoint to a temp file then atomically replace it."""
+    path = Path(_EARLY_RESEARCH_STATE_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(state, fh, default=_research_json_default, allow_nan=True, separators=(",", ":"))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _load_early_research_state():
+    path = Path(_EARLY_RESEARCH_STATE_PATH)
+    if not path.exists():
+        return _default_early_research_state()
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            state = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not restore early research checkpoint: %s", exc)
+        return _default_early_research_state()
+    base = _default_early_research_state()
+    if isinstance(state, dict):
+        base.update(state)
+        if isinstance(state.get("progress"), dict):
+            base["progress"].update(state["progress"])
+    if base.get("status") == "running":
+        base["status"] = "error"
+        base["error"] = "Research job interrupted by server restart before completion. Run it again."
+        base["finished_at"] = now_ist().isoformat(timespec="seconds")
+        try:
+            _atomic_write_early_research_state(base)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not persist interrupted research state: %s", exc)
+    return base
+
+
 _early_research_lock = threading.Lock()
-_early_research_state = {
-    "status": "idle", "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 4, "overall_pct": 0},
-    "result": None, "error": None, "started_at": None, "finished_at": None,
-}
+_early_research_state = _load_early_research_state()
+
+
+def _persist_early_research_state():
+    with _early_research_lock:
+        snapshot = dict(_early_research_state)
+        snapshot["progress"] = dict(_early_research_state.get("progress") or {})
+    try:
+        _atomic_write_early_research_state(snapshot)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not persist early research checkpoint: %s", exc)
+
 
 def get_early_research_state():
     with _early_research_lock:
         return dict(_early_research_state, progress=dict(_early_research_state["progress"]))
+
 
 def start_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                   cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
@@ -2152,6 +2266,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
             "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8)},
         })
+    _persist_early_research_state()
 
     def _progress(done, total, symbol):
         with _early_research_lock:
@@ -2161,6 +2276,9 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4,
                 "overall_pct": pct,
             }
+        # Checkpoint periodically; do not turn every Kite symbol into a disk fsync.
+        if done == 0 or done == total or done % 5 == 0:
+            _persist_early_research_state()
 
     def _stage(stage_index, stage_total, stage, overall_pct):
         with _early_research_lock:
@@ -2170,6 +2288,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 "symbol": None, "stage": stage, "stage_index": stage_index,
                 "stage_total": stage_total, "overall_pct": overall_pct,
             }
+        _persist_early_research_state()
 
     def _job():
         try:
@@ -2179,16 +2298,20 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8)
             with _early_research_lock:
                 _early_research_state["progress"] = {"done": len(symbols), "total": len(symbols), "symbol": None, "stage": "Complete", "stage_index": 4, "stage_total": 4, "overall_pct": 100}
-                _early_research_state["status"] = "done"
                 _early_research_state["result"] = result
+                _early_research_state["status"] = "done"
+                _early_research_state["error"] = None
+                _early_research_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+            # Atomic checkpoint contains both result and done status; a restart
+            # can therefore recover the last completed report without ambiguity.
+            _persist_early_research_state()
         except Exception as exc:  # noqa: BLE001
             log.exception("Early movement research run failed")
             with _early_research_lock:
                 _early_research_state["status"] = "error"
                 _early_research_state["error"] = str(exc)
-        finally:
-            with _early_research_lock:
                 _early_research_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+            _persist_early_research_state()
 
     threading.Thread(target=_job, daemon=True).start()
     return {"started": True}

@@ -741,8 +741,10 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
                 mapping = {2: "30m", 4: "1h", 8: "2h", 16: "4h"}
                 event["returns_pct"] = {h: event["intraday_returns"][label] for h, label in mapping.items() if label in event["intraday_returns"]}
                 ignition_events.append(event)
-                v9_playbook_events.append(dict(event))
-                if classified.get("intraday_eligible"):
+                # In the V9 fast path the same immutable-at-this-stage event is
+                # referenced by both families instead of duplicating a large dict.
+                v9_playbook_events.append(event if fast_v8 else dict(event))
+                if classified.get("intraday_eligible") and not fast_v8:
                     best_events.append(dict(event))
 
         # One-bar-later retention/retest: V9 needs this point-in-time event even
@@ -763,7 +765,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             classified = stock_in_play.classify_live_candidate(retained_row)
             event = _event_from_row(retained_row, pos, retained_direction, classified)
             if event is not None and bool(retained_row.get("breakout_retest_confirmed")):
-                v9_playbook_events.append(dict(event))
+                v9_playbook_events.append(event if fast_v8 else dict(event))
             if not fast_v8:
                 if event is not None and event.get("breakout_source") == "Recent Range":
                     recent_range_confirmation_events.append(dict(event))
