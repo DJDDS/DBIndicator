@@ -1,6 +1,6 @@
 # V9.1 Goal-Focused Scanner
 
-Build: `2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED`
+Build: `2026-08-30-INSTITUTIONAL-V9.1.1-RESUMABLE-BACKTEST`
 
 - Frozen Bear Fresh Short Buildup exactly as validated in V9.
 - Dedicated Bear FSB final-test mode reveals only the untouched final 20% for the frozen fingerprinted rule.

@@ -49,7 +49,9 @@ get_backtest_state() from the dashboard to show progress.
 """
 import datetime as dt
 import gc
+import hashlib
 import json
+import pickle
 import logging
 import os
 from pathlib import Path
@@ -1937,6 +1939,116 @@ def _attach_v8_full_universe_scores(replays, feature_frames):
                 event[key] = value
     return replays
 
+
+def _attach_v8_full_universe_scores_from_shards(replays, shard_map, stage_cb=None):
+    """Attach V8/V9 cross-sectional ranks without retaining 211 feature frames in RAM.
+
+    Only one feature-wide matrix is materialized at a time. Compact per-symbol
+    frames remain on disk, which sharply lowers the peak memory immediately after
+    the historical fetch stage and makes the job restart-resumable.
+    """
+    shard_map = dict(shard_map or {})
+    if not shard_map:
+        return replays
+
+    event_refs = []
+    seen_event_ids = set()
+    families = ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events", "v9_playbook_events")
+    for replay in replays or []:
+        for family in families:
+            for event in replay.get(family) or []:
+                marker = id(event)
+                if marker in seen_event_ids:
+                    continue
+                seen_event_ids.add(marker)
+                event_refs.append(event)
+    if not event_refs:
+        return replays
+
+    def _norm_ts(frame, raw):
+        try:
+            ts = pd.Timestamp(raw)
+            if frame.index.tz is None and ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            elif frame.index.tz is not None and ts.tzinfo is None:
+                ts = ts.tz_localize(frame.index.tz)
+            return ts
+        except Exception:
+            return None
+
+    rank_specs = [
+        ("v8_tod_rvol_percentile", lambda f: f.get("tod_rvol"), False),
+        ("v8_opening_rvol_percentile", lambda f: f.get("opening_rvol"), False),
+        ("v8_range_shock_percentile", lambda f: f.get("bar_range_atr"), False),
+        ("v8_gap_shock_percentile", lambda f: pd.to_numeric(f.get("gap_atr"), errors="coerce").abs(), False),
+        ("v8_turnover_percentile", lambda f: f.get("turnover_notional"), False),
+        ("v8_oi_strength_percentile", lambda f: pd.to_numeric(f.get("oi_chg_60m_pct"), errors="coerce").abs(), False),
+    ]
+
+    def _relative(frame):
+        cols = []
+        for col in ("rs_pct", "stock_sector_lead_pct"):
+            if col in frame:
+                cols.append(pd.to_numeric(frame[col], errors="coerce"))
+        if not cols:
+            return pd.Series(np.nan, index=frame.index)
+        return pd.concat(cols, axis=1).median(axis=1, skipna=True)
+
+    rank_specs.append(("v8_relative_percentile", _relative, True))
+
+    for pos, (output_key, extractor, inverse_for_bear) in enumerate(rank_specs, start=1):
+        if stage_cb:
+            stage_cb(2, 4, f"Building cross-sectional ranks ({pos}/{len(rank_specs)})", 71 + round((pos / len(rank_specs)) * 13))
+        parts = {}
+        for symbol, path in shard_map.items():
+            try:
+                payload = _load_research_symbol_shard(path)
+                frame = payload.get("compact_frame")
+                if frame is None or frame.empty:
+                    continue
+                ser = pd.to_numeric(extractor(frame), errors="coerce")
+                ser.name = symbol
+                parts[symbol] = ser
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not read V9 rank shard for %s: %s", symbol, exc)
+        if not parts:
+            continue
+        raw = pd.concat(parts, axis=1).sort_index()
+        bull_rank = raw.rank(axis=1, pct=True, method="average") * 100.0
+        bear_rank = (-raw).rank(axis=1, pct=True, method="average") * 100.0 if inverse_for_bear else None
+        for event in event_refs:
+            symbol = event.get("symbol")
+            if symbol not in bull_rank.columns:
+                continue
+            ts = _norm_ts(bull_rank, event.get("signal_time"))
+            if ts is None or ts not in bull_rank.index:
+                continue
+            use = bear_rank if inverse_for_bear and event.get("direction") == "Bearish" else bull_rank
+            value = use.at[ts, symbol]
+            if pd.notna(value):
+                event[output_key] = round(float(value), 2)
+        del parts, raw, bull_rank, bear_rank
+        gc.collect()
+
+    by_time = {}
+    for event in event_refs:
+        if event.get("breakout_source") != "Recent Range":
+            continue
+        by_time.setdefault(event.get("signal_time"), []).append(event)
+    for group in by_time.values():
+        vals = [e.get("breakout_extension_atr") for e in group]
+        ranks = v8_dual.percentile_rank(vals)
+        for event, rank in zip(group, ranks):
+            event["v8_breakout_strength_percentile"] = rank
+
+    for event in event_refs:
+        scored = v8_dual.score_preranked_row(event)
+        for key, value in scored.items():
+            if key.startswith("v8_") or key.startswith("v81_"):
+                event[key] = value
+    return replays
+
+
 _V8_COMPACT_FEATURE_COLUMNS = (
     "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
     "turnover_notional", "oi_chg_60m_pct", "rs_pct", "stock_sector_lead_pct",
@@ -1957,7 +2069,7 @@ def _compact_v8_feature_frame(frame):
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
                                 progress_cb=None, stage_cb=None, universe_is_full_fno=False,
-                                fast_v8=False, research_mode=None) -> dict:
+                                fast_v8=False, research_mode=None, resume_run_dir=None) -> dict:
     """Replay the primary V6 research on a real 15m or 4H setup timeframe.
 
     15-minute setups execute on the next 15-minute bar as before. 4-hour
@@ -1972,6 +2084,12 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     days = max(lo, min(int(days or default), hi))
     symbols = list(symbols or settings.WATCHLIST)
     horizons = DEFAULT_HORIZONS
+    run_dir = (Path(resume_run_dir) if resume_run_dir is not None else
+        _early_research_run_dir(
+            symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
+            cost_pct=cost_pct, slippage_pct=slippage_pct, research_mode=research_mode,
+        )) if fast_v8 else None
+    completed_shards = _completed_research_symbol_shards(run_dir) if run_dir is not None else {}
     instruments = _load_instrument_map(kite)
     index_token = _load_index_token(kite, "NIFTY 50")
     index_df = None
@@ -2011,16 +2129,26 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     v8_feature_frames = {}
     window_start = (now_ist() - dt.timedelta(days=days)).replace(tzinfo=None).isoformat()
     for i, symbol in enumerate(symbols):
+        if fast_v8 and symbol in completed_shards:
+            if progress_cb:
+                progress_cb(i + 1, len(symbols), f"{symbol} · resumed")
+            continue
         if progress_cb:
             progress_cb(i, len(symbols), symbol)
         token = instruments.get(symbol)
         if not token:
             notes[symbol] = "symbol not found on NSE"
+            if fast_v8:
+                path = _write_research_symbol_shard(run_dir, i, symbol, compact_frame=None, replay=None, note=notes[symbol])
+                completed_shards[symbol] = path
             continue
         try:
             df = _fetch_history(token, timeframe, days + WARMUP_DAYS, kite)
             if df is None or df.empty:
                 notes[symbol] = "no price history"
+                if fast_v8:
+                    path = _write_research_symbol_shard(run_dir, i, symbol, compact_frame=None, replay=None, note=notes[symbol])
+                    completed_shards[symbol] = path
                 continue
             execution_df = df
             if timeframe == "4hour":
@@ -2029,6 +2157,9 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 )
                 if execution_df is None or execution_df.empty:
                     notes[symbol] = "no 15-minute execution history for 4-hour setup"
+                    if fast_v8:
+                        path = _write_research_symbol_shard(run_dir, i, symbol, compact_frame=None, replay=None, note=notes[symbol])
+                        completed_shards[symbol] = path
                     continue
             oi = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
             sector_symbol = scanner_mod.SYMBOL_SECTOR_MAP.get(symbol)
@@ -2044,11 +2175,14 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 sector_rank_series=sector_rank_series, futures_df=futures_df)
             if feat.empty:
                 notes[symbol] = "not enough history for early-movement features"
+                if fast_v8:
+                    path = _write_research_symbol_shard(run_dir, i, symbol, compact_frame=None, replay=None, note=notes[symbol])
+                    completed_shards[symbol] = path
                 continue
             if not fast_v8 and "turnover_notional" in feat.columns:
                 turnover_series[symbol] = pd.to_numeric(feat["turnover_notional"], errors="coerce")
             compact_v8 = _compact_v8_feature_frame(feat)
-            if not compact_v8.empty:
+            if not fast_v8 and not compact_v8.empty:
                 v8_feature_frames[symbol] = compact_v8
             # Preserve ATR for Energy Building's directionless expansion target.
             series = compute_series(df, timeframe)
@@ -2061,16 +2195,35 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 setup_timeframe=timeframe, fast_v8=fast_v8,
             )
             replay = _trim_replay_to_window(replay, window_start)
-            replays.append(replay)
-            # Large pandas objects are no longer needed once this symbol has
-            # been reduced to compact V9 ranks + replay events. Periodic GC
-            # prevents a 211-stock / 180-day run from accumulating old frames.
-            if fast_v8 and (i + 1) % 20 == 0:
-                gc.collect()
+            if fast_v8:
+                path = _write_research_symbol_shard(
+                    run_dir, i, symbol, compact_frame=compact_v8, replay=replay, note=None
+                )
+                completed_shards[symbol] = path
+                # The shard owns the compact feature/replay payload now; keep the
+                # 211-stock fetch stage essentially constant-memory.
+                del replay, compact_v8, feat, df, execution_df, oi, futures_df
+                if (i + 1) % 10 == 0:
+                    gc.collect()
+            else:
+                replays.append(replay)
         except Exception as exc:  # noqa: BLE001
             log.exception("Early movement research failed for %s", symbol)
             notes[symbol] = str(exc)
+            if fast_v8:
+                try:
+                    path = _write_research_symbol_shard(run_dir, i, symbol, compact_frame=None, replay=None, note=notes[symbol])
+                    completed_shards[symbol] = path
+                except Exception as shard_exc:  # noqa: BLE001
+                    log.warning("Could not checkpoint failed symbol %s: %s", symbol, shard_exc)
         time.sleep(_RATE_LIMIT_PAUSE)
+
+    if fast_v8:
+        completed_shards = _completed_research_symbol_shards(run_dir)
+        replays, shard_notes, usable_shards = _load_research_replays_from_shards(completed_shards, symbols)
+        notes.update(shard_notes)
+    else:
+        usable_shards = {}
 
     # Replace the per-stock historical turnover percentile with the actual
     # point-in-time cross-sectional percentile across the researched F&O
@@ -2109,7 +2262,10 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
 
     if stage_cb:
         stage_cb(2, 4, "Building cross-sectional ranks", 72)
-    _attach_v8_full_universe_scores(replays, v8_feature_frames)
+    if fast_v8:
+        _attach_v8_full_universe_scores_from_shards(replays, usable_shards, stage_cb=stage_cb)
+    else:
+        _attach_v8_full_universe_scores(replays, v8_feature_frames)
     # Cross-sectional ranks are now attached to the compact event rows; release
     # the full-universe feature/index history before Stage 3 aggregation.
     if fast_v8:
@@ -2148,6 +2304,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             run_context=run_context)
     if stage_cb:
         stage_cb(4, 4, "Preparing report", 98)
+    symbols_completed_count = len(replays)
     if fast_v8:
         replays.clear()
         gc.collect()
@@ -2157,7 +2314,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "execution_timeframe": execution_timeframe,
         "days": days,
         "symbols_scanned": len(symbols),
-        "symbols_completed": len(replays),
+        "symbols_completed": symbols_completed_count,
         "symbols_skipped": notes,
         "cost_pct": float(cost_pct),
         "slippage_pct": float(slippage_pct),
@@ -2177,6 +2334,101 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
 _EARLY_RESEARCH_STATE_PATH = Path(
     os.environ.get("EARLY_RESEARCH_STATE_PATH", "/tmp/dbindicator-early-research-state.json")
 )
+_EARLY_RESEARCH_WORK_ROOT = Path(
+    os.environ.get("EARLY_RESEARCH_WORK_ROOT", "/tmp/dbindicator-early-research-work")
+)
+_RESEARCH_RESUME_SCHEMA = "v91-resume-shards-1"
+
+
+def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
+    """Return a deterministic same-day work directory for resumable research shards.
+
+    The date is part of the key because the historical window moves each day. A process
+    restart on the same trading day resumes the exact same 211-stock job; a later-day
+    run starts fresh instead of silently reusing stale history.
+    """
+    payload = {
+        "schema": _RESEARCH_RESUME_SCHEMA,
+        "day": now_ist().date().isoformat(),
+        "symbols": list(symbols or []),
+        "timeframe": str(timeframe),
+        "days": int(days),
+        "holdout_pct": float(holdout_pct),
+        "cost_pct": float(cost_pct),
+        "slippage_pct": float(slippage_pct),
+        "research_mode": str(research_mode or "legacy"),
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    run_dir = Path(_EARLY_RESEARCH_WORK_ROOT) / digest
+    run_dir.mkdir(parents=True, exist_ok=True)
+    meta = run_dir / "meta.json"
+    if not meta.exists():
+        tmp = run_dir / "meta.json.tmp"
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, meta)
+    return run_dir
+
+
+def _research_symbol_shard_path(run_dir, index, symbol):
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(symbol))
+    return Path(run_dir) / f"{int(index):04d}-{safe}.pkl"
+
+
+def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, replay, note):
+    """Atomically persist one completed symbol so a worker restart can resume."""
+    path = _research_symbol_shard_path(run_dir, index, symbol)
+    payload = {
+        "symbol": str(symbol),
+        "compact_frame": compact_frame,
+        "replay": replay,
+        "note": note,
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("wb") as fh:
+        pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+    return path
+
+
+def _load_research_symbol_shard(path):
+    with Path(path).open("rb") as fh:
+        return pickle.load(fh)
+
+
+def _completed_research_symbol_shards(run_dir):
+    out = {}
+    for path in sorted(Path(run_dir).glob("*.pkl")):
+        try:
+            payload = _load_research_symbol_shard(path)
+            symbol = str(payload.get("symbol") or "")
+            if symbol:
+                out[symbol] = path
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Ignoring unreadable research shard %s: %s", path, exc)
+    return out
+
+
+def _load_research_replays_from_shards(shard_map, symbols):
+    replays = []
+    notes = {}
+    usable = {}
+    for symbol in symbols:
+        path = shard_map.get(symbol)
+        if not path:
+            continue
+        payload = _load_research_symbol_shard(path)
+        note = payload.get("note")
+        replay = payload.get("replay")
+        compact = payload.get("compact_frame")
+        if note:
+            notes[symbol] = str(note)
+        if replay:
+            replays.append(replay)
+        if compact is not None and getattr(compact, "empty", True) is False:
+            usable[symbol] = path
+    return replays, notes, usable
 
 
 def _default_early_research_state():
@@ -2230,7 +2482,7 @@ def _load_early_research_state():
             base["progress"].update(state["progress"])
     if base.get("status") == "running":
         base["status"] = "error"
-        base["error"] = "Research job interrupted by server restart before completion. Run it again."
+        base["error"] = "Research job interrupted by server restart before completion. Run it again to resume from the saved symbol batches."
         base["finished_at"] = now_ist().isoformat(timespec="seconds")
         try:
             _atomic_write_early_research_state(base)
@@ -2265,6 +2517,12 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
         if _early_research_state["status"] == "running":
             return {"started": False, "reason": "Early Movement Research is already running."}
         symbols = list(symbols or settings.WATCHLIST)
+        job_run_dir = (
+            _early_research_run_dir(
+                symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
+                cost_pct=cost_pct, slippage_pct=slippage_pct, research_mode=research_mode,
+            ) if fast_v8 else None
+        )
         _early_research_state.update({
             "status": "running", "progress": {"done": 0, "total": len(symbols), "symbol": None, "stage": "Fetching F&O history", "stage_index": 1, "stage_total": 4, "overall_pct": 1},
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
@@ -2299,7 +2557,8 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             result = run_early_movement_research(
                 kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
                 cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress, stage_cb=_stage,
-                universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8, research_mode=research_mode)
+                universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8, research_mode=research_mode,
+                resume_run_dir=job_run_dir)
             with _early_research_lock:
                 _early_research_state["progress"] = {"done": len(symbols), "total": len(symbols), "symbol": None, "stage": "Complete", "stage_index": 4, "stage_total": 4, "overall_pct": 100}
                 _early_research_state["result"] = result
@@ -2309,6 +2568,10 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             # Atomic checkpoint contains both result and done status; a restart
             # can therefore recover the last completed report without ambiguity.
             _persist_early_research_state()
+            # The durable final report is now in the atomic state checkpoint, so
+            # same-day reruns must fetch fresh history rather than reuse stale shards.
+            if job_run_dir is not None:
+                shutil.rmtree(job_run_dir, ignore_errors=True)
         except Exception as exc:  # noqa: BLE001
             log.exception("Early movement research run failed")
             with _early_research_lock:

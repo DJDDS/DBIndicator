@@ -1,6 +1,6 @@
 # V9.1 Goal-Focused Research Lock
 
-**Build:** `2026-08-30-INSTITUTIONAL-V9.1-GOAL-FOCUSED`
+**Build:** `2026-08-30-INSTITUTIONAL-V9.1.1-RESUMABLE-BACKTEST`
 
 ## Frozen Bear rule
 
