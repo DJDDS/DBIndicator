@@ -1,3 +1,4 @@
+import time
 import pickle
 
 import pandas as pd
@@ -225,3 +226,45 @@ def test_v91_stage2_checkpoint_skips_all_history_fetch_on_resume(tmp_path, monke
     )
     assert result["symbols_completed"] == 2
     assert result["research"]["streaming_v91"] is True
+
+
+def test_successful_v91_background_run_cleans_checkpoint_dir_without_error(tmp_path, monkeypatch):
+    """A completed streaming run must clean its shard directory and stay done."""
+    state_path = tmp_path / "research-state.json"
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "sentinel.txt").write_text("saved", encoding="utf-8")
+
+    monkeypatch.setattr(backtest, "_EARLY_RESEARCH_STATE_PATH", state_path)
+    monkeypatch.setattr(backtest, "_early_research_run_dir", lambda **_kwargs: run_dir)
+    monkeypatch.setattr(backtest, "_research_resume_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(backtest, "_completed_research_symbol_shards", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        backtest,
+        "run_early_movement_research",
+        lambda *_args, **_kwargs: {"research": {"v91_goal": {"build_id": "TEST"}}, "symbols_completed": 1},
+    )
+
+    with backtest._early_research_lock:
+        backtest._early_research_state.clear()
+        backtest._early_research_state.update(backtest._default_early_research_state())
+
+    started = backtest.start_early_movement_research(
+        object(), symbols=["AAA"], timeframe="15minute", days=180,
+        holdout_pct=30.0, cost_pct=0.08, slippage_pct=0.05,
+        universe_is_full_fno=True, fast_v8=True, research_mode="v91_fast",
+    )
+    assert started["started"] is True
+
+    deadline = time.time() + 2.0
+    state = backtest.get_early_research_state()
+    while time.time() < deadline:
+        state = backtest.get_early_research_state()
+        if state["status"] == "error" or not run_dir.exists():
+            break
+        time.sleep(0.01)
+
+    state = backtest.get_early_research_state()
+    assert state["status"] == "done"
+    assert state["error"] is None
+    assert not run_dir.exists()

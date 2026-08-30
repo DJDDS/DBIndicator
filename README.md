@@ -1,6 +1,6 @@
 # DBIndicator — V9.1 Goal-Focused Scanner
 
-**Build:** `2026-08-30-INSTITUTIONAL-V9.1.2-STREAMING-BACKTEST`
+**Build:** `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX`
 
 V9.1 narrows the scanner to the two evidence-backed jobs that matter now:
 

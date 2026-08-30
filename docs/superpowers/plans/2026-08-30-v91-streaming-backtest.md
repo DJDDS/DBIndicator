@@ -85,7 +85,7 @@
 **Interfaces:**
 - Produces deployable ZIP `DBIndicator-institutional-v9.1.2-streaming-backtest.zip`.
 
-- [x] **Step 1: Update build marker** to `2026-08-30-INSTITUTIONAL-V9.1.2-STREAMING-BACKTEST` without changing the frozen Bear rule body.
+- [x] **Step 1: Update build marker** to `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX` without changing the frozen Bear rule body.
 - [x] **Step 2: Add changelog/README notes** describing compact event shards, Stage-2 checkpointing and Railway persistent-volume recommendations.
 - [x] **Step 3: Re-run `python -m pytest -q` and compile checks.**
 - [x] **Step 4: Package the exact branch tree**, extract to a fresh directory, rerun the full suite and ZIP integrity check.

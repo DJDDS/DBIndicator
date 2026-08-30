@@ -1,6 +1,6 @@
 # V9.1.2 Streaming Backtest Reliability Upgrade
 
-Build: `2026-08-30-INSTITUTIONAL-V9.1.2-STREAMING-BACKTEST`
+Build: `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX`
 
 - Trading logic is unchanged: Bull Institutional Accumulation and the frozen Bear Fresh Short Buildup rule retain the exact V9.1 thresholds, costs, chronology and final-lock behavior.
 - V9.1 symbol checkpoints now store only compact float32 rank inputs, compact goal-focused candidate rows and confirmation counters. Full replay dictionaries are no longer persisted for V9.1 modes.

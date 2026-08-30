@@ -1,6 +1,6 @@
 # V9.1 Benchmark Release Notes
 
-Build: `2026-08-30-INSTITUTIONAL-V9.1.2-STREAMING-BACKTEST`
+Build: `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX`
 
 V9.1 is goal-focused rather than a new parameter-search surface.
 
