@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_dashboard_has_v8_professional_dual_engine_console():
+def test_dashboard_has_v9_professional_playbook_console():
     text = (ROOT / "app" / "templates" / "index.html").read_text(encoding="utf-8")
     assert 'id="v8-decision-console"' in text
     assert 'id="v8-bull-leaders"' in text
@@ -11,8 +11,8 @@ def test_dashboard_has_v8_professional_dual_engine_console():
     assert 'id="v8-dashboard-status"' in text
     assert 'id="v8-view-intraday"' in text
     assert 'id="v8-view-swing"' in text
-    assert 'Bull Top-3' in text
-    assert 'Bear Pressure Top-3' in text
+    assert 'Bull Opening Drive' in text
+    assert 'Bear Fresh Short Buildup' in text
 
 
 def test_dashboard_polls_v8_json_and_rerenders_without_page_reload():
@@ -30,16 +30,15 @@ def test_dashboard_v8_cards_show_evidence_components_and_trade_state():
         assert token in text
 
 
-def test_backtest_template_has_v8_dual_engine_result_section():
+def test_backtest_template_has_v9_playbook_result_section():
     text = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
-    assert 'V8.1 Evidence-Locked' in text
-    assert 'v8_dual' in text
-    assert 'Bullish Engine' in text
-    assert 'Bearish Engine' in text
-    assert 'Top 1' in text
-    assert 'Top 3' in text
-    assert 'Top 5' in text
-    assert 'Selling-Pressure Top-K' in text
+    assert 'V9 Professional Playbooks' in text
+    assert 'v9_playbooks' in text
+    assert 'Bull Opening Drive' in text
+    assert 'Bear Fresh Short Buildup' in text
+    assert 'Bull Pullback/Reclaim' in text
+    assert 'Bear Failed Breakout' in text
+    assert 'Bear VWAP Retest Failure' in text
 
 
 def test_backtest_v81_renderer_reads_primary_variant_shape_and_blocks():
@@ -48,17 +47,17 @@ def test_backtest_v81_renderer_reads_primary_variant_shape_and_blocks():
     assert 'validation_blocks' in text
 
 
-def test_v8_has_dedicated_one_click_15m_backtest_runner():
+def test_v9_has_dedicated_one_click_15m_backtest_runner():
     text = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
-    assert 'id="er-v8-run-btn"' in text
-    assert 'Run V8.1 Evidence-Locked Backtest' in text
+    assert 'id="er-v9-run-btn"' in text
+    assert 'Run V9 Professional Playbook Backtest' in text
     assert "timeframe:'15minute'" in text
-    body = text[text.index("document.getElementById('er-v8-run-btn')"):]
+    body = text[text.index("document.getElementById('er-v9-run-btn')"):]
     assert "startJob('/api/early-research/start'" in body
 
 
-def test_v8_build_marker_is_current_research_build():
-    build_id = '2026-08-29-INSTITUTIONAL-V8.1-EVIDENCE-LOCKED'
+def test_v9_build_marker_is_current_research_build():
+    build_id = '2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == build_id
     assert build_id in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text(encoding='utf-8')

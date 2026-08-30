@@ -1824,7 +1824,7 @@ def _trim_replay_to_window(replay, window_start):
     """Trim every research event family to the requested non-warmup window."""
     out = dict(replay or {})
     for key in ("energy_events", "baseline_energy_events", "ignition_events",
-                "best_entry_events", "swing_events", "recent_range_confirmation_events"):
+                "best_entry_events", "swing_events", "recent_range_confirmation_events", "v9_playbook_events"):
         rows = list(out.get(key) or [])
         out[key] = [e for e in rows
                     if (e.get("signal_time") or e.get("entry_time") or "") >= window_start]
@@ -1846,7 +1846,7 @@ def _attach_v8_full_universe_scores(replays, feature_frames):
         return replays
 
     event_refs = []
-    families = ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events")
+    families = ("ignition_events", "best_entry_events", "swing_events", "recent_range_confirmation_events", "v9_playbook_events")
     for replay in replays or []:
         for family in families:
             for event in replay.get(family) or []:
@@ -2096,7 +2096,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "fast_v8": bool(fast_v8),
     }
     if stage_cb:
-        stage_cb(3, 4, "Validating Bull/Bear Top-K", 86)
+        stage_cb(3, 4, "Validating V9 professional playbooks", 86)
     if fast_v8:
         research = early_research.aggregate_v8_research_fast(
             replays, holdout_pct=holdout_pct, run_context=run_context

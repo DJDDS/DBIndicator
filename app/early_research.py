@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-29-INSTITUTIONAL-V8.1-EVIDENCE-LOCKED"
+RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS"
 
 
 
@@ -234,6 +234,11 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
     )
     out["vwap_proximity_quality"] = (pd.to_numeric(out["vwap_distance_atr"], errors="coerce") >= 0) & (pd.to_numeric(out["vwap_distance_atr"], errors="coerce") <= 0.75)
     out["breakout_vwap_agrees"] = out["vwap_side_agrees"]
+    failed_dir = out.get("failed_breakout_direction", pd.Series(None, index=df.index, dtype=object))
+    out["failed_breakout_vwap_reject"] = np.where(
+        pd.Series(failed_dir, index=df.index).eq("Bearish"), df["close"] < vwap,
+        np.where(pd.Series(failed_dir, index=df.index).eq("Bullish"), df["close"] > vwap, np.nan),
+    )
     effective_extension = pd.to_numeric(out["breakout_extension_atr"], errors="coerce").fillna(
         pd.to_numeric(out.get("retained_breakout_extension_atr"), errors="coerce")
     )
@@ -570,6 +575,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
     execution = execution_df if execution_df is not None else df
     execution_timeframe = "15minute" if execution_df is not None else setup_timeframe
     energy_events, baseline_events, ignition_events, best_events, swing_events, recent_range_confirmation_events = [], [], [], [], [], []
+    v9_playbook_events = []
     energy = features.get("energy_building")
     if energy is None:
         energy = pd.Series(False, index=features.index)
@@ -630,6 +636,16 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "entry_is_extended": row.get("entry_is_extended"),
             "breakout_retained": row.get("breakout_retained"),
             "retest_confirmed": row.get("breakout_retest_confirmed"),
+            "fresh_breakout": row.get("fresh_breakout"),
+            "retained_breakout_direction": row.get("retained_breakout_direction"),
+            "retained_breakout_source": row.get("retained_breakout_source"),
+            "retained_breakout_level": row.get("retained_breakout_level"),
+            "retained_breakout_extension_atr": row.get("retained_breakout_extension_atr"),
+            "failed_breakout_direction": row.get("failed_breakout_direction"),
+            "failed_breakout_source": row.get("failed_breakout_source"),
+            "failed_breakout_level": row.get("failed_breakout_level"),
+            "failed_breakout_extension_atr": row.get("failed_breakout_extension_atr"),
+            "failed_breakout_vwap_reject": row.get("failed_breakout_vwap_reject"),
             "intraday_returns": outcomes.get("intraday", {}),
             "swing_returns": outcomes.get("swing", {}),
             "mfe_atr": outcomes.get("mfe_atr", {}),
@@ -725,27 +741,48 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
                 mapping = {2: "30m", 4: "1h", 8: "2h", 16: "4h"}
                 event["returns_pct"] = {h: event["intraday_returns"][label] for h, label in mapping.items() if label in event["intraday_returns"]}
                 ignition_events.append(event)
+                v9_playbook_events.append(dict(event))
                 if classified.get("intraday_eligible"):
                     best_events.append(dict(event))
 
-        # One-bar-later retention: this is the live swing confirmation point.
+        # One-bar-later retention/retest: V9 needs this point-in-time event even
+        # on the fast path for Pullback/Reclaim and VWAP Retest Failure. Legacy
+        # V6 swing diagnostics remain disabled when fast_v8=True.
         retained_direction = row.get("retained_breakout_direction")
-        if (not fast_v8 and row.get("breakout_retained") is True and retained_direction in ("Bullish", "Bearish")
+        if (row.get("breakout_retained") is True and retained_direction in ("Bullish", "Bearish")
                 and pos + 1 < len(df)):
-            row["breakout_direction"] = None
-            row["retained_breakout_direction"] = retained_direction
-            if row.get("breakout_source") is None:
-                row["breakout_source"] = row.get("retained_breakout_source")
-            if row.get("breakout_level") is None:
-                row["breakout_level"] = row.get("retained_breakout_level")
-            if row.get("breakout_extension_atr") is None:
-                row["breakout_extension_atr"] = row.get("retained_breakout_extension_atr")
-            classified = stock_in_play.classify_live_candidate(row)
-            event = _event_from_row(row, pos, retained_direction, classified)
-            if event is not None and event.get("breakout_source") == "Recent Range":
-                recent_range_confirmation_events.append(dict(event))
-            if classified.get("swing_eligible") and event is not None:
-                swing_events.append(event)
+            retained_row = dict(row)
+            retained_row["breakout_direction"] = None
+            retained_row["retained_breakout_direction"] = retained_direction
+            if retained_row.get("breakout_source") is None:
+                retained_row["breakout_source"] = retained_row.get("retained_breakout_source")
+            if retained_row.get("breakout_level") is None:
+                retained_row["breakout_level"] = retained_row.get("retained_breakout_level")
+            if retained_row.get("breakout_extension_atr") is None:
+                retained_row["breakout_extension_atr"] = retained_row.get("retained_breakout_extension_atr")
+            classified = stock_in_play.classify_live_candidate(retained_row)
+            event = _event_from_row(retained_row, pos, retained_direction, classified)
+            if event is not None and bool(retained_row.get("breakout_retest_confirmed")):
+                v9_playbook_events.append(dict(event))
+            if not fast_v8:
+                if event is not None and event.get("breakout_source") == "Recent Range":
+                    recent_range_confirmation_events.append(dict(event))
+                if classified.get("swing_eligible") and event is not None:
+                    swing_events.append(event)
+
+        # Failed breakout is known only after the next completed bar. V9 treats
+        # a failed bullish escape as an independent bearish reversal playbook.
+        failed_direction = row.get("failed_breakout_direction")
+        if failed_direction in ("Bullish", "Bearish") and pos + 1 < len(df):
+            failed_row = dict(row)
+            failed_row["breakout_direction"] = None
+            failed_row["retained_breakout_direction"] = None
+            failed_row["breakout_source"] = failed_row.get("failed_breakout_source")
+            failed_row["breakout_level"] = failed_row.get("failed_breakout_level")
+            failed_row["breakout_extension_atr"] = failed_row.get("failed_breakout_extension_atr")
+            event = _event_from_row(failed_row, pos, failed_direction, {})
+            if event is not None:
+                v9_playbook_events.append(event)
 
     return {
         "energy_events": energy_events,
@@ -754,6 +791,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
         "best_entry_events": best_events,
         "swing_events": swing_events,
         "recent_range_confirmation_events": recent_range_confirmation_events,
+        "v9_playbook_events": v9_playbook_events,
     }
 
 
@@ -1256,26 +1294,29 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
 
 
 def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
-    """Minimal evidence-locked V8 aggregation for the primary backtest button.
+    """Minimal V9 playbook aggregation for the primary backtest button.
 
-    This path intentionally excludes every legacy V6 lab, compression baseline,
-    interaction sweep, exit grid and promotion diagnostic.  It computes only
-    the Bull/Bear Top-K report plus lightweight coverage metadata required to
-    audit the data path.  The full legacy research remains available from the
-    explicit Legacy / 4H Diagnostic action.
+    The historical function name is kept for API compatibility, but the V9
+    primary path deliberately skips retired V8 Top-K tables as well as all V6
+    labs. Cross-sectional V8 component ranks remain attached upstream only as
+    transparent evidence features consumed by the six V9 playbooks.
     """
     ignition = []
+    v9_candidates = []
     for replay in replays or []:
         ignition.extend(replay.get("ignition_events") or [])
+        v9_candidates.extend(replay.get("v9_playbook_events") or [])
     ignition.sort(key=lambda e: e.get("entry_time", ""))
+    v9_candidates.sort(key=lambda e: e.get("entry_time", ""))
     available = sum(1 for e in ignition if e.get("oi_status") != "Unavailable")
     confirmed = sum(1 for e in ignition if e.get("oi_status") == "Confirmed")
     return {
         "research_build_id": RESEARCH_BUILD_ID,
         "holdout_pct": float(holdout_pct),
         "fast_v8": True,
+        "fast_v9": True,
         "run_context": dict(run_context or {}),
-        "v8_dual": v8_dual_report_fast(ignition),
+        "v9_playbooks": v9_playbook_report(v9_candidates),
         "oi_coverage": {
             "total": len(ignition),
             "available": available,
@@ -1285,6 +1326,92 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
         },
         "confirmation_diagnostics": confirmation_diagnostics(ignition),
     }
+
+
+def _v9_three_way(events, field, key):
+    """V9 development/validation split with a permanently locked final 20%."""
+    from . import v6_edge
+    dev, validation, _final = v6_edge.three_way_split(events)
+    return {
+        "development": _v8_return_stats(dev, field, key),
+        "validation": _v8_return_stats(validation, field, key),
+        "validation_blocks": _v8_validation_blocks(events, field, key),
+        "final_test": {
+            "locked": True,
+            "message": "V9 final 20% stays locked until an individual playbook is frozen after validation.",
+        },
+        "split": {"development_pct": 60, "validation_pct": 20, "final_pct": 20},
+    }
+
+
+def v9_playbook_report(events):
+    """Evaluate V9 playbooks independently; never average Bull and Bear together."""
+    from . import v9_playbooks
+    rows = []
+    for raw in events or []:
+        row = dict(raw)
+        # Pre-tagged events are accepted for isolated report tests and future
+        # event archives. Normal replay rows are classified below from raw facts.
+        if row.get("v9_playbook") in v9_playbooks.PLAYBOOKS:
+            rows.append(row)
+            continue
+        try:
+            now = pd.Timestamp(row.get("signal_time") or row.get("entry_time")).to_pydatetime()
+        except Exception:
+            now = None
+        for play in v9_playbooks.evaluate_row(row, now=now):
+            # Historical report tests only the exact TRADE rule. WATCH rows are
+            # retained live for monitoring but must not inflate backtest N.
+            if play.get("state") != "TRADE CANDIDATE":
+                continue
+            item = dict(row)
+            item["v9_playbook"] = play.get("playbook")
+            item["v9_score"] = play.get("score")
+            item["v9_reasons"] = play.get("reasons") or []
+            item["v9_modes"] = play.get("modes") or []
+            rows.append(item)
+
+    playbooks = {}
+    for name in v9_playbooks.PLAYBOOKS:
+        if name == v9_playbooks.BULL_CATALYST_CONTINUATION:
+            playbooks[name] = {
+                "historical_status": "LIVE_SHADOW",
+                "message": "Real catalyst/news history is not available point-in-time; V9 refuses to fabricate a historical catalyst backtest.",
+                "trade_count": 0,
+            }
+            continue
+        subset = [e for e in rows if e.get("v9_playbook") == name]
+        playbooks[name] = {
+            "historical_status": "BACKTESTABLE",
+            "side": "Bullish" if name.startswith("Bull ") else "Bearish",
+            "trade_count": len(subset),
+            "30m": _v9_three_way(subset, "intraday_returns", "30m"),
+            "1h": _v9_three_way(subset, "intraday_returns", "1h"),
+            "2h": _v9_three_way(subset, "intraday_returns", "2h"),
+            "eod": _v9_three_way(subset, "intraday_returns", "eod"),
+            "1D": _v9_three_way(subset, "swing_returns", "1D"),
+            "2D": _v9_three_way(subset, "swing_returns", "2D"),
+            "benchmark_2h": _v8_benchmark(subset, "intraday_returns", "2h"),
+            "benchmark_1D": _v8_benchmark(subset, "swing_returns", "1D"),
+        }
+    promotable_bull = [n for n, p in playbooks.items() if n.startswith("Bull ") and p.get("benchmark_1D", {}).get("status") == "PROMOTABLE"]
+    promotable_bear = [n for n, p in playbooks.items() if n.startswith("Bear ") and p.get("benchmark_1D", {}).get("status") == "PROMOTABLE"]
+    return {
+        "build_id": v9_playbooks.V9_BUILD_ID,
+        "protocol": {
+            "setup_timeframe": "15minute",
+            "selection": "independent professional playbooks",
+            "final_20_locked": True,
+            "real_catalyst_history": False,
+        },
+        "playbooks": playbooks,
+        "promotable_bull": promotable_bull,
+        "promotable_bear": promotable_bear,
+        "combined_status": "PROMOTABLE" if promotable_bull and promotable_bear else "RESEARCH",
+        "event_count": len(events or []),
+        "trade_event_count": len(rows),
+    }
+
 
 def attach_v6_path_exits(df: pd.DataFrame, event: dict, max_bars=50):
     """Attach conservative target/stop and breakeven-path outcomes to one event."""

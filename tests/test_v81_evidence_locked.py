@@ -104,7 +104,7 @@ def test_main_dashboard_no_longer_contains_v6_production_cards():
     assert "V6 Intraday Entry" not in template
     assert "V6 Swing 1-2D" not in template
     assert "Swing remains long-only" not in template
-    assert "V8.1 Evidence-Locked" in template
+    assert "V9 Professional Playbook Scanner" in template
 
 
 def test_live_operational_shortlists_are_driven_by_v81_trade_states_not_v6():
@@ -130,6 +130,6 @@ def test_live_operational_shortlists_are_driven_by_v81_trade_states_not_v6():
 
 def test_v81_one_click_runner_locks_primary_research_to_180_days():
     template = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8").replace(" ", "")
-    body = template[template.index("document.getElementById('er-v8-run-btn')"):]
+    body = template[template.index("document.getElementById('er-v9-run-btn')"):]
     assert "document.getElementById('scope-days').value='180'" in body
     assert "timeframe:'15minute',days:'180'" in body

@@ -255,11 +255,11 @@ def classify_option_expression(row, chain, *, horizon="intraday"):
     if not directional:
         return {"option_action": "OPTION DATA INSUFFICIENT", "option_edge": "NONE", "buyer_score": None}
     if horizon == "swing":
-        alpha = _f(row.get("v8_swing_alpha"), _f(row.get("v8_decision_score", row.get("v8_alpha")), 50.0))
-        state = row.get("v8_swing_state")
+        alpha = _f(row.get("v9_swing_score"), _f(row.get("v8_swing_alpha"), _f(row.get("v8_decision_score", row.get("v8_alpha")), 50.0)))
+        state = row.get("v9_swing_state") or row.get("v8_swing_state")
     else:
-        alpha = _f(row.get("v8_decision_score", row.get("v8_alpha")), 50.0)
-        state = row.get("v8_state")
+        alpha = _f(row.get("v9_intraday_score"), _f(row.get("v8_decision_score", row.get("v8_alpha")), 50.0))
+        state = row.get("v9_intraday_state") or row.get("v8_state")
     participation = _f(row.get("v8_participation"), 50.0)
     rv = _f(row.get("realized_vol_20d"))
     iv = _f(directional.get("iv_pct"), _f((chain or {}).get("atm_iv_pct")))
@@ -338,16 +338,16 @@ def _option_contracts_map(kite):
 
 
 def enrich_shortlisted_options(kite, rows, *, now=None, max_candidates=6):
-    """Attach live option intelligence to only the strongest V8 candidates."""
+    """Attach live option intelligence only after a V9 underlying playbook qualifies."""
     now = now or dt.datetime.now()
-    pool = [r for r in (rows or []) if not r.get("error") and r.get("v8_direction") in ("Bullish", "Bearish") and r.get("v8_state") in ("TRADE CANDIDATE", "WATCH")]
+    pool = [r for r in (rows or []) if not r.get("error") and (r.get("v8_direction") or r.get("failed_breakout_direction")) in ("Bullish", "Bearish") and (r.get("v9_intraday_state") or r.get("v8_state")) in ("TRADE CANDIDATE", "WATCH")]
     # Preserve the user's two-sided objective: option API budget is split across
     # bullish and bearish leaders instead of letting one side consume all slots.
     per_side = max(1, int(max_candidates) // 2)
     candidates = []
     for direction in ("Bullish", "Bearish"):
-        side = [r for r in pool if r.get("v8_direction") == direction]
-        side.sort(key=lambda r: (1 if r.get("v8_state") == "TRADE CANDIDATE" else 0, _f(r.get("v8_decision_score"), -1)), reverse=True)
+        side = [r for r in pool if (r.get("v8_direction") or r.get("failed_breakout_direction")) == direction]
+        side.sort(key=lambda r: (1 if (r.get("v9_intraday_state") or r.get("v8_state")) == "TRADE CANDIDATE" else 0, _f(r.get("v9_intraday_score"), _f(r.get("v8_decision_score"), -1))), reverse=True)
         candidates.extend(side[:per_side])
     if not candidates:
         return rows
@@ -384,8 +384,9 @@ def enrich_shortlisted_options(kite, rows, *, now=None, max_candidates=6):
     for r in candidates:
         symbol = r.get("symbol")
         contracts = selected_contracts.get(symbol, [])
-        chain = analyze_option_quotes(symbol, r.get("v8_direction"), _f(r.get("close"), 0), contracts, quotes, now=now, min_dte=0)
-        swing_chain = analyze_option_quotes(symbol, r.get("v8_direction"), _f(r.get("close"), 0), contracts, quotes, now=now, min_dte=3)
+        direction = r.get("v8_direction") or r.get("failed_breakout_direction")
+        chain = analyze_option_quotes(symbol, direction, _f(r.get("close"), 0), contracts, quotes, now=now, min_dte=0)
+        swing_chain = analyze_option_quotes(symbol, direction, _f(r.get("close"), 0), contracts, quotes, now=now, min_dte=3)
         intel = classify_option_expression(r, chain, horizon="intraday")
         swing_intel = classify_option_expression(r, swing_chain, horizon="swing")
         r["option_intelligence"] = intel
@@ -428,7 +429,7 @@ def record_shadow_snapshot(row, *, now=None):
         return
     record = {
         "ts": (now or dt.datetime.now()).isoformat(timespec="seconds"),
-        "symbol": row.get("symbol"), "direction": row.get("v8_direction"),
+        "symbol": row.get("symbol"), "direction": row.get("v8_direction") or row.get("failed_breakout_direction"),
         "underlying_close": row.get("close"), "v8_score": row.get("v8_decision_score"),
         "v8_state": row.get("v8_state"), "participation": row.get("v8_participation"),
         "realized_vol_20d": row.get("realized_vol_20d"),
@@ -505,7 +506,7 @@ def register_shadow_signal(row, *, now=None, intel_key="option_intelligence", si
         return None
     signal_ts = _signal_timestamp(row, now)
     sid = "|".join([
-        str(row.get("symbol")), str(row.get("v8_direction")), str(signal_kind), signal_ts.isoformat(timespec="minutes"), str(symbol)
+        str(row.get("symbol")), str(row.get("v8_direction") or row.get("failed_breakout_direction")), str(signal_kind), signal_ts.isoformat(timespec="minutes"), str(symbol)
     ])
     state = load_shadow_state()
     if any(x.get("id") == sid for x in state["signals"]):
@@ -513,7 +514,7 @@ def register_shadow_signal(row, *, now=None, intel_key="option_intelligence", si
     state["signals"].append({
         "id": sid,
         "symbol": row.get("symbol"),
-        "direction": row.get("v8_direction"),
+        "direction": row.get("v8_direction") or row.get("failed_breakout_direction"),
         "signal_ts": signal_ts.isoformat(timespec="seconds"),
         "underlying_entry": _f(row.get("close")),
         "signal_kind": signal_kind,

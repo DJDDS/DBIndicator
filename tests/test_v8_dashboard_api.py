@@ -49,7 +49,7 @@ def test_web_exposes_v8_dashboard_endpoint():
     text = Path("app/web.py").read_text(encoding="utf-8")
     assert '@app.route("/api/v8-dashboard")' in text
     assert 'def api_v8_dashboard()' in text
-    assert 'v8_dual.dashboard_payload' in text
+    assert 'v9_playbooks.dashboard_payload' in text
 
 
 def test_v8_dashboard_payload_exposes_option_intelligence_fields():

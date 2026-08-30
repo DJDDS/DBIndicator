@@ -204,3 +204,28 @@ def test_shadow_registers_intraday_and_swing_option_contracts_separately(tmp_pat
     signals = di.load_shadow_state()['signals']
     assert {s['signal_kind'] for s in signals} == {'intraday','swing'}
     assert {s['contract'] for s in signals} == {'ABCNEARCE','ABCFARCE'}
+
+
+def test_v9_failed_breakout_bear_uses_put_direction_in_option_analysis(monkeypatch):
+    today = dt.date.today(); expiry = today + dt.timedelta(days=10)
+    monkeypatch.setattr(di, '_option_contracts_map', lambda kite: {
+        'ABC': [
+            {'tradingsymbol':'ABC100CE','strike':100.0,'instrument_type':'CE','expiry':expiry},
+            {'tradingsymbol':'ABC100PE','strike':100.0,'instrument_type':'PE','expiry':expiry},
+        ]
+    })
+    seen = []
+    def fake_analyze(symbol, direction, spot, contracts, quotes, **kwargs):
+        seen.append(direction)
+        return {'directional': None, 'dte': 10}
+    monkeypatch.setattr(di, 'analyze_option_quotes', fake_analyze)
+    monkeypatch.setattr(di, 'record_shadow_snapshot', lambda row, now=None: None)
+    class K:
+        def quote(self, keys):
+            return {k:{'last_price':5.0} for k in keys}
+    row = {
+        'symbol':'ABC', 'failed_breakout_direction':'Bearish', 'v9_intraday_state':'TRADE CANDIDATE',
+        'v9_intraday_score':88, 'close':100, 'realized_vol_20d':30,
+    }
+    di.enrich_shortlisted_options(K(), [row], max_candidates=6, now=dt.datetime.now())
+    assert seen and all(direction == 'Bearish' for direction in seen)

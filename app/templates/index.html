@@ -312,8 +312,8 @@
 <div id="toast-wrap"></div>
 <header>
   <div class="brand">
-    <h1>V8.2 Dual Alpha + Derivative Intelligence</h1>
-    <span class="tagline">NSE F&amp;O &middot; independent Bull/Bear Alpha &middot; cross-sectional evidence &middot; 15m signal / 4H context</span>
+    <h1>V9 Professional Playbook Scanner</h1>
+    <span class="tagline">NSE F&amp;O &middot; Bull + Bear professional playbooks &middot; derivative intelligence &middot; 15m signal / 4H context</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -396,13 +396,13 @@
     </div>
   </div>
 
-  <section id="v8-decision-console" class="card v8-console" aria-label="V8.2 Derivative Intelligence live decision console">
+  <section id="v8-decision-console" class="card v8-console" aria-label="V9 Professional Playbook Scanner live decision console">
     <div class="v8-console-head">
       <div>
-        <div class="v8-kicker">V8.2 Dual Alpha + Derivative Intelligence · NSE F&amp;O</div>
-        <h2>Live Decision Console <span class="sub">Bull Top-3 + Bear Pressure Top-3 · Derivative Intelligence for option expression · 15m signal / 4H context</span></h2>
+        <div class="v8-kicker">V9 Professional Playbook Scanner + Derivative Intelligence · NSE F&amp;O</div>
+        <h2>Live Decision Console <span class="sub">Bull Opening Drive · Bull Pullback/Reclaim · Bull Catalyst Continuation · Bear Fresh Short Buildup · Bear Failed Breakout · Bear VWAP Retest Failure</span></h2>
       </div>
-      <div class="v8-tabs" role="tablist" aria-label="V8 horizon">
+      <div class="v8-tabs" role="tablist" aria-label="V9 horizon">
         <button type="button" class="v8-tab active" id="v8-view-intraday" role="tab" aria-selected="true">Intraday</button>
         <button type="button" class="v8-tab" id="v8-view-swing" role="tab" aria-selected="false">1–2D Swing</button>
       </div>
@@ -413,19 +413,19 @@
       <div class="v8-metric"><span class="v8-metric-label">TRADE CANDIDATE</span><span class="v8-metric-value" id="v8-trade-count">—</span></div>
       <div class="v8-metric"><span class="v8-metric-label">WATCH</span><span class="v8-metric-value" id="v8-watch-count">—</span></div>
       <div class="v8-metric"><span class="v8-metric-label">Option FW 30m</span><span class="v8-metric-value" id="v82-option-fw">—</span></div>
-      <div class="v8-metric"><span class="v8-metric-label">Last V8 scan</span><span class="v8-metric-value" id="v8-last-scan" style="font-size:11px;">—</span></div>
+      <div class="v8-metric"><span class="v8-metric-label">Last V9 scan</span><span class="v8-metric-value" id="v8-last-scan" style="font-size:11px;">—</span></div>
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
-        <div class="v8-side-head">Bullish Leaders <span>Bull Top-3</span></div>
+        <div class="v8-side-head">Bullish Playbooks <span>best current professional setups</span></div>
         <div id="v8-bull-leaders" class="v8-leader-list"><div class="v8-empty">Loading bullish evidence…</div></div>
       </section>
       <section class="v8-side bear" aria-label="Bearish leaders">
-        <div class="v8-side-head">Bearish Leaders <span>Bear Pressure Top-3</span></div>
+        <div class="v8-side-head">Bearish Playbooks <span>fresh shorts / failures / retests</span></div>
         <div id="v8-bear-leaders" class="v8-leader-list"><div class="v8-empty">Loading bearish evidence…</div></div>
       </section>
     </div>
-    <div class="v8-method"><strong>Derivative Intelligence:</strong> live shortlisted options are checked for IV/RV, ATM move, Spread, DTE, Greeks and liquidity; this layer decides option expression and never changes the underlying rank. <strong>Bull:</strong> Recent-Range + Participation + Top-3 Bull Alpha. <strong>Bear:</strong> selling pressure = Participation + Relative Weakness + Derivatives + close-near-low acceptance, Top-3 across bearish breakout sources. <strong>Execution:</strong> 1.25 ATR chase guard; 4H is context, never a veto. <a href="/api/option-shadow/export" style="margin-left:8px;">Export option forward data</a> before redeploys if you want to preserve the live validation file.</div>
+    <div class="v8-method"><strong>V9 Playbook logic:</strong> the scanner first identifies a specific repeatable setup instead of a universal composite score. Bull playbooks: <strong>Bull Opening Drive</strong>, <strong>Bull Pullback/Reclaim</strong>, <strong>Bull Catalyst Continuation</strong>. Bear playbooks: <strong>Bear Fresh Short Buildup</strong>, <strong>Bear Failed Breakout</strong>, <strong>Bear VWAP Retest Failure</strong>. <strong>Derivative Intelligence:</strong> IV/RV, ATM move, spread, DTE, Greeks and liquidity decide option expression only after the underlying playbook qualifies. <strong>Execution:</strong> 1.25 ATR chase guard; 4H is context, never a veto. <a href="/api/option-shadow/export" style="margin-left:8px;">Export option forward data</a>.</div>
   </section>
 
 
@@ -460,7 +460,7 @@
   </div>
 
   <div class="card" style="border-color:#273d55;">
-    <h2>Production model status <span class="sub">V8.2 option expression on V8.1 evidence-locked underlying engine</span></h2>
+    <h2>Production model status <span class="sub">V9 playbooks select the underlying; Derivative Intelligence evaluates option expression downstream</span></h2>
     <p class="sl-empty">The live decision surface above is the production candidate. Earlier V6/V7 shortlist cards are retired from the dashboard after failing or becoming obsolete in longer validation. Research diagnostics remain on the <a href="/backtest">Backtest page</a>; they do not generate live trade candidates.</p>
   </div>
 
@@ -1021,7 +1021,7 @@
   pollDashboardState();
   setInterval(pollDashboardState, DASHBOARD_REFRESH_MS);
 
-  // V8.1 Evidence-Locked: independent JSON polling keeps the decision console live
+  // V9 Professional Playbooks: independent JSON polling keeps the decision console live
   // without reloading the page or disturbing the watchlist and research radar.
   var v8View = 'intraday';
   var lastV8Payload = null;
@@ -1065,7 +1065,7 @@
     var reasons = (row.reasons || []).slice(0, 4).map(function (reason) {
       return '<span class="v8-reason">' + v8Esc(reason) + '</span>';
     }).join('');
-    var meta = 'OI state: ' + v8Esc(row.oi_state || 'Unavailable');
+    var meta = v8Esc(row.playbook || 'No playbook') + ' · OI state: ' + v8Esc(row.oi_state || 'Unavailable');
     if (row.extension_atr != null) meta += ' · Ext ' + v8Num(row.extension_atr, 2) + ' ATR';
     if (row.tod_rvol != null) meta += ' · RVOL ' + v8Num(row.tod_rvol, 2) + 'x';
     return '<article class="v8-leader ' + side + ' ' + stateClass + '">' +
@@ -1073,10 +1073,10 @@
       '<div class="v8-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><div class="v8-meta">' + meta + '</div></div>' +
       '<div class="v8-evidence">' +
         (side === 'bear'
-          ? v8Component('Participation', row.participation) + v8Component('Relative Weakness', row.relative) + v8Component('Derivatives', row.derivatives) + v8Component('Bear Pressure', row.bear_pressure)
-          : v8Component('Structure', row.structure) + v8Component('Participation', row.participation) + v8Component('Relative Strength', row.relative) + v8Component('Derivatives', row.derivatives)) +
+          ? v8Component('Participation', row.participation) + v8Component('Relative Weakness', row.relative) + v8Component('Derivatives', row.derivatives) + v8Component('Playbook Score', row.score)
+          : v8Component('Structure', row.structure) + v8Component('Participation', row.participation) + v8Component('Relative Strength', row.relative) + v8Component('Playbook Score', row.score)) +
       '</div>' +
-      '<div class="v8-scorebox"><div class="v8-alpha">' + v8Num(row.alpha, 0) + '<small>/100</small></div><span class="v8-state ' + stateClass + '">' + v8Esc(state) + '</span></div>' +
+      '<div class="v8-scorebox"><div class="v8-alpha">' + v8Num(row.score, 0) + '<small>/100</small></div><span class="v8-state ' + stateClass + '">' + v8Esc(state) + '</span></div>' +
       renderV82Option(row) +
       (reasons ? '<div class="v8-reasons">' + reasons + '</div>' : '') +
     '</article>';
@@ -1120,7 +1120,7 @@
 
   function pollV8Dashboard() {
     fetch('/api/v8-dashboard', { cache: 'no-store' }).then(function (r) {
-      if (!r.ok) throw new Error('V8 dashboard failed: ' + r.status);
+      if (!r.ok) throw new Error('V9 dashboard failed: ' + r.status);
       return r.json();
     }).then(renderV8Leaders).catch(function () {
       var status = document.getElementById('v8-dashboard-status');

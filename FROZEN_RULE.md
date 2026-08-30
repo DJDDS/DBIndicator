@@ -1,54 +1,40 @@
-# V8.2 Operational / Research Lock
+# V9 Professional Playbook Research Lock
 
-**Production build:** `2026-08-29-INSTITUTIONAL-V8.2-DERIVATIVE-INTELLIGENCE`
+**Build:** `2026-08-30-INSTITUTIONAL-V9-PROFESSIONAL-PLAYBOOKS`
 
-## Underlying screener — evidence locked from V8.1
+V9 is designed for the project's fixed objective: **both bullish and bearish NSE stock-F&O opportunities, intraday and 1–2 day swing, with derivative intelligence downstream for option expression.**
 
-V8.2 does not retune the stock-selection model after seeing the 90/180-day results.
+## Production selection architecture
 
-- Universe: current NSE stock-F&O universe from Kite.
-- Signal timeframe: 15 minute. 4H is context only.
-- Bull pool: genuine 15m Recent-Range upside escapes.
-- Bull ranking: cross-sectional Bull Alpha with the pre-existing Participation quality floor.
-- Bear pool: genuine bearish breakout events.
-- Bear ranking: Bear Pressure = median(Participation, Relative Weakness, direction-aware Derivatives, close-near-low acceptance). Bullish Structure is not mirrored into the bear formula.
-- Operational breadth: Top 3 Bull + Top 3 Bear at each point in time.
-- Anti-chase: 1.25 ATR extension guard.
-- OI/futures basis: supporting evidence, never a universal veto.
-- Intraday and 1–2D swing states remain separate.
+V9 does not use one universal Bull/Bear score as the trade thesis. It classifies explicit playbooks:
 
-## V8.2 derivative-expression layer — live/shadow, not historically promoted
+### Bullish
+1. **Bull Opening Drive** — early-session Opening-Range escape with abnormal participation, relative leadership, high-close acceptance and anti-chase.
+2. **Bull Pullback/Reclaim** — bullish Recent-Range breakout followed by a confirmed retest/reclaim with relative strength and acceptable VWAP/location.
+3. **Bull Catalyst Continuation** — real live event/news catalyst plus bullish price/participation confirmation. This is **LIVE/SHADOW only** until a point-in-time historical event archive exists.
 
-The option layer is deliberately downstream of the stock rank. It **cannot promote or demote the underlying candidate**.
+### Bearish
+4. **Bear Fresh Short Buildup** — bearish fresh price break with price-down/OI-up positioning, relative weakness, selling participation and non-improving basis.
+5. **Bear Failed Breakout** — prior bullish breakout fails back through the decision level and rejects VWAP with bearish acceptance.
+6. **Bear VWAP Retest Failure** — bearish breakdown retest fails and relative weakness persists.
 
-For the strongest three bullish and strongest three bearish candidates it reads the live NFO stock-option chain and evaluates:
+## Fixed controls
+- NSE stock-F&O universe.
+- Signal timeframe: **15 minute**.
+- 4H: context only, never a universal veto.
+- Maximum extension/chase guard: **1.25 ATR**.
+- OI/basis: supporting evidence; Bear Fresh Short Buildup explicitly requires fresh short positioning because that is the playbook's economic premise.
+- Live focus: maximum three Bull and three Bear TRADE candidates per mode; WATCH candidates remain visible.
+- Intraday and 1–2D Swing are independent states.
 
-- nearest live expiry for intraday expression;
-- first expiry with at least 3 calendar DTE for 1–2D swing expression;
-- near-ATM contracts only (no lottery-OTM promotion);
-- live bid/ask midpoint and spread;
-- model-estimated IV, delta, gamma, theta and vega;
-- 20-session annualized realized volatility and IV/RV ratio;
-- ATM-straddle priced move to expiry;
-- ATM call/put IV spread;
-- ATM volume PCR and OI PCR as **unsigned context only**;
-- approximate put/call skew from nearby quoted strikes;
-- option volume/OI and liquidity.
+## Historical validation
+Primary V9 backtest is locked to **15minute / 180 calendar days / current stock-F&O universe** and reports each backtestable playbook independently at 30m / 1h / 2h / EOD / 1D / 2D.
 
-Expression labels are decision-support only:
+Each playbook uses chronological **60% development / 20% validation / 20% locked final**, plus four validation blocks. A weak Bear playbook cannot be averaged with a strong Bull playbook.
 
-- `OPTION BUYER EDGE`
-- `UNDERLYING GOOD - OPTION EXPENSIVE`
-- `PREMIUM RICH - DEFINED-RISK SELLING BIAS`
-- `UNDERLYING ONLY / WAIT`
-- `OPTION DATA INSUFFICIENT`
+No final 20% is exposed until an individual playbook is frozen after adequate validation.
 
-Kite's normal historical interface does not provide an honest point-in-time historical stock-option chain with the bid/ask/IV surface/signed trade flow required for a true option P&L backtest. Therefore V8.2 **does not fabricate one**.
+## Derivative Intelligence
+The existing derivative-intelligence layer remains downstream. It can label a qualified underlying playbook as OPTION BUYER EDGE, OPTION EXPENSIVE, PREMIUM RICH / DEFINED-RISK SELLING BIAS, UNDERLYING ONLY / WAIT, or OPTION DATA INSUFFICIENT. It cannot manufacture an underlying trade.
 
-Instead, every live analyzed option is written to `option_shadow.jsonl`, and registered contracts are forward-marked at 30m / 2h / EOD / 1D in `option_shadow_state.json`. The dashboard shows forward 30m sample/win-rate as evidence accumulates. Export `/api/option-shadow/export` before redeploying if the Railway container has no persistent volume.
-
-No V8.2 option label should be called a validated edge until the forward sample is large and stable enough to justify promotion.
-
-## Retired V7
-
-The former V7 `RR_LONG_CATALYST60_15M_NEXTBAR_1D` final sample was consumed and rejected. It is audit history only and must not be rerun or tuned against the already-seen final data.
+Kite does not supply a complete point-in-time historical stock-option chain suitable for an honest option-P&L replay. Live option evidence is therefore forward-marked rather than retrospectively fabricated.

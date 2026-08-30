@@ -950,6 +950,12 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     fresh_breakout = bool(_sip_last.get("fresh_breakout")) if _sip_last is not None and pd.notna(_sip_last.get("fresh_breakout")) else False
     breakout_retained = bool(_sip_last.get("breakout_retained")) if _sip_last is not None and pd.notna(_sip_last.get("breakout_retained")) else False
     breakout_retest_confirmed = bool(_sip_last.get("breakout_retest_confirmed")) if _sip_last is not None and pd.notna(_sip_last.get("breakout_retest_confirmed")) else False
+    failed_breakout_direction = _sip_last.get("failed_breakout_direction") if _sip_last is not None else None
+    failed_breakout_source = _sip_last.get("failed_breakout_source") if _sip_last is not None else None
+    failed_level_raw = _sip_last.get("failed_breakout_level") if _sip_last is not None else np.nan
+    failed_breakout_level = round(float(failed_level_raw), 2) if pd.notna(failed_level_raw) else None
+    failed_ext_raw = _sip_last.get("failed_breakout_extension_atr") if _sip_last is not None else np.nan
+    failed_breakout_extension_atr = round(float(failed_ext_raw), 3) if pd.notna(failed_ext_raw) else None
     retained_breakout_direction = _sip_last.get("retained_breakout_direction") if _sip_last is not None else None
     retained_breakout_source = _sip_last.get("retained_breakout_source") if _sip_last is not None else None
     retained_level_raw = _sip_last.get("retained_breakout_level") if _sip_last is not None else np.nan
@@ -980,6 +986,9 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     breakout_entry_extended = bool(
         active_breakout_extension_atr is not None and active_breakout_extension_atr > settings.MAX_ENTRY_EXTENSION_ATR
     )
+    failed_breakout_vwap_reject = None
+    if failed_breakout_direction and vwap:
+        failed_breakout_vwap_reject = bool(close.iloc[i] < vwap) if failed_breakout_direction == "Bearish" else bool(close.iloc[i] > vwap)
 
     # Regime-adaptive volume bar: a choppy/Ranging market throws off a
     # lot more low-conviction volume spikes than a Trending one, so a
@@ -1452,6 +1461,11 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "fresh_breakout": fresh_breakout,
         "breakout_retained": breakout_retained,
         "breakout_retest_confirmed": breakout_retest_confirmed,
+        "failed_breakout_direction": failed_breakout_direction,
+        "failed_breakout_source": failed_breakout_source,
+        "failed_breakout_level": failed_breakout_level,
+        "failed_breakout_extension_atr": failed_breakout_extension_atr,
+        "failed_breakout_vwap_reject": failed_breakout_vwap_reject,
         "retained_breakout_direction": retained_breakout_direction,
         "retained_breakout_source": retained_breakout_source,
         "retained_breakout_level": retained_breakout_level,

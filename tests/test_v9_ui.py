@@ -1,0 +1,53 @@
+from pathlib import Path
+
+from app import v9_playbooks
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_dashboard_is_v9_professional_playbook_console():
+    text = (ROOT / "app/templates/index.html").read_text(encoding="utf-8")
+    assert "V9 Professional Playbook Scanner" in text
+    assert "Bull Opening Drive" in text
+    assert "Bull Pullback/Reclaim" in text
+    assert "Bear Fresh Short Buildup" in text
+    assert "Bear Failed Breakout" in text
+    assert "Bear VWAP Retest Failure" in text
+    assert "Derivative Intelligence" in text
+
+
+def test_backtest_has_dedicated_v9_one_click_runner_and_playbook_report():
+    text = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
+    assert 'id="er-v9-run-btn"' in text
+    assert "Run V9 Professional Playbook Backtest" in text
+    assert "v9_playbooks" in text
+    assert "Bull Opening Drive" in text
+    assert "Bear Fresh Short Buildup" in text
+    assert "mode:'v9_fast'" in text
+    assert "timeframe:'15minute'" in text
+    assert "days:'180'" in text
+
+
+def test_web_accepts_v9_fast_and_v9_dashboard_payload():
+    text = (ROOT / "app/web.py").read_text(encoding="utf-8")
+    assert '"v9_fast"' in text
+    assert "v9_playbooks.dashboard_payload" in text
+
+
+def test_v9_dashboard_payload_surfaces_playbook_and_option_expression():
+    row = {
+        "symbol": "ABC", "v8_direction": "Bullish",
+        "v9_intraday_playbook": v9_playbooks.BULL_OPENING_DRIVE,
+        "v9_intraday_score": 91, "v9_intraday_state": "TRADE CANDIDATE",
+        "v9_intraday_reasons": ["Opening-range escape"],
+        "v8_participation": 93, "v8_relative": 88, "v8_derivatives": 75,
+        "v8_oi_state": "Long Buildup", "breakout_extension_atr": 0.4,
+        "option_action": "OPTION BUYER EDGE", "option_edge": "HIGH",
+        "option_contract": "ABCSEP100CE", "option_iv_rv_ratio": 0.95,
+        "option_spread_pct": 1.2, "option_dte": 8, "option_straddle_move_pct": 2.5,
+    }
+    payload = v9_playbooks.dashboard_payload({"results": [row]})
+    got = payload["intraday"]["bullish"][0]
+    assert got["playbook"] == v9_playbooks.BULL_OPENING_DRIVE
+    assert got["score"] == 91.0
+    assert got["option_action"] == "OPTION BUYER EDGE"

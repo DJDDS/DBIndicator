@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, derivative_intelligence, journal, kite_auth, scanner
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, journal, kite_auth, scanner, news
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -487,6 +487,106 @@ def _apply_v8_dual_alpha(results, now=None):
             original["v8_swing_late_session"] = swing.get("late_session")
     return results
 
+
+
+
+
+def _refresh_v9_catalyst_news(results):
+    """Spend the throttled Marketaux budget only on bullish stocks already in play."""
+    candidates = [
+        r for r in (results or [])
+        if not r.get("error") and r.get("v8_direction") == "Bullish"
+        and (r.get("v8_participation") is not None and float(r.get("v8_participation")) >= 70.0)
+    ]
+    candidates.sort(key=lambda r: float(r.get("v8_participation") or 0), reverse=True)
+    symbols = [r.get("symbol") for r in candidates[:10] if r.get("symbol")]
+    if symbols:
+        try:
+            news.fetch_news_for_symbols(symbols)
+        except Exception:  # noqa: BLE001 - catalyst data can never stop scanning
+            log.exception("V9 catalyst-news refresh failed")
+    return symbols
+
+
+def _apply_v9_playbooks(results, now=None):
+    """Attach V9 professional playbooks and cap live focus to Top-3 per side.
+
+    V8 component ranks remain useful evidence inputs, but V9—not V8.1 Top-K—
+    decides the operational setup. Real catalyst evidence comes only from the
+    live news cache; no price-volume proxy is relabelled as a real catalyst.
+    """
+    clock = now or now_ist()
+    rows = [r for r in (results or []) if not r.get("error")]
+    for r in rows:
+        articles = news.get_news_for_symbol(r.get("symbol"), limit=3) if r.get("symbol") else []
+        plays = v9_playbooks.evaluate_row(r, now=clock, news_articles=articles)
+        r["v9_playbooks"] = plays
+        for mode in ("intraday", "swing"):
+            matches = [p for p in plays if mode in (p.get("modes") or []) and p.get("state") in ("TRADE CANDIDATE", "WATCH")]
+            matches.sort(key=lambda p: (1 if p.get("state") == "TRADE CANDIDATE" else 0, float(p.get("score") or 0)), reverse=True)
+            best = matches[0] if matches else {}
+            prefix = f"v9_{mode}_"
+            r[prefix + "playbook"] = best.get("playbook")
+            r[prefix + "score"] = best.get("score")
+            r[prefix + "state"] = best.get("state") or "NO EDGE"
+            r[prefix + "reasons"] = best.get("reasons") or []
+
+    # Operational focus is at most three Bull and three Bear names per horizon.
+    # This is a display/risk-cap, not a searched score threshold.
+    for mode in ("intraday", "swing"):
+        for side in ("Bullish", "Bearish"):
+            candidates = [r for r in rows if (r.get("v8_direction") == side or r.get("failed_breakout_direction") == side)
+                          and r.get(f"v9_{mode}_state") == "TRADE CANDIDATE"]
+            candidates.sort(key=lambda r: float(r.get(f"v9_{mode}_score") or -1), reverse=True)
+            keep = {id(r) for r in candidates[:3]}
+            for r in candidates[3:]:
+                r[f"v9_{mode}_state"] = "WATCH"
+                reasons = list(r.get(f"v9_{mode}_reasons") or [])
+                reasons.append("Outside current Top-3 focus")
+                r[f"v9_{mode}_reasons"] = reasons[:5]
+    return results
+
+
+def _apply_v9_operational_shortlists(results):
+    """Project V9 playbook decisions onto shortlist fields used by UI/alerts."""
+    intraday, swing, radar = [], [], []
+    for r in results or []:
+        r["shortlist_rank"] = None
+        r["swing_rank"] = None
+        r["radar_rank"] = None
+        r["intraday_eligible"] = False
+        r["swing_eligible"] = False
+        if r.get("error"):
+            continue
+        side = r.get("v8_direction") or r.get("failed_breakout_direction")
+        if side not in ("Bullish", "Bearish"):
+            continue
+        r["trade_direction"] = side
+        istate = r.get("v9_intraday_state") or "NO EDGE"
+        sstate = r.get("v9_swing_state") or "NO EDGE"
+        score = r.get("v9_intraday_score")
+        r["movement_score"] = score
+        r["movement_stage"] = f"V9 {r.get('v9_intraday_playbook')}" if r.get("v9_intraday_playbook") else "V9 No Playbook"
+        if istate in ("TRADE CANDIDATE", "WATCH"):
+            radar.append(r)
+        if istate == "TRADE CANDIDATE":
+            r["intraday_eligible"] = True
+            intraday.append(r)
+        if sstate == "TRADE CANDIDATE":
+            r["swing_eligible"] = True
+            swing.append(r)
+
+    intraday.sort(key=lambda r: float(r.get("v9_intraday_score") or -1), reverse=True)
+    swing.sort(key=lambda r: float(r.get("v9_swing_score") or -1), reverse=True)
+    radar.sort(key=lambda r: (1 if r.get("v9_intraday_state") == "TRADE CANDIDATE" else 0,
+                              float(r.get("v9_intraday_score") or -1)), reverse=True)
+    for i, r in enumerate(intraday, 1):
+        r["shortlist_rank"] = i
+    for i, r in enumerate(swing, 1):
+        r["swing_rank"] = i
+    for i, r in enumerate(radar[:10], 1):
+        r["radar_rank"] = i
+    return intraday, swing
 
 
 def _apply_derivative_intelligence(kite, results, now=None):
@@ -1478,12 +1578,15 @@ def _run_loop():
                     )
                     _apply_v6_basis(results, history=_v6_basis_history, now=now_ist())
                     _apply_v8_dual_alpha(results, now=now_ist())
-                    # V8.1 is the single production shortlist/alert source.  V6
-                    # classifiers stay available only for historical diagnostics.
-                    _apply_v81_operational_shortlists(results)
-                    # V8.2: option intelligence is an expression layer AFTER the
-                    # underlying shortlist is frozen. It cannot promote/demote the
-                    # stock alpha; it only labels option-buy / expensive / wait.
+                    # Refresh real event headlines only for already-strong bullish
+                    # attention names, then classify the explicit V9 playbooks.
+                    _refresh_v9_catalyst_news(results)
+                    # V9 converts cross-sectional evidence into explicit Bull/Bear
+                    # playbooks. It is now the single production shortlist source.
+                    _apply_v9_playbooks(results, now=now_ist())
+                    _apply_v9_operational_shortlists(results)
+                    # V8.2 Derivative Intelligence remains downstream: it decides
+                    # option expression and cannot create an underlying playbook.
                     _apply_derivative_intelligence(kite, results, now=now_ist())
                     oi_events = _detect_oi_accel_events(results)
                     with _state_lock:

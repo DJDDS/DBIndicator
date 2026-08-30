@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual, derivative_intelligence
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -154,7 +154,7 @@ def api_dashboard_state():
 @app.route("/api/v8-dashboard")
 @require_dashboard_password
 def api_v8_dashboard():
-    payload = v8_dual.dashboard_payload(get_state())
+    payload = v9_playbooks.dashboard_payload(get_state())
     payload["market_open"] = scanner.is_market_open()
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()
@@ -517,11 +517,11 @@ def api_early_research_start():
     if not symbols:
         return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
     mode = request.form.get("mode", "legacy")
-    if mode not in ("legacy", "v8_fast"):
-        return jsonify({"started": False, "reason": "mode must be legacy or v8_fast"}), 400
+    if mode not in ("legacy", "v8_fast", "v9_fast"):
+        return jsonify({"started": False, "reason": "mode must be legacy, v8_fast or v9_fast"}), 400
     return jsonify(backtest.start_early_movement_research(
         kite, symbols=symbols, timeframe=timeframe, days=days, universe_is_full_fno=True,
-        fast_v8=(mode == "v8_fast"),
+        fast_v8=(mode in ("v8_fast", "v9_fast")),
     ))
 
 

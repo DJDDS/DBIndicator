@@ -195,6 +195,26 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
     retained_ext = retained_ext.mask(retained_dir.eq("Bullish"), (df["close"] - retained_level) / atr.replace(0, np.nan))
     retained_ext = retained_ext.mask(retained_dir.eq("Bearish"), (retained_level - df["close"]) / atr.replace(0, np.nan))
 
+    # A breakout failure is also a one-bar-later fact.  The prior fresh escape
+    # must close back through its escaped level before V9 may reinterpret that
+    # failed bullish breakout as a bearish reversal (or vice versa).  Nothing
+    # on the original breakout bar can know this yet, so there is no look-ahead.
+    prev_fresh = fresh.shift(1, fill_value=False) & same_session_prev
+    prev_fresh_dir = direction.shift(1).where(prev_fresh)
+    prev_fresh_source = source.shift(1).where(prev_fresh)
+    prev_fresh_level = level.shift(1).where(prev_fresh)
+    failed = pd.Series(False, index=idx)
+    failed |= prev_fresh_dir.eq("Bullish") & (df["close"] < prev_fresh_level)
+    failed |= prev_fresh_dir.eq("Bearish") & (df["close"] > prev_fresh_level)
+    failed_direction = pd.Series(None, index=idx, dtype=object)
+    failed_direction = failed_direction.mask(failed & prev_fresh_dir.eq("Bullish"), "Bearish")
+    failed_direction = failed_direction.mask(failed & prev_fresh_dir.eq("Bearish"), "Bullish")
+    failed_source = prev_fresh_source.where(failed)
+    failed_level = prev_fresh_level.where(failed)
+    failed_ext = pd.Series(np.nan, index=idx, dtype=float)
+    failed_ext = failed_ext.mask(failed_direction.eq("Bearish"), (failed_level - df["close"]) / atr.replace(0, np.nan))
+    failed_ext = failed_ext.mask(failed_direction.eq("Bullish"), (df["close"] - failed_level) / atr.replace(0, np.nan))
+
     # A retest is a one-bar-later confirmation, never a fact available on the
     # breakout bar itself.  The confirmation bar must probe back to within
     # 0.20 ATR of the escaped level and still CLOSE on the breakout side.
@@ -236,6 +256,10 @@ def build_price_features(df: pd.DataFrame, atr, compression=None, tod_rvol=None,
         "retained_breakout_level": retained_level,
         "retained_breakout_extension_atr": retained_ext,
         "breakout_retest_confirmed": retest_confirmed,
+        "failed_breakout_direction": failed_direction,
+        "failed_breakout_source": failed_source,
+        "failed_breakout_level": failed_level,
+        "failed_breakout_extension_atr": failed_ext,
         "breakout_source": source,
         "breakout_level": level,
         "breakout_extension_atr": ext,
