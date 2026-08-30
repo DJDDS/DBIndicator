@@ -1275,7 +1275,7 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
         "holdout_pct": float(holdout_pct),
         "fast_v8": True,
         "run_context": dict(run_context or {}),
-        "v8_dual": v8_dual_report(ignition),
+        "v8_dual": v8_dual_report_fast(ignition),
         "oi_coverage": {
             "total": len(ignition),
             "available": available,
@@ -1502,6 +1502,96 @@ def _ensure_v8_event_scores(events):
         if row.get("direction") == "Bearish" and row.get("v81_bear_pressure") is None:
             row["v81_bear_pressure"] = v8_dual.bear_pressure_score(row)
     return rows
+
+
+def v8_dual_report_fast(events):
+    """Primary V8.2.2 report without audit-only ablations or duplicate Top-K scans.
+
+    The operational logic is identical to V8.1/V8.2.1: Bullish Recent-Range
+    Top-K and independent Bear Pressure Top-K with fixed quality floors.  The
+    fast report computes K=1/3/5 in one pass per side and reuses Top-3 for the
+    full-horizon benchmark.  Legacy ablations stay available only through the
+    explicit diagnostic path.
+    """
+    from . import v8_dual
+    rows = _ensure_v8_event_scores(events)
+
+    def fin(e, key):
+        try:
+            v = e.get(key)
+            return float(v) if v is not None and np.isfinite(float(v)) else None
+        except (TypeError, ValueError):
+            return None
+
+    def not_chased(e):
+        ext = fin(e, "breakout_extension_atr")
+        return ext is None or ext <= v8_dual.MAX_EXTENSION_ATR
+
+    bull_base = [e for e in rows if e.get("direction") == "Bullish" and e.get("breakout_source") == "Recent Range" and not_chased(e)]
+    bear_base = [e for e in rows if e.get("direction") == "Bearish" and not_chased(e)]
+
+    report = {
+        "protocol": {
+            "setup_timeframe": "15minute",
+            "entry": "next executable 15-minute bar",
+            "weights_fitted": False,
+            "parameter_grid": False,
+            "final_locked": True,
+            "selection": "point-in-time Top-K, predefined K=1/3/5",
+            "operational_breadth": 3,
+            "watch_quality_floor": 70.0,
+            "participation_floor": 70.0,
+            "max_extension_atr": v8_dual.MAX_EXTENSION_ATR,
+            "bull_origin": "Bullish Recent-Range escape",
+            "bear_origin": "Any bearish breakout source; pressure-led ranking",
+            "bear_pressure": "median(Participation, Relative Weakness, Derivatives, Bear CLV)",
+            "fast_stage3": True,
+        }
+    }
+
+    bull_sets = v8_dual.select_top_k_breadths(
+        bull_base, score_field="v8_alpha", ks=(1, 3, 5), direction="Bullish",
+        participation_floor=70.0, score_floor=70.0, allowed_sources={"Recent Range"},
+    )
+    bear_sets = v8_dual.select_top_k_breadths(
+        bear_base, score_field="v81_bear_pressure", ks=(1, 3, 5), direction="Bearish",
+        participation_floor=70.0, score_floor=70.0, allowed_sources=None,
+    )
+
+    report["bullish"] = {"primary_variants": {}}
+    report["bearish"] = {"primary_variants": {}}
+    for k in (1, 3, 5):
+        subset = bull_sets[k]
+        report["bullish"]["primary_variants"][f"top{k}"] = {
+            "2h": _v8_three_way(subset, "intraday_returns", "2h"),
+            "1D": _v8_three_way(subset, "swing_returns", "1D"),
+        }
+        subset = bear_sets[k]
+        report["bearish"]["primary_variants"][f"pressure_top{k}"] = {
+            "2h": _v8_three_way(subset, "intraday_returns", "2h"),
+            "1D": _v8_three_way(subset, "swing_returns", "1D"),
+        }
+
+    for name, full in (("bullish", bull_sets[3]), ("bearish", bear_sets[3])):
+        report[name]["full_horizons"] = {
+            "30m": _v8_three_way(full, "intraday_returns", "30m"),
+            "1h": _v8_three_way(full, "intraday_returns", "1h"),
+            "2h": _v8_three_way(full, "intraday_returns", "2h"),
+            "eod": _v8_three_way(full, "intraday_returns", "eod"),
+            "1D": _v8_three_way(full, "swing_returns", "1D"),
+            "2D": _v8_three_way(full, "swing_returns", "2D"),
+        }
+        report[name]["benchmark"] = {
+            "intraday_2h": _v8_benchmark(full, "intraday_returns", "2h"),
+            "swing_1D": _v8_benchmark(full, "swing_returns", "1D"),
+        }
+
+    bull_ok = report["bullish"]["benchmark"]["swing_1D"]["status"] == "PROMOTABLE"
+    bear_ok = report["bearish"]["benchmark"]["swing_1D"]["status"] == "PROMOTABLE"
+    report["combined_status"] = "PROMOTABLE" if bull_ok and bear_ok else "RESEARCH"
+    report["total_recent_range_events"] = sum(1 for e in rows if e.get("breakout_source") == "Recent Range")
+    report["total_bearish_breakout_events"] = len(bear_base)
+    return report
 
 
 def v8_dual_report(events):

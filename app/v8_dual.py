@@ -506,6 +506,58 @@ def select_top_k(
         out.extend(ranked[:max(0, int(k))])
     return sorted(out, key=lambda r: (str(r.get("entry_time") or r.get("signal_time") or ""), -float(r.get(score_field) or -1)))
 
+def select_top_k_breadths(
+    rows: Iterable[dict], *, score_field: str, ks=(1, 3, 5), direction: str,
+    participation_floor: float = 70.0, score_floor: float = 70.0,
+    allowed_sources: set[str] | None = None,
+) -> dict[int, list[dict]]:
+    """Select several predefined Top-K breadths in one point-in-time pass.
+
+    This is the fast-backtest equivalent of calling ``select_top_k`` for
+    K=1/3/5 separately.  Eligibility is evaluated once and each timestamp is
+    sorted once; smaller breadths are prefixes of the same contemporaneous
+    ranking, so the trading semantics are unchanged.
+    """
+    widths = tuple(sorted({max(0, int(k)) for k in ks}))
+    out = {k: [] for k in widths}
+    if not widths:
+        return out
+    max_k = max(widths)
+    groups: dict[str, list[dict]] = {}
+    for raw in rows or []:
+        row = dict(raw)
+        if _direction(row) != direction:
+            continue
+        if allowed_sources is not None:
+            source = row.get("breakout_source") or row.get("retained_breakout_source")
+            if source not in allowed_sources:
+                continue
+        participation = _float(row.get("v8_participation"))
+        score = _float(row.get(score_field))
+        ext = _float(row.get("breakout_extension_atr"), _float(row.get("retained_breakout_extension_atr")))
+        if participation is None or participation < participation_floor:
+            continue
+        if score is None or score < score_floor:
+            continue
+        if ext is not None and ext > MAX_EXTENSION_ATR:
+            continue
+        ts = str(row.get("signal_time") or row.get("entry_time") or "")
+        groups.setdefault(ts, []).append(row)
+
+    for ts in sorted(groups):
+        ranked = sorted(
+            groups[ts],
+            key=lambda r: (float(r.get(score_field) or -1), float(r.get("v8_participation") or -1), str(r.get("symbol") or "")),
+            reverse=True,
+        )[:max_k]
+        for k in widths:
+            out[k].extend(ranked[:k])
+
+    for k in widths:
+        out[k].sort(key=lambda r: (str(r.get("entry_time") or r.get("signal_time") or ""), -float(r.get(score_field) or -1)))
+    return out
+
+
 def _json_number(value):
     if not _finite(value):
         return None

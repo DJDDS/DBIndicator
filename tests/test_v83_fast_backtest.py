@@ -71,3 +71,46 @@ def test_fast_result_hides_legacy_research_sections_in_ui():
     template = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
     assert "er-legacy-research" in template
     assert "r.fast_v8" in template
+
+
+def test_fast_v8_report_skips_legacy_ablations_and_selects_each_side_once(monkeypatch):
+    from app import early_research, v8_dual
+
+    calls = []
+    real = v8_dual.select_top_k_breadths if hasattr(v8_dual, 'select_top_k_breadths') else None
+
+    # The optimized API does not exist in V8.2.1; this test must fail before the fix.
+    assert real is not None, 'select_top_k_breadths is required for one-pass Top-K selection'
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs.get('direction'))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(v8_dual, 'select_top_k_breadths', counted)
+    rows = []
+    for i in range(120):
+        direction = 'Bullish' if i % 2 == 0 else 'Bearish'
+        rows.append({
+            'symbol': f'S{i%20}', 'direction': direction,
+            'breakout_source': 'Recent Range' if direction == 'Bullish' else ('Opening Range' if i % 4 else 'Recent Range'),
+            'signal_time': f'2026-01-{1 + (i//20):02d}T10:{(i%4)*15:02d}:00',
+            'entry_time': f'2026-01-{1 + (i//20):02d}T10:{(i%4)*15:02d}:00',
+            'v8_alpha': 70 + (i % 30), 'v81_bear_pressure': 70 + ((i*3) % 30),
+            'v8_participation': 75 + (i % 20), 'v8_structure': 80,
+            'v8_relative': 80, 'v8_derivatives': 80,
+            'breakout_extension_atr': 0.4,
+            'intraday_returns': {'30m': 0.1, '1h': 0.1, '2h': 0.1, 'eod': 0.1},
+            'swing_returns': {'1D': 0.1, '2D': 0.1},
+            'mfe_atr': {'2h': 1.0, '1D': 1.0}, 'mae_atr': {'2h': 0.5, '1D': 0.5},
+            'oi_status': 'Confirmed',
+        })
+    replay = {'ignition_events': rows}
+    result = early_research.aggregate_v8_research_fast([replay], run_context={'fast_v8': True})
+    report = result['v8_dual']
+
+    assert calls.count('Bullish') == 1
+    assert calls.count('Bearish') == 1
+    assert 'legacy_ablations' not in report['bullish']
+    assert 'legacy_ablations' not in report['bearish']
+    assert set(report['bullish']['primary_variants']) == {'top1', 'top3', 'top5'}
+    assert set(report['bearish']['primary_variants']) == {'pressure_top1', 'pressure_top3', 'pressure_top5'}

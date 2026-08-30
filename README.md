@@ -131,3 +131,6 @@ Railway can auto-deploy from the GitHub repository's `main` branch. After replac
 A high Movement Score is not a probability of profit. OI can reflect hedging/arbitrage, compressed stocks can break either way, and options can lose even when the underlying direction is correct because of IV, spread and theta. Use the system as a research/shortlisting tool and validate changes out-of-sample before risking capital.
 ## V8.2.1 fast backtest
 The primary V8 evidence-locked backtest now bypasses legacy V6 diagnostics and reports four explicit progress stages. Use **Legacy / 4H Diagnostic** only when you intentionally want the older research tables.
+
+## V8.2.2 Stage-3 fast validation
+The primary V8 backtest now computes Top-1/Top-3/Top-5 in one contemporaneous ranking pass per direction and omits audit-only V8 ablations. This is a performance-only change; trading logic and validation rules are unchanged. Legacy / 4H Diagnostic retains the full audit calculations.
