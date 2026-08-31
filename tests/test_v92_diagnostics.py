@@ -1,5 +1,7 @@
 import datetime as dt
 
+import pytest
+
 from app import v91_goal
 
 
@@ -98,19 +100,19 @@ def test_bear_regime_decomposition_compares_validation_and_consumed_final():
 
     report = v91_goal.bear_fsb_regime_decomposition(rows)
     assert report["validation"]["overall"]["trade_count"] == 2
-    assert report["final"]["overall"]["trade_count"] == 2
+    # The consumed one-shot final is immutable; current rolling rows must not
+    # manufacture a replacement final cohort.
+    assert report["final"]["overall"]["trade_count"] == 68
+    assert report["final"]["overall"]["avg_return_pct"] == pytest.approx(-0.208)
+    assert report["final"]["overall"]["profit_factor"] == pytest.approx(0.68)
+    assert report["final_sample_source"] == "IMMUTABLE_CONSUMED_FINAL_SUMMARY"
+    assert report["final_cohort_analysis_available"] is False
     assert report["validation"]["market_regime"]["Trend Down"]["trade_count"] == 2
-    assert report["final"]["market_regime"]["Trend Up"]["trade_count"] == 2
     assert report["validation"]["sector_relative"]["weaker_than_sector"]["trade_count"] == 2
-    assert report["final"]["sector_relative"]["not_weaker_than_sector"]["trade_count"] == 2
     assert report["validation"]["index_trend"]["index_down"]["trade_count"] == 2
-    assert report["final"]["index_trend"]["index_up"]["trade_count"] == 2
     assert report["validation"]["market_volatility"]["normal_vol"]["trade_count"] == 2
-    assert report["final"]["market_volatility"]["high_vol"]["trade_count"] == 2
     assert report["validation"]["oi_persistence"]["accelerating_oi"]["trade_count"] == 2
-    assert report["final"]["oi_persistence"]["decelerating_oi"]["trade_count"] == 2
     assert report["validation"]["post_60m_positioning"]["shorts_persisting"]["trade_count"] == 2
-    assert report["final"]["post_60m_positioning"]["short_covering"]["trade_count"] == 2
     assert report["breadth_history"] == "UNAVAILABLE_IN_CURRENT_HISTORICAL_DATASET"
     assert report["diagnostic_only"] is True
     assert "new_rule" not in report
@@ -252,3 +254,35 @@ def test_v91_goal_report_emits_stage3_subprogress():
         "Finalizing V9.2 diagnostic report",
     ]
     assert [p for _, p in updates] == [88, 92, 96]
+
+
+def test_bull_gate_funnel_separates_vwap_availability_from_bull_above_vwap():
+    row = bull_seed(vwap_side_agrees=None)
+    row['bull_vwap_available'] = True
+    row['bull_above_vwap'] = True
+    funnel = v91_goal.bull_accumulation_gate_funnel([row])
+    counts = {x['gate']: x['survivors'] for x in funnel['stages']}
+    assert counts['vwap_available'] == 1
+    assert counts['above_vwap'] == 1
+
+
+def test_consumed_bear_final_summary_is_immutable_and_not_resplit_from_current_events():
+    rows = []
+    start = dt.datetime(2026, 1, 1, 10, 0, tzinfo=dt.timezone(dt.timedelta(hours=5, minutes=30)))
+    for i in range(100):
+        ts = (start + dt.timedelta(days=i)).isoformat()
+        rows.append(bear_row(ts, 9.0 if i >= 80 else 0.2))
+
+    report = v91_goal.bear_fsb_regime_decomposition(rows)
+
+    final = report['final']['overall']
+    assert final['trade_count'] == 68
+    assert final['avg_return_pct'] == pytest.approx(-0.208)
+    assert final['profit_factor'] == pytest.approx(0.68)
+    assert report['final_sample_source'] == 'IMMUTABLE_CONSUMED_FINAL_SUMMARY'
+    assert report['final_cohort_analysis_available'] is False
+
+
+def test_15minute_backtest_default_is_180_days_for_primary_research():
+    from app import backtest
+    assert backtest.backtest_day_bounds('15minute')[2] == 180

@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE"
+V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY"
 
 BULL_INSTITUTIONAL_ACCUMULATION = "Bull Institutional Accumulation"
 BULL_OPENING_DRIVE = "Bull Opening Drive"
@@ -209,8 +209,11 @@ def evaluate_row(row: dict, *, now=None, news_articles=None) -> list[dict]:
         and oi_60 is not None and oi_60 > 0
         and tod is not None and tod >= 1.0
     )
+    bull_above_vwap = r.get("bull_above_vwap")
+    if bull_above_vwap is None:
+        bull_above_vwap = r.get("vwap_side_agrees")
     if (accumulation_seed and r.get("v8_oi_state") == "Long Buildup"
-            and r.get("vwap_side_agrees") is True and accumulation_basis_ok):
+            and bull_above_vwap is True and accumulation_basis_ok):
         score = _consensus([part, relative, deriv, bull_clv])
         quality = bool(
             part is not None and part >= 70

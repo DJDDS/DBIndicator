@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE"
+BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 
@@ -64,6 +64,19 @@ def _fingerprint() -> str:
     raw = json.dumps(_FROZEN_BEAR_RULE, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
+
+
+# Immutable audit record from the one-shot Bear FSB final test consumed on
+# 2026-08-30.  V9.2 diagnostics must never regenerate a different final
+# sample from a later rolling 180-day window.  Exact final event identifiers
+# were not persisted by the consumed run, so cohort-level final decomposition
+# is intentionally unavailable rather than fabricated.
+CONSUMED_BEAR_FSB_FINAL_SUMMARY = {
+    "trade_count": 68,
+    "avg_return_pct": -0.208,
+    "profit_factor": 0.68,
+    "verdict": "REJECT",
+}
 
 def frozen_bear_fsb_spec() -> dict:
     spec = json.loads(json.dumps(_FROZEN_BEAR_RULE))
@@ -199,10 +212,26 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
         score = _consensus([row.get("v8_participation"), row.get("v8_relative"), row.get("v8_derivatives"), _bull_clv(row)])
         return score is not None and score >= 70.0
 
+    def vwap_available(row):
+        explicit = row.get("bull_vwap_available")
+        if explicit is not None:
+            return bool(explicit)
+        # Compatibility for older unit fixtures/shards where the only VWAP
+        # field was direction-relative. A real True/False value means VWAP was
+        # available; None means it was not evaluable for this broad Bull seed.
+        return row.get("vwap_side_agrees") is not None
+
+    def above_vwap(row):
+        explicit = row.get("bull_above_vwap")
+        if explicit is not None:
+            return bool(explicit)
+        return row.get("vwap_side_agrees") is True
+
     gates = [
         ("price_up_oi_up", "Price up + OI up", seed),
         ("long_buildup", "Long Buildup state", lambda r: r.get("v8_oi_state") == "Long Buildup"),
-        ("above_vwap", "Above-VWAP acceptance", lambda r: r.get("vwap_side_agrees") is True),
+        ("vwap_available", "VWAP data available", vwap_available),
+        ("above_vwap", "Above-VWAP acceptance", above_vwap),
         ("tod_rvol_ge_1", "TOD RVOL >= 1.0", lambda r: finite_ge(r, "tod_rvol", 1.0)),
         ("participation_ge_70", "Participation >= 70", lambda r: finite_ge(r, "v8_participation", 70.0)),
         ("relative_strength_ge_70", "Relative Strength >= 70", lambda r: finite_ge(r, "v8_relative", 70.0)),
@@ -348,20 +377,31 @@ def _period_regime_summary(events: Iterable[dict]) -> dict:
 
 
 def bear_fsb_regime_decomposition(events: Iterable[dict]) -> dict:
-    """Explain the already-consumed Bear FSB validation/final divergence.
+    """Audit the rejected Bear FSB rule without regenerating its final sample.
 
-    The rule has been rejected and is not modified here.  These cohorts are
-    descriptive diagnostics only; no cohort becomes a new trading rule.
+    The one-shot final result is immutable.  The consumed run did not persist
+    exact final event identifiers, therefore V9.2 reports the exact consumed
+    final summary and refuses to invent cohort-level final diagnostics from a
+    later rolling window. Validation cohorts remain descriptive only.
     """
     candidates = select_frozen_bear_fsb(events)
-    _dev, validation, final = _split_60_20_20(candidates)
+    _dev, validation, _rolling_final = _split_60_20_20(candidates)
+    immutable_final = dict(CONSUMED_BEAR_FSB_FINAL_SUMMARY)
     return {
         "diagnostic_only": True,
         "rule_status": "REJECTED_FINAL_DO_NOT_RETUNE",
         "breadth_history": "UNAVAILABLE_IN_CURRENT_HISTORICAL_DATASET",
         "validation": _period_regime_summary(validation),
-        "final": _period_regime_summary(final),
-        "message": "Validation-vs-final regime decomposition only. Do not use this table to retune the rejected Bear FSB rule against its consumed final sample.",
+        "final": {
+            "overall": immutable_final,
+            "market_regime": {}, "index_trend": {}, "market_volatility": {},
+            "basis_direction": {}, "sector_relative": {}, "time_bucket": {},
+            "oi_strength_bucket": {}, "oi_persistence": {}, "post_60m_positioning": {},
+            "feature_summary": {},
+        },
+        "final_sample_source": "IMMUTABLE_CONSUMED_FINAL_SUMMARY",
+        "final_cohort_analysis_available": False,
+        "message": "The exact consumed final summary is preserved (68 trades, -0.208%, PF 0.68). Exact final event IDs were not persisted, so V9.2 does not fabricate final regime cohorts from a later rolling window.",
     }
 
 def validate_protocol(run_context: dict | None) -> dict:

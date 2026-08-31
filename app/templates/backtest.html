@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY</div>
     <p>
       <strong>V9.2 Diagnostic Reset is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.1 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
     </p>
@@ -300,7 +300,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE";
+const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -795,8 +795,9 @@ function renderEarlyResearch(result) {
         <p class="hint">Cumulative survival through the unchanged Bull Institutional Accumulation gates. This identifies the population bottleneck; it does not tune thresholds or unlock the Bull final 20%.</p>
         <table><thead><tr><th>Gate</th><th>Survivors</th><th>Dropped here</th><th>% of seed</th></tr></thead><tbody>${funnelRows || '<tr><td colspan="4">No broad Price↑ + OI↑ seeds captured.</td></tr>'}</tbody></table>
         <h4 style="margin:18px 0 6px;">Bear FSB Validation vs Final Regime <span class="hint">diagnostic only · rejected rule</span></h4>
-        <p class="hint">The Bear FSB final sample has already been consumed and rejected. These tables explain regime drift only; they must not be used to retune or resurrect the rejected rule.</p>
-        <div class="hint"><strong>Validation:</strong> ${regimeOverallV.trade_count || 0} trades · ${pct(regimeOverallV.avg_return_pct)} · PF ${pf(regimeOverallV.profit_factor)} &nbsp; | &nbsp; <strong>Final:</strong> ${regimeOverallF.trade_count || 0} trades · ${pct(regimeOverallF.avg_return_pct)} · PF ${pf(regimeOverallF.profit_factor)}</div>
+        <p class="hint">The Bear FSB final sample has already been consumed and rejected. Its final summary is immutable and cannot be regenerated from today's rolling window.</p>
+        <div class="hint"><strong>Validation:</strong> ${regimeOverallV.trade_count || 0} trades · ${pct(regimeOverallV.avg_return_pct)} · PF ${pf(regimeOverallV.profit_factor)} &nbsp; | &nbsp; <strong>Consumed Final:</strong> ${regimeOverallF.trade_count || 0} trades · ${pct(regimeOverallF.avg_return_pct)} · PF ${pf(regimeOverallF.profit_factor)}</div>
+        ${regime.final_cohort_analysis_available === false ? '<div class="hint" style="margin-top:8px;color:#d9a441;"><strong>Final regime cohorts unavailable:</strong> exact final event IDs were not persisted by the consumed one-shot run, so V9.2 will not fabricate them from a later rolling window.</div>' : `
         ${cohortCompare('market_regime','Market regime')}
         ${cohortCompare('index_trend','Index trend')}
         ${cohortCompare('market_volatility','Market volatility')}
@@ -805,7 +806,7 @@ function renderEarlyResearch(result) {
         ${cohortCompare('time_bucket','Signal time of day')}
         ${cohortCompare('oi_strength_bucket','OI-change magnitude')}
         ${cohortCompare('oi_persistence','OI persistence')}
-        ${cohortCompare('post_60m_positioning','Post-signal positioning')}
+        ${cohortCompare('post_60m_positioning','Post-signal positioning')}`}
         <div class="hint" style="margin-top:8px;"><strong>Historical breadth:</strong> unavailable in the current point-in-time research dataset; V9.2 does not fabricate it.</div>
       `;
       v91Box.innerHTML = `

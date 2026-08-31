@@ -125,7 +125,7 @@ MIN_BACKTEST_DAYS_BY_TF = {
     "15minute": 5, "60minute": 10, "4hour": 30, "day": 120, "week": 540,
 }
 DEFAULT_BACKTEST_DAYS_BY_TF = {
-    "15minute": 90, "60minute": 90, "4hour": 180, "day": 365, "week": 900,
+    "15minute": 180, "60minute": 90, "4hour": 180, "day": 365, "week": 900,
 }
 MAX_BACKTEST_DAYS = 1095  # absolute ceiling; the per-timeframe cap above is what actually applies
 
@@ -2067,7 +2067,7 @@ _V91_COMPACT_EVENT_KEYS = (
     "fresh_breakout", "breakout_source", "breakout_direction", "breakout_extension_atr",
     "price_chg_60m_pct", "oi_chg_60m_pct", "oi_chg_30m_pct", "oi_acceleration", "basis_acceleration",
     "future_price_chg_60m_pct", "future_oi_chg_60m_pct",
-    "vwap_side_agrees", "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
+    "vwap_side_agrees", "bull_vwap_available", "bull_above_vwap", "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
     "turnover_notional", "rs_pct", "stock_sector_lead_pct", "stock_index_lead_pct",
     "market_regime", "index_ret_8_pct", "index_vol_20bar_pct", "sector_rank_percentile", "basis_pct",
     "close_position_pct", "high", "low", "close",

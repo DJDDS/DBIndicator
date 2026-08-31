@@ -1,6 +1,6 @@
 # V9.2.2 Stage-2 In-Place Scoring Patch
 
-Build: `2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE`
+Build: `2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY`
 
 - Keeps all V9.2 diagnostic/trading logic unchanged.
 - Scores already-private Stage-2 candidate rows in place instead of allocating a second dictionary population.

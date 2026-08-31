@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE"
+RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY"
 
 
 
@@ -228,6 +228,11 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
         context_direction.eq("Bullish"), df["close"] > vwap,
         np.where(context_direction.eq("Bearish"), df["close"] < vwap, np.nan),
     )
+    # V9.1 Bull Institutional Accumulation is intentionally independent of a
+    # breakout/legacy indicator direction. Preserve the raw session-VWAP fact
+    # separately so broad price-up/OI-up diagnostic seeds can be evaluated.
+    out["bull_vwap_available"] = vwap.notna() & pd.to_numeric(df["close"], errors="coerce").notna()
+    out["bull_above_vwap"] = np.where(out["bull_vwap_available"], df["close"] > vwap, np.nan)
     out["vwap_distance_atr"] = np.where(
         context_direction.eq("Bullish"), (df["close"] - vwap) / atr_safe,
         np.where(context_direction.eq("Bearish"), (vwap - df["close"]) / atr_safe, np.nan),
@@ -633,6 +638,8 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "sector_agrees": row.get("sector_agrees"),
             "rs_pct": row.get("rs_pct"),
             "vwap_side_agrees": row.get("vwap_side_agrees"),
+            "bull_vwap_available": row.get("bull_vwap_available"),
+            "bull_above_vwap": row.get("bull_above_vwap"),
             "vwap_distance_atr": row.get("vwap_distance_atr"),
             "vwap_proximity_quality": row.get("vwap_proximity_quality"),
             "entry_is_extended": row.get("entry_is_extended"),
@@ -762,8 +769,11 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             if accumulation_event is not None:
                 accumulation_event["v92_accumulation_seed"] = True
                 accumulation_event["v91_accumulation_seed_direction"] = "Bullish"
+                bull_above_vwap = row.get("bull_above_vwap")
+                if bull_above_vwap is None:
+                    bull_above_vwap = row.get("vwap_side_agrees")
                 accumulation_event["v91_accumulation_probe"] = bool(
-                    row.get("vwap_side_agrees") is True
+                    bull_above_vwap is True
                     and tod is not None and np.isfinite(tod) and float(tod) >= 1.0
                 )
                 accumulation_event["fresh_breakout"] = False

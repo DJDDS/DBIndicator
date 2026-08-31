@@ -75,8 +75,20 @@ def time_of_day_rvol(df: pd.DataFrame, lookback_sessions: int = 20, now=None, in
         denom = baseline.copy()
         if now is not None and len(vals):
             last_ts = vals.index[-1]
-            if last_ts.date() == now.date() and last_ts <= now < last_ts + dt.timedelta(minutes=interval_minutes):
-                elapsed = (now - last_ts).total_seconds() / (interval_minutes * 60.0)
+            # Kite intraday candle indexes are commonly timezone-aware while
+            # scanner.now_ist() intentionally returns a naive IST wall-clock
+            # datetime for Kite request compatibility.  Normalize only for this
+            # comparison so a live 15-minute scan cannot fail every symbol with
+            # "can't compare offset-naive and offset-aware datetimes".
+            now_ts = pd.Timestamp(now)
+            if getattr(last_ts, "tzinfo", None) is not None and now_ts.tzinfo is None:
+                now_ts = now_ts.tz_localize(last_ts.tzinfo)
+            elif getattr(last_ts, "tzinfo", None) is None and now_ts.tzinfo is not None:
+                now_ts = now_ts.tz_localize(None)
+            elif getattr(last_ts, "tzinfo", None) is not None and now_ts.tzinfo is not None:
+                now_ts = now_ts.tz_convert(last_ts.tzinfo)
+            if last_ts.date() == now_ts.date() and last_ts <= now_ts < last_ts + dt.timedelta(minutes=interval_minutes):
+                elapsed = (now_ts - last_ts).total_seconds() / (interval_minutes * 60.0)
                 elapsed = min(1.0, max(1.0 / interval_minutes, elapsed))
                 denom.iloc[-1] = denom.iloc[-1] * elapsed if pd.notna(denom.iloc[-1]) else np.nan
         ratios = vals / denom.replace(0, np.nan)
@@ -1424,6 +1436,12 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         "tod_rvol_accel": tod_rvol_accel,
         "trend_state": trend_state,
         "vwap_side_agrees": vwap_side_agrees,
+        # Direction-independent VWAP facts for V9.1 Bull Institutional
+        # Accumulation.  ``vwap_side_agrees`` follows the legacy majority
+        # direction, so it cannot be used to decide whether a price-up/OI-up
+        # accumulation seed is simply above session VWAP.
+        "bull_vwap_available": bool(vwap is not None and np.isfinite(float(vwap))),
+        "bull_above_vwap": (bool(close.iloc[i] > vwap) if vwap is not None and np.isfinite(float(vwap)) else None),
         # One momentum axis, reported in two parts: did RSI cross its
         # average on THIS bar (the early read), and is it merely holding
         # above it (the weaker, later read). MACD is exposed separately as

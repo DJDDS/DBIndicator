@@ -476,7 +476,8 @@ def _apply_v8_dual_alpha(results, now=None):
             p60 = oi60 = tod = None
         if (not (r.get("breakout_direction") or r.get("retained_breakout_direction") or r.get("direction"))
                 and p60 is not None and p60 > 0 and oi60 is not None and oi60 > 0
-                and tod is not None and tod >= 1.0 and r.get("vwap_side_agrees") is True):
+                and tod is not None and tod >= 1.0
+                and (r.get("bull_above_vwap") if r.get("bull_above_vwap") is not None else r.get("vwap_side_agrees")) is True):
             r["v91_accumulation_seed_direction"] = "Bullish"
     ranked = v8_dual.rank_cross_section(rows)
     clock = now if now is not None else now_ist()
