@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -18,9 +18,11 @@ _scanner_started = False
 _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
 
-def _dashboard_counts(results):
+def _dashboard_counts(results, *, index_direction=None, index_chg_pct=None, market_breadth=None):
     rows = list(results or [])
-    opportunity = live_opportunity_radar(rows)
+    opportunity = live_opportunity_radar(
+        rows, index_direction=index_direction, index_chg_pct=index_chg_pct, market_breadth=market_breadth
+    )
     return {
         "radar": sum(1 for r in rows if r.get("radar_rank") is not None),
         "opportunities": opportunity["counts"]["displayed"],
@@ -79,8 +81,15 @@ def dashboard():
     all_results = state["results"]
     scan_health = v9_playbooks.scan_health_counts(all_results)
     scan_failures = v9_playbooks.scan_failure_details(all_results, state.get("scan_symbol_health") or {})
-    market_state = live_market_state(all_results)
-    opportunity_radar = live_opportunity_radar(all_results)
+    market_state = live_market_state(
+        all_results, index_direction=state.get("index_direction"),
+        index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+    )
+    opportunity_radar = live_opportunity_radar(
+        all_results, index_direction=state.get("index_direction"),
+        index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+    )
+    forward_validation = opportunity_forward.summarize(state.get("opportunity_forward"))
 
     return render_template(
         "index.html",
@@ -93,7 +102,11 @@ def dashboard():
         scan_failures=scan_failures,
         market_state=market_state,
         opportunity_radar=opportunity_radar,
-        live_counts=_dashboard_counts(all_results),
+        forward_validation=forward_validation,
+        live_counts=_dashboard_counts(
+            all_results, index_direction=state.get("index_direction"),
+            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        ),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
         timeframe=config.WATCHLIST_TIMEFRAME,
@@ -161,9 +174,19 @@ def api_dashboard_state():
         "error_count": health["errors"],
         "scan_health": health,
         "scan_failures": v9_playbooks.scan_failure_details(rows, state.get("scan_symbol_health") or {}),
-        "market_state": live_market_state(rows),
-        "opportunity_radar": live_opportunity_radar(rows),
-        "counts": _dashboard_counts(rows),
+        "market_state": live_market_state(
+            rows, index_direction=state.get("index_direction"),
+            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        ),
+        "opportunity_radar": live_opportunity_radar(
+            rows, index_direction=state.get("index_direction"),
+            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        ),
+        "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
+        "counts": _dashboard_counts(
+            rows, index_direction=state.get("index_direction"),
+            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        ),
         "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
         "market_open": scanner.is_market_open(),
     })
@@ -175,12 +198,30 @@ def api_v8_dashboard():
     state = get_state()
     payload = v9_playbooks.dashboard_payload(state)
     payload["market_open"] = scanner.is_market_open()
-    payload["market_state"] = live_market_state(state.get("results") or [])
-    payload["opportunity_radar"] = live_opportunity_radar(state.get("results") or [])
+    rows = state.get("results") or []
+    payload["market_state"] = live_market_state(
+        rows, index_direction=state.get("index_direction"),
+        index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+    )
+    payload["opportunity_radar"] = live_opportunity_radar(
+        rows, index_direction=state.get("index_direction"),
+        index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+    )
+    payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()
     payload["option_forward_swing"] = derivative_intelligence.get_shadow_stats("swing")
     return jsonify(payload)
+
+
+@app.route("/api/opportunity-forward/export")
+@require_dashboard_password
+def api_opportunity_forward_export():
+    """Download the raw V9.2.7 live-opportunity forward-validation state."""
+    state = get_state().get("opportunity_forward") or opportunity_forward.empty_state()
+    body = json.dumps(state, indent=2, default=str)
+    headers = {"Content-Disposition": "attachment; filename=v927_opportunity_forward_validation.json"}
+    return Response(body, mimetype="application/json", headers=headers)
 
 
 @app.route("/api/option-shadow/export")

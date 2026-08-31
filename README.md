@@ -1,6 +1,6 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.6-LIVE-OPPORTUNITY-RADAR`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.7-REGIME-FORWARD-VALIDATION`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
@@ -24,7 +24,7 @@ The diagnostic run remains fixed to the full NSE F&O universe, 15-minute setup/e
 The live Dashboard/Watchlist/OI surfaces are evidence-gated: research or rejected playbooks do not generate production candidates. The dashboard reports attempted/valid/error scan counts, and the OI Screener uses a compact JSON-safe API payload so restored state cannot break browser number formatting.
 
 
-## V9.2.6 live opportunity radar
+## V9.2.6 live opportunity radar (retained)
 
 This release keeps every V9 evidence gate unchanged but separates **production validation** from **live market attention**. The main Dashboard now has a **Live Opportunity Radar — RESEARCH / SHADOW** that can surface bullish and bearish stocks even while `ACTIVE_PLAYBOOKS` is empty.
 
@@ -33,3 +33,14 @@ The radar ranks current F&O names using price + OI structure, day/recent OI expa
 The **Opportunity Score is an attention/ranking score, not probability of profit and not a validated entry signal**. Rejected Bear Fresh Short Buildup remains rejected; Bull Institutional Accumulation/Catalyst remain shadow-only; alerts and validated TRADE/WATCH shortlists stay evidence-gated.
 
 V9.2.5 scan-health diagnostics are retained: exact per-symbol failure stage, last successful scan, valid/attempted universe counts, current failure details, and the Live Market State OI breadth strip.
+
+
+## V9.2.7 regime + forward-validation upgrade
+
+V9.2.7 keeps the V9.2.6 Live Opportunity Radar but fixes the three production-integrity issues found in the live deployment:
+
+- the live NSE stock-F&O universe is cross-checked against the NSE cash instrument map, so non-stock derivative names such as `NIFTYFPI` are excluded before scanning;
+- persisted breakout-extension settings above **1.25 ATR** are migrated back to 1.25 and the Settings page cannot loosen the anti-chase ceiling beyond 1.25;
+- Market Bias is now a weighted, missing-data-aware regime score from **NIFTY trend (25%) + watchlist price breadth (20%) + F&O OI breadth (20%) + sector breadth (15%) + relative-strength distribution (10%) + VWAP participation (10%)**. Regime remains ranking context only, never a veto.
+
+The build also starts honest **forward validation** for Live Opportunity Radar names. The first top-5 Bull/Bear appearance for each symbol+direction per trading day is recorded with its original score/rank/entry price. Outcomes are then measured from the first available live scan at/after **30m, 1h, 2h, 4h and next-session same-time (1D)**. Intraday horizons that do not mature before the session ends are marked unavailable rather than contaminated with an overnight move. The forward state is persisted inside the normal scanner state and can be exported from the Dashboard.

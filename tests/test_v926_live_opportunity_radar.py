@@ -87,7 +87,8 @@ def test_web_api_exposes_live_opportunity_radar():
 
     assert "live_opportunity_radar" in text
     assert 'payload["opportunity_radar"]' in text
-    assert '"opportunity_radar": live_opportunity_radar(rows)' in text
+    assert '"opportunity_radar": live_opportunity_radar(' in text
+    assert 'market_breadth=state.get("breadth")' in text
 
 
 def test_live_opportunity_radar_uses_4h_as_context_not_a_veto():

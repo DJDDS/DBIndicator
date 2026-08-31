@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_backtest_ui_exposes_v9_build_and_keeps_legacy_v6_audit_locked():
     html = (ROOT / 'app/templates/backtest.html').read_text()
-    build_id = '2026-08-31-INSTITUTIONAL-V9.2.6-LIVE-OPPORTUNITY-RADAR'
+    build_id = '2026-08-31-INSTITUTIONAL-V9.2.7-REGIME-FORWARD-VALIDATION'
     assert build_id in html
     assert build_id in (ROOT / 'app/early_research.py').read_text()
     assert build_id in (ROOT / 'RESEARCH_BUILD.txt').read_text()

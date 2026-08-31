@@ -300,6 +300,8 @@
   .lms-cell { min-width:0; padding:8px 9px; border:1px solid #202a38; border-radius:7px; background:#0d131d; }
   .lms-label { display:block; color:var(--dim); font-size:8.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
   .lms-value { display:block; margin-top:4px; color:var(--text); font:700 10px var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lms-cell.regime-factors { grid-column:1 / -1; }
+  .lms-cell.regime-factors .lms-value { white-space:normal; line-height:1.55; }
   .live-opportunity-radar { border-bottom:1px solid var(--border); background:#0d141d; }
   .lor-head { display:flex; justify-content:space-between; gap:14px; align-items:center; padding:13px 16px 10px; }
   .lor-kicker { color:#d5def0; font:800 11px var(--mono); letter-spacing:.055em; }
@@ -331,6 +333,9 @@
   .lor-reason.warn { color:#ffd98b; border-color:rgba(240,185,11,.35); }
   .lor-note { padding:8px 16px 10px; border-top:1px solid #202a38; color:var(--dim); font-size:9px; line-height:1.45; background:#0a1017; }
   .lor-note strong { color:var(--muted); }
+  .lor-forward { padding:8px 16px 10px; border-top:1px solid #202a38; color:var(--dim); font:700 9px var(--mono); background:#0c121a; }
+  .lor-forward strong { color:#d5def0; }
+  .lor-forward a { margin-left:8px; color:#7fb4ff; }
   .scan-failure-panel { margin:0 0 14px; border:1px solid rgba(234,57,67,.35); background:rgba(234,57,67,.06); border-radius:8px; overflow:hidden; }
   .scan-failure-panel[hidden] { display:none; }
   .scan-failure-summary { padding:9px 12px; display:flex; justify-content:space-between; align-items:center; gap:10px; color:#ffc2c6; font-size:11px; }
@@ -488,20 +493,21 @@
       <div class="v8-metric"><span class="v8-metric-label">Last V9 scan</span><span class="v8-metric-value" id="v8-last-scan" style="font-size:11px;">—</span></div>
     </div>
     <div id="live-market-state" class="live-market-state">
-      <div class="lms-head"><span class="lms-title">Live Market State · intelligence only, not a production trade signal</span><span id="lms-bias" class="lms-bias">—</span></div>
+      <div class="lms-head"><span class="lms-title">Live Market State · intelligence only, not a production trade signal</span><span id="lms-bias" class="lms-bias">Regime Bias · —</span></div>
       <div class="lms-grid">
         <div class="lms-cell"><span class="lms-label">F&amp;O Breadth</span><span class="lms-value" id="lms-breadth">—</span></div>
         <div class="lms-cell"><span class="lms-label">Highest OI Expansion</span><span class="lms-value" id="lms-expansion">—</span></div>
         <div class="lms-cell"><span class="lms-label">Price + OI Confirmation</span><span class="lms-value" id="lms-confirmation">—</span></div>
         <div class="lms-cell"><span class="lms-label">Unusual Volume + OI</span><span class="lms-value" id="lms-volume-oi">—</span></div>
         <div class="lms-cell"><span class="lms-label">OI Acceleration</span><span class="lms-value" id="lms-acceleration">—</span></div>
+        <div class="lms-cell regime-factors"><span class="lms-label">Regime Factors · NIFTY + price breadth + OI breadth + sectors + relative strength + VWAP</span><span class="lms-value" id="lms-regime-factors">—</span></div>
       </div>
     </div>
     <div id="live-opportunity-radar" class="live-opportunity-radar" aria-label="Live opportunity radar research shadow">
       <div class="lor-head">
         <div>
           <div class="lor-kicker">LIVE OPPORTUNITY RADAR · RESEARCH / SHADOW</div>
-          <div class="lor-sub">Ranks stocks needing attention now from live price + OI + acceleration + participation + relative strength/weakness + VWAP. This is not a validated trade signal.</div>
+          <div class="lor-sub">Ranks stocks needing attention now from live price + OI + acceleration + participation + relative strength/weakness + VWAP, with multi-factor market regime used as context only. This is not a validated trade signal.</div>
         </div>
         <div class="lor-bias" id="lor-market-bias">Market bias —</div>
       </div>
@@ -516,6 +522,7 @@
         </section>
       </div>
       <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
+      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.2.7 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
@@ -1124,13 +1131,15 @@
     var confirmationEl = document.getElementById('lms-confirmation');
     var volumeEl = document.getElementById('lms-volume-oi');
     var accelEl = document.getElementById('lms-acceleration');
+    var regimeFactorsEl = document.getElementById('lms-regime-factors');
     function symbols(items) {
       items = Array.isArray(items) ? items : [];
       return items.length ? items.slice(0, 5).map(function (x) { return x.symbol || '—'; }).join(', ') : '—';
     }
     if (bias) {
-      var label = market.bias || 'Neutral/Unavailable';
-      bias.textContent = 'OI Bias · ' + label;
+      var label = market.bias || 'Balanced';
+      var strength = Number(market.bias_strength_pct);
+      bias.textContent = 'Regime Bias · ' + label + (Number.isFinite(strength) ? ' ' + Math.round(strength) + '%' : '');
       bias.className = 'lms-bias ' + (label === 'Bullish' ? 'bullish' : (label === 'Bearish' ? 'bearish' : 'balanced'));
     }
     if (breadthEl) breadthEl.textContent = 'Long ' + (breadth.long_buildup ?? 0) + ' · Short ' + (breadth.short_buildup ?? 0) + ' · Cover ' + (breadth.short_covering ?? 0) + ' · Unwind ' + (breadth.long_unwinding ?? 0);
@@ -1143,6 +1152,32 @@
         ? 'Warming · 60m ' + (a.ready_60m ?? 0) + '/' + (a.eligible_with_oi ?? 0)
         : 'Strong ' + (a.strong ?? 0) + ' · Moderate ' + (a.moderate ?? 0) + ' · 60m ready';
     }
+    if (regimeFactorsEl) {
+      var factors = market.regime_factors || {};
+      var labels = {index:'NIFTY', price_breadth:'Price breadth', oi_breadth:'OI breadth', sector_breadth:'Sectors', relative_strength:'RS distribution', vwap:'VWAP'};
+      regimeFactorsEl.textContent = Object.keys(labels).map(function (key) {
+        var f = factors[key] || {};
+        var n = f.score == null ? NaN : Number(f.score);
+        return labels[key] + ' ' + (Number.isFinite(n) ? ((n > 0 ? '+' : '') + n.toFixed(0)) : '—');
+      }).join(' · ');
+    }
+  }
+
+  function renderOpportunityForward(summary) {
+    summary = summary || {};
+    var el = document.getElementById('opportunity-forward-summary');
+    if (!el) return;
+    var h = summary.horizons || {};
+    function one(label) {
+      var x = h[label] || {};
+      var n = Number(x.n || 0);
+      if (!n) return label + ' 0 matured';
+      var wr = Number(x.win_rate_pct);
+      var avg = Number(x.avg_directional_return_pct);
+      return label + ' ' + n + ' · WR ' + (Number.isFinite(wr) ? wr.toFixed(0) + '%' : '—') + ' · Avg ' + (Number.isFinite(avg) ? (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%' : '—');
+    }
+    el.textContent = 'Captured ' + (summary.events ?? 0) + ' events (' + (summary.captured_today ?? 0) + ' today) · ' +
+      ['30m','1h','2h','4h','1D'].map(one).join(' | ');
   }
 
   (function bindScanFailureToggle() {
@@ -1176,6 +1211,7 @@
       renderScanFailures(state.scan_failures, state.valid_scanned, state.total_scanned);
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
+      renderOpportunityForward(state.opportunity_forward);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;
@@ -1222,7 +1258,7 @@
     var bias = document.getElementById('lor-market-bias');
     if (bullCount) bullCount.textContent = bulls.length;
     if (bearCount) bearCount.textContent = bears.length;
-    if (bias) bias.textContent = 'Market bias ' + (radar.market_bias || '—');
+    if (bias) { var bs = Number(radar.market_bias_strength_pct); bias.textContent = 'Market bias ' + (radar.market_bias || '—') + (Number.isFinite(bs) ? ' ' + Math.round(bs) + '%' : ''); }
 
     function signed(value, digits) {
       var n = Number(value);

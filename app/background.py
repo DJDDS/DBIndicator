@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, journal, kite_auth, scanner, news
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, journal, kite_auth, scanner, news, oi_view, opportunity_forward
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1296,6 +1296,7 @@ _state = {
     "breadth": None,
     "market_regime": None,
     "scan_symbol_health": {},
+    "opportunity_forward": opportunity_forward.empty_state(),
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1495,6 +1496,7 @@ def _load_persisted_state():
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["oi_label_prev"] = saved.get("oi_label_prev", {})
                 _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
+                _state["opportunity_forward"] = saved.get("opportunity_forward") or opportunity_forward.empty_state()
                 _state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -1511,6 +1513,7 @@ def _save_persisted_state():
             "oi_structure_prev": _state["oi_structure_prev"],
             "oi_label_prev": _state["oi_label_prev"],
             "scan_symbol_health": _state["scan_symbol_health"],
+            "opportunity_forward": _state.get("opportunity_forward") or opportunity_forward.empty_state(),
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -1606,7 +1609,12 @@ def _run_loop():
                     # option expression and cannot create an underlying playbook.
                     _apply_derivative_intelligence(kite, results, now=now_ist())
                     oi_events = _detect_oi_accel_events(results)
-                    scan_ts = now_ist().isoformat(timespec="seconds")
+                    scan_now = now_ist()
+                    scan_ts = scan_now.isoformat(timespec="seconds")
+                    radar_snapshot = oi_view.live_opportunity_radar(
+                        results, index_direction=index_direction, index_chg_pct=index_chg_pct,
+                        market_breadth=breadth,
+                    )
                     with _state_lock:
                         _state["results"] = results
                         _state["index_direction"] = index_direction
@@ -1615,6 +1623,9 @@ def _run_loop():
                         _state["breadth"] = breadth
                         _state["scan_symbol_health"] = v9_playbooks.update_symbol_scan_health(
                             _state.get("scan_symbol_health") or {}, results, scan_ts
+                        )
+                        _state["opportunity_forward"] = opportunity_forward.process_scan(
+                            _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now
                         )
                         _state["last_scan"] = scan_ts
                         _state["last_error"] = None

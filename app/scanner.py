@@ -75,7 +75,14 @@ def get_fno_stock_list(kite) -> list:
             name = (row.get("name") or "").strip()
             if name and name.upper() not in _NON_STOCK_FNO_NAMES:
                 names.add(name)
-    symbols = sorted(names)
+    # NFO occasionally contains derivative/index-family names that are not
+    # tradeable NSE cash stocks (for example NIFTYFPI).  The live stock-F&O
+    # universe must have a matching NSE cash instrument because every scanner
+    # row starts from that underlying's NSE candles.  Filtering against the
+    # same cached NSE instrument map used by scan_watchlist removes stale or
+    # non-stock derivatives before they can become a permanent scan error.
+    cash_symbols = set(_load_instrument_map(kite))
+    symbols = sorted(name for name in names if name in cash_symbols)
     if symbols:
         _fno_cache["date"] = today
         _fno_cache["symbols"] = symbols

@@ -86,7 +86,7 @@ TOKEN_CACHE_FILE = os.getenv("TOKEN_CACHE_FILE", "kite_token_cache.json")
 
 # Where live-editable scanner settings are persisted (also gitignored).
 SETTINGS_FILE = os.getenv("SETTINGS_FILE", "scanner_settings.json")
-SETTINGS_SCHEMA_VERSION = 3
+SETTINGS_SCHEMA_VERSION = 4
 
 # Where the most recent scan results are persisted (also gitignored), so
 # the dashboard still shows the last scan for analysis after market
@@ -502,7 +502,8 @@ def _env_defaults():
         # own direction, before the entry counts as EXTENDED (chasing) -
         # a signal firing 3 ATR into a move is a materially worse entry
         # than the same signal firing as the move turns, and until now
-        # both carried an identical "Confirmed" mark. Default 2.0 ATR.
+        # both carried an identical "Confirmed" mark. V9.2.7 caps this at
+        # 1.25 ATR so live entries cannot silently drift back into chasing.
         # When REQUIRE_ENTRY_LOCATION_AGREEMENT is on, an extended row
         # loses its "Confirmed" status; off by default, same reasoning as
         # every other REQUIRE_* gate above.
@@ -555,6 +556,22 @@ class Settings:
                 if saved_version < SETTINGS_SCHEMA_VERSION:
                     if data.get("MIN_REQUIRED") == 4:
                         data["MIN_REQUIRED"] = 3
+                    # V9.2.7 restores the anti-chase contract.  Earlier UI
+                    # versions allowed a persisted 2.0 ATR value even though
+                    # the research/live rule is 1.25 ATR.  Migrate that stale
+                    # setting once so a redeploy fixes the running instance.
+                    try:
+                        if float(data.get("MAX_ENTRY_EXTENSION_ATR", 1.25)) > 1.25:
+                            data["MAX_ENTRY_EXTENSION_ATR"] = 1.25
+                    except (TypeError, ValueError):
+                        data["MAX_ENTRY_EXTENSION_ATR"] = 1.25
+                    # NIFTYFPI was observed in the persisted research list
+                    # even though it has no NSE cash symbol.  The live universe
+                    # is now generically cash-cross-checked in scanner.py; this
+                    # one-time cleanup also removes the known stale entry from
+                    # the saved research/backtest watchlist.
+                    if isinstance(data.get("WATCHLIST"), list):
+                        data["WATCHLIST"] = [s for s in data["WATCHLIST"] if str(s).upper() != "NIFTYFPI"]
                     needs_schema_write = True
             except (json.JSONDecodeError, OSError, TypeError, ValueError):
                 pass
@@ -877,11 +894,11 @@ class Settings:
         if "MAX_ENTRY_EXTENSION_ATR" in kwargs:
             try:
                 mee = float(kwargs["MAX_ENTRY_EXTENSION_ATR"])
-                if mee <= 0:
+                if not (0.25 <= mee <= 1.25):
                     raise ValueError
                 clean["MAX_ENTRY_EXTENSION_ATR"] = mee
             except (TypeError, ValueError):
-                errors.append("Max entry extension (ATR) must be a positive number.")
+                errors.append("Max entry extension (ATR) must be between 0.25 and 1.25.")
 
         if "COMPRESSION_RADAR_SCORE" in kwargs:
             try:
