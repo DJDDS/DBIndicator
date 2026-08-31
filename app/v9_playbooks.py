@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX"
+V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.6-LIVE-OPPORTUNITY-RADAR"
 
 BULL_INSTITUTIONAL_ACCUMULATION = "Bull Institutional Accumulation"
 BULL_OPENING_DRIVE = "Bull Opening Drive"
@@ -33,7 +33,7 @@ PLAYBOOKS = (
     BEAR_VWAP_RETEST_FAILURE,
 )
 
-# Production eligibility is evidence-gated.  At V9.2.4 the bullish
+# Production eligibility is evidence-gated.  At V9.2.6 the bullish
 # accumulation hypothesis is still research/shadow only and the frozen Bear
 # Fresh Short Buildup rule has already failed its untouched final sample.
 # Therefore no V9 playbook is allowed to drive live TRADE/WATCH shortlists yet.
@@ -353,6 +353,58 @@ def _compact_dashboard_row(row: dict, *, mode: str) -> dict:
     }
 
 
+
+def update_symbol_scan_health(previous: dict | None, results: Iterable[dict], scan_ts: str) -> dict:
+    """Track per-symbol scan health without losing the last known good scan.
+
+    A current error updates error metadata but deliberately preserves the prior
+    ``last_success`` timestamp. A successful row clears current error metadata
+    and advances ``last_success``. The structure is JSON-safe so it can be
+    persisted alongside the normal Railway scan state.
+    """
+    health = {str(k): dict(v or {}) for k, v in (previous or {}).items()}
+    for row in results or []:
+        symbol = row.get("symbol")
+        if not symbol:
+            continue
+        symbol = str(symbol)
+        item = dict(health.get(symbol) or {})
+        if row.get("error"):
+            item.update({
+                "last_error": scan_ts,
+                "error_stage": row.get("error_stage") or "scan",
+                "error": str(row.get("error")),
+            })
+            item.setdefault("last_success", None)
+        else:
+            item.update({
+                "last_success": scan_ts,
+                "last_error": None,
+                "error_stage": None,
+                "error": None,
+            })
+        health[symbol] = item
+    return health
+
+
+def scan_failure_details(results: Iterable[dict], symbol_health: dict | None = None) -> list[dict]:
+    """Return compact diagnostics for symbols that failed the current scan."""
+    health = symbol_health or {}
+    failures = []
+    for row in results or []:
+        if not row.get("error"):
+            continue
+        symbol = str(row.get("symbol") or "UNKNOWN")
+        item = health.get(symbol) or {}
+        failures.append({
+            "symbol": symbol,
+            "stage": row.get("error_stage") or item.get("error_stage") or "scan",
+            "error": str(row.get("error") or item.get("error") or "unknown error"),
+            "last_success": item.get("last_success"),
+        })
+    failures.sort(key=lambda x: x["symbol"])
+    return failures
+
 def scan_health_counts(results: Iterable[dict]) -> dict:
     """Return attempted/valid/error counts for the live scan surface."""
     all_rows = list(results or [])
@@ -386,6 +438,7 @@ def dashboard_payload(state: dict, *, limit: int = 6) -> dict:
         "production_status": "NO VALIDATED PRODUCTION PLAYBOOK" if not ACTIVE_PLAYBOOKS else "PRODUCTION ACTIVE",
         "shadow_playbooks": list(SHADOW_PLAYBOOKS),
         "rejected_playbooks": list(REJECTED_PLAYBOOKS),
+        "scan_failures": scan_failure_details(all_rows, state.get("scan_symbol_health") or {}),
         "counts": {
             "attempted": health["attempted"],
             "universe": health["valid"],

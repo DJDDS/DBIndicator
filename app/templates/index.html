@@ -289,12 +289,67 @@
   .v8-empty { display:flex; align-items:center; justify-content:center; min-height:94px; border:1px dashed #293445; border-radius:8px; color:var(--dim); font-size:11px; text-align:center; padding:14px; }
   .v8-method { padding:9px 16px 11px; border-top:1px solid var(--border); background:#0a0f16; color:var(--dim); font-size:9.5px; line-height:1.5; }
   .v8-method strong { color:var(--muted); }
+  .live-market-state { border-bottom:1px solid var(--border); background:#0b1018; padding:12px 16px; }
+  .lms-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:8px; }
+  .lms-title { font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#9fb0cc; }
+  .lms-bias { font:800 11px var(--mono); }
+  .lms-bias.bullish { color:var(--green); }
+  .lms-bias.bearish { color:var(--red); }
+  .lms-bias.balanced { color:var(--amber); }
+  .lms-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+  .lms-cell { min-width:0; padding:8px 9px; border:1px solid #202a38; border-radius:7px; background:#0d131d; }
+  .lms-label { display:block; color:var(--dim); font-size:8.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+  .lms-value { display:block; margin-top:4px; color:var(--text); font:700 10px var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .live-opportunity-radar { border-bottom:1px solid var(--border); background:#0d141d; }
+  .lor-head { display:flex; justify-content:space-between; gap:14px; align-items:center; padding:13px 16px 10px; }
+  .lor-kicker { color:#d5def0; font:800 11px var(--mono); letter-spacing:.055em; }
+  .lor-sub { margin-top:4px; color:var(--dim); font-size:9.5px; line-height:1.45; max-width:900px; }
+  .lor-bias { flex:0 0 auto; padding:5px 8px; border:1px solid #2c394b; border-radius:5px; color:var(--amber); font:800 10px var(--mono); text-transform:uppercase; }
+  .lor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .lor-side { min-width:0; padding:10px 16px 14px; }
+  .lor-side + .lor-side { border-left:1px solid var(--border); }
+  .lor-side-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font:800 10px var(--mono); letter-spacing:.045em; text-transform:uppercase; }
+  .lor-side.bull .lor-side-head { color:var(--green); }
+  .lor-side.bear .lor-side-head { color:var(--red); }
+  .lor-side-head span { min-width:22px; text-align:center; padding:2px 5px; border:1px solid currentColor; border-radius:999px; font-size:9px; }
+  .lor-list { display:flex; flex-direction:column; gap:6px; min-height:94px; }
+  .lor-card { display:grid; grid-template-columns:26px minmax(90px,.62fr) 72px minmax(0,1.45fr); gap:8px; align-items:center; padding:9px 10px; border:1px solid #273446; border-radius:8px; background:#101722; }
+  .lor-card.bull { box-shadow:inset 3px 0 0 rgba(22,199,132,.75); }
+  .lor-card.bear { box-shadow:inset 3px 0 0 rgba(234,57,67,.75); }
+  .lor-rank { color:var(--dim); font:700 10px var(--mono); }
+  .lor-symbol a { color:#fff; text-decoration:none; font:800 12px var(--mono); }
+  .lor-symbol small { display:block; margin-top:3px; color:var(--dim); font:600 8.5px var(--mono); }
+  .lor-score { text-align:right; }
+  .lor-score strong { display:block; color:#fff; font:800 17px var(--mono); }
+  .lor-score span { display:inline-block; margin-top:3px; padding:2px 5px; border:1px solid #3b485b; border-radius:4px; color:var(--muted); font-size:7.5px; font-weight:800; white-space:nowrap; }
+  .lor-score span.high { color:#fff0ae; border-color:rgba(240,185,11,.55); background:rgba(240,185,11,.08); }
+  .lor-score span.building { color:#cbd8ef; }
+  .lor-evidence { min-width:0; }
+  .lor-metrics { display:flex; flex-wrap:wrap; gap:4px 7px; color:var(--muted); font:700 8.5px var(--mono); }
+  .lor-reasons { display:flex; flex-wrap:wrap; gap:3px; margin-top:5px; }
+  .lor-reason { padding:2px 4px; border-radius:3px; background:#0a1018; border:1px solid #202b3a; color:var(--dim); font-size:7.8px; }
+  .lor-reason.warn { color:#ffd98b; border-color:rgba(240,185,11,.35); }
+  .lor-note { padding:8px 16px 10px; border-top:1px solid #202a38; color:var(--dim); font-size:9px; line-height:1.45; background:#0a1017; }
+  .lor-note strong { color:var(--muted); }
+  .scan-failure-panel { margin:0 0 14px; border:1px solid rgba(234,57,67,.35); background:rgba(234,57,67,.06); border-radius:8px; overflow:hidden; }
+  .scan-failure-panel[hidden] { display:none; }
+  .scan-failure-summary { padding:9px 12px; display:flex; justify-content:space-between; align-items:center; gap:10px; color:#ffc2c6; font-size:11px; }
+  .scan-failure-summary button { border:1px solid rgba(234,57,67,.45); background:#161018; color:#ffc2c6; border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; }
+  .scan-failure-body { display:none; border-top:1px solid rgba(234,57,67,.2); padding:8px 12px 10px; overflow-x:auto; }
+  .scan-failure-panel.open .scan-failure-body { display:block; }
+  .scan-failure-table { width:100%; border-collapse:collapse; font-size:10px; }
+  .scan-failure-table th,.scan-failure-table td { padding:5px 6px; text-align:left; border-bottom:1px solid #27202a; vertical-align:top; }
+  .scan-failure-table th { color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
   @media (max-width: 900px) {
     .v8-console-head { grid-template-columns: 1fr auto; }
     .v8-status { grid-column: 1 / -1; text-align:left; }
     .v8-grid { grid-template-columns:1fr; }
     .v8-side + .v8-side { border-left:0; border-top:1px solid var(--border); }
     .v8-metrics { grid-template-columns:repeat(2,1fr); }
+    .lms-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .lor-grid { grid-template-columns:1fr; }
+    .lor-side + .lor-side { border-left:0; border-top:1px solid var(--border); }
+    .lor-card { grid-template-columns:24px minmax(80px,.7fr) 64px minmax(0,1.3fr); }
     .v8-metric:nth-child(2) { border-right:0; }
     .v8-metric:nth-child(-n+2) { border-bottom:1px solid var(--border); }
   }
@@ -304,6 +359,7 @@
     .v8-leader { grid-template-columns:24px minmax(85px,1fr) 78px; }
     .v8-evidence { grid-column:2 / -1; grid-row:2; }
     .v8-reasons { grid-column:2 / -1; }
+    .lms-grid { grid-template-columns:1fr; }
   }
 </style>
 </head>
@@ -389,10 +445,26 @@
         F&amp;O universe: <strong>live</strong> &middot; execution: <strong>15m</strong> &middot; HTF: <strong>4h</strong>
       </span>
       <span class="tb-status">Attempted <strong id="live-scan-count">{{ total_scanned }}</strong> &middot; Valid <strong id="live-valid-count">{{ valid_scanned }}</strong> &middot; Errors <strong id="live-error-count">{{ scan_errors }}</strong></span>
-      <span class="tb-status">Radar <strong id="radar-count">{{ live_counts.radar }}</strong></span>
-      <span class="tb-status">Intraday <strong id="intraday-count">{{ live_counts.intraday }}</strong></span>
-      <span class="tb-status">Swing <strong id="swing-count">{{ live_counts.swing }}</strong></span>
+      <span class="tb-status">Live opportunities <strong id="opportunity-count">{{ live_counts.opportunities }}</strong></span>
+      <span class="tb-status" title="Evidence-gated production radar; remains zero while no playbook is validated">Prod Radar <strong id="radar-count">{{ live_counts.radar }}</strong></span>
+      <span class="tb-status">Validated Intraday <strong id="intraday-count">{{ live_counts.intraday }}</strong></span>
+      <span class="tb-status">Validated Swing <strong id="swing-count">{{ live_counts.swing }}</strong></span>
       <span class="tb-status" title="Legacy RSI/MACD/BB tuning no longer drives the live shortlist.">Stock-in-Play thresholds are validated on the Backtest page &middot; <a href="/backtest">Open research</a></span>
+    </div>
+  </div>
+
+  <div id="scan-failure-panel" class="scan-failure-panel{{ ' open' if scan_failures else '' }}" {% if not scan_failures %}hidden{% endif %}>
+    <div class="scan-failure-summary">
+      <span id="scan-failure-summary-text">Scan health: {{ valid_scanned }} / {{ total_scanned }} successful · {{ scan_errors }} failed</span>
+      <button type="button" id="scan-failure-toggle">Failure details</button>
+    </div>
+    <div class="scan-failure-body">
+      <table class="scan-failure-table" aria-label="Current live scan failures">
+        <thead><tr><th>Symbol</th><th>Failure stage</th><th>Error</th><th>Last success</th></tr></thead>
+        <tbody id="scan-failure-body">
+        {% for f in scan_failures %}<tr><td><strong>{{ f.symbol }}</strong></td><td>{{ f.stage }}</td><td>{{ f.error }}</td><td>{{ f.last_success or 'No successful scan recorded yet' }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -400,7 +472,7 @@
     <div class="v8-console-head">
       <div>
         <div class="v8-kicker">V9.2 Live Market Monitor + Derivative Intelligence · NSE F&amp;O</div>
-        <h2>Live Decision Console <span class="sub">No validated production playbook · Bull Institutional Accumulation / Bull Catalyst Continuation remain SHADOW · Bear Fresh Short Buildup REJECTED</span></h2>
+        <h2>Validated Production Models · Live Decision Console <span class="sub">Strict evidence gate stays intact. Live opportunities are shown separately as RESEARCH / SHADOW attention names, never as validated trades.</span></h2>
       </div>
       <div class="v8-tabs" role="tablist" aria-label="V9 horizon">
         <button type="button" class="v8-tab active" id="v8-view-intraday" role="tab" aria-selected="true">Intraday</button>
@@ -415,13 +487,43 @@
       <div class="v8-metric"><span class="v8-metric-label">Option FW 30m</span><span class="v8-metric-value" id="v82-option-fw">—</span></div>
       <div class="v8-metric"><span class="v8-metric-label">Last V9 scan</span><span class="v8-metric-value" id="v8-last-scan" style="font-size:11px;">—</span></div>
     </div>
+    <div id="live-market-state" class="live-market-state">
+      <div class="lms-head"><span class="lms-title">Live Market State · intelligence only, not a production trade signal</span><span id="lms-bias" class="lms-bias">—</span></div>
+      <div class="lms-grid">
+        <div class="lms-cell"><span class="lms-label">F&amp;O Breadth</span><span class="lms-value" id="lms-breadth">—</span></div>
+        <div class="lms-cell"><span class="lms-label">Highest OI Expansion</span><span class="lms-value" id="lms-expansion">—</span></div>
+        <div class="lms-cell"><span class="lms-label">Price + OI Confirmation</span><span class="lms-value" id="lms-confirmation">—</span></div>
+        <div class="lms-cell"><span class="lms-label">Unusual Volume + OI</span><span class="lms-value" id="lms-volume-oi">—</span></div>
+        <div class="lms-cell"><span class="lms-label">OI Acceleration</span><span class="lms-value" id="lms-acceleration">—</span></div>
+      </div>
+    </div>
+    <div id="live-opportunity-radar" class="live-opportunity-radar" aria-label="Live opportunity radar research shadow">
+      <div class="lor-head">
+        <div>
+          <div class="lor-kicker">LIVE OPPORTUNITY RADAR · RESEARCH / SHADOW</div>
+          <div class="lor-sub">Ranks stocks needing attention now from live price + OI + acceleration + participation + relative strength/weakness + VWAP. This is not a validated trade signal.</div>
+        </div>
+        <div class="lor-bias" id="lor-market-bias">Market bias —</div>
+      </div>
+      <div class="lor-grid">
+        <section class="lor-side bull">
+          <div class="lor-side-head">▲ Bullish attention <span id="lor-bull-count">0</span></div>
+          <div id="lor-bullish" class="lor-list"><div class="v8-empty">Waiting for live bullish evidence…</div></div>
+        </section>
+        <section class="lor-side bear">
+          <div class="lor-side-head">▼ Bearish attention <span id="lor-bear-count">0</span></div>
+          <div id="lor-bearish" class="lor-list"><div class="v8-empty">Waiting for live bearish evidence…</div></div>
+        </section>
+      </div>
+      <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
+    </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
-        <div class="v8-side-head">Bullish Models <span>production: none validated · institutional accumulation / real catalyst shadow-only</span></div>
+        <div class="v8-side-head">Validated Bullish Models <span>production: none validated · research remains shadow-only</span></div>
         <div id="v8-bull-leaders" class="v8-leader-list"><div class="v8-empty">Loading bullish evidence…</div></div>
       </section>
       <section class="v8-side bear" aria-label="Bearish leaders">
-        <div class="v8-side-head">Bearish Model <span>production: none · Bear Fresh Short Buildup rejected</span></div>
+        <div class="v8-side-head">Validated Bearish Models <span>production: none · Bear Fresh Short Buildup rejected</span></div>
         <div id="v8-bear-leaders" class="v8-leader-list"><div class="v8-empty">Loading bearish evidence…</div></div>
       </section>
     </div>
@@ -431,7 +533,7 @@
 
   <div class="card" style="border-color:#3a2f0f;">
     <div id="early-radar-card">
-    <h2>⚡ Early Radar <span class="sub">movement setup before full confirmation — Energy Building / Stock in Play / Ignition</span></h2>
+    <h2>⚡ Production Early Radar <span class="sub">evidence-gated production path only — Energy Building / Stock in Play / Ignition may remain empty while no playbook is validated</span></h2>
     {% set radar_rows = results | selectattr('radar_rank', 'defined') | selectattr('radar_rank', 'ne', None) | sort(attribute='radar_rank') | list %}
     {% if radar_rows %}
     <div class="sl-list">
@@ -994,6 +1096,61 @@
     });
   }
 
+
+  function renderScanFailures(failures, valid, total) {
+    failures = Array.isArray(failures) ? failures : [];
+    var panel = document.getElementById('scan-failure-panel');
+    var summary = document.getElementById('scan-failure-summary-text');
+    var body = document.getElementById('scan-failure-body');
+    if (!panel || !summary || !body) return;
+    var failed = failures.length;
+    panel.hidden = failed === 0;
+    if (!failed) { panel.classList.remove('open'); return; }
+    summary.textContent = 'Scan health: ' + (valid ?? 0) + ' / ' + (total ?? 0) + ' successful · ' + failed + ' failed';
+    body.innerHTML = failures.map(function (f) {
+      return '<tr><td><strong>' + v8Esc(f.symbol || '—') + '</strong></td>' +
+        '<td>' + v8Esc(f.stage || 'scan') + '</td>' +
+        '<td>' + v8Esc(f.error || 'unknown error') + '</td>' +
+        '<td>' + v8Esc(f.last_success || 'No successful scan recorded yet') + '</td></tr>';
+    }).join('');
+  }
+
+  function renderLiveMarketState(market) {
+    market = market || {};
+    var breadth = market.breadth || {};
+    var bias = document.getElementById('lms-bias');
+    var breadthEl = document.getElementById('lms-breadth');
+    var expansionEl = document.getElementById('lms-expansion');
+    var confirmationEl = document.getElementById('lms-confirmation');
+    var volumeEl = document.getElementById('lms-volume-oi');
+    var accelEl = document.getElementById('lms-acceleration');
+    function symbols(items) {
+      items = Array.isArray(items) ? items : [];
+      return items.length ? items.slice(0, 5).map(function (x) { return x.symbol || '—'; }).join(', ') : '—';
+    }
+    if (bias) {
+      var label = market.bias || 'Neutral/Unavailable';
+      bias.textContent = 'OI Bias · ' + label;
+      bias.className = 'lms-bias ' + (label === 'Bullish' ? 'bullish' : (label === 'Bearish' ? 'bearish' : 'balanced'));
+    }
+    if (breadthEl) breadthEl.textContent = 'Long ' + (breadth.long_buildup ?? 0) + ' · Short ' + (breadth.short_buildup ?? 0) + ' · Cover ' + (breadth.short_covering ?? 0) + ' · Unwind ' + (breadth.long_unwinding ?? 0);
+    if (expansionEl) expansionEl.textContent = symbols(market.oi_expansion);
+    if (confirmationEl) confirmationEl.textContent = symbols(market.price_oi_confirmation);
+    if (volumeEl) volumeEl.textContent = symbols(market.volume_oi);
+    if (accelEl) {
+      var a = market.acceleration || {};
+      accelEl.textContent = a.warming_up
+        ? 'Warming · 60m ' + (a.ready_60m ?? 0) + '/' + (a.eligible_with_oi ?? 0)
+        : 'Strong ' + (a.strong ?? 0) + ' · Moderate ' + (a.moderate ?? 0) + ' · 60m ready';
+    }
+  }
+
+  (function bindScanFailureToggle() {
+    var button = document.getElementById('scan-failure-toggle');
+    var panel = document.getElementById('scan-failure-panel');
+    if (button && panel) button.addEventListener('click', function () { panel.classList.toggle('open'); });
+  })();
+
   function pollDashboardState() {
     fetch('/api/dashboard-state').then(function (r) {
       if (!r.ok) throw new Error('state failed: ' + r.status);
@@ -1003,6 +1160,7 @@
       var scanCount = document.getElementById('live-scan-count');
       var validCount = document.getElementById('live-valid-count');
       var errorCount = document.getElementById('live-error-count');
+      var opportunityCount = document.getElementById('opportunity-count');
       var radarCount = document.getElementById('radar-count');
       var intradayCount = document.getElementById('intraday-count');
       var swingCount = document.getElementById('swing-count');
@@ -1010,10 +1168,14 @@
       if (scanCount) scanCount.textContent = state.total_scanned ?? 0;
       if (validCount) validCount.textContent = state.valid_scanned ?? 0;
       if (errorCount) errorCount.textContent = state.error_count ?? 0;
+      if (opportunityCount) opportunityCount.textContent = counts.opportunities ?? 0;
       if (radarCount) radarCount.textContent = counts.radar ?? 0;
       if (intradayCount) intradayCount.textContent = counts.intraday ?? 0;
       if (swingCount) swingCount.textContent = counts.swing ?? 0;
       if (lastScan) lastScan.textContent = state.last_scan || 'waiting for first scan...';
+      renderScanFailures(state.scan_failures, state.valid_scanned, state.total_scanned);
+      renderLiveMarketState(state.market_state);
+      renderLiveOpportunityRadar(state.opportunity_radar);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;
@@ -1047,6 +1209,49 @@
     var width = finite ? Math.max(0, Math.min(100, n)) : 0;
     return '<div class="v8-component"><div class="v8-component-top"><span>' + v8Esc(label) + '</span><strong>' + (finite ? Math.round(n) : '—') + '</strong></div>' +
       '<div class="v8-bar"><span class="v8-bar-fill" style="width:' + width + '%"></span></div></div>';
+  }
+
+  function renderLiveOpportunityRadar(radar) {
+    radar = radar || {};
+    var bulls = radar.bullish || [];
+    var bears = radar.bearish || [];
+    var bullBox = document.getElementById('lor-bullish');
+    var bearBox = document.getElementById('lor-bearish');
+    var bullCount = document.getElementById('lor-bull-count');
+    var bearCount = document.getElementById('lor-bear-count');
+    var bias = document.getElementById('lor-market-bias');
+    if (bullCount) bullCount.textContent = bulls.length;
+    if (bearCount) bearCount.textContent = bears.length;
+    if (bias) bias.textContent = 'Market bias ' + (radar.market_bias || '—');
+
+    function signed(value, digits) {
+      var n = Number(value);
+      return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(digits == null ? 1 : digits) + '%' : '—';
+    }
+    function card(row, rank, side) {
+      var status = row.status || 'EARLY';
+      var statusClass = status === 'HIGH ATTENTION' ? 'high' : (status === 'BUILDING' ? 'building' : 'early');
+      var chase = row.chase_guard === 'EXTENDED' ? ' · EXTENDED' : '';
+      var reasons = (row.reasons || []).slice(0, 6).map(function (reason) {
+        var warn = String(reason).indexOf('do not chase') >= 0 ? ' warn' : '';
+        return '<span class="lor-reason' + warn + '">' + v8Esc(reason) + '</span>';
+      }).join('');
+      var rvol = row.tod_rvol != null ? Number(row.tod_rvol) : Number(row.vol_multiple);
+      return '<article class="lor-card ' + side + '">' +
+        '<div class="lor-rank">#' + rank + '</div>' +
+        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
+        '<div class="lor-score"><strong>' + v8Num(row.score, 0) + '</strong><span class="' + statusClass + '">' + v8Esc(status) + '</span></div>' +
+        '<div class="lor-evidence"><div class="lor-metrics">' +
+          '<span>Price ' + signed(row.price_chg_pct, 2) + '</span>' +
+          '<span>Day OI ' + signed(row.oi_day_chg_pct, 1) + '</span>' +
+          '<span>OI30 ' + signed(row.oi_30m_chg_pct, 1) + '</span>' +
+          '<span>RVOL ' + (Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—') + '</span>' +
+          '<span>Rel ' + v8Num(row.relative, 0) + '</span>' +
+        '</div><div class="lor-reasons">' + reasons + '</div></div>' +
+      '</article>';
+    }
+    if (bullBox) bullBox.innerHTML = bulls.length ? bulls.map(function (r,i) { return card(r, i+1, 'bull'); }).join('') : '<div class="v8-empty">No bullish attention name clears the live research floor right now.</div>';
+    if (bearBox) bearBox.innerHTML = bears.length ? bears.map(function (r,i) { return card(r, i+1, 'bear'); }).join('') : '<div class="v8-empty">No bearish attention name clears the live research floor right now.</div>';
   }
 
   function renderV82Option(row) {
@@ -1088,6 +1293,7 @@
 
   function renderV8Leaders(payload) {
     lastV8Payload = payload || {};
+    renderLiveOpportunityRadar(lastV8Payload.opportunity_radar);
     var view = (lastV8Payload[v8View] || {});
     var bull = view.bullish || [];
     var bear = view.bearish || [];

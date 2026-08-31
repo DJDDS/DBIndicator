@@ -1,6 +1,6 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.6-LIVE-OPPORTUNITY-RADAR`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
@@ -22,3 +22,14 @@ The diagnostic run remains fixed to the full NSE F&O universe, 15-minute setup/e
 
 ## V9.2.4 live production repair
 The live Dashboard/Watchlist/OI surfaces are evidence-gated: research or rejected playbooks do not generate production candidates. The dashboard reports attempted/valid/error scan counts, and the OI Screener uses a compact JSON-safe API payload so restored state cannot break browser number formatting.
+
+
+## V9.2.6 live opportunity radar
+
+This release keeps every V9 evidence gate unchanged but separates **production validation** from **live market attention**. The main Dashboard now has a **Live Opportunity Radar — RESEARCH / SHADOW** that can surface bullish and bearish stocks even while `ACTIVE_PLAYBOOKS` is empty.
+
+The radar ranks current F&O names using price + OI structure, day/recent OI expansion, OI acceleration, RVOL/participation, relative strength or weakness, VWAP acceptance, technical structure, 4H context and current F&O breadth. The 4H read is context only, never a veto. Names extended beyond 1.25 ATR remain visible but receive a clear anti-chase penalty.
+
+The **Opportunity Score is an attention/ranking score, not probability of profit and not a validated entry signal**. Rejected Bear Fresh Short Buildup remains rejected; Bull Institutional Accumulation/Catalyst remain shadow-only; alerts and validated TRADE/WATCH shortlists stay evidence-gated.
+
+V9.2.5 scan-health diagnostics are retained: exact per-symbol failure stage, last successful scan, valid/attempted universe counts, current failure details, and the Live Market State OI breadth strip.

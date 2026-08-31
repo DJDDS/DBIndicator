@@ -30,6 +30,10 @@
   .count-tile { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
   .count-value { font-size:24px; font-weight:750; color:var(--navy); }
   .count-label { font-size:11px; color:var(--muted); margin-top:3px; }
+  .scan-health-note { margin:-8px 0 20px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:12px; color:var(--muted); background:var(--card); }
+  .scan-health-note.warn { border-color:#f0b7b7; color:var(--red); }
+  .scan-health-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:11px; }
+  .scan-health-table th, .scan-health-table td { text-align:left; border-top:1px solid var(--border); padding:6px 4px; vertical-align:top; }
   @media (max-width:680px){ .count-grid{grid-template-columns:1fr;} }
   .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
          padding: 10px 20px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
@@ -75,9 +79,18 @@
   {% endif %}
 
   <div class="count-grid">
-    <div class="count-tile"><div class="count-value" id="live-fno-count">{{ live_fno_count if live_fno_count is not none else '—' }}</div><div class="count-label">Current NSE stock-F&amp;O universe</div></div>
-    <div class="count-tile"><div class="count-value" id="last-scan-count">{{ last_scan_count }}</div><div class="count-label">Stocks in latest live scan{% if settings_last_scan %} · {{ settings_last_scan }}{% endif %}</div></div>
-    <div class="count-tile"><div class="count-value" id="research-watchlist-count">{{ research_watchlist_count }}</div><div class="count-label">Symbols saved for research/backtests</div></div>
+    <div class="count-tile"><div class="count-value" id="live-fno-count">{{ live_fno_count if live_fno_count is not none else '—' }}</div><div class="count-label">F&amp;O master universe</div></div>
+    <div class="count-tile"><div class="count-value"><span id="valid-live-scan-count">{{ valid_live_scan_count }}</span> / <span id="last-scan-count">{{ last_scan_count }}</span></div><div class="count-label">Valid live symbols{% if settings_last_scan %} · {{ settings_last_scan }}{% endif %}</div></div>
+    <div class="count-tile"><div class="count-value" id="research-watchlist-count">{{ research_watchlist_count }}</div><div class="count-label">Research universe</div></div>
+  </div>
+  <div class="scan-health-note {{ 'warn' if scan_error_count else '' }}">
+    <strong>Scan health:</strong> {{ valid_live_scan_count }} / {{ last_scan_count }} successful · {{ scan_error_count }} failed.
+    {% if scan_failures %}
+    <table class="scan-health-table" aria-label="Current scan failures">
+      <thead><tr><th>Symbol</th><th>Failure stage</th><th>Error</th><th>Last success</th></tr></thead>
+      <tbody>{% for f in scan_failures %}<tr><td><strong>{{ f.symbol }}</strong></td><td>{{ f.stage }}</td><td>{{ f.error }}</td><td>{{ f.last_success or 'No successful scan recorded yet' }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
   </div>
 
   <form method="post" action="/settings">

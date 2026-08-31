@@ -734,15 +734,18 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True, symbols=No
     for symbol in universe:
         token = instruments.get(symbol)
         if not token:
-            results.append({"symbol": symbol, "error": "symbol not found on NSE"})
+            results.append({"symbol": symbol, "error": "symbol not found on NSE", "error_stage": "instrument_lookup"})
             continue
+        stage = "candle_fetch"
         try:
             df = fetch_candles(kite, token, timeframe)
             if df.empty:
-                results.append({"symbol": symbol, "error": "no candle data returned"})
+                results.append({"symbol": symbol, "error": "no candle data returned", "error_stage": "candle_fetch"})
                 continue
+            stage = "signal_compute"
             signal = compute_signal(df, timeframe, now=now_ist())
             signal["symbol"] = symbol
+            stage = "oi_attach"
             # Always set these keys (None when unavailable) rather than
             # omitting them - the dashboard template checks "r.oi is not
             # none", which for a genuinely missing dict key evaluates
@@ -767,8 +770,8 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True, symbols=No
             signal["fut_depth_shadow_only"] = True
             results.append(signal)
         except Exception as exc:  # noqa: BLE001 - keep scanning the rest of the watchlist
-            log.warning("Scan failed for %s: %s", symbol, exc)
-            results.append({"symbol": symbol, "error": str(exc)})
+            log.warning("Scan failed for %s during %s: %s", symbol, stage, exc)
+            results.append({"symbol": symbol, "error": str(exc), "error_stage": stage})
     return results
 
 

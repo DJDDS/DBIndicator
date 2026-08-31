@@ -9,7 +9,7 @@ from . import alerts, backtest, background, config, delivery, early_signal, indi
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
-from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row
+from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar
 
 log = logging.getLogger(__name__)
 
@@ -20,8 +20,10 @@ _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
 def _dashboard_counts(results):
     rows = list(results or [])
+    opportunity = live_opportunity_radar(rows)
     return {
         "radar": sum(1 for r in rows if r.get("radar_rank") is not None),
+        "opportunities": opportunity["counts"]["displayed"],
         "intraday": sum(1 for r in rows if r.get("shortlist_rank") is not None),
         "swing": sum(1 for r in rows if r.get("swing_rank") is not None),
         "bullish": sum(1 for r in rows if (r.get("trade_direction") or r.get("direction")) == "Bullish"),
@@ -76,6 +78,9 @@ def dashboard():
     state = get_state()
     all_results = state["results"]
     scan_health = v9_playbooks.scan_health_counts(all_results)
+    scan_failures = v9_playbooks.scan_failure_details(all_results, state.get("scan_symbol_health") or {})
+    market_state = live_market_state(all_results)
+    opportunity_radar = live_opportunity_radar(all_results)
 
     return render_template(
         "index.html",
@@ -85,6 +90,9 @@ def dashboard():
         total_scanned=scan_health["attempted"],
         valid_scanned=scan_health["valid"],
         scan_errors=scan_health["errors"],
+        scan_failures=scan_failures,
+        market_state=market_state,
+        opportunity_radar=opportunity_radar,
         live_counts=_dashboard_counts(all_results),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
@@ -152,6 +160,9 @@ def api_dashboard_state():
         "valid_scanned": health["valid"],
         "error_count": health["errors"],
         "scan_health": health,
+        "scan_failures": v9_playbooks.scan_failure_details(rows, state.get("scan_symbol_health") or {}),
+        "market_state": live_market_state(rows),
+        "opportunity_radar": live_opportunity_radar(rows),
         "counts": _dashboard_counts(rows),
         "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
         "market_open": scanner.is_market_open(),
@@ -161,8 +172,11 @@ def api_dashboard_state():
 @app.route("/api/v8-dashboard")
 @require_dashboard_password
 def api_v8_dashboard():
-    payload = v9_playbooks.dashboard_payload(get_state())
+    state = get_state()
+    payload = v9_playbooks.dashboard_payload(state)
     payload["market_open"] = scanner.is_market_open()
+    payload["market_state"] = live_market_state(state.get("results") or [])
+    payload["opportunity_radar"] = live_opportunity_radar(state.get("results") or [])
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()
     payload["option_forward_swing"] = derivative_intelligence.get_shadow_stats("swing")
@@ -251,7 +265,12 @@ def settings_page():
         if saved:
             background.trigger_rescan()
     scan_state = get_state()
-    live_scan_count = len(scan_state.get("results") or [])
+    live_rows = scan_state.get("results") or []
+    live_scan_health = v9_playbooks.scan_health_counts(live_rows)
+    live_scan_count = live_scan_health["attempted"]
+    valid_live_scan_count = live_scan_health["valid"]
+    scan_error_count = live_scan_health["errors"]
+    scan_failures = v9_playbooks.scan_failure_details(live_rows, scan_state.get("scan_symbol_health") or {})
     research_watchlist_count = len(settings.WATCHLIST)
     live_fno_count = None
     if kite_auth.is_logged_in_today():
@@ -267,6 +286,9 @@ def settings_page():
         research_watchlist_count=research_watchlist_count,
         live_fno_count=live_fno_count,
         last_scan_count=live_scan_count,
+        valid_live_scan_count=valid_live_scan_count,
+        scan_error_count=scan_error_count,
+        scan_failures=scan_failures,
         settings_last_scan=scan_state.get("last_scan"),
         errors=errors,
         saved=saved,

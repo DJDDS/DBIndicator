@@ -1295,6 +1295,7 @@ _state = {
     "index_chg_pct": None,
     "breadth": None,
     "market_regime": None,
+    "scan_symbol_health": {},
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1493,6 +1494,7 @@ def _load_persisted_state():
                 _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["oi_label_prev"] = saved.get("oi_label_prev", {})
+                _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
                 _state["last_error"] = None
     except (json.JSONDecodeError, OSError):
         pass
@@ -1508,6 +1510,7 @@ def _save_persisted_state():
             "oi_day_baseline": _state["oi_day_baseline"],
             "oi_structure_prev": _state["oi_structure_prev"],
             "oi_label_prev": _state["oi_label_prev"],
+            "scan_symbol_health": _state["scan_symbol_health"],
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -1603,13 +1606,17 @@ def _run_loop():
                     # option expression and cannot create an underlying playbook.
                     _apply_derivative_intelligence(kite, results, now=now_ist())
                     oi_events = _detect_oi_accel_events(results)
+                    scan_ts = now_ist().isoformat(timespec="seconds")
                     with _state_lock:
                         _state["results"] = results
                         _state["index_direction"] = index_direction
                         _state["index_close"] = index_close
                         _state["index_chg_pct"] = index_chg_pct
                         _state["breadth"] = breadth
-                        _state["last_scan"] = now_ist().isoformat(timespec="seconds")
+                        _state["scan_symbol_health"] = v9_playbooks.update_symbol_scan_health(
+                            _state.get("scan_symbol_health") or {}, results, scan_ts
+                        )
+                        _state["last_scan"] = scan_ts
                         _state["last_error"] = None
                     try:
                         alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)

@@ -1,6 +1,6 @@
 # V9.2 Diagnostic / Audit Lock
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.5-PRODUCTION-DIAGNOSTICS`
 
 ## Rejected Bear rule — audit only
 
