@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING"
+BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 
@@ -216,12 +216,22 @@ def _bull_clv(row: dict) -> float | None:
     return round(float(np.clip((close - lo) / (hi - lo) * 100.0, 0.0, 100.0)), 2)
 
 
-def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
-    """Cumulative diagnostic funnel for the unchanged Bull Accumulation rule.
+def bull_accumulation_event_key(row: dict) -> str:
+    """Stable identifier for one point-in-time Bull accumulation research event."""
+    return "|".join([
+        str(row.get("symbol") or ""),
+        str(row.get("signal_time") or row.get("timestamp") or ""),
+        str(row.get("entry_time") or ""),
+        str(row.get("direction") or row.get("v8_direction") or "Bullish"),
+    ])
 
-    This reports where the population disappears; it does not alter eligibility
-    or propose replacement thresholds.  The input may contain the broader V9.2
-    price-up/OI-up diagnostic seeds as well as the original V9.1 probes.
+
+def _bull_accumulation_gate_path(events: Iterable[dict]):
+    """Return the exact cumulative Bull gate path and surviving row objects.
+
+    The funnel and the backtest population must share this function so a
+    diagnostic survivor can never silently disappear in a second eligibility
+    implementation.
     """
     rows = [e for e in (events or []) if e.get("v92_accumulation_seed") or e.get("v91_accumulation_probe")]
 
@@ -246,9 +256,6 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
         explicit = row.get("bull_vwap_available")
         if explicit is not None:
             return bool(explicit)
-        # Compatibility for older unit fixtures/shards where the only VWAP
-        # field was direction-relative. A real True/False value means VWAP was
-        # available; None means it was not evaluable for this broad Bull seed.
         return row.get("vwap_side_agrees") is not None
 
     def above_vwap(row):
@@ -258,8 +265,6 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
         return row.get("vwap_side_agrees") is True
 
     gates = [
-        # "Long Buildup" is exactly the same price-up + OI-up computation as
-        # the seed, so do not present it as an independent confirmation.
         ("price_up_oi_up", "Price up + OI up / Long Buildup", seed),
         ("vwap_available", "VWAP data available", vwap_available),
         ("above_vwap", "Above-VWAP acceptance", above_vwap),
@@ -283,13 +288,47 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
             "survival_pct_of_seed": round(current / len(rows) * 100.0, 1) if rows else 0.0,
         })
         previous = current
+    return rows, stages, survivors
+
+
+def select_bull_accumulation_gate_qualified(events: Iterable[dict]) -> list[dict]:
+    """Exact Bull research population after the V9.2 diagnostic gates."""
+    _rows, _stages, survivors = _bull_accumulation_gate_path(events)
+    return survivors
+
+
+def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
+    """Cumulative diagnostic funnel and exact surviving event identifiers."""
+    rows, stages, survivors = _bull_accumulation_gate_path(events)
     return {
         "diagnostic_only": True,
         "seed_count": len(rows),
         "qualified": len(survivors),
+        "qualified_event_keys": [bull_accumulation_event_key(row) for row in survivors],
         "stages": stages,
         "independent_streams": ["price", "volume", "futures_oi", "relative_strength", "basis_when_available"],
-        "message": "Diagnostic only: duplicate price+OI/Long-Buildup evidence is collapsed; this identifies the population bottleneck without changing any Bull threshold.",
+        "message": "Diagnostic only: duplicate price+OI/Long-Buildup evidence is collapsed; this exact surviving population feeds the Bull development/validation split without changing any threshold.",
+    }
+
+
+def assert_bull_population_integrity(funnel: dict, candidates: Iterable[dict]) -> dict:
+    """Fail loudly if the diagnostic funnel and Bull backtest population diverge."""
+    candidate_rows = list(candidates or [])
+    expected = int((funnel or {}).get("qualified") or 0)
+    actual = len(candidate_rows)
+    funnel_keys = list((funnel or {}).get("qualified_event_keys") or [])
+    candidate_keys = [bull_accumulation_event_key(row) for row in candidate_rows]
+    keys_match = (not funnel_keys) or funnel_keys == candidate_keys
+    if expected != actual or not keys_match:
+        raise RuntimeError(
+            f"DATA/LOGIC ERROR: Bull gate funnel qualified {expected} events but "
+            f"the Bull backtest population contains {actual}. Research result withheld."
+        )
+    return {
+        "status": "OK",
+        "funnel_qualified": expected,
+        "candidate_count": actual,
+        "event_keys_match": True,
     }
 
 

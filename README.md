@@ -1,6 +1,6 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
@@ -55,3 +55,7 @@ V9.2.9 fixes the Stage-2 research bottleneck that could leave the production bac
 
 The build also adopts the low-risk measurement recommendations from the external validation audit: forward validation now headlines net expectancy, net profit factor and 95% Wilson confidence intervals; duplicate Price+OI/Long-Buildup evidence is collapsed in the Bull diagnostic funnel; Bear frozen thresholds are applied at one freeze boundary rather than duplicated in the compactor; historical trial count/Bonferroni alpha and current-universe survivorship bias are disclosed explicitly. No Deflated Sharpe/FDR, MWPL history, point-in-time F&O membership or new Bear strategy is fabricated without the required data/protocol.
 
+
+## V9.2.10 Bull-population integrity
+
+V9.2.10 makes the Bull Gate Funnel and Bull Institutional Accumulation backtest use one exact event population. The funnel now exposes stable event keys, its survivors directly feed the 60/20/20 split, and any future count/identity mismatch aborts the research result with `DATA/LOGIC ERROR` instead of silently printing zero trades. Historical price/OI coverage is also shown directly in the V9.2 result block.

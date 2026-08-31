@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY</div>
     <p>
       <strong>V9.2 Diagnostic Reset is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.2 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
     </p>
@@ -149,8 +149,9 @@
       <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
       </div>
 
-      <h3 class="bt-group-title" style="margin-top:18px;">V9.1 Goal-Focused Evidence</h3>
+      <h3 class="bt-group-title" style="margin-top:18px;">V9.2 Goal-Focused Evidence</h3>
       <p class="hint">Bull Institutional Accumulation remains development/validation only. Bear Fresh Short Buildup is frozen; only the dedicated final-test run can reveal its final 20%.</p>
+      <div id="er-v91-history-coverage" class="hint" style="margin:10px 0 14px;"></div>
       <div id="er-v91-goal"></div>
       <div id="er-v8-audit" style="display:none;">
       <h3 class="bt-group-title" style="margin-top:18px;">V8.1 Evidence-Locked <span class="hint">Bull Top-K + Bear Pressure Top-K · final 20% locked</span></h3>
@@ -301,7 +302,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING";
+const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -700,6 +701,11 @@ function renderEarlyResearch(result) {
   const s1d = stat(r.swing, '1D');
   const oi = r.oi_coverage || {};
   const hc = r.history_coverage || result.history_coverage || {};
+  const v91Coverage = ((r.v91_goal || {}).history_coverage || hc);
+  const v91CoverageEl = document.getElementById('er-v91-history-coverage');
+  if (v91CoverageEl) {
+    v91CoverageEl.innerHTML = `<strong>Historical Data Coverage:</strong> Price ${v91Coverage.price_bars || 0} bars${v91Coverage.price_first_timestamp ? ' · ' + v91Coverage.price_first_timestamp + ' → ' + v91Coverage.price_last_timestamp : ''} · Intraday OI ${v91Coverage.oi_bars || 0} bars (${v91Coverage.oi_bar_coverage_pct == null ? '—' : v91Coverage.oi_bar_coverage_pct + '%'}) · OI symbols ${v91Coverage.symbols_with_oi || 0}/${v91Coverage.symbols_measured || 0}${v91Coverage.oi_first_timestamp ? ' · OI era ' + v91Coverage.oi_first_timestamp + ' → ' + v91Coverage.oi_last_timestamp : ''}. <span>${v91Coverage.note || ''}</span>`;
+  }
   const oneAtr4 = (r.compression_lift || []).find(x => String(x.horizon) === '4' && Number(x.threshold_atr) === 1) || {};
   document.getElementById('er-tiles').innerHTML = `
     <div class="tile"><div class="tv">${oneAtr4.lift == null ? '—' : Number(oneAtr4.lift).toFixed(2) + '×'}</div><div class="tl">Coil 1h ≥1 ATR lift vs baseline</div></div>
@@ -779,6 +785,8 @@ function renderEarlyResearch(result) {
       const finalText = finalStats.locked ? '<strong>LOCKED</strong>' : `${finalStats.trade_count || 0} trades · ${pct(finalStats.avg_return_pct)} · PF ${pf(finalStats.profit_factor)} · <strong style="color:${verdictColour}">${verdict}</strong>`;
       const funnel = v91.bull_gate_funnel || {};
       const protocol = v91.protocol || {};
+      const bullIntegrity = bull.population_integrity || {};
+      const bullIntegrityOk = bullIntegrity.status === 'OK';
       const funnelRows = (funnel.stages || []).map(stage => `<tr><td>${stage.label || stage.gate}</td><td>${stage.survivors || 0}</td><td>${stage.dropped_at_gate || 0}</td><td>${stage.survival_pct_of_seed == null ? '—' : Number(stage.survival_pct_of_seed).toFixed(1) + '%'}</td></tr>`).join('');
       const regime = v91.bear_regime_decomposition || {};
       const cohortCompare = (field, title) => {
@@ -796,6 +804,7 @@ function renderEarlyResearch(result) {
       const regimeOverallF = (regime.final || {}).overall || {};
       const diagnosticHtml = `
         <div class="hint" style="margin-top:10px;border:1px solid #4a3f1d;padding:9px;border-radius:6px;"><strong>Research protocol hardening:</strong> ${protocol.historical_trials_counted || 0} historical trials declared · family-wise α ${protocol.familywise_alpha ?? '—'} · Bonferroni α ${protocol.bonferroni_alpha ?? '—'} · reference power n≈${protocol.power_reference_55pct_vs_50pct_n || '—'} for 55% vs 50%. <strong>Universe limitation:</strong> ${protocol.universe_warning || 'Point-in-time F&O membership unavailable.'}</div>
+        <div class="hint" style="margin-top:8px;border:1px solid ${bullIntegrityOk ? '#235d48' : '#8b2e2e'};padding:9px;border-radius:6px;"><strong>Bull population integrity:</strong> ${bullIntegrityOk ? `OK · funnel ${bullIntegrity.funnel_qualified || 0} = backtest ${bullIntegrity.candidate_count || 0}` : '<span style="color:var(--red)">DATA/LOGIC ERROR · research result withheld</span>'}</div>
         <h4 style="margin:18px 0 6px;">Bull Gate Funnel <span class="hint">diagnostic only</span></h4>
         <p class="hint">Cumulative survival through the unchanged Bull Institutional Accumulation gates. Duplicate Price↑+OI↑ / Long-Buildup evidence is collapsed. Independent streams tracked: ${(funnel.independent_streams || []).join(', ') || '—'}. This identifies the population bottleneck; it does not tune thresholds or unlock the Bull final 20%.</p>
         <table><thead><tr><th>Gate</th><th>Survivors</th><th>Dropped here</th><th>% of seed</th></tr></thead><tbody>${funnelRows || '<tr><td colspan="4">No broad Price↑ + OI↑ seeds captured.</td></tr>'}</tbody></table>

@@ -217,7 +217,7 @@ def api_v8_dashboard():
 @app.route("/api/opportunity-forward/export")
 @require_dashboard_password
 def api_opportunity_forward_export():
-    """Download the raw V9.2.9 live-opportunity forward-validation state."""
+    """Download the raw V9.2.10 live-opportunity forward-validation state."""
     state = get_state().get("opportunity_forward") or opportunity_forward.empty_state()
     body = json.dumps(state, indent=2, default=str)
     headers = {"Content-Disposition": "attachment; filename=v929_opportunity_forward_validation.json"}

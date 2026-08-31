@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING"
+V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY"
 
 BULL_INSTITUTIONAL_ACCUMULATION = "Bull Institutional Accumulation"
 BULL_OPENING_DRIVE = "Bull Opening Drive"
@@ -33,7 +33,7 @@ PLAYBOOKS = (
     BEAR_VWAP_RETEST_FAILURE,
 )
 
-# Production eligibility is evidence-gated.  At V9.2.9 the bullish
+# Production eligibility is evidence-gated.  At V9.2.10 the bullish
 # accumulation hypothesis is still research/shadow only and the frozen Bear
 # Fresh Short Buildup rule has already failed its untouched final sample.
 # Therefore no V9 playbook is allowed to drive live TRADE/WATCH shortlists yet.

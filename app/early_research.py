@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING"
+RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY"
 
 
 
@@ -2015,28 +2015,17 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False, progre
         progress_cb("Bull accumulation + gate funnel", 88)
     bull_gate_funnel = v91_goal.bull_accumulation_gate_funnel(rows)
 
-    bull = []
-    for row in rows:
-        if not row.get("v91_accumulation_probe"):
-            continue
-        try:
-            now = pd.Timestamp(row.get("signal_time") or row.get("entry_time")).to_pydatetime()
-        except Exception:
-            now = None
-        for play in v9_playbooks.evaluate_row(row, now=now):
-            if play.get("playbook") != v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION:
-                continue
-            if play.get("state") != "TRADE CANDIDATE":
-                continue
-            item = dict(row)
-            item["v9_playbook"] = play.get("playbook")
-            item["v9_score"] = play.get("score")
-            item["v9_reasons"] = play.get("reasons") or []
-            bull.append(item)
+    # V9.2.10 integrity rule: the cumulative Bull gate funnel is the single
+    # source of truth for the research population.  Do not re-run a second
+    # playbook eligibility implementation after the funnel; that was the source
+    # of the V9.2.9 651-qualified -> 0-candidate contradiction.
+    bull = v91_goal.select_bull_accumulation_gate_qualified(rows)
+    population_integrity = v91_goal.assert_bull_population_integrity(bull_gate_funnel, bull)
 
     bull_report = {
         "historical_status": "BACKTESTABLE",
         "trade_count": len(bull),
+        "population_integrity": population_integrity,
         "30m": _v9_three_way(bull, "intraday_returns", "30m"),
         "1h": _v9_three_way(bull, "intraday_returns", "1h"),
         "2h": _v9_three_way(bull, "intraday_returns", "2h"),
@@ -2101,6 +2090,7 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False, progre
         "bear_fresh_short_buildup": bear_report,
         "bear_final": bear_final,
         "bull_gate_funnel": bull_gate_funnel,
+        "history_coverage": dict((run_context or {}).get("history_coverage") or {}),
         "bear_regime_decomposition": bear_regime_decomposition,
         "retired_playbooks": [
             "Bull Opening Drive", "Bull Pullback/Reclaim",

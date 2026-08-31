@@ -32,7 +32,7 @@ def test_dashboard_v8_cards_show_evidence_components_and_trade_state():
 
 def test_backtest_template_has_v9_playbook_result_section():
     text = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
-    assert 'V9.1 Goal-Focused Evidence' in text
+    assert 'V9.2 Goal-Focused Evidence' in text
     assert 'v91_goal' in text
     assert 'Bull Institutional Accumulation' in text
     assert 'Bear Fresh Short Buildup' in text
@@ -57,7 +57,7 @@ def test_v9_has_dedicated_one_click_15m_backtest_runner():
 
 
 def test_v9_build_marker_is_current_research_build():
-    build_id = '2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING'
+    build_id = '2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == build_id
     assert build_id in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text(encoding='utf-8')
