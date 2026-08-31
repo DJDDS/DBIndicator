@@ -57,7 +57,7 @@ def test_v9_has_dedicated_one_click_15m_backtest_runner():
 
 
 def test_v9_build_marker_is_current_research_build():
-    build_id = '2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET'
+    build_id = '2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == build_id
     assert build_id in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text(encoding='utf-8')

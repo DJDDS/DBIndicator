@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET"
+BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 
@@ -180,7 +180,7 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
     or propose replacement thresholds.  The input may contain the broader V9.2
     price-up/OI-up diagnostic seeds as well as the original V9.1 probes.
     """
-    rows = [dict(e) for e in (events or []) if e.get("v92_accumulation_seed") or e.get("v91_accumulation_probe")]
+    rows = [e for e in (events or []) if e.get("v92_accumulation_seed") or e.get("v91_accumulation_probe")]
 
     def finite_ge(row, key, threshold):
         v = _f(row.get(key))

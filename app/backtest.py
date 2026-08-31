@@ -2197,6 +2197,9 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 ranked_v91_payload.get("confirmation") or {},
                 holdout_pct=holdout_pct,
                 run_context=run_context,
+                stage3_progress_cb=(
+                    (lambda message, pct: stage_cb(3, 4, message, pct)) if stage_cb else None
+                ),
             )
             if stage_cb:
                 stage_cb(4, 4, "Preparing report", 98)
@@ -2456,6 +2459,9 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             ranked_v91_payload.get("confirmation") or {},
             holdout_pct=holdout_pct,
             run_context=run_context,
+            stage3_progress_cb=(
+                (lambda message, pct: stage_cb(3, 4, message, pct)) if stage_cb else None
+            ),
         )
     elif fast_v8:
         research = early_research.aggregate_v8_research_fast(

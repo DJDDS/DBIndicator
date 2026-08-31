@@ -1,6 +1,6 @@
 # V9.2 Diagnostic Reset Release Notes
 
-Build: `2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET`
+Build: `2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY`
 
 V9.2 answers two post-final-test questions without adding a new tunable strategy:
 

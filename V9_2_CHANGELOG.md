@@ -1,6 +1,6 @@
 # V9.2 Diagnostic Reset
 
-Build: `2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET`
+Build: `2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY`
 
 - Adds a cumulative Bull Institutional Accumulation gate funnel beginning at the broad point-in-time `price up + OI up` seed.
 - Adds diagnostic-only Bear FSB validation-vs-consumed-final decomposition by market regime, index trend, market volatility, basis direction, sector-relative state, signal time, OI magnitude, OI persistence and post-signal 60-minute positioning.

@@ -1,6 +1,6 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 

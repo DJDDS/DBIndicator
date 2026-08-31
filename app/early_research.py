@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET"
+RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY"
 
 
 
@@ -1379,7 +1379,7 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
     return result
 
 
-def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=30.0, run_context=None):
+def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=30.0, run_context=None, stage3_progress_cb=None):
     """Aggregate the streaming V9.1 candidate checkpoint directly.
 
     This deliberately bypasses replay-family reconstruction.  The candidate
@@ -1412,6 +1412,7 @@ def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=
             rows,
             run_context=run_context,
             reveal_bear_final=(mode == "v91_bear_final"),
+            progress_cb=stage3_progress_cb,
         ),
     }
 
@@ -1692,27 +1693,27 @@ def _v8_benchmark(events, field, key):
 
 
 def _ensure_v8_event_scores(events):
-    """Score events missing V8 fields, grouped at their signal timestamp.
+    """Ensure V8 fields exist without cloning an already-ranked Stage-2 set.
 
-    Backtest.py can attach full-universe percentiles before aggregation. This
-    fallback keeps unit tests and partial research runs usable by ranking the
-    contemporaneous event cross-section only; it never overwrites pre-ranked
-    full-universe scores.
+    Stage 2 writes point-in-time ranks into the compact candidate rows.  The
+    common production path therefore reuses those exact row objects.  Only
+    partial/unit-test inputs that are genuinely missing ranks invoke the
+    fallback cross-sectional scorer, and the returned scores are merged back
+    into the original rows in place.
     """
     from . import v8_dual
-    rows = [dict(e) for e in (events or [])]
+    rows = events if isinstance(events, list) else list(events or [])
     missing = [i for i, e in enumerate(rows) if e.get("v8_alpha") is None]
-    if not missing:
-        return rows
-    groups = {}
-    for i in missing:
-        groups.setdefault(rows[i].get("signal_time") or rows[i].get("entry_time") or "", []).append(i)
-    for idxs in groups.values():
-        scored = v8_dual.rank_cross_section([rows[i] for i in idxs])
-        for i, scored_row in zip(idxs, scored):
-            for key, value in scored_row.items():
-                if key.startswith("v8_") or key.startswith("v81_"):
-                    rows[i][key] = value
+    if missing:
+        groups = {}
+        for i in missing:
+            groups.setdefault(rows[i].get("signal_time") or rows[i].get("entry_time") or "", []).append(i)
+        for idxs in groups.values():
+            scored = v8_dual.rank_cross_section([rows[i] for i in idxs])
+            for i, scored_row in zip(idxs, scored):
+                for key, value in scored_row.items():
+                    if key.startswith("v8_") or key.startswith("v81_"):
+                        rows[i][key] = value
     for row in rows:
         if row.get("direction") == "Bearish" and row.get("v81_bear_pressure") is None:
             row["v81_bear_pressure"] = v8_dual.bear_pressure_score(row)
@@ -1989,11 +1990,14 @@ def v6_edge_report(events):
     return report
 
 
-def v91_goal_report(events, run_context=None, *, reveal_bear_final=False):
+def v91_goal_report(events, run_context=None, *, reveal_bear_final=False, progress_cb=None):
     """V9.1 goal-focused report: one new Bull research play + frozen Bear final."""
     from . import v9_playbooks, v91_goal
 
     rows = _ensure_v8_event_scores(events)
+    if progress_cb:
+        progress_cb("Bull accumulation + gate funnel", 88)
+    bull_gate_funnel = v91_goal.bull_accumulation_gate_funnel(rows)
 
     bull = []
     for row in rows:
@@ -2027,6 +2031,9 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False):
         "benchmark_1D": _v8_benchmark(bull, "swing_returns", "1D"),
     }
 
+    if progress_cb:
+        progress_cb("Bear FSB regime decomposition", 92)
+    bear_regime_decomposition = v91_goal.bear_fsb_regime_decomposition(rows)
     bear_final = v91_goal.bear_fsb_final_report(
         rows, run_context or {}, reveal_final=bool(reveal_bear_final)
     )
@@ -2056,6 +2063,8 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False):
         "validation_qualified": validation_qualified,
     }
 
+    if progress_cb:
+        progress_cb("Finalizing V9.2 diagnostic report", 96)
     return {
         "build_id": v91_goal.BUILD_ID,
         "protocol": {
@@ -2072,8 +2081,8 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False):
         },
         "bear_fresh_short_buildup": bear_report,
         "bear_final": bear_final,
-        "bull_gate_funnel": v91_goal.bull_accumulation_gate_funnel(rows),
-        "bear_regime_decomposition": v91_goal.bear_fsb_regime_decomposition(rows),
+        "bull_gate_funnel": bull_gate_funnel,
+        "bear_regime_decomposition": bear_regime_decomposition,
         "retired_playbooks": [
             "Bull Opening Drive", "Bull Pullback/Reclaim",
             "Bear Failed Breakout", "Bear VWAP Retest Failure",

@@ -195,3 +195,60 @@ def test_v92_backtest_ui_mentions_gate_funnel_and_regime_decomposition():
     assert "Bear FSB Final: REJECTED" in text
     assert "Run Frozen Bear FSB Final Test" not in text
     assert "diagnostic only" in text.lower()
+
+
+def test_stage3_reuses_already_ranked_event_objects_without_copying():
+    from app import early_research
+
+    bull = bull_seed(v8_alpha=82.0)
+    bear = bear_row("2026-08-01T10:00:00+05:30", 0.3)
+    bear.update({"v8_alpha": 80.0, "v81_bear_pressure": 79.0})
+    rows = [bull, bear]
+
+    scored = early_research._ensure_v8_event_scores(rows)
+
+    assert scored is rows
+    assert scored[0] is bull
+    assert scored[1] is bear
+
+
+def test_bull_gate_funnel_does_not_clone_seed_mappings():
+    class NoCloneDict(dict):
+        def keys(self):
+            raise AssertionError("gate funnel must not clone candidate dictionaries")
+
+    row = NoCloneDict(bull_seed(v8_alpha=82.0))
+    funnel = v91_goal.bull_accumulation_gate_funnel([row])
+
+    assert funnel["seed_count"] == 1
+    assert funnel["qualified"] == 1
+
+
+def test_v91_goal_report_emits_stage3_subprogress():
+    from app import early_research
+
+    rows = [bull_seed(symbol="A", v8_alpha=82.0)]
+    start = dt.datetime(2026, 1, 1, 10, 0, tzinfo=dt.timezone(dt.timedelta(hours=5, minutes=30)))
+    for i in range(20):
+        ts = (start + dt.timedelta(days=i)).isoformat()
+        row = bear_row(ts, 0.2)
+        row.update({"v8_alpha": 80.0, "v81_bear_pressure": 80.0})
+        rows.append(row)
+    ctx = {
+        "setup_timeframe": "15minute", "execution_timeframe": "15minute", "days": 180,
+        "cost_pct": 0.08, "slippage_pct": 0.05, "universe_is_full_fno": True,
+        "research_mode": "v91_fast",
+    }
+    updates = []
+
+    early_research.v91_goal_report(
+        rows, run_context=ctx, reveal_bear_final=False,
+        progress_cb=lambda message, pct: updates.append((message, pct)),
+    )
+
+    assert [m for m, _ in updates] == [
+        "Bull accumulation + gate funnel",
+        "Bear FSB regime decomposition",
+        "Finalizing V9.2 diagnostic report",
+    ]
+    assert [p for _, p in updates] == [88, 92, 96]
