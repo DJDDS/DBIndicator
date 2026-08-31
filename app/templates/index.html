@@ -312,8 +312,8 @@
 <div id="toast-wrap"></div>
 <header>
   <div class="brand">
-    <h1>V9.1 Goal-Focused Scanner</h1>
-    <span class="tagline">NSE F&amp;O &middot; Bull accumulation + Bear fresh-shorts &middot; derivative intelligence &middot; 15m signal / 4H context</span>
+    <h1>V9.2 Live F&amp;O Monitor</h1>
+    <span class="tagline">NSE F&amp;O &middot; live Watchlist + OI intelligence &middot; research models evidence-gated &middot; 15m signal / 4H context</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -388,7 +388,7 @@
       <span class="tb-status" title="Live universe is refreshed from current NSE stock futures. Execution evidence uses 15-minute candles with a 4-hour higher-timeframe read.">
         F&amp;O universe: <strong>live</strong> &middot; execution: <strong>15m</strong> &middot; HTF: <strong>4h</strong>
       </span>
-      <span class="tb-status"><strong id="live-scan-count">{{ total_scanned }}</strong> scanned</span>
+      <span class="tb-status">Attempted <strong id="live-scan-count">{{ total_scanned }}</strong> &middot; Valid <strong id="live-valid-count">{{ valid_scanned }}</strong> &middot; Errors <strong id="live-error-count">{{ scan_errors }}</strong></span>
       <span class="tb-status">Radar <strong id="radar-count">{{ live_counts.radar }}</strong></span>
       <span class="tb-status">Intraday <strong id="intraday-count">{{ live_counts.intraday }}</strong></span>
       <span class="tb-status">Swing <strong id="swing-count">{{ live_counts.swing }}</strong></span>
@@ -396,11 +396,11 @@
     </div>
   </div>
 
-  <section id="v8-decision-console" class="card v8-console" aria-label="V9.1 Goal-Focused Scanner live decision console">
+  <section id="v8-decision-console" class="card v8-console" aria-label="V9.2 evidence-gated live decision console">
     <div class="v8-console-head">
       <div>
-        <div class="v8-kicker">V9.1 Goal-Focused Scanner + Derivative Intelligence · NSE F&amp;O</div>
-        <h2>Live Decision Console <span class="sub">Bull Institutional Accumulation · Bull Catalyst Continuation · Bear Fresh Short Buildup</span></h2>
+        <div class="v8-kicker">V9.2 Live Market Monitor + Derivative Intelligence · NSE F&amp;O</div>
+        <h2>Live Decision Console <span class="sub">No validated production playbook · Bull Institutional Accumulation / Bull Catalyst Continuation remain SHADOW · Bear Fresh Short Buildup REJECTED</span></h2>
       </div>
       <div class="v8-tabs" role="tablist" aria-label="V9 horizon">
         <button type="button" class="v8-tab active" id="v8-view-intraday" role="tab" aria-selected="true">Intraday</button>
@@ -417,15 +417,15 @@
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
-        <div class="v8-side-head">Bullish Models <span>institutional accumulation / real catalyst</span></div>
+        <div class="v8-side-head">Bullish Models <span>production: none validated · institutional accumulation / real catalyst shadow-only</span></div>
         <div id="v8-bull-leaders" class="v8-leader-list"><div class="v8-empty">Loading bullish evidence…</div></div>
       </section>
       <section class="v8-side bear" aria-label="Bearish leaders">
-        <div class="v8-side-head">Bearish Model <span>frozen Fresh Short Buildup</span></div>
+        <div class="v8-side-head">Bearish Model <span>production: none · Bear Fresh Short Buildup rejected</span></div>
         <div id="v8-bear-leaders" class="v8-leader-list"><div class="v8-empty">Loading bearish evidence…</div></div>
       </section>
     </div>
-    <div class="v8-method"><strong>V9.1 goal logic:</strong> failed V9 playbooks are retired rather than retuned. Bull: <strong>Institutional Accumulation</strong> (price up + OI up, participation, relative leadership, VWAP acceptance) plus <strong>real Catalyst Continuation</strong> in live/shadow. Bear: the frozen <strong>Fresh Short Buildup</strong> model only. <strong>Derivative Intelligence:</strong> IV/RV, ATM move, spread, DTE, Greeks and liquidity decide option expression only after the underlying playbook qualifies. <strong>Execution:</strong> 1.25 ATR chase guard; 4H is context, never a veto. <a href="/api/option-shadow/export" style="margin-left:8px;">Export option forward data</a>.</div>
+    <div class="v8-method"><strong>V9.2 evidence gate:</strong> no research model can drive live TRADE/WATCH until it clears validation and its untouched final test. Bull <strong>Institutional Accumulation</strong> and <strong>real Catalyst Continuation</strong> remain SHADOW. Bear <strong>Fresh Short Buildup</strong> is REJECTED after its final test and cannot generate live candidates. <strong>Derivative Intelligence:</strong> IV/RV, ATM move, spread, DTE, Greeks and liquidity remain downstream research/expression data. <strong>Execution:</strong> 1.25 ATR chase guard; 4H is context, never a veto. <a href="/api/option-shadow/export" style="margin-left:8px;">Export option forward data</a>.</div>
   </section>
 
 
@@ -460,8 +460,8 @@
   </div>
 
   <div class="card" style="border-color:#273d55;">
-    <h2>Production model status <span class="sub">V9 playbooks select the underlying; Derivative Intelligence evaluates option expression downstream</span></h2>
-    <p class="sl-empty">The live decision surface above is the production candidate. Earlier V6/V7 shortlist cards are retired from the dashboard after failing or becoming obsolete in longer validation. Research diagnostics remain on the <a href="/backtest">Backtest page</a>; they do not generate live trade candidates.</p>
+    <h2>Production model status <span class="sub">No validated V9 production playbook is active</span></h2>
+    <p class="sl-empty"><strong>Live market data remains active:</strong> the Watchlist and OI Screener continue scanning the F&amp;O universe. Bull Institutional Accumulation/Catalyst are research-shadow only, and rejected Bear FSB is blocked from alerts/shortlists. Research diagnostics remain on the <a href="/backtest">Backtest page</a>.</p>
   </div>
 
   {% if insights_enabled %}
@@ -1001,11 +1001,15 @@
     }).then(function (state) {
       var counts = state.counts || {};
       var scanCount = document.getElementById('live-scan-count');
+      var validCount = document.getElementById('live-valid-count');
+      var errorCount = document.getElementById('live-error-count');
       var radarCount = document.getElementById('radar-count');
       var intradayCount = document.getElementById('intraday-count');
       var swingCount = document.getElementById('swing-count');
       var lastScan = document.getElementById('last-scan-text');
       if (scanCount) scanCount.textContent = state.total_scanned ?? 0;
+      if (validCount) validCount.textContent = state.valid_scanned ?? 0;
+      if (errorCount) errorCount.textContent = state.error_count ?? 0;
       if (radarCount) radarCount.textContent = counts.radar ?? 0;
       if (intradayCount) intradayCount.textContent = counts.intraday ?? 0;
       if (swingCount) swingCount.textContent = counts.swing ?? 0;
@@ -1089,8 +1093,8 @@
     var bear = view.bearish || [];
     var bullBox = document.getElementById('v8-bull-leaders');
     var bearBox = document.getElementById('v8-bear-leaders');
-    var emptyBull = '<div class="v8-empty">No bullish TRADE/WATCH candidate in the current scan.</div>';
-    var emptyBear = '<div class="v8-empty">No bearish TRADE/WATCH candidate in the current scan.</div>';
+    var emptyBull = '<div class="v8-empty">No validated bullish production model yet. Bull Accumulation and real Catalyst remain research/shadow.</div>';
+    var emptyBear = '<div class="v8-empty">No validated bearish production model. Bear Fresh Short Buildup failed its final test and is retired.</div>';
     if (bullBox) bullBox.innerHTML = bull.length ? bull.map(function (r,i) { return renderV8Card(r, i+1, 'bull'); }).join('') : emptyBull;
     if (bearBox) bearBox.innerHTML = bear.length ? bear.map(function (r,i) { return renderV8Card(r, i+1, 'bear'); }).join('') : emptyBear;
 
@@ -1114,7 +1118,8 @@
       var market = lastV8Payload.market || {};
       var idx = market.index_direction ? (' · Nifty ' + market.index_direction + (market.index_chg_pct == null ? '' : ' ' + (market.index_chg_pct >= 0 ? '+' : '') + v8Num(market.index_chg_pct, 2) + '%')) : '';
       status.className = 'v8-status ' + (lastV8Payload.market_open ? 'live' : 'closed');
-      status.textContent = (lastV8Payload.market_open ? 'LIVE' : 'MARKET CLOSED') + idx;
+      var prod = lastV8Payload.production_status ? (' · ' + lastV8Payload.production_status) : '';
+      status.textContent = (lastV8Payload.market_open ? 'LIVE' : 'MARKET CLOSED') + idx + prod;
     }
   }
 

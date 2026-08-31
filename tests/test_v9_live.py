@@ -35,15 +35,14 @@ def row(symbol, direction="Bullish", source="Opening Range", score=80):
     }
 
 
-def test_v9_live_attaches_playbook_and_replaces_v81_operational_stage(monkeypatch):
+def test_v9_live_keeps_unvalidated_bull_playbook_in_shadow_not_operational(monkeypatch):
     rows = [row("BULL1"), row("BULL2"), row("BULL3"), row("BULL4")]
     monkeypatch.setattr(background.news, "get_news_for_symbol", lambda symbol, limit=3: [])
     background._apply_v9_playbooks(rows, now=dt.datetime(2026, 8, 30, 10, 0))
     intraday, _swing = background._apply_v9_operational_shortlists(rows)
-    assert len(intraday) == 3
-    assert all(r.get("movement_stage", "").startswith("V9.1 ") for r in intraday)
-    assert all("V8.1" not in r.get("movement_stage", "") for r in intraday)
-    assert intraday[0]["v9_intraday_playbook"] == v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION
+    assert intraday == []
+    assert any(p.get("playbook") == v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION for p in rows[0]["v9_playbooks"])
+    assert rows[0]["v9_intraday_playbook"] is None
 
 
 def test_v9_live_uses_real_cached_catalyst_headline(monkeypatch):
@@ -56,16 +55,17 @@ def test_v9_live_uses_real_cached_catalyst_headline(monkeypatch):
     background._apply_v9_playbooks(rows, now=dt.datetime.fromisoformat("2026-08-30T10:00:00+05:30"))
     plays = rows[0]["v9_playbooks"]
     assert any(p["playbook"] == v9_playbooks.BULL_CATALYST_CONTINUATION for p in plays)
-    assert rows[0]["v9_intraday_playbook"] == v9_playbooks.BULL_CATALYST_CONTINUATION
+    assert rows[0]["v9_intraday_playbook"] is None  # live/shadow until validated
 
 
-def test_v9_operational_shortlists_keep_bull_and_bear_first_class(monkeypatch):
+def test_v9_operational_shortlists_do_not_promote_research_or_rejected_models(monkeypatch):
     bull = row("BULL")
     bear = row("BEAR", direction="Bearish", source="Recent Range")
     monkeypatch.setattr(background.news, "get_news_for_symbol", lambda symbol, limit=3: [])
     background._apply_v9_playbooks([bull, bear], now=dt.datetime(2026, 8, 30, 10, 0))
-    intraday, _ = background._apply_v9_operational_shortlists([bull, bear])
-    assert {r["trade_direction"] for r in intraday} == {"Bullish", "Bearish"}
+    intraday, swing = background._apply_v9_operational_shortlists([bull, bear])
+    assert intraday == []
+    assert swing == []
 
 
 def test_live_indicator_payload_exposes_failed_breakout_confirmation():

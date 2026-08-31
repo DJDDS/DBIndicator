@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY"
+V9_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX"
 
 BULL_INSTITUTIONAL_ACCUMULATION = "Bull Institutional Accumulation"
 BULL_OPENING_DRIVE = "Bull Opening Drive"
@@ -33,17 +33,23 @@ PLAYBOOKS = (
     BEAR_VWAP_RETEST_FAILURE,
 )
 
-ACTIVE_PLAYBOOKS = (
+# Production eligibility is evidence-gated.  At V9.2.4 the bullish
+# accumulation hypothesis is still research/shadow only and the frozen Bear
+# Fresh Short Buildup rule has already failed its untouched final sample.
+# Therefore no V9 playbook is allowed to drive live TRADE/WATCH shortlists yet.
+ACTIVE_PLAYBOOKS = ()
+SHADOW_PLAYBOOKS = (
     BULL_INSTITUTIONAL_ACCUMULATION,
     BULL_CATALYST_CONTINUATION,
-    BEAR_FRESH_SHORT_BUILDUP,
 )
-RETIRED_PLAYBOOKS = (
+REJECTED_PLAYBOOKS = (
+    BEAR_FRESH_SHORT_BUILDUP,
     BULL_OPENING_DRIVE,
     BULL_PULLBACK_RECLAIM,
     BEAR_FAILED_BREAKOUT,
     BEAR_VWAP_RETEST_FAILURE,
 )
+RETIRED_PLAYBOOKS = REJECTED_PLAYBOOKS
 
 MAX_EXTENSION_ATR = 1.25
 TRADE_SCORE_MIN = 70.0
@@ -347,14 +353,24 @@ def _compact_dashboard_row(row: dict, *, mode: str) -> dict:
     }
 
 
+def scan_health_counts(results: Iterable[dict]) -> dict:
+    """Return attempted/valid/error counts for the live scan surface."""
+    all_rows = list(results or [])
+    errors = sum(bool(r.get("error")) for r in all_rows)
+    return {"attempted": len(all_rows), "valid": len(all_rows) - errors, "errors": errors}
+
+
 def dashboard_payload(state: dict, *, limit: int = 6) -> dict:
     """JSON-safe live V9 professional-playbook decision console payload."""
-    rows = [r for r in (state.get("results") or []) if not r.get("error")]
+    all_rows = list(state.get("results") or [])
+    health = scan_health_counts(all_rows)
+    rows = [r for r in all_rows if not r.get("error")]
     priority = {"TRADE CANDIDATE": 2, "WATCH": 1, "NO EDGE": 0}
 
     def side(mode, direction):
         prefix = f"v9_{mode}_"
-        candidates = [r for r in rows if (r.get("v8_direction") or r.get("failed_breakout_direction")) == direction and r.get(prefix + "playbook")]
+        candidates = [r for r in rows if (r.get("v8_direction") or r.get("failed_breakout_direction")) == direction
+                      and r.get(prefix + "playbook") in ACTIVE_PLAYBOOKS]
         candidates.sort(key=lambda r: (priority.get(r.get(prefix + "state"), 0), float(r.get(prefix + "score") or 0)), reverse=True)
         return [_compact_dashboard_row(r, mode=mode) for r in candidates[:max(0, int(limit))]]
 
@@ -367,12 +383,17 @@ def dashboard_payload(state: dict, *, limit: int = 6) -> dict:
             "index_direction": state.get("index_direction"),
             "index_chg_pct": _json_number(state.get("index_chg_pct")),
         },
+        "production_status": "NO VALIDATED PRODUCTION PLAYBOOK" if not ACTIVE_PLAYBOOKS else "PRODUCTION ACTIVE",
+        "shadow_playbooks": list(SHADOW_PLAYBOOKS),
+        "rejected_playbooks": list(REJECTED_PLAYBOOKS),
         "counts": {
-            "universe": len(rows),
-            "intraday_trade": sum(r.get("v9_intraday_state") == "TRADE CANDIDATE" for r in rows),
-            "intraday_watch": sum(r.get("v9_intraday_state") == "WATCH" for r in rows),
-            "swing_trade": sum(r.get("v9_swing_state") == "TRADE CANDIDATE" for r in rows),
-            "swing_watch": sum(r.get("v9_swing_state") == "WATCH" for r in rows),
+            "attempted": health["attempted"],
+            "universe": health["valid"],
+            "errors": health["errors"],
+            "intraday_trade": sum(r.get("v9_intraday_playbook") in ACTIVE_PLAYBOOKS and r.get("v9_intraday_state") == "TRADE CANDIDATE" for r in rows),
+            "intraday_watch": sum(r.get("v9_intraday_playbook") in ACTIVE_PLAYBOOKS and r.get("v9_intraday_state") == "WATCH" for r in rows),
+            "swing_trade": sum(r.get("v9_swing_playbook") in ACTIVE_PLAYBOOKS and r.get("v9_swing_state") == "TRADE CANDIDATE" for r in rows),
+            "swing_watch": sum(r.get("v9_swing_playbook") in ACTIVE_PLAYBOOKS and r.get("v9_swing_state") == "WATCH" for r in rows),
         },
         "intraday": {"bullish": side("intraday", "Bullish"), "bearish": side("intraday", "Bearish")},
         "swing": {"bullish": side("swing", "Bullish"), "bearish": side("swing", "Bearish")},

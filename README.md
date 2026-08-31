@@ -1,6 +1,6 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
@@ -19,3 +19,6 @@ Derivative Intelligence remains downstream/live-shadow: CE/PE expression, IV/RV,
 Open **Backtest → Run V9.2 Diagnostic Reset**.
 
 The diagnostic run remains fixed to the full NSE F&O universe, 15-minute setup/execution and 180 calendar days. The streaming/checkpoint architecture from V9.1.2 is retained for Railway reliability.
+
+## V9.2.4 live production repair
+The live Dashboard/Watchlist/OI surfaces are evidence-gated: research or rejected playbooks do not generate production candidates. The dashboard reports attempted/valid/error scan counts, and the OI Screener uses a compact JSON-safe API payload so restored state cannot break browser number formatting.

@@ -157,11 +157,12 @@ def test_v91_live_accumulation_can_trigger_from_live_long_buildup_facts_without_
     assert any(p["playbook"] == v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION and p["state"] == "TRADE CANDIDATE" for p in plays)
 
 
-def test_v91_active_playbook_set_retires_failed_v9_models():
-    assert v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION in v9_playbooks.ACTIVE_PLAYBOOKS
-    assert v9_playbooks.BEAR_FRESH_SHORT_BUILDUP in v9_playbooks.ACTIVE_PLAYBOOKS
-    assert v9_playbooks.BULL_OPENING_DRIVE not in v9_playbooks.ACTIVE_PLAYBOOKS
-    assert v9_playbooks.BEAR_FAILED_BREAKOUT not in v9_playbooks.ACTIVE_PLAYBOOKS
+def test_live_production_set_excludes_unvalidated_bull_and_rejected_bear_models():
+    assert v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION not in v9_playbooks.ACTIVE_PLAYBOOKS
+    assert v9_playbooks.BEAR_FRESH_SHORT_BUILDUP not in v9_playbooks.ACTIVE_PLAYBOOKS
+    assert v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION in v9_playbooks.SHADOW_PLAYBOOKS
+    assert v9_playbooks.BULL_CATALYST_CONTINUATION in v9_playbooks.SHADOW_PLAYBOOKS
+    assert v9_playbooks.BEAR_FRESH_SHORT_BUILDUP in v9_playbooks.REJECTED_PLAYBOOKS
 
 
 def test_v91_fast_aggregate_keeps_bear_final_locked_but_final_mode_reveals_it():

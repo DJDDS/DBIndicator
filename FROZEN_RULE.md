@@ -1,6 +1,6 @@
 # V9.2 Diagnostic / Audit Lock
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX`
 
 ## Rejected Bear rule — audit only
 

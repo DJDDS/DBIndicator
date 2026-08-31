@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_dashboard_is_v9_professional_playbook_console():
     text = (ROOT / "app/templates/index.html").read_text(encoding="utf-8")
-    assert "V9.1 Goal-Focused Scanner" in text
+    assert "V9.2 Live F&amp;O Monitor" in text
     assert "Bull Institutional Accumulation" in text
     assert "Bear Fresh Short Buildup" in text
     assert "Bull Pullback/Reclaim" not in text
@@ -34,7 +34,7 @@ def test_web_accepts_v9_fast_and_v9_dashboard_payload():
     assert "v9_playbooks.dashboard_payload" in text
 
 
-def test_v9_dashboard_payload_surfaces_playbook_and_option_expression():
+def test_v9_dashboard_does_not_surface_shadow_playbook_as_production_candidate():
     row = {
         "symbol": "ABC", "v8_direction": "Bullish",
         "v9_intraday_playbook": v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION,
@@ -47,10 +47,9 @@ def test_v9_dashboard_payload_surfaces_playbook_and_option_expression():
         "option_spread_pct": 1.2, "option_dte": 8, "option_straddle_move_pct": 2.5,
     }
     payload = v9_playbooks.dashboard_payload({"results": [row]})
-    got = payload["intraday"]["bullish"][0]
-    assert got["playbook"] == v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION
-    assert got["score"] == 91.0
-    assert got["option_action"] == "OPTION BUYER EDGE"
+    assert payload["intraday"]["bullish"] == []
+    assert v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION in payload["shadow_playbooks"]
+    assert payload["production_status"] == "NO VALIDATED PRODUCTION PLAYBOOK"
 
 
 

@@ -1,6 +1,6 @@
 # V9.2 Diagnostic Reset Release Notes
 
-Build: `2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY`
+Build: `2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX`
 
 V9.2 answers two post-final-test questions without adding a new tunable strategy:
 

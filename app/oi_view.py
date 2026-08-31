@@ -4,12 +4,15 @@ Kept free of Flask/Kite imports so the ranking rules can be regression-tested
 without a live broker session.
 """
 
+import math
+
 
 def _num(value, default=None):
     try:
-        return float(value) if value is not None else default
+        number = float(value) if value is not None else None
     except (TypeError, ValueError):
         return default
+    return number if number is not None and math.isfinite(number) else default
 
 
 def _abs_or(value, default=-1.0):
@@ -76,3 +79,28 @@ def oi_history_readiness(results, *, min_tier=None):
         "ready_60m": ready_60m,
         "warming_up": bool(total and ready_60m < total),
     }
+
+
+_OI_NUMERIC_FIELDS = (
+    "close", "price_chg_today_pct", "oi_day_chg_pct",
+    "oi_chg_15m_pct", "oi_chg_30m_pct", "oi_chg_60m_pct",
+    "oi_acceleration", "vol_multiple", "oi_z", "param_tier",
+)
+_OI_TEXT_FIELDS = ("symbol", "oi_accel_label", "oi_structure", "direction")
+
+
+def serialize_oi_screener_row(row):
+    """Return only OI-view fields using strict JSON-safe primitive types.
+
+    Persisted Railway scan state may restore numeric values as strings and live
+    pandas/numpy values are not guaranteed to be Flask-JSON serializable.  The
+    OI endpoint therefore normalizes its own small contract instead of returning
+    the scanner's full 100+ field row.
+    """
+    out = {field: (str(row.get(field)) if row.get(field) is not None else None)
+           for field in _OI_TEXT_FIELDS}
+    for field in _OI_NUMERIC_FIELDS:
+        out[field] = _num(row.get(field))
+    live_oi = row.get("oi_total") if row.get("oi_total") is not None else row.get("oi")
+    out["oi_total"] = _num(live_oi)
+    return out

@@ -95,3 +95,30 @@ def test_v8_swing_payload_uses_swing_specific_option_contract_and_dte():
     got = payload['swing']['bullish'][0]
     assert got['option_contract'] == 'ABCFAR100CE'
     assert got['option_dte'] == 10
+
+
+def test_v9_dashboard_counts_attempted_valid_errors_and_hides_nonproduction_models():
+    from app import v9_playbooks
+    rows = [
+        {
+            'symbol': 'BULL', 'v8_direction': 'Bullish',
+            'v9_intraday_playbook': v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION,
+            'v9_intraday_score': 92, 'v9_intraday_state': 'TRADE CANDIDATE',
+            'v9_swing_playbook': v9_playbooks.BULL_INSTITUTIONAL_ACCUMULATION,
+            'v9_swing_score': 90, 'v9_swing_state': 'TRADE CANDIDATE',
+        },
+        {
+            'symbol': 'BEAR', 'v8_direction': 'Bearish',
+            'v9_intraday_playbook': v9_playbooks.BEAR_FRESH_SHORT_BUILDUP,
+            'v9_intraday_score': 94, 'v9_intraday_state': 'TRADE CANDIDATE',
+        },
+        {'symbol': 'ERR', 'error': 'boom'},
+    ]
+    payload = v9_playbooks.dashboard_payload({'results': rows})
+    assert payload['counts']['attempted'] == 3
+    assert payload['counts']['universe'] == 2
+    assert payload['counts']['errors'] == 1
+    assert payload['counts']['intraday_trade'] == 0
+    assert payload['intraday']['bullish'] == []
+    assert payload['intraday']['bearish'] == []
+    assert payload['production_status'] == 'NO VALIDATED PRODUCTION PLAYBOOK'

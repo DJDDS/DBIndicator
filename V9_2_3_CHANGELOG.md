@@ -1,6 +1,6 @@
 # V9.2.3 Live + Backtest Integrity Fix
 
-Build: `2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY`
+Build: `2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX`
 
 ## Live production fix
 - Normalizes the naive IST scanner clock to the timezone shape of Kite's intraday candle index inside TOD-RVOL before comparisons.

@@ -9,7 +9,7 @@ from . import alerts, backtest, background, config, delivery, early_signal, indi
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
-from .oi_view import select_oi_screener_rows, oi_history_readiness
+from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row
 
 log = logging.getLogger(__name__)
 
@@ -75,13 +75,16 @@ def dashboard():
     login_url = kite_auth.get_login_url() if not logged_in else None
     state = get_state()
     all_results = state["results"]
+    scan_health = v9_playbooks.scan_health_counts(all_results)
 
     return render_template(
         "index.html",
         logged_in=logged_in,
         login_url=login_url,
         results=all_results,
-        total_scanned=len(all_results),
+        total_scanned=scan_health["attempted"],
+        valid_scanned=scan_health["valid"],
+        scan_errors=scan_health["errors"],
         live_counts=_dashboard_counts(all_results),
         last_scan=state["last_scan"],
         last_error=state["last_error"],
@@ -141,10 +144,14 @@ def dashboard():
 def api_dashboard_state():
     state = get_state()
     rows = state.get("results") or []
+    health = v9_playbooks.scan_health_counts(rows)
     return jsonify({
         "last_scan": state.get("last_scan"),
         "last_error": state.get("last_error"),
-        "total_scanned": len(rows),
+        "total_scanned": health["attempted"],
+        "valid_scanned": health["valid"],
+        "error_count": health["errors"],
+        "scan_health": health,
         "counts": _dashboard_counts(rows),
         "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
         "market_open": scanner.is_market_open(),
@@ -422,10 +429,11 @@ def api_oi_screener():
     # not wait for a legacy 2+/3+/4 parameter tier before surfacing a name.
     state = get_state()
     threshold = early_signal.OI_Z_THRESHOLD
-    results = select_oi_screener_rows(
+    selected = select_oi_screener_rows(
         state["results"], unusual_only=False, min_tier=None, z_threshold=threshold
     )
-    rolling = oi_history_readiness(results, min_tier=None)
+    rolling = oi_history_readiness(selected, min_tier=None)
+    results = [serialize_oi_screener_row(row) for row in selected]
     return jsonify({
         "results": results,
         "min_required": settings.MIN_REQUIRED,

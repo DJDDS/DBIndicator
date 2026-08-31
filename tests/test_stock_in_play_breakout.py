@@ -946,5 +946,5 @@ def test_backtest_page_surfaces_recent_range_edge_lab_and_live_dashboard_copy_is
     index = open('app/templates/index.html', encoding='utf-8').read()
     assert 'Recent-Range Edge Lab' in backtest
     assert 'er-recent-range-lab' in backtest
-    assert 'V9.1 Goal-Focused Scanner' in index
+    assert 'V9.2 Live F&amp;O Monitor' in index
     assert 'Production model status' in index

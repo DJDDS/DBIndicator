@@ -53,4 +53,14 @@ def test_backtest_template_exposes_research_build_marker():
 def test_aggregate_research_includes_build_id():
     from app.early_research import aggregate_research
     result = aggregate_research([])
-    assert result['research_build_id'] == '2026-08-31-INSTITUTIONAL-V9.2.3-LIVE-BACKTEST-INTEGRITY'
+    assert result['research_build_id'] == '2026-08-31-INSTITUTIONAL-V9.2.4-LIVE-PRODUCTION-OI-FIX'
+
+
+def test_dashboard_scan_health_exposes_attempted_valid_and_error_counts():
+    from app.v9_playbooks import scan_health_counts
+    got = scan_health_counts([{'symbol': 'A'}, {'symbol': 'B', 'error': 'x'}, {'symbol': 'C'}])
+    assert got == {'attempted': 3, 'valid': 2, 'errors': 1}
+    text = Path('app/templates/index.html').read_text(encoding='utf-8')
+    assert 'id="live-valid-count"' in text
+    assert 'id="live-error-count"' in text
+    assert 'Attempted' in text and 'Valid' in text and 'Errors' in text

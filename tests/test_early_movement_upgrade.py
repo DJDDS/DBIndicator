@@ -162,7 +162,7 @@ def test_live_dashboard_retires_btst_candidates_and_legacy_best_entry_drivers():
     text = open('app/templates/index.html', encoding='utf-8').read()
     assert 'BTST / STBT' not in text
     assert 'Production model status' in text
-    assert 'V9.1 Goal-Focused Scanner' in text
+    assert 'V9.2 Live F&amp;O Monitor' in text
     for legacy in ('V6 Intraday Entry', 'V6 Swing 1-2D', 'Swing remains long-only'):
         assert legacy not in text
 

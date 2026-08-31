@@ -190,16 +190,24 @@
   var currentSort = { col: null, dir: 'desc', type: 'num' };
   var latestResults = [];
 
+  function oiNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    var n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
   function fmtPct(v) {
-    if (v === null || v === undefined) return '—';
-    return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+    var n = oiNumber(v);
+    if (n === null) return '—';
+    return (n > 0 ? '+' : '') + n.toFixed(2) + '%';
   }
   function fmtPp(v) {
-    if (v === null || v === undefined) return '—';
-    return (v > 0 ? '+' : '') + v.toFixed(2) + 'pp';
+    var n = oiNumber(v);
+    if (n === null) return '—';
+    return (n > 0 ? '+' : '') + n.toFixed(2) + 'pp';
   }
   function fmtNum(v) {
-    return (v === null || v === undefined) ? '—' : v.toLocaleString('en-IN');
+    var n = oiNumber(v);
+    return n === null ? '—' : n.toLocaleString('en-IN');
   }
 
   function oiMoveMax(r) {
@@ -229,7 +237,7 @@
     var accel = r.oi_accel_label || 'New';
     return '' +
       '<td class="sym-col" data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
-      '<td data-sort="' + (r.close != null ? r.close : '') + '">' + (r.close != null ? r.close.toLocaleString('en-IN') : '—') + '</td>' +
+      '<td data-sort="' + (r.close != null ? r.close : '') + '">' + fmtNum(r.close) + '</td>' +
       '<td data-sort="' + (priceChg != null ? priceChg : '') + '" class="' + (priceChg > 0 ? 'green-text' : priceChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(priceChg) + '</td>' +
       '<td data-sort="' + ((r.oi_total != null ? r.oi_total : r.oi) != null ? (r.oi_total != null ? r.oi_total : r.oi) : '') + '">' + fmtNum(r.oi_total != null ? r.oi_total : r.oi) + '</td>' +
       '<td data-sort="' + (r.oi_day_chg_pct != null ? r.oi_day_chg_pct : '') + '" class="' + (r.oi_day_chg_pct > 0 ? 'green-text' : r.oi_day_chg_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_day_chg_pct) + '</td>' +
@@ -336,7 +344,10 @@
   });
 
   function loadData() {
-    fetch('/api/oi-screener').then(function (r) { return r.json(); }).then(function (data) {
+    fetch('/api/oi-screener').then(function (r) {
+      if (!r.ok) throw new Error('OI screener failed: ' + r.status);
+      return r.json();
+    }).then(function (data) {
       latestResults = data.results || [];
       buildRows(latestResults);
       updateTiles(latestResults);
