@@ -470,7 +470,7 @@ def _net_return(entry, exit_px, direction, cost_pct, slippage_pct):
     raw = (float(exit_px) / float(entry) - 1.0) * 100.0
     if direction == "Bearish":
         raw = -raw
-    return raw - max(0.0, float(cost_pct)) - max(0.0, float(slippage_pct))
+    return raw - max(0.0, float(cost_pct)) - 2.0 * max(0.0, float(slippage_pct))
 
 
 def compute_trade_outcomes(df: pd.DataFrame, signal_pos: int, direction: str, atr: float,

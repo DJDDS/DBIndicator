@@ -90,7 +90,7 @@ def test_backtest_copy_matches_v92_architecture_and_build_is_bumped():
     text = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V9.1 focuses" not in text
     assert "V9.2 focuses" in text
-    assert "V9.2.7" in text
+    assert "V9.2.8" in text
 
 
 def test_scan_watchlist_tags_failure_stage(monkeypatch):

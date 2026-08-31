@@ -369,24 +369,111 @@ def _run_backtest_job(kite, symbols, timeframe, days, horizons, params, required
 # Historical data fetching
 # --------------------------------------------------------------------------
 
+_INTRADAY_INTERVAL_MINUTES = {
+    "minute": 1, "3minute": 3, "5minute": 5, "10minute": 10,
+    "15minute": 15, "30minute": 30, "60minute": 60, "4hour": 240,
+}
+
+
+def _drop_incomplete_intraday_bars(df, interval, now=None):
+    """Keep only candles whose full interval had elapsed at research time.
+
+    Kite can return the currently-forming intraday candle. Research must never
+    score that partial bar because its OHLC/volume are not yet knowable live at
+    candle close. The index may be tz-aware or naive; ``now_ist`` is normally
+    naive IST, so normalize the comparison shape without changing wall time.
+    """
+    if df is None or df.empty:
+        return df
+    minutes = _INTRADAY_INTERVAL_MINUTES.get(str(interval))
+    if not minutes:
+        return df
+    idx = pd.DatetimeIndex(df.index)
+    clock = pd.Timestamp(now if now is not None else now_ist())
+    if idx.tz is not None and clock.tzinfo is None:
+        clock = clock.tz_localize(idx.tz)
+    elif idx.tz is None and clock.tzinfo is not None:
+        clock = clock.tz_localize(None)
+    completed_at = idx + pd.Timedelta(minutes=minutes)
+    if str(interval) == "4hour":
+        # NSE cash/F&O session ends at 15:30, so the final 13:15 bucket is a
+        # legitimate session-closed 4H context candle even though the exchange
+        # day has only 6h15m. During the session it remains incomplete.
+        session_close = idx.normalize() + pd.Timedelta(hours=15, minutes=30)
+        completed_at = pd.DatetimeIndex([min(a, b) for a, b in zip(completed_at, session_close)])
+    completed = completed_at <= clock
+    return df.loc[completed].copy()
+
+
+def _history_coverage_summary(price_df, oi_series, requested_days):
+    """Transparent price/OI measurement coverage for one research symbol."""
+    price_idx = pd.DatetimeIndex([] if price_df is None else price_df.index)
+    oi = pd.Series(dtype="float64") if oi_series is None else pd.Series(oi_series).dropna()
+    price_bars = int(len(price_idx))
+    oi_bars = int(len(oi))
+    return {
+        "requested_days": int(requested_days),
+        "price_bars": price_bars,
+        "price_first_timestamp": price_idx[0].isoformat() if price_bars else None,
+        "price_last_timestamp": price_idx[-1].isoformat() if price_bars else None,
+        "oi_bars": oi_bars,
+        "oi_first_timestamp": pd.Timestamp(oi.index[0]).isoformat() if oi_bars else None,
+        "oi_last_timestamp": pd.Timestamp(oi.index[-1]).isoformat() if oi_bars else None,
+        "oi_bar_coverage_pct": round((oi_bars / price_bars * 100.0), 1) if price_bars else 0.0,
+        "oi_available": bool(oi_bars),
+    }
+
+
+def _aggregate_history_coverage(rows, *, timeframe, requested_days):
+    rows = list(rows or [])
+    price_bars = sum(int(r.get("price_bars") or 0) for r in rows)
+    oi_bars = sum(int(r.get("oi_bars") or 0) for r in rows)
+    valid_oi = sum(1 for r in rows if r.get("oi_available"))
+    price_first = [r.get("price_first_timestamp") for r in rows if r.get("price_first_timestamp")]
+    price_last = [r.get("price_last_timestamp") for r in rows if r.get("price_last_timestamp")]
+    oi_first = [r.get("oi_first_timestamp") for r in rows if r.get("oi_first_timestamp")]
+    oi_last = [r.get("oi_last_timestamp") for r in rows if r.get("oi_last_timestamp")]
+    return {
+        "timeframe": timeframe,
+        "requested_days": int(requested_days),
+        "symbols_measured": len(rows),
+        "symbols_with_oi": valid_oi,
+        "symbols_without_oi": max(0, len(rows) - valid_oi),
+        "price_bars": price_bars,
+        "oi_bars": oi_bars,
+        "oi_bar_coverage_pct": round((oi_bars / price_bars * 100.0), 1) if price_bars else 0.0,
+        "price_first_timestamp": min(price_first) if price_first else None,
+        "price_last_timestamp": max(price_last) if price_last else None,
+        "oi_first_timestamp": min(oi_first) if oi_first else None,
+        "oi_last_timestamp": max(oi_last) if oi_last else None,
+        "note": (
+            "Intraday OI uses the currently live near-expiry futures token; expired-contract "
+            "15-minute OI is not reconstructed. Missing history remains missing and lowers coverage."
+        ),
+    }
+
+
 def _fetch_history(token, timeframe, days, kite):
-    """Returns a DataFrame of open/high/low/close/volume candles for one
-    symbol - just the one Kite API call needed (no futures/OI lookup,
-    since none of the selectable parameters use OI)."""
+    """Return completed historical candles using the same safe chunking as live scans."""
     to_date = now_ist()
     from_date = to_date - dt.timedelta(days=days)
     interval = "60minute" if timeframe == "4hour" else timeframe
 
-    data = kite.historical_data(token, from_date, to_date, interval)
+    data = scanner_mod._fetch_historical_chunked(
+        kite, token, from_date, to_date, interval, oi=False, continuous=False
+    )
     df = pd.DataFrame(data)
     if df.empty:
         return df
     df = df.rename(columns={"date": "timestamp"}).set_index("timestamp")
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    df = _drop_incomplete_intraday_bars(df, interval, now=to_date)
 
     if timeframe == "4hour":
         df = df.resample("4h", origin="start_day", offset="9h15min").agg(
             {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
         ).dropna()
+        df = _drop_incomplete_intraday_bars(df, "4hour", now=to_date)
 
     return df
 
@@ -2263,6 +2350,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
 
     turnover_series = {}
     v8_feature_frames = {}
+    history_coverage_rows = []
     window_start = (now_ist() - dt.timedelta(days=days)).replace(tzinfo=None).isoformat()
     for i, symbol in enumerate(symbols):
         if fast_v8 and symbol in completed_shards:
@@ -2298,6 +2386,19 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                         completed_shards[symbol] = path
                     continue
             oi = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
+            try:
+                window_floor = pd.Timestamp(window_start)
+                price_cov = df.loc[pd.DatetimeIndex(df.index) >= early_research._align_timestamp_to_index(window_floor, df.index)]
+                if oi is not None and len(oi):
+                    oi_floor = early_research._align_timestamp_to_index(window_floor, oi.index)
+                    oi_cov = pd.Series(oi).loc[pd.DatetimeIndex(oi.index) >= oi_floor]
+                else:
+                    oi_cov = oi
+                cov = _history_coverage_summary(price_cov, oi_cov, requested_days=days)
+                cov["symbol"] = symbol
+                history_coverage_rows.append(cov)
+            except Exception as coverage_exc:  # coverage is diagnostic, never a run blocker
+                log.debug("Coverage diagnostic failed for %s: %s", symbol, coverage_exc)
             sector_symbol = scanner_mod.SYMBOL_SECTOR_MAP.get(symbol)
             sector_df = sector_history.get(sector_symbol) if sector_symbol else None
             sector_rank_series = None
@@ -2438,6 +2539,9 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
 
     if progress_cb:
         progress_cb(len(symbols), len(symbols), None)
+    history_coverage = _aggregate_history_coverage(
+        history_coverage_rows, timeframe=timeframe, requested_days=days
+    )
     run_context = {
         "setup_timeframe": timeframe,
         "execution_timeframe": execution_timeframe,
@@ -2447,6 +2551,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "universe_is_full_fno": bool(universe_is_full_fno),
         "fast_v8": bool(fast_v8),
         "research_mode": research_mode or ("v9_fast" if fast_v8 else "legacy"),
+        "history_coverage": history_coverage,
     }
     if stage_cb:
         stage_cb(3, 4, (
@@ -2492,6 +2597,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "cost_pct": float(cost_pct),
         "slippage_pct": float(slippage_pct),
         "research": research,
+        "history_coverage": history_coverage,
         "fast_v8": bool(fast_v8),
         "research_notes": [
             "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",

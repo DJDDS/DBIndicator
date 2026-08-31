@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.7-REGIME-FORWARD-VALIDATION</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR</div>
     <p>
       <strong>V9.2 Diagnostic Reset is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.2 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
     </p>
@@ -134,6 +134,7 @@
     <div id="er-results" style="display:none; margin-top:18px;">
       <div id="er-legacy-research-pre" class="er-legacy-research">
       <div class="stat-tiles" id="er-tiles"></div>
+      <div id="er-history-coverage" class="hint" style="margin:10px 0 16px;"></div>
       <h3 class="bt-group-title">Intraday holdout &mdash; actual breakout direction</h3>
       <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-intraday"></tbody></table>
       <h3 class="bt-group-title" style="margin-top:18px;">Swing holdout &mdash; 1&ndash;2 sessions</h3>
@@ -300,7 +301,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.7-REGIME-FORWARD-VALIDATION";
+const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -698,12 +699,14 @@ function renderEarlyResearch(result) {
   const i2h = stat(r.intraday, '2h');
   const s1d = stat(r.swing, '1D');
   const oi = r.oi_coverage || {};
+  const hc = r.history_coverage || result.history_coverage || {};
   const oneAtr4 = (r.compression_lift || []).find(x => String(x.horizon) === '4' && Number(x.threshold_atr) === 1) || {};
   document.getElementById('er-tiles').innerHTML = `
     <div class="tile"><div class="tv">${oneAtr4.lift == null ? '—' : Number(oneAtr4.lift).toFixed(2) + '×'}</div><div class="tl">Coil 1h ≥1 ATR lift vs baseline</div></div>
     <div class="tile"><div class="tv">${oi.coverage_pct == null ? '—' : oi.coverage_pct + '%'}</div><div class="tl">Historical OI velocity coverage</div></div>
     <div class="tile"><div class="tv">${pct(i2h.avg_return_pct)}</div><div class="tl">Breakout 2h holdout avg · PF ${pf(i2h.profit_factor)}</div></div>
     <div class="tile"><div class="tv">${pct(s1d.avg_return_pct)}</div><div class="tl">Breakout 1D holdout avg · PF ${pf(s1d.profit_factor)}</div></div>`;
+  document.getElementById('er-history-coverage').innerHTML = `<strong>Historical Data Coverage:</strong> Price ${hc.price_bars || 0} bars${hc.price_first_timestamp ? ' · ' + hc.price_first_timestamp + ' → ' + hc.price_last_timestamp : ''} · Intraday OI ${hc.oi_bars || 0} bars (${hc.oi_bar_coverage_pct == null ? '—' : hc.oi_bar_coverage_pct + '%'}) · OI symbols ${hc.symbols_with_oi || 0}/${hc.symbols_measured || 0}${hc.oi_first_timestamp ? ' · OI era ' + hc.oi_first_timestamp + ' → ' + hc.oi_last_timestamp : ''}. <span>${hc.note || ''}</span>`;
 
   const fillReturns = (id, stage, horizons) => {
     const body = document.getElementById(id); body.innerHTML = '';

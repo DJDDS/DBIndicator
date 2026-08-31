@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.7-REGIME-FORWARD-VALIDATION"
+RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR"
 
 
 
@@ -724,6 +724,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
 
     # A sampled non-coil baseline is enough to estimate lift without storing
     # every bar from the entire 211-stock universe in memory.
+    long_seed_was_active = False
     for pos in range(len(df)):
         if not fast_v8:
             atr = _py(features["atr"].iloc[pos]) if "atr" in features.columns else None
@@ -764,7 +765,9 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             and price_60 is not None and np.isfinite(price_60) and float(price_60) > 0
             and oi_60 is not None and np.isfinite(oi_60) and float(oi_60) > 0
         )
-        if long_seed:
+        long_seed_rise = bool(long_seed and not long_seed_was_active)
+        long_seed_was_active = long_seed
+        if long_seed_rise:
             accumulation_event = _event_from_row(row, pos, "Bullish", {})
             if accumulation_event is not None:
                 accumulation_event["v92_accumulation_seed"] = True
@@ -1099,7 +1102,7 @@ def replay_feature_frame(df, features, symbol, horizons=(1, 2, 3, 5, 10),
             raw = (exit_px / entry - 1.0) * 100.0
             if direction == "Bearish":
                 raw = -raw
-            returns[h] = round(raw - max(0.0, float(cost_pct)) - max(0.0, float(slippage_pct)), 3)
+            returns[h] = round(raw - max(0.0, float(cost_pct)) - 2.0 * max(0.0, float(slippage_pct)), 3)
 
         event = {
             "symbol": symbol,
@@ -1257,6 +1260,7 @@ def aggregate_research(replays, holdout_pct=30.0, ref_horizon=3, horizons=(1, 2,
         "research_build_id": RESEARCH_BUILD_ID,
         "ref_horizon": int(ref_horizon),
         "holdout_pct": float(holdout_pct),
+        "history_coverage": dict((run_context or {}).get("history_coverage") or {}),
         "energy": {
             "all": summarize_energy_events(energy, horizons=(4, 8), move_atr=1.0),
             "train": summarize_energy_events(energy_train, horizons=(4, 8), move_atr=1.0),
@@ -1369,6 +1373,7 @@ def aggregate_v8_research_fast(replays, holdout_pct=30.0, run_context=None):
         "fast_v8": True,
         "fast_v9": True,
         "run_context": dict(run_context or {}),
+        "history_coverage": dict((run_context or {}).get("history_coverage") or {}),
         "oi_coverage": {
             "total": len(ignition),
             "available": available,
@@ -1410,6 +1415,7 @@ def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=
         "fast_v9": True,
         "streaming_v91": True,
         "run_context": dict(run_context or {}),
+        "history_coverage": dict((run_context or {}).get("history_coverage") or {}),
         "oi_coverage": {
             "total": total,
             "available": available,

@@ -369,7 +369,7 @@ def _net_return(entry: float, exit_px: float, direction: str, cost_pct: float, s
     raw = (float(exit_px) / float(entry) - 1.0) * 100.0
     if direction == "Bearish":
         raw = -raw
-    return raw - max(0.0, float(cost_pct)) - max(0.0, float(slippage_pct))
+    return raw - max(0.0, float(cost_pct)) - 2.0 * max(0.0, float(slippage_pct))
 
 
 def first_touch_exit(df: pd.DataFrame, *, entry_pos: int, direction: str, entry_price: float,

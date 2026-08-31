@@ -561,6 +561,56 @@ def _apply_v9_playbooks(results, now=None):
     return results
 
 
+def _apply_shadow_early_radar(results):
+    """Attach research-only early-stage ranks without touching production fields.
+
+    This makes Energy Building / Ignition observable while ACTIVE_PLAYBOOKS is
+    empty. It cannot create ``radar_rank``, TRADE/WATCH, alerts, or eligibility.
+    """
+    ranked = []
+    for r in results or []:
+        r["shadow_radar_rank"] = None
+        r["shadow_movement_stage"] = None
+        r["shadow_movement_score"] = None
+        r["shadow_movement_blockers"] = []
+        if r.get("error"):
+            continue
+        probe = dict(r)
+        direction = (
+            probe.get("breakout_direction") or probe.get("retained_breakout_direction")
+            or probe.get("trade_direction") or probe.get("direction")
+        )
+        if direction in ("Bullish", "Bearish"):
+            probe["direction"] = direction
+            probe["trade_direction"] = direction
+            if probe.get("oi_recent_agrees") is None:
+                oi60 = probe.get("oi_chg_60m_pct")
+                px_now, px_prev = probe.get("close"), probe.get("prev_close")
+                if oi60 is not None and px_now and px_prev:
+                    px_move = (float(px_now) / float(px_prev) - 1.0) * 100.0
+                    probe["oi_recent_agrees"] = bool(
+                        float(oi60) > 0 and ((direction == "Bullish" and px_move > 0) or (direction == "Bearish" and px_move < 0))
+                    )
+        scored = early_movement.score_candidate(probe)
+        stage = scored.get("stage")
+        if stage not in ("Energy Building", "Ignition", "Best Entry"):
+            continue
+        r["shadow_movement_stage"] = stage
+        r["shadow_movement_score"] = scored.get("score")
+        r["shadow_movement_blockers"] = scored.get("blockers") or []
+        ranked.append(r)
+    priority = {"Best Entry": 3, "Ignition": 2, "Energy Building": 1}
+    ranked.sort(key=lambda r: (
+        priority.get(r.get("shadow_movement_stage"), 0),
+        r.get("shadow_movement_score") if r.get("shadow_movement_score") is not None else -1,
+        r.get("compression_score") if r.get("compression_score") is not None else -1,
+        r.get("tod_rvol") if r.get("tod_rvol") is not None else -1,
+    ), reverse=True)
+    for i, r in enumerate(ranked[:8], 1):
+        r["shadow_radar_rank"] = i
+    return ranked[:8]
+
+
 def _apply_v9_operational_shortlists(results):
     """Project V9 playbook decisions onto shortlist fields used by UI/alerts."""
     intraday, swing, radar = [], [], []
@@ -1604,6 +1654,7 @@ def _run_loop():
                     # V9 converts cross-sectional evidence into explicit Bull/Bear
                     # playbooks. It is now the single production shortlist source.
                     _apply_v9_playbooks(results, now=now_ist())
+                    _apply_shadow_early_radar(results)
                     _apply_v9_operational_shortlists(results)
                     # V8.2 Derivative Intelligence remains downstream: it decides
                     # option expression and cannot create an underlying playbook.

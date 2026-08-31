@@ -1,6 +1,6 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.7-REGIME-FORWARD-VALIDATION`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
@@ -34,6 +34,10 @@ The **Opportunity Score is an attention/ranking score, not probability of profit
 
 V9.2.5 scan-health diagnostics are retained: exact per-symbol failure stage, last successful scan, valid/attempted universe counts, current failure details, and the Live Market State OI breadth strip.
 
+
+## V9.2.8 backtest-integrity + shadow-radar upgrade
+
+V9.2.8 keeps the V9.2.7 regime and forward-validation architecture but fixes the research-integrity issues found in the production audit: correct two-sided slippage, rising-edge Bull accumulation episodes, chunked historical retrieval, completed-candle-only replay, and explicit price/OI history coverage. The Production Early Radar stays evidence-gated; a separate Shadow Early Radar now exposes Energy Building / Ignition research stages without creating TRADE/WATCH alerts. Legacy dashboard diagnostic columns are labelled explicitly so they cannot be confused with the 0–100 Live Opportunity Score.
 
 ## V9.2.7 regime + forward-validation upgrade
 

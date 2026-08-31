@@ -522,7 +522,7 @@
         </section>
       </div>
       <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
-      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.2.7 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
+      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.2.8 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
@@ -565,6 +565,26 @@
     {% else %}
     <p class="sl-empty"><strong>No early setup is building right now.</strong> Radar is directionless until price escapes a real 15-minute decision range. It watches coils, opening-range pressure, abnormal TOD volume and F&amp;O positioning.</p>
     {% endif %}
+
+    {% set shadow_rows = results | selectattr('shadow_radar_rank', 'defined') | selectattr('shadow_radar_rank', 'ne', None) | sort(attribute='shadow_radar_rank') | list %}
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid #3a2f0f;">
+      <h2 style="margin-bottom:8px;">Shadow Early Radar <span class="sub">RESEARCH / SHADOW · observable only · cannot create production TRADE/WATCH</span></h2>
+      {% if shadow_rows %}
+      <div class="sl-list">
+        {% for r in shadow_rows %}
+        <div class="sl-row" onclick="window.location='/chart/{{ r.symbol }}'">
+          <span class="sl-rank">{{ r.shadow_radar_rank }}</span>
+          <span class="sl-score" style="color:var(--amber);">{{ r.shadow_movement_score if r.shadow_movement_score is not none else '—' }}</span>
+          <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a><span class="sl-close">{{ r.shadow_movement_stage }}</span></span>
+          <span class="sl-why"><span class="sl-oi">{{ r.shadow_movement_stage }}</span><span class="sl-detail">{% if r.compression_score is not none %}Coil {{ '%.0f'|format(r.compression_score) }} · {% endif %}{% if r.tod_rvol %}TOD RVOL {{ r.tod_rvol }}x · {% endif %}{% if r.oi_chg_60m_pct is not none %}OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%{% endif %}</span></span>
+          <span class="sl-tags"><span class="sl-tag">Research only</span>{% if r.entry_trigger %}<span class="sl-tag strong">{{ r.entry_trigger }}</span>{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="sl-empty">No shadow Energy Building / Ignition setup is measurable on this scan.</p>
+      {% endif %}
+    </div>
     </div>
   </div>
 
@@ -585,6 +605,7 @@
       <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Watchlist</h2>
       <span class="footer-note">Click a header to sort &middot; use the filter row to narrow &middot; click a row to open its chart</span>
     </div>
+    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar or validated production eligibility.</div>
     <div class="table-scroll">
     <table id="main-table">
       <thead>
@@ -596,10 +617,10 @@
           <th class="sortable" data-col="4">OI <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="5">OI Accel <span class="sort-arrow"></span></th>
           <th class="sortable" data-col="6" title="Relative Volume magnitude, plus a small &#9650;/&#9660; Chaikin Money Flow badge - CMF is now one of the four voting parameters, not just a display badge">Vol <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="7">Aligned <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="8">Signal <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="9">Regime <span class="sort-arrow"></span></th>
-          <th class="sortable" data-col="10">Score <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="7">Legacy Align <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="8">Legacy Signal <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="9">Stock ADX Regime <span class="sort-arrow"></span></th>
+          <th class="sortable" data-col="10">Legacy Score <span class="sort-arrow"></span></th>
           <th></th>
         </tr>
         <tr class="filter-row">
