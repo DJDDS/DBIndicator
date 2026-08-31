@@ -2761,6 +2761,8 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
         del parts, raw, bull_rank, bear_rank
         gc.collect()
 
+    if stage_cb:
+        stage_cb(2, 4, "Finalizing breakout-strength ranks", 84)
     by_time = {}
     for event in rows:
         if event.get("breakout_source") != "Recent Range":
@@ -2770,13 +2772,26 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
         ranks = v8_dual.percentile_rank([e.get("breakout_extension_atr") for e in group])
         for event, rank in zip(group, ranks):
             event["v8_breakout_strength_percentile"] = rank
+    del by_time
 
-    # Replace rows in place so Stage 2 never holds both the unscored and scored
-    # candidate universes at once. score_preranked_row returns a copy by design;
-    # assigning it back immediately lets the previous dict be reclaimed.
-    for idx, event in enumerate(rows):
-        rows[idx] = v8_dual.score_preranked_row(event)
+    # These rows are private Stage-2 candidate objects. Score them in place so
+    # a large V9.2 Bull diagnostic seed does not allocate a second dictionary
+    # population after the seven cross-sectional ranks are already complete.
+    total_rows = len(rows)
+    if stage_cb:
+        stage_cb(2, 4, f"Scoring ranked candidates (0/{total_rows})", 85)
+    next_quarter = 1
+    for pos, event in enumerate(rows, start=1):
+        v8_dual.score_goal_preranked_row_inplace(event)
+        if stage_cb and total_rows:
+            quarter = min(4, (pos * 4) // total_rows)
+            if quarter >= next_quarter or pos == total_rows:
+                pct = min(100, round((pos / total_rows) * 100))
+                stage_cb(2, 4, f"Scoring ranked candidates ({pct}% · {pos}/{total_rows})", 85)
+                next_quarter = quarter + 1
 
+    if stage_cb:
+        stage_cb(2, 4, "Writing Stage-2 checkpoint", 85)
     return _atomic_pickle(path, {
         "schema": _V91_RANKED_EVENTS_SCHEMA,
         "events": rows,

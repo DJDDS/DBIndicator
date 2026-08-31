@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY"
+BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 

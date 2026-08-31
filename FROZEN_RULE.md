@@ -1,6 +1,6 @@
 # V9.2 Diagnostic / Audit Lock
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE`
 
 ## Rejected Bear rule — audit only
 

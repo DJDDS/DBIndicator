@@ -268,3 +268,91 @@ def test_successful_v91_background_run_cleans_checkpoint_dir_without_error(tmp_p
     assert state["status"] == "done"
     assert state["error"] is None
     assert not run_dir.exists()
+
+
+def test_score_preranked_row_inplace_reuses_same_mapping():
+    from app import v8_dual
+
+    row = _event(direction="Bullish")
+    row.update({
+        "v8_tod_rvol_percentile": 90.0,
+        "v8_opening_rvol_percentile": 85.0,
+        "v8_range_shock_percentile": 88.0,
+        "v8_gap_shock_percentile": 60.0,
+        "v8_turnover_percentile": 92.0,
+        "v8_breakout_strength_percentile": 80.0,
+        "v8_oi_strength_percentile": 90.0,
+        "v8_relative_percentile": 91.0,
+    })
+
+    out = v8_dual.score_preranked_row_inplace(row)
+
+    assert out is row
+    assert row["v8_alpha"] is not None
+    assert row["v8_state"] in {"TRADE CANDIDATE", "WATCH", "NO EDGE"}
+
+
+def test_ranked_checkpoint_uses_inplace_scoring_without_copy_helper(tmp_path, monkeypatch):
+    idx = pd.date_range("2026-08-30 10:00", periods=2, freq="15min")
+    shard = backtest._write_research_symbol_shard(
+        tmp_path, 0, "AAA", compact_frame=_compact_frame([2.0, 1.0], idx), replay=None, note=None,
+        v91_events=[_event(symbol="AAA", direction="Bullish", signal=idx[0].isoformat())],
+        v91_confirmation={"events": 1},
+    )
+    monkeypatch.setattr(
+        backtest.v8_dual,
+        "score_preranked_row",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("copy scoring helper must not be used")),
+    )
+
+    checkpoint = backtest._build_v91_ranked_events_checkpoint(tmp_path, {"AAA": shard})
+    payload = backtest._load_v91_ranked_events_checkpoint(checkpoint)
+
+    assert payload["events"][0]["v8_alpha"] is not None
+
+
+def test_ranked_checkpoint_reports_post_rank_scoring_and_write_progress(tmp_path):
+    idx = pd.date_range("2026-08-30 10:00", periods=2, freq="15min")
+    shard = backtest._write_research_symbol_shard(
+        tmp_path, 0, "AAA", compact_frame=_compact_frame([2.0, 1.0], idx), replay=None, note=None,
+        v91_events=[_event(symbol="AAA", direction="Bullish", signal=idx[0].isoformat())],
+        v91_confirmation={"events": 1},
+    )
+    updates = []
+
+    backtest._build_v91_ranked_events_checkpoint(
+        tmp_path, {"AAA": shard},
+        stage_cb=lambda stage, total, message, pct: updates.append((stage, total, message, pct)),
+    )
+
+    messages = [message for _, _, message, _ in updates]
+    assert any(message.startswith("Scoring ranked candidates") for message in messages)
+    assert "Writing Stage-2 checkpoint" in messages
+
+
+def test_goal_preranked_inplace_scoring_keeps_only_goal_fields():
+    from app import v8_dual
+
+    row = _event(direction="Bullish")
+    row.update({
+        "v8_tod_rvol_percentile": 90.0,
+        "v8_opening_rvol_percentile": 85.0,
+        "v8_range_shock_percentile": 88.0,
+        "v8_gap_shock_percentile": 60.0,
+        "v8_turnover_percentile": 92.0,
+        "v8_breakout_strength_percentile": 80.0,
+        "v8_oi_strength_percentile": 90.0,
+        "v8_relative_percentile": 91.0,
+    })
+
+    out = v8_dual.score_goal_preranked_row_inplace(row)
+
+    assert out is row
+    assert row["v8_participation"] is not None
+    assert row["v8_relative"] is not None
+    assert row["v8_derivatives"] is not None
+    assert row["v8_oi_state"] == "Long Buildup"
+    assert row["v8_alpha"] is not None
+    assert "v8_reasons" not in row
+    assert "v8_state" not in row
+    assert "v8_structure" not in row

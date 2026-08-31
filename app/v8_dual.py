@@ -256,14 +256,9 @@ def _rank_map(rows: list[dict], getter, *, higher_better=True) -> list[float | N
 
 
 
-def score_preranked_row(row: dict) -> dict:
-    """Score one row whose raw evidence has already been ranked vs the full universe.
-
-    Historical V8 backtests attach these percentiles point-in-time across every
-    researched F&O stock before scoring breakout events. This preserves live /
-    research parity without keeping a fitted weighting model.
-    """
-    r = dict(row)
+def _score_preranked_row(row: dict, *, copy_row: bool) -> dict:
+    """Score one pre-ranked row, optionally mutating the supplied mapping."""
+    r = dict(row) if copy_row else row
     direction = _direction(r)
     r["v8_direction"] = direction
     if direction not in ("Bullish", "Bearish"):
@@ -315,6 +310,56 @@ def score_preranked_row(row: dict) -> dict:
         reasons.append(derivatives.get("oi_state"))
     r["v8_reasons"] = reasons[:5]
     return r
+
+
+def score_preranked_row(row: dict) -> dict:
+    """Score one row whose raw evidence has already been ranked vs the full universe.
+
+    Returns a copy for compatibility with callers that expect input immutability.
+    """
+    return _score_preranked_row(row, copy_row=True)
+
+
+def score_preranked_row_inplace(row: dict) -> dict:
+    """Score one already-private pre-ranked row without allocating a dict copy."""
+    return _score_preranked_row(row, copy_row=False)
+
+
+def score_goal_preranked_row_inplace(row: dict) -> dict:
+    """Attach only V9.1/V9.2 goal fields to an already-private ranked row.
+
+    The diagnostic streaming path needs participation, relative evidence,
+    derivatives state and a scored sentinel, but not V8 UI/reason fields.
+    Keeping this lean avoids a large post-rank dictionary expansion.
+    """
+    direction = _direction(row)
+    participation = consensus_score([
+        row.get("v8_tod_rvol_percentile"),
+        row.get("v8_opening_rvol_percentile"),
+        row.get("v8_range_shock_percentile"),
+        row.get("v8_gap_shock_percentile"),
+        row.get("v8_turnover_percentile"),
+    ])
+    structure = consensus_score([
+        row.get("v8_breakout_strength_percentile"),
+        directional_clv(row, direction) if direction in ("Bullish", "Bearish") else None,
+    ])
+    relative = _float(row.get("v8_relative_percentile"))
+    derivatives = directional_derivatives_score(
+        direction,
+        price_chg_pct=row.get("price_chg_60m_pct", row.get("price_chg_pct")),
+        oi_chg_pct=row.get("oi_chg_60m_pct"),
+        oi_strength_percentile=row.get("v8_oi_strength_percentile"),
+        basis_acceleration=row.get("basis_acceleration"),
+    ) if direction in ("Bullish", "Bearish") else {"score": None, "oi_state": "OI Neutral/Unavailable"}
+    alpha = consensus_score([structure, participation, relative, derivatives.get("score")])
+    row["v8_participation"] = participation
+    row["v8_relative"] = relative
+    row["v8_derivatives"] = derivatives.get("score")
+    row["v8_oi_state"] = derivatives.get("oi_state")
+    row["v8_alpha"] = alpha
+    return row
+
 
 def rank_cross_section(rows: Iterable[dict]) -> list[dict]:
     """Attach V8 component ranks and independent Bull/Bear Alpha to rows.

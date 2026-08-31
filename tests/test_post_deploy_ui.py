@@ -53,4 +53,4 @@ def test_backtest_template_exposes_research_build_marker():
 def test_aggregate_research_includes_build_id():
     from app.early_research import aggregate_research
     result = aggregate_research([])
-    assert result['research_build_id'] == '2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY'
+    assert result['research_build_id'] == '2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE'

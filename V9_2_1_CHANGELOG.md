@@ -1,6 +1,6 @@
 # V9.2.1 Stage-3 No-Copy Patch
 
-Build: `2026-08-31-INSTITUTIONAL-V9.2.1-STAGE3-NOCOPY`
+Build: `2026-08-31-INSTITUTIONAL-V9.2.2-STAGE2-INPLACE`
 
 - Reuses Stage-2 ranked candidate dictionaries directly in V9.2 Stage 3 instead of cloning the full candidate universe.
 - Bull Gate Funnel now filters references rather than copying each candidate mapping.
