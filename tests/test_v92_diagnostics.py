@@ -43,7 +43,7 @@ def test_bull_gate_funnel_counts_exact_cumulative_failures():
     funnel = v91_goal.bull_accumulation_gate_funnel(rows)
     counts = {x["gate"]: x["survivors"] for x in funnel["stages"]}
     assert counts["price_up_oi_up"] == 9
-    assert counts["long_buildup"] == 9
+    assert "long_buildup" not in counts
     assert counts["above_vwap"] == 8
     assert counts["tod_rvol_ge_1"] == 7
     assert counts["participation_ge_70"] == 6

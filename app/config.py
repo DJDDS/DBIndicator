@@ -502,7 +502,7 @@ def _env_defaults():
         # own direction, before the entry counts as EXTENDED (chasing) -
         # a signal firing 3 ATR into a move is a materially worse entry
         # than the same signal firing as the move turns, and until now
-        # both carried an identical "Confirmed" mark. V9.2.8 caps this at
+        # both carried an identical "Confirmed" mark. V9.2.9 caps this at
         # 1.25 ATR so live entries cannot silently drift back into chasing.
         # When REQUIRE_ENTRY_LOCATION_AGREEMENT is on, an extended row
         # loses its "Confirmed" status; off by default, same reasoning as
@@ -556,7 +556,7 @@ class Settings:
                 if saved_version < SETTINGS_SCHEMA_VERSION:
                     if data.get("MIN_REQUIRED") == 4:
                         data["MIN_REQUIRED"] = 3
-                    # V9.2.8 preserves the anti-chase contract.  Earlier UI
+                    # V9.2.9 preserves the anti-chase contract.  Earlier UI
                     # versions allowed a persisted 2.0 ATR value even though
                     # the research/live rule is 1.25 ATR.  Migrate that stale
                     # setting once so a redeploy fixes the running instance.

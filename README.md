@@ -1,12 +1,12 @@
 # DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING`
 
 V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
 Primary jobs:
 
-- **Bull Gate Funnel:** starts from the broad point-in-time `price up + OI up` population and reports cumulative survivors through the unchanged Bull Institutional Accumulation gates: Long Buildup state, VWAP acceptance, TOD RVOL, Participation, Relative Strength, Derivatives, Bull CLV, basis and final consensus. Bull final 20% remains locked.
+- **Bull Gate Funnel:** starts from the broad point-in-time `price up + OI up / Long Buildup` population and reports cumulative survivors through VWAP acceptance, TOD RVOL, Participation, Relative Strength, Derivatives, Bull CLV, basis and final consensus. The duplicate price+OI/Long-Buildup evidence is shown once. Bull final 20% remains locked.
 - **Bear FSB Regime Decomposition:** explains why the previously validated Bear Fresh Short Buildup rule failed its already-consumed final 20%. It compares validation vs final by market regime, index trend, market volatility, futures-basis direction, stock-vs-sector state, time of day, OI magnitude, OI persistence and post-signal 60-minute positioning. These cohorts are descriptive only and must not become replacement rules.
 - **Historical breadth:** explicitly marked unavailable in the current point-in-time dataset rather than inferred or fabricated.
 
@@ -48,3 +48,10 @@ V9.2.7 keeps the V9.2.6 Live Opportunity Radar but fixes the three production-in
 - Market Bias is now a weighted, missing-data-aware regime score from **NIFTY trend (25%) + watchlist price breadth (20%) + F&O OI breadth (20%) + sector breadth (15%) + relative-strength distribution (10%) + VWAP participation (10%)**. Regime remains ranking context only, never a veto.
 
 The build also starts honest **forward validation** for Live Opportunity Radar names. The first top-5 Bull/Bear appearance for each symbol+direction per trading day is recorded with its original score/rank/entry price. Outcomes are then measured from the first available live scan at/after **30m, 1h, 2h, 4h and next-session same-time (1D)**. Intraday horizons that do not mature before the session ends are marked unavailable rather than contaminated with an overnight move. The forward state is persisted inside the normal scanner state and can be exported from the Dashboard.
+
+## V9.2.9 pipeline-reliability + audit-hardening upgrade
+
+V9.2.9 fixes the Stage-2 research bottleneck that could leave the production backtest apparently stuck at cross-sectional rank 6/7. Each symbol shard is now deserialized once per Stage-2 run, compact feature frames are ranked in memory, granular progress/elapsed-time messages are emitted, and rank-level checkpoints allow Railway restarts to resume after the last completed rank. A full 210-symbol × 5,000-bar regression test protects the workload.
+
+The build also adopts the low-risk measurement recommendations from the external validation audit: forward validation now headlines net expectancy, net profit factor and 95% Wilson confidence intervals; duplicate Price+OI/Long-Buildup evidence is collapsed in the Bull diagnostic funnel; Bear frozen thresholds are applied at one freeze boundary rather than duplicated in the compactor; historical trial count/Bonferroni alpha and current-universe survivorship bias are disclosed explicitly. No Deflated Sharpe/FDR, MWPL history, point-in-time F&O membership or new Bear strategy is fabricated without the required data/protocol.
+

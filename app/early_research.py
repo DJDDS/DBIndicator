@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR"
+RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING"
 
 
 
@@ -2089,6 +2089,9 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False, progre
             "final_20_locked_for_bull": True,
             "bear_rule_fingerprint": v91_goal.frozen_bear_fsb_spec()["fingerprint"],
             "bear_final_revealed": bool(reveal_bear_final),
+            # Trial accounting is explicit but deliberately not presented as a
+            # significance result until a calibrated multiplicity statistic exists.
+            **v91_goal.validation_audit_protocol(),
         },
         "bull_institutional_accumulation": bull_report,
         "bull_catalyst_continuation": {

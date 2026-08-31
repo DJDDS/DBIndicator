@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING</div>
     <p>
       <strong>V9.2 Diagnostic Reset is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.2 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
     </p>
@@ -301,7 +301,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR";
+const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -778,6 +778,7 @@ function renderEarlyResearch(result) {
       const verdictColour = verdict === 'PASS' ? 'var(--green)' : (verdict === 'REJECT' ? 'var(--red)' : '#d9a441');
       const finalText = finalStats.locked ? '<strong>LOCKED</strong>' : `${finalStats.trade_count || 0} trades · ${pct(finalStats.avg_return_pct)} · PF ${pf(finalStats.profit_factor)} · <strong style="color:${verdictColour}">${verdict}</strong>`;
       const funnel = v91.bull_gate_funnel || {};
+      const protocol = v91.protocol || {};
       const funnelRows = (funnel.stages || []).map(stage => `<tr><td>${stage.label || stage.gate}</td><td>${stage.survivors || 0}</td><td>${stage.dropped_at_gate || 0}</td><td>${stage.survival_pct_of_seed == null ? '—' : Number(stage.survival_pct_of_seed).toFixed(1) + '%'}</td></tr>`).join('');
       const regime = v91.bear_regime_decomposition || {};
       const cohortCompare = (field, title) => {
@@ -794,8 +795,9 @@ function renderEarlyResearch(result) {
       const regimeOverallV = (regime.validation || {}).overall || {};
       const regimeOverallF = (regime.final || {}).overall || {};
       const diagnosticHtml = `
+        <div class="hint" style="margin-top:10px;border:1px solid #4a3f1d;padding:9px;border-radius:6px;"><strong>Research protocol hardening:</strong> ${protocol.historical_trials_counted || 0} historical trials declared · family-wise α ${protocol.familywise_alpha ?? '—'} · Bonferroni α ${protocol.bonferroni_alpha ?? '—'} · reference power n≈${protocol.power_reference_55pct_vs_50pct_n || '—'} for 55% vs 50%. <strong>Universe limitation:</strong> ${protocol.universe_warning || 'Point-in-time F&O membership unavailable.'}</div>
         <h4 style="margin:18px 0 6px;">Bull Gate Funnel <span class="hint">diagnostic only</span></h4>
-        <p class="hint">Cumulative survival through the unchanged Bull Institutional Accumulation gates. This identifies the population bottleneck; it does not tune thresholds or unlock the Bull final 20%.</p>
+        <p class="hint">Cumulative survival through the unchanged Bull Institutional Accumulation gates. Duplicate Price↑+OI↑ / Long-Buildup evidence is collapsed. Independent streams tracked: ${(funnel.independent_streams || []).join(', ') || '—'}. This identifies the population bottleneck; it does not tune thresholds or unlock the Bull final 20%.</p>
         <table><thead><tr><th>Gate</th><th>Survivors</th><th>Dropped here</th><th>% of seed</th></tr></thead><tbody>${funnelRows || '<tr><td colspan="4">No broad Price↑ + OI↑ seeds captured.</td></tr>'}</tbody></table>
         <h4 style="margin:18px 0 6px;">Bear FSB Validation vs Final Regime <span class="hint">diagnostic only · rejected rule</span></h4>
         <p class="hint">The Bear FSB final sample has already been consumed and rejected. Its final summary is immutable and cannot be regenerated from today's rolling window.</p>

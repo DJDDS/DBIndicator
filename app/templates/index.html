@@ -522,7 +522,7 @@
         </section>
       </div>
       <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
-      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.2.8 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
+      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.2.9 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
@@ -1193,11 +1193,18 @@
       var x = h[label] || {};
       var n = Number(x.n || 0);
       if (!n) return label + ' 0 matured';
-      var wr = Number(x.win_rate_pct);
-      var avg = Number(x.avg_directional_return_pct);
-      return label + ' ' + n + ' · WR ' + (Number.isFinite(wr) ? wr.toFixed(0) + '%' : '—') + ' · Avg ' + (Number.isFinite(avg) ? (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%' : '—');
+      var wr = Number(x.net_win_rate_pct);
+      var lo = Number(x.net_win_rate_ci95_low_pct);
+      var hi = Number(x.net_win_rate_ci95_high_pct);
+      var avg = Number(x.avg_net_return_pct);
+      var pf = Number(x.net_profit_factor);
+      var ci = (Number.isFinite(lo) && Number.isFinite(hi)) ? ' (' + lo.toFixed(0) + '–' + hi.toFixed(0) + '%)' : '';
+      return label + ' n=' + n + ' · Net ' + (Number.isFinite(avg) ? (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%' : '—') +
+        ' · PF ' + (Number.isFinite(pf) ? pf.toFixed(2) : (pf === Infinity ? '∞' : '—')) +
+        ' · WR ' + (Number.isFinite(wr) ? wr.toFixed(0) + '%' : '—') + ci;
     }
-    el.textContent = 'Captured ' + (summary.events ?? 0) + ' events (' + (summary.captured_today ?? 0) + ' today) · ' +
+    var days = Number(summary.distinct_trade_days || 0);
+    el.textContent = 'Captured ' + (summary.events ?? 0) + ' events (' + (summary.captured_today ?? 0) + ' today · ' + days + ' trading day' + (days === 1 ? '' : 's') + ') · ' +
       ['30m','1h','2h','4h','1D'].map(one).join(' | ');
   }
 

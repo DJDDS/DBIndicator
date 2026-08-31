@@ -13,9 +13,39 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.8-BACKTEST-INTEGRITY-SHADOW-RADAR"
+BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.9-PIPELINE-RELIABILITY-AUDIT-HARDENING"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
+
+# Research-history accounting from the external V9.2 validation audit.  This
+# registry is disclosure/protocol metadata only until a calibrated p-value or
+# Deflated-Sharpe/FDR statistic is implemented; it must not be confused with a
+# significance result.
+HISTORICAL_MODEL_TRIALS_COUNTED = 12
+FAMILYWISE_ALPHA = 0.05
+BONFERRONI_ALPHA = FAMILYWISE_ALPHA / HISTORICAL_MODEL_TRIALS_COUNTED
+POWER_REFERENCE_55_VS_50_N = 782
+
+
+def validation_audit_protocol() -> dict:
+    return {
+        "historical_trials_counted": HISTORICAL_MODEL_TRIALS_COUNTED,
+        "familywise_alpha": FAMILYWISE_ALPHA,
+        "bonferroni_alpha": round(BONFERRONI_ALPHA, 6),
+        "power_reference_55pct_vs_50pct_n": POWER_REFERENCE_55_VS_50_N,
+        "power_reference_note": (
+            "Reference from the validation audit: about 782 independent trades are needed "
+            "to distinguish a 55% win rate from 50% at 80% power; serially correlated "
+            "same-session events are less informative."
+        ),
+        "multiplicity_control_status": "DECLARED_NOT_YET_A_PROMOTION_STATISTIC",
+        "point_in_time_fno_universe_available": False,
+        "universe_warning": (
+            "Historical replay uses the current NSE stock-F&O membership and is therefore "
+            "survivorship-biased until a point-in-time F&O membership dataset is supplied."
+        ),
+    }
+
 
 _FROZEN_BEAR_RULE = {
     "rule_id": BEAR_RULE_ID,
@@ -228,8 +258,9 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
         return row.get("vwap_side_agrees") is True
 
     gates = [
-        ("price_up_oi_up", "Price up + OI up", seed),
-        ("long_buildup", "Long Buildup state", lambda r: r.get("v8_oi_state") == "Long Buildup"),
+        # "Long Buildup" is exactly the same price-up + OI-up computation as
+        # the seed, so do not present it as an independent confirmation.
+        ("price_up_oi_up", "Price up + OI up / Long Buildup", seed),
         ("vwap_available", "VWAP data available", vwap_available),
         ("above_vwap", "Above-VWAP acceptance", above_vwap),
         ("tod_rvol_ge_1", "TOD RVOL >= 1.0", lambda r: finite_ge(r, "tod_rvol", 1.0)),
@@ -257,7 +288,8 @@ def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
         "seed_count": len(rows),
         "qualified": len(survivors),
         "stages": stages,
-        "message": "Diagnostic only: identifies the population bottleneck without changing any Bull threshold.",
+        "independent_streams": ["price", "volume", "futures_oi", "relative_strength", "basis_when_available"],
+        "message": "Diagnostic only: duplicate price+OI/Long-Buildup evidence is collapsed; this identifies the population bottleneck without changing any Bull threshold.",
     }
 
 

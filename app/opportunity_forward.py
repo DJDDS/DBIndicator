@@ -24,6 +24,7 @@ INTRADAY_HORIZONS_MINUTES = {
 ALL_HORIZONS = ("30m", "1h", "2h", "4h", "1D")
 STATE_VERSION = 1
 MAX_EVENTS = 2500
+RESEARCH_FRICTION_PCT = 0.18  # 0.08% costs + 0.05% slippage per side
 
 
 def _finite(value):
@@ -184,19 +185,75 @@ def process_scan(state, radar, results, *, now=None):
     return state
 
 
+def _wilson_interval_pct(wins, n, z=1.959963984540054):
+    if not n:
+        return (None, None)
+    p = float(wins) / float(n)
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    centre = (p + z2 / (2.0 * n)) / denom
+    half = z * math.sqrt((p * (1.0 - p) / n) + (z2 / (4.0 * n * n))) / denom
+    return (round(max(0.0, centre - half) * 100.0, 1), round(min(1.0, centre + half) * 100.0, 1))
+
+
+def _return_stats(values):
+    n = len(values)
+    if not n:
+        return {
+            "n": 0, "win_rate_pct": None, "win_rate_ci95_low_pct": None,
+            "win_rate_ci95_high_pct": None, "avg_return_pct": None,
+            "profit_factor": None, "avg_win_pct": None, "avg_loss_pct": None,
+        }
+    wins = [v for v in values if v > 0]
+    losses = [v for v in values if v < 0]
+    gp = float(sum(wins))
+    gl = abs(float(sum(losses)))
+    pf = gp / gl if gl > 0 else (float("inf") if gp > 0 else None)
+    lo, hi = _wilson_interval_pct(len(wins), n)
+    return {
+        "n": n,
+        "win_rate_pct": round(len(wins) / n * 100.0, 1),
+        "win_rate_ci95_low_pct": lo,
+        "win_rate_ci95_high_pct": hi,
+        "avg_return_pct": round(sum(values) / n, 4),
+        "profit_factor": round(float(pf), 3) if pf is not None and math.isfinite(pf) else pf,
+        "avg_win_pct": round(sum(wins) / len(wins), 4) if wins else None,
+        "avg_loss_pct": round(sum(losses) / len(losses), 4) if losses else None,
+    }
+
+
 def _aggregate(events, horizon):
     values = []
     for event in events:
         outcome = (event.get("outcomes") or {}).get(horizon)
         if outcome and _finite(outcome.get("directional_return_pct")):
             values.append(float(outcome["directional_return_pct"]))
-    n = len(values)
-    if not n:
-        return {"n": 0, "win_rate_pct": None, "avg_directional_return_pct": None}
+    raw = _return_stats(values)
+    if not values:
+        return {
+            "n": 0, "win_rate_pct": None, "win_rate_ci95_low_pct": None,
+            "win_rate_ci95_high_pct": None, "avg_directional_return_pct": None,
+            "profit_factor": None, "avg_win_pct": None, "avg_loss_pct": None,
+            "net_win_rate_pct": None, "net_win_rate_ci95_low_pct": None,
+            "net_win_rate_ci95_high_pct": None, "avg_net_return_pct": None,
+            "net_profit_factor": None, "research_friction_pct": RESEARCH_FRICTION_PCT,
+        }
+    net = _return_stats([v - RESEARCH_FRICTION_PCT for v in values])
     return {
-        "n": n,
-        "win_rate_pct": round(sum(v > 0 for v in values) / n * 100.0, 1),
-        "avg_directional_return_pct": round(sum(values) / n, 4),
+        "n": raw["n"],
+        "win_rate_pct": raw["win_rate_pct"],
+        "win_rate_ci95_low_pct": raw["win_rate_ci95_low_pct"],
+        "win_rate_ci95_high_pct": raw["win_rate_ci95_high_pct"],
+        "avg_directional_return_pct": raw["avg_return_pct"],
+        "profit_factor": raw["profit_factor"],
+        "avg_win_pct": raw["avg_win_pct"],
+        "avg_loss_pct": raw["avg_loss_pct"],
+        "net_win_rate_pct": net["win_rate_pct"],
+        "net_win_rate_ci95_low_pct": net["win_rate_ci95_low_pct"],
+        "net_win_rate_ci95_high_pct": net["win_rate_ci95_high_pct"],
+        "avg_net_return_pct": net["avg_return_pct"],
+        "net_profit_factor": net["profit_factor"],
+        "research_friction_pct": RESEARCH_FRICTION_PCT,
     }
 
 
@@ -213,9 +270,12 @@ def summarize(state, *, today=None):
         band: {h: _aggregate([e for e in events if e.get("score_band") == band], h) for h in ALL_HORIZONS}
         for band in ("70+", "55-69", "<55")
     }
+    trade_days = sorted({str(e.get("trade_date")) for e in events if e.get("trade_date")})
     return {
         "events": len(events),
         "captured_today": sum(e.get("trade_date") == today.isoformat() for e in events),
+        "distinct_trade_days": len(trade_days),
+        "trade_days": trade_days,
         "last_scan": state.get("last_scan"),
         "horizons": horizon_stats,
         "by_direction": by_direction,
