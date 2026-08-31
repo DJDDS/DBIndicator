@@ -1,12 +1,10 @@
-# V9.1 Benchmark Release Notes
+# V9.2 Diagnostic Reset Release Notes
 
-Build: `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX`
+Build: `2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET`
 
-V9.1 is goal-focused rather than a new parameter-search surface.
+V9.2 answers two post-final-test questions without adding a new tunable strategy:
 
-- **Bear Fresh Short Buildup** is validation-qualified and frozen. Only the dedicated final-test path may reveal its final 20%, using the fingerprinted rule in `FROZEN_RULE.md`.
-- **Bull Institutional Accumulation** is development/validation research only. Its final 20% remains locked.
-- **Bull Catalyst Continuation** and Derivative Intelligence remain live/shadow until point-in-time historical datasets exist.
-- Retired V9 playbooks are not allowed back into the primary live shortlist merely by changing thresholds.
+1. Why did **Bull Institutional Accumulation** produce zero validation candidates? The Bull Gate Funnel counts the exact cumulative population loss at every unchanged gate.
+2. Why did **Bear Fresh Short Buildup** pass validation but fail its consumed final 20%? The Bear regime decomposition compares validation and final across available market/derivatives contexts.
 
-Bull and Bear are judged independently. No combined score can hide a weak side.
+The Bull final 20% remains locked. The Bear final sample is already consumed and rejected; V9.2 disables its final-test button and treats all Bear regime tables as diagnostic-only.

@@ -50,14 +50,14 @@ def test_backtest_v81_renderer_reads_primary_variant_shape_and_blocks():
 def test_v9_has_dedicated_one_click_15m_backtest_runner():
     text = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
     assert 'id="er-v91-run-btn"' in text
-    assert 'Run V9.1 Goal-Focused Backtest' in text
+    assert 'Run V9.2 Diagnostic Reset' in text
     assert "timeframe:'15minute'" in text
     body = text[text.index("document.getElementById('er-v91-run-btn')"):]
     assert "startJob('/api/early-research/start'" in body
 
 
 def test_v9_build_marker_is_current_research_build():
-    build_id = '2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX'
+    build_id = '2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == build_id
     assert build_id in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text(encoding='utf-8')

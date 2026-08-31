@@ -19,7 +19,7 @@ def test_dashboard_is_v9_professional_playbook_console():
 def test_backtest_has_dedicated_v9_one_click_runner_and_playbook_report():
     text = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
     assert 'id="er-v91-run-btn"' in text
-    assert "Run V9.1 Goal-Focused Backtest" in text
+    assert "Run V9.2 Diagnostic Reset" in text
     assert "v91_goal" in text
     assert "Bull Institutional Accumulation" in text
     assert "Bear Fresh Short Buildup" in text

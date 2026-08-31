@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX"
+RESEARCH_BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET"
 
 
 
@@ -387,9 +387,11 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
         idx_close_v6 = pd.Series(index_df["close"]).reindex(df.index, method="ffill", limit=2)
         out["market_regime"] = _historical_market_regime(idx_close_v6, df.index)
         out["index_ret_8_pct"] = idx_close_v6.pct_change(8) * 100.0
+        out["index_vol_20bar_pct"] = idx_close_v6.pct_change().rolling(20, min_periods=10).std() * 100.0
     else:
         out["market_regime"] = "Unknown"
         out["index_ret_8_pct"] = np.nan
+        out["index_vol_20bar_pct"] = np.nan
 
     if sector_df is not None and not sector_df.empty:
         sec_close_v6 = pd.Series(sector_df["close"]).reindex(df.index, method="ffill", limit=2)
@@ -667,12 +669,24 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "bar_range_atr": row.get("bar_range_atr"),
             "catalyst_score": row.get("catalyst_score"),
             "market_regime": row.get("market_regime"),
+            "index_ret_8_pct": row.get("index_ret_8_pct"),
+            "index_vol_20bar_pct": row.get("index_vol_20bar_pct"),
             "sector_rank_percentile": row.get("sector_rank_percentile"),
             "stock_sector_lead_pct": row.get("stock_sector_lead_pct"),
             "price_location_score": row.get("price_location_score"),
             "basis_pct": row.get("basis_pct"),
             "basis_acceleration": row.get("basis_acceleration"),
         }
+        # V9.2 diagnostic-only post-signal positioning.  At t+4 on a 15-minute
+        # frame these session-aware 60-minute features measure price/OI change
+        # from the signal candle to one hour later.  They never participate in
+        # eligibility, scoring, or the frozen Bear rule.
+        if setup_timeframe == "15minute" and pos + 4 < len(features):
+            event["future_price_chg_60m_pct"] = _py(features["price_chg_60m_pct"].iloc[pos + 4]) if "price_chg_60m_pct" in features.columns else None
+            event["future_oi_chg_60m_pct"] = _py(features["oi_chg_60m_pct"].iloc[pos + 4]) if "oi_chg_60m_pct" in features.columns else None
+        else:
+            event["future_price_chg_60m_pct"] = None
+            event["future_oi_chg_60m_pct"] = None
         # Legacy V6 classification and path-exit grids are intentionally
         # bypassed by the V8 fast path. They are expensive and have no role in
         # V8.1/V8.2 Top-K selection; the Legacy / 4H Diagnostic button still
@@ -730,22 +744,28 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
         row = {k: _py(v) for k, v in features.iloc[pos].to_dict().items()}
         row["timestamp"] = df.index[pos].isoformat()
 
-        # V9.1 Bull Institutional Accumulation probe. This is intentionally
-        # independent of a price-range breakout: it starts from new long futures
-        # positioning (price up + OI up), above-VWAP acceptance and at least normal
-        # time-of-day participation. Cross-sectional ranks attached later decide
-        # whether the activity is exceptional enough to become a trade candidate.
+        # V9.2 diagnostic seed for Bull Institutional Accumulation.  Capture the
+        # economically primary event (price up + OI up) *before* the V9.1 VWAP /
+        # TOD-RVOL pre-gates so the gate funnel can show exactly where the long-
+        # buildup population collapses.  The production V9.1 probe flag remains
+        # unchanged and is set only when those original pre-gates also pass.
         price_60 = row.get("price_chg_60m_pct")
         oi_60 = row.get("oi_chg_60m_pct")
         tod = row.get("tod_rvol")
-        if (fast_v8 and setup_timeframe == "15minute" and pos + 1 < len(df)
-                and price_60 is not None and np.isfinite(price_60) and float(price_60) > 0
-                and oi_60 is not None and np.isfinite(oi_60) and float(oi_60) > 0
-                and row.get("vwap_side_agrees") is True
-                and tod is not None and np.isfinite(tod) and float(tod) >= 1.0):
+        long_seed = bool(
+            fast_v8 and setup_timeframe == "15minute" and pos + 1 < len(df)
+            and price_60 is not None and np.isfinite(price_60) and float(price_60) > 0
+            and oi_60 is not None and np.isfinite(oi_60) and float(oi_60) > 0
+        )
+        if long_seed:
             accumulation_event = _event_from_row(row, pos, "Bullish", {})
             if accumulation_event is not None:
-                accumulation_event["v91_accumulation_probe"] = True
+                accumulation_event["v92_accumulation_seed"] = True
+                accumulation_event["v91_accumulation_seed_direction"] = "Bullish"
+                accumulation_event["v91_accumulation_probe"] = bool(
+                    row.get("vwap_side_agrees") is True
+                    and tod is not None and np.isfinite(tod) and float(tod) >= 1.0
+                )
                 accumulation_event["fresh_breakout"] = False
                 accumulation_event["breakout_source"] = None
                 v9_playbook_events.append(accumulation_event)
@@ -2052,6 +2072,8 @@ def v91_goal_report(events, run_context=None, *, reveal_bear_final=False):
         },
         "bear_fresh_short_buildup": bear_report,
         "bear_final": bear_final,
+        "bull_gate_funnel": v91_goal.bull_accumulation_gate_funnel(rows),
+        "bear_regime_decomposition": v91_goal.bear_fsb_regime_decomposition(rows),
         "retired_playbooks": [
             "Bull Opening Drive", "Bull Pullback/Reclaim",
             "Bear Failed Breakout", "Bear VWAP Retest Failure",

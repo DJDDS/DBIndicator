@@ -1,27 +1,21 @@
-# DBIndicator — V9.1 Goal-Focused Scanner
+# DBIndicator — V9.2 Diagnostic Reset
 
-**Build:** `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX`
+**Build:** `2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET`
 
-V9.1 narrows the scanner to the two evidence-backed jobs that matter now:
+V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
 
-- **Bear Fresh Short Buildup:** frozen exactly as V9 validation qualified it. The Backtest page has a dedicated final-test button that reveals only this rule's untouched final 20%.
-- **Bull Institutional Accumulation:** new development/validation-only model based on price up + OI up, VWAP acceptance, abnormal participation, relative leadership and direction-aware futures positioning. Its final 20% remains locked.
+Primary jobs:
 
-The failed V9 Opening Drive, Pullback/Reclaim, Failed Breakout and VWAP Retest Failure models are retired from the primary live shortlist instead of being retuned. Bull Catalyst Continuation remains live/shadow until point-in-time event history exists.
+- **Bull Gate Funnel:** starts from the broad point-in-time `price up + OI up` population and reports cumulative survivors through the unchanged Bull Institutional Accumulation gates: Long Buildup state, VWAP acceptance, TOD RVOL, Participation, Relative Strength, Derivatives, Bull CLV, basis and final consensus. Bull final 20% remains locked.
+- **Bear FSB Regime Decomposition:** explains why the previously validated Bear Fresh Short Buildup rule failed its already-consumed final 20%. It compares validation vs final by market regime, index trend, market volatility, futures-basis direction, stock-vs-sector state, time of day, OI magnitude, OI persistence and post-signal 60-minute positioning. These cohorts are descriptive only and must not become replacement rules.
+- **Historical breadth:** explicitly marked unavailable in the current point-in-time dataset rather than inferred or fabricated.
 
-Derivative Intelligence remains downstream: it evaluates CE/PE expression, IV/RV, expected move, liquidity, DTE and Greeks only after the underlying model qualifies a stock.
+The rejected Bear FSB final test is disabled on the Backtest page. Its frozen fingerprint is preserved for audit continuity only.
+
+Derivative Intelligence remains downstream/live-shadow: CE/PE expression, IV/RV, expected move, liquidity, DTE and Greeks are not fabricated into the historical backtest.
 
 ## Backtest
 
-Open **Backtest**:
+Open **Backtest → Run V9.2 Diagnostic Reset**.
 
-1. **Run V9.1 Goal-Focused Backtest** — full NSE F&O, 15-minute, 180 days; validates Bull Institutional Accumulation and keeps all final samples locked.
-2. **Run Frozen Bear FSB Final Test** — same fixed protocol, but reveals the final 20% only for the fingerprinted Bear Fresh Short Buildup rule.
-
-The final test has no threshold controls.
-
-## V9.1.2 streaming reliability
-
-The 180-day V9.1 path is now constant-memory relative to the full replay universe: each stock is checkpointed as compact rank inputs plus only the Bull Accumulation / frozen Bear FSB candidate rows needed by the goal-focused report. Stage 2 persists a ranked-events checkpoint, so a worker restart after cross-sectional ranking resumes directly at validation instead of rebuilding history or ranks.
-
-During a resumed run the Backtest page shows the durable checkpoint state (for example, `170/211 symbols saved` or `211/211 symbols saved · Stage 2 checkpoint available`).
+The diagnostic run remains fixed to the full NSE F&O universe, 15-minute setup/execution and 180 calendar days. The streaming/checkpoint architecture from V9.1.2 is retained for Railway reliability.

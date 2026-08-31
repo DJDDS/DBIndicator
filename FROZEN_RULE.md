@@ -1,14 +1,13 @@
-# V9.1 Goal-Focused Research Lock
+# V9.2 Diagnostic / Audit Lock
 
-**Build:** `2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX`
+**Build:** `2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET`
 
-## Frozen Bear rule
+## Rejected Bear rule — audit only
 
 `BEAR_FSB_15M_NEXTBAR_1D_V91`
 
-The final-test path is fixed to the full NSE stock-F&O universe, 15-minute setup and execution, 180 calendar days, 0.08% round-trip costs and 0.05% slippage per side.
+Fingerprint remains unchanged for audit continuity. The rule used the full NSE stock-F&O universe, 15-minute setup/execution, 180 calendar days, 0.08% costs and 0.05% slippage per side, with:
 
-Bear Fresh Short Buildup is frozen as validated in V9:
 - fresh bearish breakout;
 - futures state = **Fresh Short Buildup** (price down + OI up);
 - breakout extension <= 1.25 ATR;
@@ -19,10 +18,8 @@ Bear Fresh Short Buildup is frozen as validated in V9:
 - futures-basis acceleration <= +0.02 when available;
 - median evidence score >= 70.
 
-Final acceptance is predeclared: at least 60 final trades, average net >= +0.15%, PF >= 1.25, and at least 3 of 4 chronological final blocks positive.
+Its untouched final 20% was consumed and rejected. V9.2 must not alter this rule or create a replacement rule from final-sample cohorts. The final-test button is disabled.
 
-## Bull research rule
+## Bull diagnostic rule
 
-**Bull Institutional Accumulation** is research-only and its final 20% stays locked. The historical probe starts from price up + OI up, above-VWAP acceptance and at least normal TOD participation, then requires cross-sectional Participation >= 70, Relative Strength >= 70, Derivatives >= 65, bullish close-location >= 60, and non-deteriorating basis when available.
-
-Bull Catalyst Continuation stays live/shadow until a point-in-time historical news archive exists.
+**Bull Institutional Accumulation** remains research-only and its final 20% stays locked. V9.2 does not lower thresholds. It broadens only the diagnostic population to every point-in-time `price up + OI up` seed so the gate funnel can identify exactly where candidates disappear.

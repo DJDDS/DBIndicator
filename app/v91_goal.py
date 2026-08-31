@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.1.2-SHUTIL-FIX"
+BUILD_ID = "2026-08-30-INSTITUTIONAL-V9.2-DIAGNOSTIC-RESET"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 
@@ -161,6 +161,208 @@ def _blocks(events: Iterable[dict], count=4):
         out.append(s)
     return out
 
+
+
+def _bull_clv(row: dict) -> float | None:
+    cp = _f(row.get("close_position_pct"))
+    if cp is not None:
+        return round(float(np.clip(cp, 0.0, 100.0)), 2)
+    hi, lo, close = (_f(row.get(k)) for k in ("high", "low", "close"))
+    if None in (hi, lo, close) or hi <= lo:
+        return None
+    return round(float(np.clip((close - lo) / (hi - lo) * 100.0, 0.0, 100.0)), 2)
+
+
+def bull_accumulation_gate_funnel(events: Iterable[dict]) -> dict:
+    """Cumulative diagnostic funnel for the unchanged Bull Accumulation rule.
+
+    This reports where the population disappears; it does not alter eligibility
+    or propose replacement thresholds.  The input may contain the broader V9.2
+    price-up/OI-up diagnostic seeds as well as the original V9.1 probes.
+    """
+    rows = [dict(e) for e in (events or []) if e.get("v92_accumulation_seed") or e.get("v91_accumulation_probe")]
+
+    def finite_ge(row, key, threshold):
+        v = _f(row.get(key))
+        return v is not None and v >= threshold
+
+    def seed(row):
+        p = _f(row.get("price_chg_60m_pct"))
+        oi = _f(row.get("oi_chg_60m_pct"))
+        return p is not None and p > 0 and oi is not None and oi > 0
+
+    def basis_ok(row):
+        value = _f(row.get("basis_acceleration"))
+        return value is None or value >= -0.02
+
+    def score_ok(row):
+        score = _consensus([row.get("v8_participation"), row.get("v8_relative"), row.get("v8_derivatives"), _bull_clv(row)])
+        return score is not None and score >= 70.0
+
+    gates = [
+        ("price_up_oi_up", "Price up + OI up", seed),
+        ("long_buildup", "Long Buildup state", lambda r: r.get("v8_oi_state") == "Long Buildup"),
+        ("above_vwap", "Above-VWAP acceptance", lambda r: r.get("vwap_side_agrees") is True),
+        ("tod_rvol_ge_1", "TOD RVOL >= 1.0", lambda r: finite_ge(r, "tod_rvol", 1.0)),
+        ("participation_ge_70", "Participation >= 70", lambda r: finite_ge(r, "v8_participation", 70.0)),
+        ("relative_strength_ge_70", "Relative Strength >= 70", lambda r: finite_ge(r, "v8_relative", 70.0)),
+        ("derivatives_ge_65", "Derivatives >= 65", lambda r: finite_ge(r, "v8_derivatives", 65.0)),
+        ("bull_clv_ge_60", "Bull CLV >= 60", lambda r: (_bull_clv(r) is not None and _bull_clv(r) >= 60.0)),
+        ("basis_non_deteriorating", "Basis acceleration >= -0.02 or unavailable", basis_ok),
+        ("consensus_ge_70", "Median evidence >= 70", score_ok),
+    ]
+    survivors = rows
+    stages = []
+    previous = len(rows)
+    for gate, label, predicate in gates:
+        survivors = [r for r in survivors if predicate(r)]
+        current = len(survivors)
+        stages.append({
+            "gate": gate, "label": label, "survivors": current,
+            "dropped_at_gate": max(0, previous - current),
+            "survival_pct_of_seed": round(current / len(rows) * 100.0, 1) if rows else 0.0,
+        })
+        previous = current
+    return {
+        "diagnostic_only": True,
+        "seed_count": len(rows),
+        "qualified": len(survivors),
+        "stages": stages,
+        "message": "Diagnostic only: identifies the population bottleneck without changing any Bull threshold.",
+    }
+
+
+def _cohort_stats(events: Iterable[dict], classifier) -> dict:
+    groups = {}
+    for event in events or []:
+        key = classifier(event)
+        groups.setdefault(str(key), []).append(event)
+    return {key: _stats(rows) for key, rows in sorted(groups.items())}
+
+
+def _time_bucket(event: dict) -> str:
+    raw = event.get("signal_time") or event.get("entry_time")
+    try:
+        # Research timestamps are ISO strings; the local wall-clock portion is
+        # sufficient for this descriptive time-of-day cohort.
+        text = str(raw).split("T")[-1][:5]
+        hh, mm = (int(x) for x in text.split(":"))
+        minutes = hh * 60 + mm
+    except Exception:
+        return "unknown"
+    if minutes < 10 * 60 + 45:
+        return "opening_to_10_45"
+    if minutes < 13 * 60 + 30:
+        return "midday_10_45_to_13_30"
+    return "late_after_13_30"
+
+
+def _period_regime_summary(events: Iterable[dict]) -> dict:
+    rows = list(events or [])
+    def basis_state(e):
+        v = _f(e.get("basis_acceleration"))
+        if v is None:
+            return "missing"
+        return "deteriorating" if v < 0 else "non_deteriorating"
+    def sector_state(e):
+        v = _f(e.get("stock_sector_lead_pct"))
+        if v is None:
+            return "missing"
+        return "weaker_than_sector" if v < 0 else "not_weaker_than_sector"
+    def oi_bucket(e):
+        v = _f(e.get("oi_chg_60m_pct"))
+        if v is None:
+            return "missing"
+        if v < 2.0:
+            return "oi_0_to_2pct"
+        if v < 5.0:
+            return "oi_2_to_5pct"
+        return "oi_5pct_plus"
+    def index_trend(e):
+        v = _f(e.get("index_ret_8_pct"))
+        if v is None:
+            return "missing"
+        if v >= 0.35:
+            return "index_up"
+        if v <= -0.35:
+            return "index_down"
+        return "index_flat"
+    def market_volatility(e):
+        v = _f(e.get("index_vol_20bar_pct"))
+        if v is None:
+            return "missing"
+        return "high_vol" if v >= 0.25 else "normal_vol"
+    def oi_persistence(e):
+        v = _f(e.get("oi_acceleration"))
+        if v is None:
+            return "missing"
+        if v > 0.05:
+            return "accelerating_oi"
+        if v < -0.05:
+            return "decelerating_oi"
+        return "stable_oi"
+    def post_positioning(e):
+        p = _f(e.get("future_price_chg_60m_pct"))
+        oi = _f(e.get("future_oi_chg_60m_pct"))
+        if p is None or oi is None:
+            return "missing"
+        if p < 0 and oi > 0:
+            return "shorts_persisting"
+        if p > 0 and oi < 0:
+            return "short_covering"
+        if p < 0 and oi < 0:
+            return "long_unwinding"
+        if p > 0 and oi > 0:
+            return "long_buildup_reversal"
+        return "mixed_flat"
+    regime = lambda e: e.get("market_regime") or "Unknown"
+
+    def numeric_summary(key):
+        vals = [_f(e.get(key)) for e in rows]
+        vals = [v for v in vals if v is not None]
+        if not vals:
+            return {"n": 0, "mean": None, "median": None}
+        return {"n": len(vals), "mean": round(float(np.mean(vals)), 4), "median": round(float(np.median(vals)), 4)}
+
+    return {
+        "overall": _stats(rows),
+        "market_regime": _cohort_stats(rows, regime),
+        "index_trend": _cohort_stats(rows, index_trend),
+        "market_volatility": _cohort_stats(rows, market_volatility),
+        "basis_direction": _cohort_stats(rows, basis_state),
+        "sector_relative": _cohort_stats(rows, sector_state),
+        "time_bucket": _cohort_stats(rows, _time_bucket),
+        "oi_strength_bucket": _cohort_stats(rows, oi_bucket),
+        "oi_persistence": _cohort_stats(rows, oi_persistence),
+        "post_60m_positioning": _cohort_stats(rows, post_positioning),
+        "feature_summary": {
+            "oi_chg_60m_pct": numeric_summary("oi_chg_60m_pct"),
+            "oi_acceleration": numeric_summary("oi_acceleration"),
+            "basis_acceleration": numeric_summary("basis_acceleration"),
+            "stock_sector_lead_pct": numeric_summary("stock_sector_lead_pct"),
+            "index_ret_8_pct": numeric_summary("index_ret_8_pct"),
+            "index_vol_20bar_pct": numeric_summary("index_vol_20bar_pct"),
+            "tod_rvol": numeric_summary("tod_rvol"),
+        },
+    }
+
+
+def bear_fsb_regime_decomposition(events: Iterable[dict]) -> dict:
+    """Explain the already-consumed Bear FSB validation/final divergence.
+
+    The rule has been rejected and is not modified here.  These cohorts are
+    descriptive diagnostics only; no cohort becomes a new trading rule.
+    """
+    candidates = select_frozen_bear_fsb(events)
+    _dev, validation, final = _split_60_20_20(candidates)
+    return {
+        "diagnostic_only": True,
+        "rule_status": "REJECTED_FINAL_DO_NOT_RETUNE",
+        "breadth_history": "UNAVAILABLE_IN_CURRENT_HISTORICAL_DATASET",
+        "validation": _period_regime_summary(validation),
+        "final": _period_regime_summary(final),
+        "message": "Validation-vs-final regime decomposition only. Do not use this table to retune the rejected Bear FSB rule against its consumed final sample.",
+    }
 
 def validate_protocol(run_context: dict | None) -> dict:
     ctx = dict(run_context or {})

@@ -2063,11 +2063,13 @@ _V8_COMPACT_FEATURE_COLUMNS = (
 
 _V91_COMPACT_EVENT_KEYS = (
     "symbol", "signal_time", "entry_time", "timestamp", "direction", "v8_direction",
-    "v91_accumulation_probe", "v91_accumulation_seed_direction",
+    "v91_accumulation_probe", "v91_accumulation_seed_direction", "v92_accumulation_seed",
     "fresh_breakout", "breakout_source", "breakout_direction", "breakout_extension_atr",
-    "price_chg_60m_pct", "oi_chg_60m_pct", "oi_chg_30m_pct", "basis_acceleration",
+    "price_chg_60m_pct", "oi_chg_60m_pct", "oi_chg_30m_pct", "oi_acceleration", "basis_acceleration",
+    "future_price_chg_60m_pct", "future_oi_chg_60m_pct",
     "vwap_side_agrees", "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
     "turnover_notional", "rs_pct", "stock_sector_lead_pct", "stock_index_lead_pct",
+    "market_regime", "index_ret_8_pct", "index_vol_20bar_pct", "sector_rank_percentile", "basis_pct",
     "close_position_pct", "high", "low", "close",
     "intraday_returns", "swing_returns", "mfe_atr", "mae_atr",
 )
@@ -2083,7 +2085,11 @@ def _compact_v91_events(replay):
     out = []
     for raw in (replay or {}).get("v9_playbook_events") or []:
         keep = False
-        if raw.get("v91_accumulation_probe") is True:
+        if raw.get("v92_accumulation_seed") is True:
+            # Diagnostic V9.2 seed must survive even when a later Bull gate fails;
+            # otherwise the funnel cannot identify the population bottleneck.
+            keep = True
+        elif raw.get("v91_accumulation_probe") is True:
             keep = True
             try:
                 basis = raw.get("basis_acceleration")
