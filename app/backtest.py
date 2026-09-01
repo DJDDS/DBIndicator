@@ -2368,7 +2368,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                     "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",
                     "15-minute setups retain next-bar execution; V9.3 streaming reuses the same point-in-time event logic.",
                     "V9.3 separately maps daily continuous-futures OI only after the completed session close; same-day morning bars cannot see that day's daily OI.",
-                    "Stage 2 loads each completed symbol shard once, retains only compact feature frames for the seven cross-sectional ranks, and checkpoints after every completed rank.",
+                    "Stage 2 converts each heavy symbol shard once into a lean rank-only checkpoint, streams one cross-sectional rank at a time, and checkpoints after input preparation plus every completed rank.",
                     "A Stage-2 rank-progress checkpoint resumes after the last completed rank; a completed ranked-events checkpoint resumes directly at validation after a worker restart.",
                     "Historical membership uses the current NSE stock-F&O universe replayed backward; point-in-time F&O membership is not available in the present data source, so survivorship bias is explicitly disclosed rather than hidden.",
                     "V9.3 daily continuous-OI features are point-in-time and swing-oriented; intraday current-contract OI remains partial and is never backfilled from invented expired-contract 15-minute data.",
@@ -2860,12 +2860,42 @@ def _v91_rank_progress_path(run_dir):
 _V91_RANK_PROGRESS_SCHEMA = "v930-rank-progress-1"
 
 
-def _save_v91_rank_progress(run_dir, *, rows, confirmations, notes, completed_rank_keys, symbols_completed):
-    """Persist Stage-2 progress after each completed cross-sectional rank.
+def _v91_rank_feature_dir(run_dir):
+    path = Path(run_dir) / "rank-features"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
-    The checkpoint contains only compact candidate rows and audit summaries;
-    feature frames stay in the per-symbol Stage-1 shards.  A worker restart can
-    therefore skip ranks already attached without repeating successful work.
+
+def _v91_rank_feature_path(run_dir, symbol):
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(symbol))
+    return _v91_rank_feature_dir(run_dir) / f"{safe}.pkl"
+
+
+def _write_v91_rank_feature_shard(run_dir, symbol, compact_frame):
+    """Persist only the compact Stage-2 feature frame for one symbol.
+
+    Stage-1 shards also carry event dictionaries and coverage metadata. Reopening
+    those heavy payloads during every cross-sectional rank caused large transient
+    allocations on Railway.  The lean rank shard keeps Stage 2 disk-streamable.
+    """
+    path = _v91_rank_feature_path(run_dir, symbol)
+    return _atomic_pickle(path, {"symbol": str(symbol), "compact_frame": compact_frame})
+
+
+def _load_v91_rank_feature_shard(path):
+    with Path(path).open("rb") as fh:
+        payload = pickle.load(fh)
+    return payload.get("compact_frame")
+
+
+def _save_v91_rank_progress(run_dir, *, rows, confirmations, notes, completed_rank_keys, symbols_completed,
+                            inputs_prepared=False, history_coverage_rows=None, daily_oi_coverage_rows=None):
+    """Persist Stage-2 progress after input compaction and each completed rank.
+
+    The checkpoint contains compact candidate rows plus audit summaries. Heavy
+    Stage-1 symbol shards are converted once into rank-only shards and never need
+    to be kept together in RAM. A worker restart after input preparation can
+    therefore resume Stage 2 without touching the heavy symbol payloads again.
     """
     return _atomic_pickle(_v91_rank_progress_path(run_dir), {
         "schema": _V91_RANK_PROGRESS_SCHEMA,
@@ -2874,6 +2904,25 @@ def _save_v91_rank_progress(run_dir, *, rows, confirmations, notes, completed_ra
         "notes": notes,
         "completed_rank_keys": list(completed_rank_keys or []),
         "symbols_completed": int(symbols_completed or 0),
+        "inputs_prepared": bool(inputs_prepared),
+        "history_coverage_rows": list(history_coverage_rows or []),
+        "daily_oi_coverage_rows": list(daily_oi_coverage_rows or []),
+    })
+
+
+def _save_v91_input_progress(run_dir, *, rows, confirmations, notes, symbols_completed,
+                             history_coverage_rows=None, daily_oi_coverage_rows=None, completed_rank_keys=None):
+    """Persist the lean-input preparation boundary separately from rank checkpoints."""
+    return _atomic_pickle(_v91_rank_progress_path(run_dir), {
+        "schema": _V91_RANK_PROGRESS_SCHEMA,
+        "events": rows,
+        "confirmation": _merge_v91_confirmation_summaries(confirmations),
+        "notes": notes,
+        "completed_rank_keys": list(completed_rank_keys or []),
+        "symbols_completed": int(symbols_completed or 0),
+        "inputs_prepared": True,
+        "history_coverage_rows": list(history_coverage_rows or []),
+        "daily_oi_coverage_rows": list(daily_oi_coverage_rows or []),
     })
 
 
@@ -2889,15 +2938,15 @@ def _load_v91_rank_progress(run_dir):
 
 
 def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
-    """Build/reuse the compact Stage-2 checkpoint for V9.1/V9.2 research.
+    """Build/reuse the compact Stage-2 checkpoint with bounded memory.
 
     Reliability contract:
-      * each Stage-1 symbol shard is deserialized at most once per Stage-2 run;
-      * only compact feature frames are retained for ranking, not replay payloads;
-      * every completed rank is checkpointed so a Railway restart resumes rather
-        than redoing earlier rank passes;
-      * progress messages identify loading/ranking/attachment work and elapsed
-        time so a slow worker is distinguishable from a true stall.
+      * each heavy Stage-1 symbol shard is deserialized at most once;
+      * compact rank-only shards are persisted before ranking begins;
+      * one cross-sectional rank is built at a time from those lean shards;
+      * the entire universe of feature frames is never retained in RAM;
+      * input preparation and every completed rank are resumable checkpoints;
+      * progress identifies loading/ranking/attachment work and elapsed time.
     """
     run_dir = Path(run_dir)
     path = _v91_ranked_events_path(run_dir)
@@ -2926,50 +2975,64 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
     rows = list((progress or {}).get("events") or [])
     confirmations = []
     if progress and progress.get("confirmation"):
-        # Keep the merged summary as one item so the existing merger remains the
-        # single code path when the final checkpoint is written.
         confirmations = [progress.get("confirmation") or {}]
     notes = dict((progress or {}).get("notes") or {})
     completed_rank_keys = list((progress or {}).get("completed_rank_keys") or [])
-    history_coverage_rows = []
-    daily_oi_coverage_rows = []
+    history_coverage_rows = list((progress or {}).get("history_coverage_rows") or [])
+    daily_oi_coverage_rows = list((progress or {}).get("daily_oi_coverage_rows") or [])
+    inputs_prepared = bool((progress or {}).get("inputs_prepared"))
     already_loaded_events = bool(progress)
+
+    items = list(dict(shard_map or {}).items())
+    total_symbols = len(items)
 
     if stage_cb and completed_rank_keys:
         stage_cb(2, 4, f"Resuming Stage 2 after {len(completed_rank_keys)}/7 ranks · elapsed {elapsed()}", 71)
 
-    # Load every full shard once.  The previous implementation re-opened all
-    # 210 shards for each of seven ranks (about 1,680 deserializations), which
-    # could thrash Railway disk/RAM/GC and appear stuck at rank 6/7.
-    frames = {}
-    items = list(dict(shard_map or {}).items())
-    total_symbols = len(items)
-    for idx, (symbol, shard_path) in enumerate(items, start=1):
-        if stage_cb and (idx == 1 or idx % 25 == 0 or idx == total_symbols):
-            stage_cb(2, 4, f"Loading Stage-2 inputs {idx}/{total_symbols} · elapsed {elapsed()}", 71)
-        payload = _load_research_symbol_shard(shard_path)
-        if payload.get("note") and symbol not in notes:
-            notes[symbol] = str(payload["note"])
-        if payload.get("history_coverage"):
-            history_coverage_rows.append(dict(payload["history_coverage"]))
-        if payload.get("daily_oi_coverage"):
-            daily_oi_coverage_rows.append(dict(payload["daily_oi_coverage"]))
-        if not already_loaded_events:
-            shard_events = payload.get("v91_events")
-            shard_confirmation = payload.get("v91_confirmation")
-            # Compatibility with pre-streaming shards: compact one legacy replay
-            # once during the single load pass.
-            if shard_events is None and payload.get("replay") is not None:
-                shard_events = _compact_v91_events(payload.get("replay"))
-            if shard_confirmation is None and payload.get("replay") is not None:
-                shard_confirmation = _v91_confirmation_summary(payload.get("replay"))
-            rows.extend(shard_events or [])
-            confirmations.append(shard_confirmation or {})
-        compact = payload.get("compact_frame")
-        if compact is not None and getattr(compact, "empty", True) is False:
-            frames[symbol] = compact
-        # Do not retain the full shard payload after extracting the compact data.
-        del payload
+    if not inputs_prepared:
+        # Convert heavy Stage-1 payloads into lean feature-only shards one symbol
+        # at a time. This is the only Stage-2 pass that deserializes event-rich
+        # Stage-1 checkpoints. Nothing from the full universe is retained in RAM.
+        history_coverage_rows = []
+        daily_oi_coverage_rows = []
+        for idx, (symbol, shard_path) in enumerate(items, start=1):
+            if stage_cb and (idx == 1 or idx % 10 == 0 or idx == total_symbols):
+                stage_cb(2, 4, f"Loading Stage-2 inputs · preparing memory-safe {idx}/{total_symbols} · elapsed {elapsed()}", 71)
+            payload = _load_research_symbol_shard(shard_path)
+            if payload.get("note") and symbol not in notes:
+                notes[symbol] = str(payload["note"])
+            if payload.get("history_coverage"):
+                history_coverage_rows.append(dict(payload["history_coverage"]))
+            if payload.get("daily_oi_coverage"):
+                daily_oi_coverage_rows.append(dict(payload["daily_oi_coverage"]))
+            if not already_loaded_events:
+                shard_events = payload.get("v91_events")
+                shard_confirmation = payload.get("v91_confirmation")
+                if shard_events is None and payload.get("replay") is not None:
+                    shard_events = _compact_v91_events(payload.get("replay"))
+                if shard_confirmation is None and payload.get("replay") is not None:
+                    shard_confirmation = _v91_confirmation_summary(payload.get("replay"))
+                rows.extend(shard_events or [])
+                confirmations.append(shard_confirmation or {})
+            compact = payload.get("compact_frame")
+            if compact is not None and getattr(compact, "empty", True) is False:
+                _write_v91_rank_feature_shard(run_dir, symbol, compact)
+            del payload, compact
+            if idx % 10 == 0:
+                gc.collect()
+
+        inputs_prepared = True
+        _save_v91_input_progress(
+            run_dir, rows=rows, confirmations=confirmations, notes=notes,
+            symbols_completed=total_symbols, completed_rank_keys=completed_rank_keys,
+            history_coverage_rows=history_coverage_rows,
+            daily_oi_coverage_rows=daily_oi_coverage_rows,
+        )
+        gc.collect()
+        if stage_cb:
+            stage_cb(2, 4, f"Memory-safe Stage-2 inputs ready · {total_symbols} symbols · elapsed {elapsed()}", 71)
+    elif stage_cb:
+        stage_cb(2, 4, f"Resuming from memory-safe Stage-2 input checkpoint · elapsed {elapsed()}", 71)
 
     def _norm_ts(frame, raw):
         try:
@@ -3010,10 +3073,16 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
     for pos, (output_key, label, extractor, inverse_for_bear) in enumerate(rank_specs, start=1):
         if output_key in completed_rank_keys:
             continue
+        parts = []
         if stage_cb:
-            stage_cb(2, 4, f"Rank {pos}/7 {label} · building matrix from {len(frames)} symbols · elapsed {elapsed()}", 71 + round((pos / len(rank_specs)) * 13))
-        parts = {}
-        for symbol, frame in frames.items():
+            stage_cb(2, 4, f"Rank {pos}/7 {label} · streaming lean inputs · elapsed {elapsed()}", 71 + round((pos / len(rank_specs)) * 13))
+        for idx, (symbol, _heavy_path) in enumerate(items, start=1):
+            feature_path = _v91_rank_feature_path(run_dir, symbol)
+            if not feature_path.exists():
+                continue
+            frame = _load_v91_rank_feature_shard(feature_path)
+            if frame is None or getattr(frame, "empty", True):
+                continue
             extracted = extractor(frame)
             if isinstance(extracted, pd.Series):
                 ser = pd.to_numeric(extracted, errors="coerce")
@@ -3021,21 +3090,30 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
                 ser = pd.Series(np.nan, index=frame.index, dtype="float32")
             else:
                 ser = pd.to_numeric(pd.Series(extracted, index=frame.index), errors="coerce")
+            ser = ser.astype("float32", copy=False)
             ser.name = symbol
-            parts[symbol] = ser
+            parts.append(ser)
+            del frame, extracted, ser
+            if stage_cb and (idx == 1 or idx % 25 == 0 or idx == total_symbols):
+                stage_cb(2, 4, f"Rank {pos}/7 {label} · loaded {idx}/{total_symbols} symbols · elapsed {elapsed()}", 71 + round((pos / len(rank_specs)) * 13))
+
         if not parts:
             completed_rank_keys.append(output_key)
             _save_v91_rank_progress(
                 run_dir, rows=rows, confirmations=confirmations, notes=notes,
                 completed_rank_keys=completed_rank_keys, symbols_completed=total_symbols,
+                inputs_prepared=True, history_coverage_rows=history_coverage_rows,
+                daily_oi_coverage_rows=daily_oi_coverage_rows,
             )
             continue
 
         if stage_cb:
             stage_cb(2, 4, f"Rank {pos}/7 {label} · ranking {len(parts)} symbols · elapsed {elapsed()}", 71 + round((pos / len(rank_specs)) * 13))
         raw = pd.concat(parts, axis=1).sort_index()
+        del parts
         bull_rank = raw.rank(axis=1, pct=True, method="average") * 100.0
         bear_rank = (-raw).rank(axis=1, pct=True, method="average") * 100.0 if inverse_for_bear else None
+        del raw
 
         if stage_cb:
             stage_cb(2, 4, f"Rank {pos}/7 {label} · attaching {len(rows)} events · elapsed {elapsed()}", 71 + round((pos / len(rank_specs)) * 13))
@@ -3055,8 +3133,10 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
         _save_v91_rank_progress(
             run_dir, rows=rows, confirmations=confirmations, notes=notes,
             completed_rank_keys=completed_rank_keys, symbols_completed=total_symbols,
+            inputs_prepared=True, history_coverage_rows=history_coverage_rows,
+            daily_oi_coverage_rows=daily_oi_coverage_rows,
         )
-        del parts, raw, bull_rank, bear_rank
+        del bull_rank, bear_rank
         gc.collect()
 
     if stage_cb:

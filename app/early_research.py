@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.4-RESEARCH-WORKER-STABILITY-SLIM"
+RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2"
 
 
 

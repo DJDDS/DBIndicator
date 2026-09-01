@@ -1,6 +1,6 @@
 # V9.3.4 — Research Worker Stability + Slim App
 
-Build: `2026-09-01-INSTITUTIONAL-V9.3.4-RESEARCH-WORKER-STABILITY-SLIM`
+Build: `2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2`
 
 - Historical research and the live scanner now share one exclusive Kite-heavy runtime slot; research has priority and the live scanner yields until the lab ends.
 - V9.3 daily continuous OI is acquired inside each symbol batch, so completed symbols become resumable units instead of depending on a separate 210-symbol pre-sweep.

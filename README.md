@@ -1,6 +1,6 @@
 # DBIndicator — V9.3 Anticipation Research
 
-**Build:** `2026-09-01-INSTITUTIONAL-V9.3.4-RESEARCH-WORKER-STABILITY-SLIM`
+**Build:** `2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2`
 
 V9.3 keeps the live V9 evidence gate intact while changing the research question from **“which extra confirmation gate rescues a weak setup?”** to **“which independent evidence stream predicts movement before the move, and at what holding horizon?”**
 
@@ -8,7 +8,7 @@ V9.3 keeps the live V9 evidence gate intact while changing the research question
 
 Open **Backtest → Run V9.3 Anticipation Lab**.
 
-The V9.3 research run is fixed to the current NSE stock-F&O universe, 15-minute setup/execution and 180 calendar days. Primary evidence is **1D / 2D**; 2H / 4H remain diagnostics. Historical price fetching is chunked and the Stage-2 pipeline retains the V9.2.9 single-load/checkpoint design.
+The V9.3 research run is fixed to the current NSE stock-F&O universe, 15-minute setup/execution and 180 calendar days. Primary evidence is **1D / 2D**; 2H / 4H remain diagnostics. Historical price fetching is chunked. Stage 2 converts the completed symbol shards once into lean rank-only checkpoints, then streams one cross-sectional rank at a time so the full universe is never retained in RAM.
 
 ## Component Edge Laboratory
 
@@ -78,5 +78,5 @@ This routing is a research hypothesis, not a production signal. The validated pr
 - Live Opportunity Radar and Shadow Early Radar remain attention/research layers, not probability-of-profit labels.
 
 
-### V9.3.4 alert scope
+### V9.3.5 alert scope
 OI acceleration remains a research/ranking feature. OI-acceleration-only popups are disabled; alerts are reserved for the remaining configured signal/news channels.
