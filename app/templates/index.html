@@ -372,7 +372,7 @@
 <div id="toast-wrap"></div>
 <header>
   <div class="brand">
-    <h1>V9.2 Live F&amp;O Monitor</h1>
+    <h1>V9.4 Live F&amp;O Monitor</h1>
     <span class="tagline">NSE F&amp;O &middot; live Watchlist + OI intelligence &middot; research models evidence-gated &middot; 15m signal / 4H context</span>
   </div>
   <div class="hdr-right">
@@ -475,7 +475,7 @@
   <section id="v8-decision-console" class="card v8-console" aria-label="V9.2 evidence-gated live decision console">
     <div class="v8-console-head">
       <div>
-        <div class="v8-kicker">V9.2 Live Market Monitor + Derivative Intelligence · NSE F&amp;O</div>
+        <div class="v8-kicker">V9.4 Live Market Monitor + Magnitude Research · NSE F&amp;O</div>
         <h2>Validated Production Models · Live Decision Console <span class="sub">Strict evidence gate stays intact. Live opportunities are shown separately as RESEARCH / SHADOW attention names, never as validated trades.</span></h2>
       </div>
       <div class="v8-tabs" role="tablist" aria-label="V9 horizon">
@@ -488,7 +488,8 @@
       <div class="v8-metric"><span class="v8-metric-label">F&amp;O universe</span><span class="v8-metric-value" id="v8-universe-count">—</span></div>
       <div class="v8-metric"><span class="v8-metric-label">TRADE CANDIDATE</span><span class="v8-metric-value" id="v8-trade-count">—</span></div>
       <div class="v8-metric"><span class="v8-metric-label">WATCH</span><span class="v8-metric-value" id="v8-watch-count">—</span></div>
-      <div class="v8-metric"><span class="v8-metric-label">Option FW 30m</span><span class="v8-metric-value" id="v82-option-fw">—</span></div>
+      <div class="v8-metric"><span class="v8-metric-label">Option FW</span><span class="v8-metric-value" id="v82-option-fw">—</span></div>
+      <div class="v8-metric"><span class="v8-metric-label">Long-vol FW 1D</span><span class="v8-metric-value" id="v94-longvol-fw">0 n</span></div>
       <div class="v8-metric"><span class="v8-metric-label">Last V9 scan</span><span class="v8-metric-value" id="v8-last-scan" style="font-size:11px;">—</span></div>
     </div>
     <div id="live-market-state" class="live-market-state">
@@ -1370,7 +1371,18 @@
     var fwdSource = v8View === 'swing' ? (lastV8Payload.option_forward_swing || {}) : (lastV8Payload.option_forward || {});
     var fwdHorizon = v8View === 'swing' ? '1D' : '30m';
     var fwd = (fwdSource || {})[fwdHorizon] || {};
-    if (fw) fw.textContent = (fwd.count || 0) + ' n · ' + fwdHorizon + (fwd.win_rate_pct == null ? '' : ' · ' + v8Num(fwd.win_rate_pct,0) + '% win');
+    if (fw) {
+      var exp = fwd.expectancy_pct == null ? '—' : ((fwd.expectancy_pct >= 0 ? '+' : '') + v8Num(fwd.expectancy_pct,2) + '%');
+      var pfx = fwd.profit_factor == null ? '—' : (fwd.profit_factor === Infinity ? '∞' : v8Num(fwd.profit_factor,2));
+      fw.textContent = (fwd.count || 0) + ' n · ' + fwdHorizon + ' · exp ' + exp + ' · PF ' + pfx;
+    }
+    var lvBox = document.getElementById('v94-longvol-fw');
+    var lv = ((lastV8Payload.option_forward_magnitude || {})['1D']) || {};
+    if (lvBox) {
+      var lvExp = lv.expectancy_pct == null ? '—' : ((lv.expectancy_pct >= 0 ? '+' : '') + v8Num(lv.expectancy_pct,2) + '%');
+      var lvPf = lv.profit_factor == null ? '—' : (lv.profit_factor === Infinity ? '∞' : v8Num(lv.profit_factor,2));
+      lvBox.textContent = (lv.count || 0) + ' n · exp ' + lvExp + ' · PF ' + lvPf;
+    }
 
     var status = document.getElementById('v8-dashboard-status');
     if (status) {

@@ -13,6 +13,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from . import costs
+
 
 def _finite(value) -> bool:
     try:
@@ -366,10 +368,9 @@ def five_minute_execution_quality(df: pd.DataFrame, *, direction: str, breakout_
 
 
 def _net_return(entry: float, exit_px: float, direction: str, cost_pct: float, slippage_pct: float) -> float:
-    raw = (float(exit_px) / float(entry) - 1.0) * 100.0
-    if direction == "Bearish":
-        raw = -raw
-    return raw - max(0.0, float(cost_pct)) - 2.0 * max(0.0, float(slippage_pct))
+    return costs.net_return_pct(
+        entry, exit_px, direction, cost_pct=cost_pct, slippage_pct=slippage_pct
+    )
 
 
 def first_touch_exit(df: pd.DataFrame, *, entry_pos: int, direction: str, entry_price: float,

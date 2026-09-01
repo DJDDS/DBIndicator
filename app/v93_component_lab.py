@@ -1,4 +1,4 @@
-"""V9.3 component-edge and anticipation research.
+"""V9.4 measurement repair, component-edge and magnitude research.
 
 Research-only.  Nothing in this module can activate a production playbook.
 The purpose is to measure independent evidence streams before combining them.
@@ -12,7 +12,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2"
+BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14"
 TRIAL_NUMBER = 13
 FAMILYWISE_ALPHA = 0.05
 OI_ACCEL_MODERATE_PP = 0.5
@@ -42,6 +42,86 @@ def trial13_spec() -> dict:
             "agree with the sign of NIFTY's completed 8-bar return, and evaluate 1D primary / 2D secondary."
         ),
     }
+
+
+def trial14_spec() -> dict:
+    """Pre-registered magnitude hypothesis; direction is deliberately absent."""
+    return {
+        "trial_number": 14,
+        "name": "Daily OI Anomaly + Compression -> Expansion",
+        "daily_oi_z_min": 1.5,
+        "compression_onset_min": COMPRESSION_MIN,
+        "directional_prediction": False,
+        "primary_horizon": "1D",
+        "secondary_horizon": "2D",
+        "final_locked": True,
+        "familywise_alpha": FAMILYWISE_ALPHA,
+        "bonferroni_alpha": FAMILYWISE_ALPHA / 14.0,
+        "research_only": True,
+        "data_preference": "point-in-time daily continuous futures OI (210/210 coverage)",
+        "acceptance_protocol": {
+            "primary_horizon": "1D only",
+            "minimum_events": 250,
+            "minimum_distinct_days": 60,
+            "movement_lift_ci95_low_gt": 1.0,
+            "live_atm_straddle_net_expectancy_gt_pct": 0.0,
+            "live_atm_straddle_profit_factor_gt": 1.20,
+            "max_single_trade_share_positive_pnl_pct": 15.0,
+            "chronological_stability": "majority of predeclared blocks positive",
+            "secondary_2D_cannot_rescue_1D": True,
+        },
+        "message": (
+            "Pre-registered before Trial 14 outcome inspection: completed-session daily OI z-score >=1.5 "
+            "plus a fresh compression onset >=60 predicts excess absolute movement, not direction. "
+            "Primary horizon is fixed at 1D; 2D is secondary and cannot rescue a failed 1D result."
+        ),
+    }
+
+
+def _truthy_flag(value) -> bool:
+    """Normalize pandas/NumPy/numeric boolean payloads without identity traps."""
+    if value is None:
+        return False
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        try:
+            return bool(float(value) != 0.0 and np.isfinite(float(value)))
+        except Exception:
+            return False
+    return False
+
+
+def point_in_time_daily_atr(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
+    """Previous-completed-session daily ATR mapped point-in-time to intraday bars."""
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+    idx = pd.DatetimeIndex(df.index)
+    daily = df[["open", "high", "low", "close"]].copy()
+    daily["session"] = idx.normalize()
+    daily = daily.groupby("session", sort=True).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last")
+    )
+    prev_close = daily["close"].shift(1)
+    tr = pd.concat([
+        daily["high"] - daily["low"],
+        (daily["high"] - prev_close).abs(),
+        (daily["low"] - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(int(window), min_periods=max(3, min(int(window), 5))).mean()
+    # The day's ATR is only known after 15:30; mapping with ffill means morning bars see prior session ATR.
+    stamp = pd.DatetimeIndex(daily.index) + pd.Timedelta(hours=15, minutes=30)
+    if idx.tz is not None and stamp.tz is None:
+        stamp = stamp.tz_localize(idx.tz)
+    elif idx.tz is None and stamp.tz is not None:
+        stamp = stamp.tz_localize(None)
+    known = pd.Series(atr.to_numpy(), index=stamp).sort_index()
+    return known.reindex(idx, method="ffill")
 
 
 def _same_tz_index(index: pd.DatetimeIndex, tz):
@@ -238,16 +318,116 @@ def _three_way(events: Iterable[dict], field: str, key: str) -> dict:
     }
 
 
+def _day_bootstrap_mean_ci(events: Iterable[dict], field: str, key: str, *, reps: int = 2000) -> tuple[float | None, float | None]:
+    grouped = defaultdict(list)
+    for row in events or []:
+        day = _trade_day(row)
+        value = (row.get(field) or {}).get(key)
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if day is not None and np.isfinite(v):
+            grouped[day].append(v)
+    day_means = np.array([np.mean(vs) for vs in grouped.values() if vs], dtype=float)
+    if len(day_means) < 2:
+        return None, None
+    rng = np.random.default_rng(20260901)
+    sims = np.empty(int(reps), dtype=float)
+    n = len(day_means)
+    for i in range(int(reps)):
+        sims[i] = float(np.mean(rng.choice(day_means, size=n, replace=True)))
+    lo, hi = np.quantile(sims, [0.025, 0.975])
+    return float(lo), float(hi)
+
+
+def payoff_decomposition(events: Iterable[dict], field: str, key: str) -> dict:
+    pairs = []
+    for row in events or []:
+        value = (row.get(field) or {}).get(key)
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(v):
+            pairs.append((row, v))
+    vals = [v for _, v in pairs]
+    if not vals:
+        return {"trade_count": 0}
+    wins = [v for v in vals if v > 0]
+    losses = [v for v in vals if v < 0]
+    ordered = sorted(vals, reverse=True)
+    pos_sum = sum(wins)
+    net_sum = sum(vals)
+    lo, hi = _day_bootstrap_mean_ci([r for r, _ in pairs], field, key)
+    def trimmed(k):
+        rem = ordered[k:] if len(ordered) > k else []
+        return float(np.mean(rem)) if rem else None
+    top = max(vals)
+    return {
+        **directional_stats([r for r, _ in pairs], field, key),
+        "avg_win_pct": round(float(np.mean(wins)), 4) if wins else None,
+        "avg_loss_pct": round(float(np.mean(losses)), 4) if losses else None,
+        "largest_winner_pct": round(float(max(vals)), 4),
+        "largest_loser_pct": round(float(min(vals)), 4),
+        "avg_return_top1_removed_pct": round(trimmed(1), 4) if trimmed(1) is not None else None,
+        "avg_return_top3_removed_pct": round(trimmed(3), 4) if trimmed(3) is not None else None,
+        "largest_winner_share_positive_pnl_pct": round(top / pos_sum * 100.0, 2) if pos_sum > 0 and top > 0 else None,
+        "largest_winner_share_net_pnl_pct": round(top / net_sum * 100.0, 2) if net_sum > 0 and top > 0 else None,
+        "day_bootstrap_ci95_low_pct": round(lo, 4) if lo is not None else None,
+        "day_bootstrap_ci95_high_pct": round(hi, 4) if hi is not None else None,
+    }
+
+
+def _movement_lift_bootstrap_ci(subset: Iterable[dict], baseline: Iterable[dict], key: str, *, reps: int = 2000):
+    def daily_vals(events):
+        grouped = defaultdict(list)
+        for row in events or []:
+            payload = (row.get("movement_outcomes") or {}).get(key) or {}
+            value = payload.get("max_abs_move_horizon_atr", payload.get("max_abs_move_atr"))
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                continue
+            day = _trade_day(row)
+            if day and np.isfinite(v):
+                grouped[day].append(v)
+        return np.array([np.mean(vs) for vs in grouped.values() if vs], dtype=float)
+    a, b = daily_vals(subset), daily_vals(baseline)
+    if len(a) < 2 or len(b) < 2 or float(np.mean(b)) == 0:
+        return None, None
+    rng = np.random.default_rng(20260902)
+    sims = []
+    for _ in range(int(reps)):
+        av = float(np.mean(rng.choice(a, size=len(a), replace=True)))
+        bv = float(np.mean(rng.choice(b, size=len(b), replace=True)))
+        if bv > 0:
+            sims.append(av / bv)
+    if not sims:
+        return None, None
+    lo, hi = np.quantile(np.array(sims), [0.025, 0.975])
+    return float(lo), float(hi)
+
+
 def _movement_stats(events: Iterable[dict], key: str, baseline_avg=None) -> dict:
     rows = []
+    raw_vals = []
     for row in events or []:
-        value = ((row.get("movement_outcomes") or {}).get(key) or {}).get("max_abs_move_atr")
+        payload = ((row.get("movement_outcomes") or {}).get(key) or {})
+        value = payload.get("max_abs_move_horizon_atr", payload.get("max_abs_move_atr"))
+        raw = payload.get("max_abs_move_atr")
         try:
             v = float(value)
         except (TypeError, ValueError):
             continue
         if np.isfinite(v):
             rows.append((row, v))
+            try:
+                rv = float(raw)
+                if np.isfinite(rv):
+                    raw_vals.append(rv)
+            except (TypeError, ValueError):
+                pass
     vals = [v for _, v in rows]
     days = {_trade_day(row) for row, _ in rows}
     days.discard(None)
@@ -256,11 +436,14 @@ def _movement_stats(events: Iterable[dict], key: str, baseline_avg=None) -> dict
         "event_count": len(vals),
         "distinct_days": len(days),
         "avg_max_abs_move_atr": round(avg, 3) if avg is not None else None,
+        "avg_max_abs_move_horizon_atr": round(avg, 3) if avg is not None else None,
+        "legacy_avg_max_abs_move_15m_atr": round(float(np.mean(raw_vals)), 3) if raw_vals else None,
         "median_max_abs_move_atr": round(float(np.median(vals)), 3) if vals else None,
         "hit_0_5atr_pct": round(sum(v >= 0.5 for v in vals) / len(vals) * 100.0, 2) if vals else None,
         "hit_1atr_pct": round(sum(v >= 1.0 for v in vals) / len(vals) * 100.0, 2) if vals else None,
         "hit_1_5atr_pct": round(sum(v >= 1.5 for v in vals) / len(vals) * 100.0, 2) if vals else None,
         "lift_vs_baseline": round(avg / baseline_avg, 3) if avg is not None and baseline_avg not in (None, 0) else None,
+        "measurement_basis": "horizon_scaled_daily_atr" if any(((r.get("movement_outcomes") or {}).get(key) or {}).get("max_abs_move_horizon_atr") is not None for r, _ in rows) else "legacy_signal_15m_atr",
     }
 
 
@@ -269,7 +452,11 @@ def _movement_component_report(rows: list[dict], event_type: str, baseline_rows:
     out = {}
     for key in ("2h", "4h", "1D", "2D"):
         baseline = _movement_stats(baseline_rows, key)
-        out[key] = _movement_stats(subset, key, baseline.get("avg_max_abs_move_atr"))
+        stats = _movement_stats(subset, key, baseline.get("avg_max_abs_move_atr"))
+        lo, hi = _movement_lift_bootstrap_ci(subset, baseline_rows, key)
+        stats["lift_ci95_low"] = round(lo, 3) if lo is not None else None
+        stats["lift_ci95_high"] = round(hi, 3) if hi is not None else None
+        out[key] = stats
     return out
 
 
@@ -283,6 +470,7 @@ def build_report(events: Iterable[dict], run_context: dict | None = None) -> dic
     aligned = [e for e in fresh if e.get("v93_absolute_regime_aligned") is True]
     silent_to_ignition = [e for e in fresh if e.get("v93_silent_oi_lead") is True and not e.get("entry_is_extended")]
     baseline_rows = [e for e in rows if e.get("v93_event_type") == "baseline"]
+    trial14_rows = [e for e in rows if e.get("v93_event_type") == "trial14_daily_oi_compression"]
 
     # Fixed, pre-existing operational thresholds are used here as descriptive
     # component cuts.  They are not optimized against these outcomes.  The
@@ -304,15 +492,27 @@ def build_report(events: Iterable[dict], run_context: dict | None = None) -> dic
     rvol_hot = [e for e in fresh if finite_ge(e, "tod_rvol", TOD_RVOL_MIN)]
     compressed = [e for e in fresh if finite_ge(e, "compression_score", COMPRESSION_MIN)]
     rs_aligned = [e for e in fresh if relative_aligned(e)]
-    vwap_aligned = [e for e in fresh if e.get("vwap_side_agrees") is True]
+    vwap_aligned = [e for e in fresh if _truthy_flag(e.get("vwap_side_agrees"))]
     atr_floor = [e for e in fresh if finite_ge(e, "atr_pct", effective_atr_floor)]
     not_extended = [e for e in fresh if e.get("entry_is_extended") is False]
+
+    trial_dev, trial_validation, trial_final = _split_60_20_20(trial_rows)
+    trial_prefinal = list(trial_dev) + list(trial_validation)
 
     trial = {
         "spec": trial13_spec(),
         "candidate_count": len(trial_rows),
         "primary_horizon": "1D",
         "secondary_horizon": "2D",
+        "prefinal_80": {
+            "candidate_count": len(trial_prefinal),
+            "development_count": len(trial_dev),
+            "validation_count": len(trial_validation),
+            "locked_final_candidate_count": len(trial_final),
+            "1D": payoff_decomposition(trial_prefinal, "swing_returns", "1D"),
+            "2D": payoff_decomposition(trial_prefinal, "swing_returns", "2D"),
+            "note": "Development + validation only. Locked final outcomes are not read or returned.",
+        },
         "2h": _three_way(trial_rows, "intraday_returns", "2h"),
         "4h": _three_way(trial_rows, "intraday_returns", "4h"),
         "1D": _three_way(trial_rows, "swing_returns", "1D"),
@@ -330,21 +530,55 @@ def build_report(events: Iterable[dict], run_context: dict | None = None) -> dic
             "2D": directional_stats(subset, "swing_returns", "2D"),
         }
 
+    # Trial 14 is pre-registered before this build is run. Preserve its only clean
+    # chronological final sample: the report may count those candidates, but it
+    # must not read their movement outcomes. Baseline comparison is restricted to
+    # the same pre-final calendar so the lift cannot be influenced by future days.
+    trial14_dev, trial14_validation, trial14_final = _split_60_20_20(trial14_rows)
+    trial14_prefinal = list(trial14_dev) + list(trial14_validation)
+    trial14_final_days = {_trade_day(e) for e in trial14_final}
+    trial14_final_days.discard(None)
+    trial14_baseline_prefinal = [e for e in baseline_rows if _trade_day(e) not in trial14_final_days]
+    trial14_prefinal_rows = [e for e in rows if e.get("v93_event_type") != "trial14_daily_oi_compression"] + trial14_prefinal
+    trial14_movement = _movement_component_report(
+        trial14_prefinal_rows, "trial14_daily_oi_compression", trial14_baseline_prefinal
+    )
+    trial14_report = {
+        "spec": trial14_spec(),
+        "candidate_count": len(trial14_rows),
+        "prefinal_80_candidate_count": len(trial14_prefinal),
+        "development_candidate_count": len(trial14_dev),
+        "validation_candidate_count": len(trial14_validation),
+        "locked_final_candidate_count": len(trial14_final),
+        "1D": trial14_movement.get("1D", {}),
+        "2D": trial14_movement.get("2D", {}),
+        "status": "PREREGISTERED_RESEARCH_SHADOW",
+        "measurement_scope": "Development + validation only; final 20% outcomes are not read.",
+        "final_test": {
+            "locked": True,
+            "candidate_count": len(trial14_final),
+            "message": "Trial 14 final 20% is locked. No final movement or option-P&L outcomes are returned by this report.",
+        },
+    }
+
     return {
         "build_id": BUILD_ID,
         "research_only": True,
         "protocol": {
             "historical_trials_counted": TRIAL_NUMBER,
+            "total_preregistered_trials": 14,
             "familywise_alpha": FAMILYWISE_ALPHA,
             "bonferroni_alpha": FAMILYWISE_ALPHA / TRIAL_NUMBER,
             "primary_horizons": ["1D", "2D"],
             "secondary_horizons": ["2h", "4h"],
+            "multiplicity_policy": "Primary horizon fixed in advance. Secondary horizons are descriptive and cannot rescue a failed primary test.",
             "production_activation": False,
             "point_in_time_fno_universe_available": False,
             "intraday_oi_coverage_pct": (ctx.get("history_coverage") or {}).get("oi_bar_coverage_pct"),
             "daily_oi_coverage": dict(ctx.get("daily_oi_coverage") or {}),
         },
         "trial13": trial,
+        "trial14": trial14_report,
         "component_reference": {
             "oi_acceleration_moderate_pp": OI_ACCEL_MODERATE_PP,
             "tod_rvol_min": TOD_RVOL_MIN,
@@ -370,6 +604,7 @@ def build_report(events: Iterable[dict], run_context: dict | None = None) -> dic
             "silent_oi": _movement_component_report(rows, "silent_oi", baseline_rows),
             "compression_onset": _movement_component_report(rows, "compression_onset", baseline_rows),
             "daily_oi_anomaly": _movement_component_report(rows, "daily_oi_anomaly", baseline_rows),
+            "trial14_daily_oi_compression": _movement_component_report(trial14_prefinal_rows, "trial14_daily_oi_compression", trial14_baseline_prefinal),
             "baseline": _movement_component_report(rows, "baseline", baseline_rows),
         },
     }
@@ -420,7 +655,7 @@ def is_trial13_candidate(event: dict) -> bool:
     return True
 
 
-def movement_outcomes(df: pd.DataFrame, signal_pos: int, atr: float) -> dict:
+def movement_outcomes(df: pd.DataFrame, signal_pos: int, atr: float, daily_atr: float | None = None) -> dict:
     """Directionless future expansion from the next executable bar.
 
     This is intentionally different from trade P&L.  It asks whether a
@@ -447,12 +682,22 @@ def movement_outcomes(df: pd.DataFrame, signal_pos: int, atr: float) -> dict:
         hi = float(pd.to_numeric(window['high'], errors='coerce').max())
         lo = float(pd.to_numeric(window['low'], errors='coerce').min())
         close = float(pd.to_numeric(window['close'], errors='coerce').iloc[-1])
-        max_abs = max(abs(hi - entry), abs(entry - lo)) / atr
+        max_abs_px = max(abs(hi - entry), abs(entry - lo))
+        max_abs = max_abs_px / atr
         close_abs = abs(close / entry - 1.0) * 100.0 if entry else None
-        return {
+        payload = {
             'max_abs_move_atr': round(float(max_abs), 4),
             'close_abs_return_pct': round(float(close_abs), 4) if close_abs is not None else None,
         }
+        if daily_atr is not None:
+            try:
+                da = float(daily_atr)
+            except (TypeError, ValueError):
+                da = 0.0
+            if da > 0:
+                scale = math.sqrt(2.0) if end_pos is not None and sessions.iloc[end_pos] != entry_session and len(pd.unique(sessions.iloc[entry_pos:end_pos + 1])) >= 3 else 1.0
+                payload['max_abs_move_horizon_atr'] = round(float(max_abs_px / (da * scale)), 4)
+        return payload
 
     out = {}
     for label, bars in (('30m', 2), ('1h', 4), ('2h', 8), ('4h', 16)):

@@ -12,6 +12,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from . import costs
+
 RECENT_RANGE_BARS = 6          # 90 minutes on the 15-minute engine
 OPENING_RANGE_BARS = 2         # 30-minute opening range
 COMPRESSION_RADAR_SCORE = 60.0
@@ -467,10 +469,9 @@ def classify_live_candidate(row: dict) -> dict:
 
 
 def _net_return(entry, exit_px, direction, cost_pct, slippage_pct):
-    raw = (float(exit_px) / float(entry) - 1.0) * 100.0
-    if direction == "Bearish":
-        raw = -raw
-    return raw - max(0.0, float(cost_pct)) - 2.0 * max(0.0, float(slippage_pct))
+    return costs.net_return_pct(
+        entry, exit_px, direction, cost_pct=cost_pct, slippage_pct=slippage_pct
+    )
 
 
 def compute_trade_outcomes(df: pd.DataFrame, signal_pos: int, direction: str, atr: float,

@@ -21,6 +21,7 @@ from statistics import median
 
 RISK_FREE_RATE = float(os.getenv("OPTION_RISK_FREE_RATE", "0.06"))
 MAX_DTE = int(os.getenv("OPTION_MAX_DTE", "45"))
+OPTION_EXECUTION_EXTRA_COST_PCT = float(os.getenv("OPTION_EXECUTION_EXTRA_COST_PCT", "0.0"))
 SHADOW_FILE = os.getenv("OPTION_SHADOW_FILE", "option_shadow.jsonl")
 SHADOW_STATE_FILE = os.getenv("OPTION_SHADOW_STATE_FILE", "option_shadow_state.json")
 
@@ -188,8 +189,14 @@ def analyze_option_quotes(symbol, direction, spot, contracts, quotes, *, now=Non
     ivs = [x["iv_pct"] for x in (ce_atm, pe_atm) if x and _finite(x.get("iv_pct"))]
     atm_iv = median(ivs) if ivs else None
     straddle_move = None
+    straddle_ask = None
+    straddle_bid = None
     if ce_atm and pe_atm and _finite(ce_atm.get("mid")) and _finite(pe_atm.get("mid")):
         straddle_move = (ce_atm["mid"] + pe_atm["mid"]) / float(spot) * 100.0
+    if ce_atm and pe_atm and _finite(ce_atm.get("ask")) and _finite(pe_atm.get("ask")):
+        straddle_ask = float(ce_atm["ask"]) + float(pe_atm["ask"])
+    if ce_atm and pe_atm and _finite(ce_atm.get("bid")) and _finite(pe_atm.get("bid")):
+        straddle_bid = float(ce_atm["bid"]) + float(pe_atm["bid"])
     wanted = "CE" if direction == "Bullish" else "PE"
     dir_snaps = [x for x in snaps if x["type"] == wanted]
     # Prefer liquid near-ATM, then tighter spread; do not chase far OTM contracts.
@@ -231,6 +238,10 @@ def analyze_option_quotes(symbol, direction, spot, contracts, quotes, *, now=Non
         "atm_oi_pcr": round(atm_oi_pcr, 3) if atm_oi_pcr is not None else None,
         "put_skew_pct": round(put_skew, 2) if put_skew is not None else None,
         "call_skew_pct": round(call_skew, 2) if call_skew is not None else None,
+        "atm_call": ce_atm, "atm_put": pe_atm,
+        "atm_straddle_ask": round(straddle_ask, 4) if straddle_ask is not None else None,
+        "atm_straddle_bid": round(straddle_bid, 4) if straddle_bid is not None else None,
+        "atm_straddle_ask_move_pct": round(straddle_ask / float(spot) * 100.0, 3) if straddle_ask is not None else None,
         "directional": directional, "contracts": snaps,
     }
 
@@ -335,6 +346,11 @@ def _option_contracts_map(kite):
     _cache["date"] = key
     _cache["map"] = grouped
     return grouped
+
+
+def get_option_contracts_map(kite):
+    """Public cached option-contract map for downstream research layers."""
+    return _option_contracts_map(kite)
 
 
 def enrich_shortlisted_options(kite, rows, *, now=None, max_candidates=6):
@@ -528,6 +544,10 @@ def register_shadow_signal(row, *, now=None, intel_key="option_intelligence", si
         "strike": contract.get("strike"),
         "expiry": contract.get("expiry"),
         "entry_mid": entry_mid,
+        "entry_bid": _f(contract.get("bid")),
+        "entry_ask": _f(contract.get("ask")),
+        "entry_execution_price": _f(contract.get("ask"), entry_mid),
+        "execution_basis": "ask_to_bid" if _finite(contract.get("ask")) else "mid_fallback",
         "entry_iv_pct": _f(contract.get("iv_pct")),
         "entry_spread_pct": _f(contract.get("spread_pct")),
         "entry_delta": _f(contract.get("delta")),
@@ -536,6 +556,61 @@ def register_shadow_signal(row, *, now=None, intel_key="option_intelligence", si
         "outcomes": {},
     })
     # Keep a bounded history in the container state file; JSONL remains the raw archive.
+    if len(state["signals"]) > 5000:
+        state["signals"] = state["signals"][-5000:]
+    _save_shadow_state(state)
+    return sid
+
+
+def register_long_vol_signal(row, chain, *, now=None):
+    """Register an ATM long-straddle shadow signal using executable ask prices.
+
+    This is magnitude research only.  It does not predict Bullish/Bearish and
+    cannot create a production trade.  Both legs must have real asks at entry.
+    """
+    now = now or dt.datetime.now()
+    row = row or {}
+    chain = chain or {}
+    call = chain.get("atm_call") or {}
+    put = chain.get("atm_put") or {}
+    call_symbol, put_symbol = call.get("symbol"), put.get("symbol")
+    call_ask, put_ask = _f(call.get("ask")), _f(put.get("ask"))
+    if not row.get("symbol") or not call_symbol or not put_symbol or call_ask is None or put_ask is None:
+        return None
+    entry_total = call_ask + put_ask
+    if entry_total <= 0:
+        return None
+    signal_ts = _signal_timestamp(row, now)
+    sid = "|".join([str(row.get("symbol")), "MAGNITUDE", signal_ts.isoformat(timespec="minutes"), str(call_symbol), str(put_symbol)])
+    state = load_shadow_state()
+    if any(x.get("id") == sid for x in state["signals"]):
+        return sid
+    spot = _f(row.get("close"))
+    state["signals"].append({
+        "id": sid,
+        "symbol": row.get("symbol"),
+        "direction": None,
+        "signal_kind": "magnitude",
+        "signal_ts": signal_ts.isoformat(timespec="seconds"),
+        "underlying_entry": spot,
+        "trial": row.get("trial") or "Trial 14",
+        "precursor": row.get("precursor") or "Daily OI anomaly + compression",
+        "call_contract": call_symbol,
+        "put_contract": put_symbol,
+        "atm_strike": chain.get("atm_strike"),
+        "expiry": chain.get("expiry"),
+        "dte": chain.get("dte"),
+        "entry_call_ask": call_ask,
+        "entry_put_ask": put_ask,
+        "entry_ask_total": entry_total,
+        "entry_call_bid": _f(call.get("bid")),
+        "entry_put_bid": _f(put.get("bid")),
+        "entry_atm_iv_pct": _f(chain.get("atm_iv_pct")),
+        "entry_implied_move_pct": _f(chain.get("atm_straddle_ask_move_pct"), _f(chain.get("straddle_move_pct"))),
+        "execution_basis": "ATM CE+PE ask entry / bid exit",
+        "extra_cost_pct": max(0.0, OPTION_EXECUTION_EXTRA_COST_PCT),
+        "outcomes": {},
+    })
     if len(state["signals"]) > 5000:
         state["signals"] = state["signals"][-5000:]
     _save_shadow_state(state)
@@ -564,22 +639,43 @@ def _due_horizons(signal, now):
     # Weekend/holiday gaps naturally wait until the scanner next runs.
     if "1D" not in outcomes and now.date() > start.date() and now.time() >= start.time():
         due.append("1D")
+    elif "1D" in outcomes and "2D" not in outcomes and now.time() >= start.time():
+        try:
+            one_d_date = dt.datetime.fromisoformat(outcomes["1D"]["ts"]).date()
+        except (KeyError, TypeError, ValueError):
+            one_d_date = start.date()
+        if now.date() > one_d_date:
+            due.append("2D")
     return due
 
 
 def resolve_shadow_outcomes(kite, *, now=None):
-    """Mark real option-premium outcomes for previously registered live signals."""
+    """Resolve live option outcomes with executable prices when available."""
     now = now or dt.datetime.now()
     state = load_shadow_state()
     due = []
     for sig in state["signals"]:
         hs = _due_horizons(sig, now)
-        if hs and sig.get("contract") and _finite(sig.get("entry_mid")):
+        if not hs:
+            continue
+        if sig.get("signal_kind") == "magnitude":
+            if sig.get("call_contract") and sig.get("put_contract") and _finite(sig.get("entry_ask_total")):
+                due.append((sig, hs))
+        elif sig.get("contract") and _finite(sig.get("entry_mid")):
             due.append((sig, hs))
     if not due:
         return state
-    keys = sorted({f"NFO:{sig['contract']}" for sig, _ in due})
+    keys = set()
+    for sig, _ in due:
+        if sig.get("signal_kind") == "magnitude":
+            keys.add(f"NFO:{sig['call_contract']}")
+            keys.add(f"NFO:{sig['put_contract']}")
+            if sig.get("symbol"):
+                keys.add(f"NSE:{sig['symbol']}")
+        else:
+            keys.add(f"NFO:{sig['contract']}")
     quotes = {}
+    keys = sorted(keys)
     for i in range(0, len(keys), 400):
         try:
             quotes.update(kite.quote(keys[i:i+400]))
@@ -587,19 +683,66 @@ def resolve_shadow_outcomes(kite, *, now=None):
             continue
     changed = False
     for sig, horizons in due:
-        q = quotes.get(f"NFO:{sig['contract']}") or {}
-        mid, spread, _bid, _ask = _mid_and_spread(q)
-        entry = _f(sig.get("entry_mid"))
-        if mid is None or entry is None or entry <= 0:
-            continue
-        ret = round((mid / entry - 1.0) * 100.0, 3)
         sig.setdefault("outcomes", {})
+        if sig.get("signal_kind") == "magnitude":
+            cq = quotes.get(f"NFO:{sig['call_contract']}") or {}
+            pq = quotes.get(f"NFO:{sig['put_contract']}") or {}
+            _cmid, _cspread, cbid, cask = _mid_and_spread(cq)
+            _pmid, _pspread, pbid, pask = _mid_and_spread(pq)
+            entry = _f(sig.get("entry_ask_total"))
+            if cbid is None or pbid is None or entry is None or entry <= 0:
+                continue
+            exit_total = cbid + pbid
+            gross = (exit_total / entry - 1.0) * 100.0
+            net = gross - max(0.0, _f(sig.get("extra_cost_pct"), 0.0))
+            spot_q = quotes.get(f"NSE:{sig.get('symbol')}") or {}
+            spot_exit = _f(spot_q.get("last_price"))
+            spot_entry = _f(sig.get("underlying_entry"))
+            abs_underlying = abs(spot_exit / spot_entry - 1.0) * 100.0 if spot_exit is not None and spot_entry and spot_entry > 0 else None
+            implied = _f(sig.get("entry_implied_move_pct"))
+            for h in horizons:
+                sig["outcomes"][h] = {
+                    "ts": now.isoformat(timespec="seconds"),
+                    "entry_ask_total": round(entry, 4),
+                    "exit_bid_total": round(exit_total, 4),
+                    "exit_call_bid": round(cbid, 4),
+                    "exit_put_bid": round(pbid, 4),
+                    "premium_return_pct": round(net, 3),
+                    "gross_executable_return_pct": round(gross, 3),
+                    "extra_cost_pct": max(0.0, _f(sig.get("extra_cost_pct"), 0.0)),
+                    "underlying_exit": round(spot_exit, 4) if spot_exit is not None else None,
+                    "underlying_abs_return_pct": round(abs_underlying, 3) if abs_underlying is not None else None,
+                    "entry_implied_move_pct": implied,
+                    "realized_to_implied_ratio": round(abs_underlying / implied, 3) if abs_underlying is not None and implied and implied > 0 else None,
+                    "execution_basis": "ATM CE+PE ask entry / bid exit",
+                }
+                changed = True
+            continue
+
+        q = quotes.get(f"NFO:{sig['contract']}") or {}
+        mid, spread, bid, _ask = _mid_and_spread(q)
+        entry_mid = _f(sig.get("entry_mid"))
+        entry_ask = _f(sig.get("entry_ask"))
+        if entry_ask is not None and bid is not None and entry_ask > 0:
+            exit_px = bid
+            entry_px = entry_ask
+            basis = "ask_to_bid"
+        else:
+            exit_px = mid
+            entry_px = entry_mid
+            basis = "mid_fallback"
+        if exit_px is None or entry_px is None or entry_px <= 0:
+            continue
+        ret = round((exit_px / entry_px - 1.0) * 100.0, 3)
         for h in horizons:
             sig["outcomes"][h] = {
                 "ts": now.isoformat(timespec="seconds"),
-                "mid": round(mid, 4),
+                "mid": round(mid, 4) if mid is not None else None,
+                "exit_bid": round(bid, 4) if bid is not None else None,
+                "entry_execution_price": round(entry_px, 4),
                 "premium_return_pct": ret,
                 "spread_pct": round(spread, 3) if spread is not None else None,
+                "execution_basis": basis,
             }
             changed = True
     if changed:
@@ -608,10 +751,10 @@ def resolve_shadow_outcomes(kite, *, now=None):
 
 
 def get_shadow_stats(kind="intraday"):
-    """Aggregate forward option-buyer results by horizon; no backfill or look-ahead."""
+    """Aggregate live option outcomes with expectancy and profit factor."""
     state = load_shadow_state()
     out = {}
-    for horizon in ("30m", "2h", "EOD", "1D"):
+    for horizon in ("30m", "2h", "EOD", "1D", "2D"):
         vals = []
         for sig in state["signals"]:
             if kind is not None and sig.get("signal_kind", "intraday") != kind:
@@ -621,12 +764,19 @@ def get_shadow_stats(kind="intraday"):
             if v is not None:
                 vals.append(v)
         if vals:
+            pos = sum(v for v in vals if v > 0)
+            neg = -sum(v for v in vals if v < 0)
+            pf = pos / neg if neg > 0 else (float("inf") if pos > 0 else None)
+            avg = sum(vals) / len(vals)
             out[horizon] = {
                 "count": len(vals),
                 "win_rate_pct": round(sum(v > 0 for v in vals) / len(vals) * 100.0, 1),
-                "avg_premium_return_pct": round(sum(vals) / len(vals), 3),
+                "avg_premium_return_pct": round(avg, 3),
+                "expectancy_pct": round(avg, 3),
+                "profit_factor": round(pf, 3) if pf is not None and math.isfinite(pf) else pf,
             }
         else:
-            out[horizon] = {"count": 0, "win_rate_pct": None, "avg_premium_return_pct": None}
+            out[horizon] = {"count": 0, "win_rate_pct": None, "avg_premium_return_pct": None, "expectancy_pct": None, "profit_factor": None}
     out["registered"] = sum(1 for sig in state["signals"] if kind is None or sig.get("signal_kind", "intraday") == kind)
     return out
+

@@ -13,7 +13,9 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2"
+from . import costs
+
+BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 
@@ -488,6 +490,10 @@ def validate_protocol(run_context: dict | None) -> dict:
         mismatches.append("cost assumption must be fixed at 0.08%")
     if not _finite(ctx.get("slippage_pct")) or abs(float(ctx.get("slippage_pct")) - 0.05) > 1e-9:
         mismatches.append("slippage assumption must be fixed at 0.05% per side")
+    if _finite(ctx.get("cost_pct")) and _finite(ctx.get("slippage_pct")):
+        applied_drag = costs.round_trip_drag_pct(float(ctx["cost_pct"]), float(ctx["slippage_pct"]))
+        if abs(applied_drag - 0.18) > 1e-9:
+            mismatches.append(f"computed round-trip drag must be 0.18%, got {applied_drag:.6f}%")
     if ctx.get("universe_is_full_fno") is not True:
         mismatches.append("universe must be full NSE stock-F&O")
     return {"valid": not mismatches, "mismatches": mismatches}

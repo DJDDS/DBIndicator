@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_dashboard_is_v9_professional_playbook_console():
     text = (ROOT / "app/templates/index.html").read_text(encoding="utf-8")
-    assert "V9.2 Live F&amp;O Monitor" in text
+    assert "V9.4 Live F&amp;O Monitor" in text
     assert "Bull Institutional Accumulation" in text
     assert "Bear Fresh Short Buildup" in text
     assert "Bull Pullback/Reclaim" not in text

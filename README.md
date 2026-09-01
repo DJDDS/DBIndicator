@@ -1,12 +1,12 @@
 # DBIndicator — V9.3 Anticipation Research
 
-**Build:** `2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2`
+**Build:** `2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14`
 
 V9.3 keeps the live V9 evidence gate intact while changing the research question from **“which extra confirmation gate rescues a weak setup?”** to **“which independent evidence stream predicts movement before the move, and at what holding horizon?”**
 
 ## What to run first
 
-Open **Backtest → Run V9.3 Anticipation Lab**.
+Open **Backtest → Run V9.4 Measurement + Magnitude Lab**.
 
 The V9.3 research run is fixed to the current NSE stock-F&O universe, 15-minute setup/execution and 180 calendar days. Primary evidence is **1D / 2D**; 2H / 4H remain diagnostics. Historical price fetching is chunked. Stage 2 converts the completed symbol shards once into lean rank-only checkpoints, then streams one cross-sectional rank at a time so the full universe is never retained in RAM.
 

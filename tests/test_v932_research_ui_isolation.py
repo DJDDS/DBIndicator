@@ -23,7 +23,7 @@ def test_v932_has_separate_progress_containers_for_each_research_mode():
 
 def test_v932_v93_results_live_inside_v93_card_and_not_v92_card():
     text = _text()
-    v93_card_start = text.index('<h2>1 &middot; V9.3 Component Edge Laboratory</h2>')
+    v93_card_start = text.index('<h2>1 &middot; V9.4 Measurement Repair + Magnitude Lab</h2>')
     v92_card_start = text.index('<h2>2 &middot; V9.2 Diagnostic Reset</h2>')
     v93_results = text.index('id="er-v93-results"')
     assert v93_card_start < v93_results < v92_card_start

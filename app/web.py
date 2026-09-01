@@ -216,6 +216,7 @@ def api_v8_dashboard():
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()
     payload["option_forward_swing"] = derivative_intelligence.get_shadow_stats("swing")
+    payload["option_forward_magnitude"] = derivative_intelligence.get_shadow_stats("magnitude")
     return jsonify(payload)
 
 

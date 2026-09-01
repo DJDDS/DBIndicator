@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-V9_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2"
+V9_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14"
 
 BULL_INSTITUTIONAL_ACCUMULATION = "Bull Institutional Accumulation"
 BULL_OPENING_DRIVE = "Bull Opening Drive"

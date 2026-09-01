@@ -57,7 +57,7 @@ def test_v9_has_dedicated_one_click_15m_backtest_runner():
 
 
 def test_v9_build_marker_is_current_research_build():
-    build_id = '2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2'
+    build_id = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == build_id
     assert build_id in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text(encoding='utf-8')
@@ -71,5 +71,6 @@ def test_dashboard_v82_cards_surface_option_expression_intelligence():
 
 def test_dashboard_shows_live_forward_option_validation_metric():
     text = (ROOT / 'app' / 'templates' / 'index.html').read_text(encoding='utf-8')
-    assert 'Option FW 30m' in text
+    assert 'Option FW' in text
+    assert 'Long-vol FW 1D' in text
     assert 'option_forward' in text

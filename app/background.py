@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1622,6 +1622,17 @@ def _run_loop():
                         # V8.2 Derivative Intelligence remains downstream: it decides
                         # option expression and cannot create an underlying playbook.
                         _apply_derivative_intelligence(kite, results, now=now_ist())
+                        # V9.4 magnitude research is deliberately separate from
+                        # Bull/Bear production logic. A cached completed-session
+                        # daily-OI anomaly plus a *fresh* compression onset may
+                        # register an executable ATM-straddle shadow observation,
+                        # but it cannot create alerts or TRADE/WATCH states.
+                        try:
+                            v94_magnitude.register_live_trial14_straddles(
+                                kite, results, now=now_ist()
+                            )
+                        except Exception:  # noqa: BLE001 - research shadow cannot stop live scan
+                            log.exception("V9.4 magnitude shadow registration failed")
                         scan_now = now_ist()
                         scan_ts = scan_now.isoformat(timespec="seconds")
                         radar_snapshot = oi_view.live_opportunity_radar(

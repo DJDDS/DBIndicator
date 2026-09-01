@@ -104,7 +104,7 @@ def test_main_dashboard_no_longer_contains_v6_production_cards():
     assert "V6 Intraday Entry" not in template
     assert "V6 Swing 1-2D" not in template
     assert "Swing remains long-only" not in template
-    assert "V9.2 Live F&amp;O Monitor" in template
+    assert "V9.4 Live F&amp;O Monitor" in template
 
 
 def test_live_operational_shortlists_are_driven_by_v81_trade_states_not_v6():

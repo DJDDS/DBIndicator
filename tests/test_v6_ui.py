@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_backtest_ui_exposes_v9_build_and_keeps_legacy_v6_audit_locked():
     html = (ROOT / 'app/templates/backtest.html').read_text()
-    build_id = '2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2'
+    build_id = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
     assert build_id in html
     assert build_id in (ROOT / 'app/early_research.py').read_text()
     assert build_id in (ROOT / 'RESEARCH_BUILD.txt').read_text()
@@ -18,7 +18,7 @@ def test_dashboard_retires_v6_production_cards_and_uses_v9_console():
     html = (ROOT / 'app/templates/index.html').read_text()
     assert 'V6 Intraday Entry' not in html
     assert 'V6 Swing 1-2D' not in html
-    assert 'V9.2 Live F&amp;O Monitor' in html
+    assert 'V9.4 Live F&amp;O Monitor' in html
     assert 'Bullish Models' in html and 'Bearish Model' in html
 
 

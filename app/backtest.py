@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import early_signal, early_research, v6_edge, v8_dual, research_runtime
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -976,7 +976,7 @@ def _compute_trade(df: pd.DataFrame, entry_pos: int, direction: str, symbol: str
     # left unclamped it would silently ADD return - a backtest that pays you
     # to trade. Clamp rather than raise, so one bad config value can never
     # kill a whole run.
-    total_drag = max(0.0, float(cost_pct)) + 2 * max(0.0, float(slippage_pct))
+    total_drag = costs.round_trip_drag_pct(cost_pct, slippage_pct)
 
     # ---- stop / target exits -------------------------------------------
     # The app computes an ATR stop and target for every row, shows them on the
@@ -1497,7 +1497,7 @@ def overnight_outcomes(df, direction_series, signal_mask, cost_pct=0.0, slippage
     Returns per-exit stats plus the raw per-trade returns, net of costs."""
     o, c = df["open"], df["close"]
     nxt_o, nxt_c = o.shift(-1), c.shift(-1)
-    drag = float(cost_pct) + 2.0 * float(slippage_pct)
+    drag = costs.round_trip_drag_pct(cost_pct, slippage_pct)
 
     long_mask = direction_series.reindex(df.index) == "Bullish"
     sign = pd.Series(np.where(long_mask, 1.0, -1.0), index=df.index)
@@ -2187,6 +2187,7 @@ def _attach_v8_full_universe_scores_from_shards(replays, shard_map, stage_cb=Non
 _V8_COMPACT_FEATURE_COLUMNS = (
     "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
     "turnover_notional", "oi_chg_60m_pct", "rs_pct", "stock_sector_lead_pct",
+    "daily_oi_z_pti", "daily_oi_chg_pct_pti",
 )
 
 _V91_COMPACT_EVENT_KEYS = (
@@ -2337,7 +2338,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 if research_mode == "v91_bear_final":
                     stage_cb(3, 4, "Running frozen Bear FSB final test", 86)
                 elif research_mode == "v93_lab":
-                    stage_cb(3, 4, "Running V9.3 Component Edge Laboratory + Trial 13", 86)
+                    stage_cb(3, 4, "Running V9.4 Measurement Repair + Trial 13 resolution + Trial 14", 86)
                 else:
                     stage_cb(3, 4, "Validating V9.2 goal-focused models", 86)
             research = early_research.aggregate_v91_compact_events(
@@ -2445,7 +2446,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                     )
                     daily_oi_coverage_rows.append(daily_cov)
                 except Exception as daily_exc:  # disclosed research input, never fabricated
-                    log.debug("V9.3 daily continuous OI unavailable for %s: %s", symbol, daily_exc)
+                    log.debug("V9.4 daily continuous OI unavailable for %s: %s", symbol, daily_exc)
                     daily_oi_series = None
                     daily_cov = _daily_oi_coverage_summary({}, [symbol])
                     daily_oi_coverage_rows.append(daily_cov)
@@ -2545,6 +2546,15 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 except Exception as shard_exc:  # noqa: BLE001
                     log.warning("Could not checkpoint failed symbol %s: %s", symbol, shard_exc)
         time.sleep(_RATE_LIMIT_PAUSE)
+
+    # V9.4 persists one tiny point-in-time daily-OI snapshot for the live
+    # magnitude shadow.  The live scanner reads this compact cache instead of
+    # reopening 210 research shards or launching another historical OI sweep.
+    if research_mode == "v93_lab" and fast_v8 and completed_shards:
+        try:
+            v94_magnitude.persist_daily_oi_snapshot_from_shards(completed_shards)
+        except Exception as exc:  # research cache is useful but never run-blocking
+            log.warning("Could not persist V9.4 daily-OI live snapshot: %s", exc)
 
     ranked_v91_payload = None
     if streaming_v91:
@@ -2649,7 +2659,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         if research_mode == "v91_bear_final":
             stage_cb(3, 4, "Running frozen Bear FSB final test", 86)
         elif research_mode == "v93_lab":
-            stage_cb(3, 4, "Running V9.3 Component Edge Laboratory + Trial 13", 86)
+            stage_cb(3, 4, "Running V9.4 Measurement Repair + Trial 13 resolution + Trial 14", 86)
         elif research_mode == "v91_fast":
             stage_cb(3, 4, "Validating V9.2 goal-focused models", 86)
         else:
@@ -2734,6 +2744,7 @@ def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, 
         "cost_pct": float(cost_pct),
         "slippage_pct": float(slippage_pct),
         "research_mode": str(research_mode or "legacy"),
+        "feature_revision": "v940-measurement-repair-1" if str(research_mode or "") == "v93_lab" else "legacy",
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
     run_dir = Path(_EARLY_RESEARCH_WORK_ROOT) / digest

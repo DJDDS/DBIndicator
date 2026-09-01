@@ -4,7 +4,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2"
+from . import costs
+
+RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14"
 
 
 
@@ -284,6 +286,10 @@ def build_feature_frame(df, timeframe="15minute", oi_series=None, index_df=None,
     )
     for col in daily_pti.columns:
         out[col] = daily_pti[col]
+    if timeframe == "15minute":
+        out["daily_atr_pti"] = v93_component_lab.point_in_time_daily_atr(df)
+    else:
+        out["daily_atr_pti"] = np.nan
 
     # Intraday OI. The timezone-safe _session_pct_change is critical: previous
     # code stripped timezone from one side of the same-session comparison and
@@ -758,7 +764,9 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
         atr = _py(features["atr"].iloc[pos]) if "atr" in features.columns else None
         if atr is None or atr <= 0 or pos + 1 >= len(df):
             return None
-        movement = v93_component_lab.movement_outcomes(df, signal_pos=pos, atr=float(atr))
+        movement = v93_component_lab.movement_outcomes(
+            df, signal_pos=pos, atr=float(atr), daily_atr=row.get("daily_atr_pti")
+        )
         if not movement:
             return None
         return {
@@ -782,6 +790,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
             "daily_oi_z_pti": row.get("daily_oi_z_pti"),
             "daily_oi_chg_pct_pti": row.get("daily_oi_chg_pct_pti"),
             "atr_value": float(atr),
+            "daily_atr_pti": row.get("daily_atr_pti"),
         }
 
     # A sampled non-coil baseline is enough to estimate lift without storing
@@ -794,6 +803,7 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
     last_silent_seed_compression = None
     silent_session_seen = set()
     daily_oi_session_seen = set()
+    trial14_session_seen = set()
     baseline_session_seen = set()
     for pos in range(len(df)):
         if not fast_v8:
@@ -856,6 +866,16 @@ def _replay_breakout_feature_frame(df, features, symbol, cost_pct=0.05, slippage
 
             daily_z = row.get("daily_oi_z_pti")
             daily_anomaly = bool(daily_z is not None and np.isfinite(daily_z) and float(daily_z) >= 1.5)
+            # Trial 14 is pre-registered as a magnitude-only interaction: the
+            # completed-session daily OI anomaly must already be known, then a
+            # fresh compression onset occurs during the current session. One
+            # candidate per symbol/session avoids overlapping pseudo-samples.
+            if daily_anomaly and compression_rise and session_key not in trial14_session_seen:
+                t14 = _v93_movement_event(row, pos, "trial14_daily_oi_compression")
+                if t14 is not None:
+                    t14["v94_trial14_candidate"] = True
+                    v9_playbook_events.append(t14)
+                    trial14_session_seen.add(session_key)
             if daily_anomaly and session_key not in daily_oi_session_seen:
                 daily_event = _v93_movement_event(row, pos, "daily_oi_anomaly")
                 if daily_event is not None:
@@ -1249,7 +1269,7 @@ def replay_feature_frame(df, features, symbol, horizons=(1, 2, 3, 5, 10),
             raw = (exit_px / entry - 1.0) * 100.0
             if direction == "Bearish":
                 raw = -raw
-            returns[h] = round(raw - max(0.0, float(cost_pct)) - 2.0 * max(0.0, float(slippage_pct)), 3)
+            returns[h] = round(raw - costs.round_trip_drag_pct(cost_pct, slippage_pct), 3)
 
         event = {
             "symbol": symbol,
@@ -1575,11 +1595,11 @@ def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=
     if mode == "v93_lab":
         from . import v93_component_lab
         if stage3_progress_cb:
-            stage3_progress_cb("V9.3 Component Edge Laboratory + pre-registered Trial 13", 95)
+            stage3_progress_cb("V9.4 Measurement Repair · Trial 13 resolution + pre-registered Trial 14", 95)
         result["v93_component_lab"] = v93_component_lab.build_report(rows, run_context=run_context)
     else:
         # V9.2 is a separate, explicitly-invoked diagnostic path.  Do not
-        # silently execute it as part of the V9.3 Anticipation Lab.
+        # silently execute it as part of the V9.4 Measurement Lab.
         result["v91_goal"] = v91_goal_report(
             rows,
             run_context=run_context,

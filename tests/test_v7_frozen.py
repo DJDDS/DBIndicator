@@ -152,7 +152,7 @@ def test_aggregate_research_exposes_frozen_report_with_run_context():
             'universe_is_full_fno': True,
         },
     )
-    assert out['research_build_id'] == '2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2'
+    assert out['research_build_id'] == '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
     assert 'v7_frozen' not in out
     assert 'v8_dual' in out
 

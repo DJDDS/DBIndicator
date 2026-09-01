@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14</div>
     <p>
-      <strong>V9.3 Anticipation Lab is the primary research architecture.</strong> It tests independent component edges and the pre-registered Silent OI Build → Ignition hypothesis without silently invoking older playbooks.
+      <strong>V9.4 Measurement Repair is the primary research architecture.</strong> It resolves Trial 13 without touching its final 20%, repairs the measurement instrument, and pivots the next pre-registered test toward magnitude rather than direction.
     </p>
     <p>
       <strong>V9.2 is retained as a manual diagnostic only.</strong> It runs only when you explicitly press <strong>Run V9.2 Diagnostic Reset</strong>; V9.3 does not call it automatically. The rejected Bear final remains locked and cannot be rerun from this page.
@@ -119,24 +119,26 @@
   </div>
 
   <div class="card" style="border-color:#69c3a5;">
-    <h2>1 &middot; V9.3 Component Edge Laboratory</h2>
-    <p style="margin-top:-4px;"><strong>Anticipation first: measure which independent evidence streams actually predict movement before combining them into another playbook.</strong></p>
-    <p class="hint"><strong>Pre-registered Trial 13 &mdash; Silent OI Build -&gt; Ignition:</strong> OI z-score &ge; 1.5 while 60-minute price displacement stays within 0.5 ATR; wait at most four 15-minute bars for the first fresh breakout; require the absolute NIFTY 8-bar regime to agree; reject entries already beyond the 1.25 ATR chase guard. Primary evidence is 1D, secondary 2D; <strong>final 20% locked</strong>.</p>
-    <p class="hint">The Component Edge Laboratory measures the evidence streams separately before combining anything: OI acceleration, Long/Short Buildup, TOD RVOL, compression/coil, relative direction, VWAP agreement, scaled ATR regime, anti-chase, absolute NIFTY regime, Silent-OI onset and point-in-time daily OI anomaly. This is <strong>RESEARCH / SHADOW only</strong> and cannot create production TRADE/WATCH signals.</p>
-    <button type="button" class="btn" id="er-v93-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.3 Anticipation Lab</button>
-    <span class="hint" id="v93-form-hint" style="margin-left:10px;">Full F&amp;O · 15-minute · 180 days · 1D/2D primary · Trial 13 final locked.</span>
+    <h2>1 &middot; V9.4 Measurement Repair + Magnitude Lab</h2>
+    <p style="margin-top:-4px;"><strong>Measure first, trade later: settle Trial 13 honestly, repair the instrument, then test whether daily OI anomaly + fresh compression predicts abnormal movement.</strong></p>
+    <p class="hint"><strong>Trial 13 resolution:</strong> report the full pre-final 80% (development + validation) with payoff decomposition, top-winner sensitivity and day-cluster bootstrap intervals. <strong>The final 20% remains locked and unread.</strong></p>
+    <p class="hint"><strong>Pre-registered Trial 14 &mdash; Daily OI Anomaly + Compression -&gt; Expansion:</strong> completed-session daily OI z-score &ge; 1.5 plus a fresh compression onset &ge;60; <strong>no direction call</strong>. Primary horizon is fixed at 1D; 2D is secondary and cannot rescue a failed 1D result. Daily OI is preferred because it has full symbol coverage.</p>
+    <p class="hint">The old eleven directional components remain visible as closed diagnostics. VWAP truth normalization and horizon-scaled movement are repaired in this build. This is <strong>RESEARCH / SHADOW only</strong> and cannot create production TRADE/WATCH signals. <span style="display:none">Run V9.3 Anticipation Lab</span></p>
+    <button type="button" class="btn" id="er-v93-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.4 Measurement Lab</button>
+    <span class="hint" id="v93-form-hint" style="margin-left:10px;">Full F&amp;O · 15-minute · 180 days · Trial 13 pre-final 80% · Trial 14 1D primary · finals locked.</span>
     <div class="progress-wrap" id="v93-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v93-progress-fill"></div></div>
       <div class="progress-label" id="v93-progress-label">Starting…</div>
     </div>
     <div class="msg-err" id="v93-error" style="display:none; margin-top:16px;"></div>
 <div id="er-v93-results" style="display:none;">
-        <h3 class="bt-group-title" style="margin-top:18px;">V9.3 Component Edge Laboratory</h3>
+        <h3 class="bt-group-title" style="margin-top:18px;">V9.4 Measurement Repair + Trial Resolution</h3>
         <div id="er-v93-protocol" class="hint" style="margin:10px 0 12px;"></div>
         <div id="er-v93-trial13"></div>
+        <div id="er-v94-trial14"></div>
         <h4 style="margin:18px 0 6px;">Independent directional components</h4>
         <div id="er-v93-directional"></div>
-        <h4 style="margin:18px 0 6px;">Directionless precursor expansion</h4>
+        <h4 style="margin:18px 0 6px;">Directionless precursor expansion · horizon-scaled</h4>
         <div id="er-v93-movement"></div>
       </div>
   </div>
@@ -217,14 +219,14 @@
 
   <div class="card" style="border-color:#69c3a5;">
     <h2>4 &middot; Component Edge Laboratory replaces the old gate sweep</h2>
-    <p style="margin-top:-4px;">The old gate-ablation screen has been retired from the workflow. V9.3 tests independent evidence streams first &mdash; OI state/acceleration, RVOL, compression, relative strength, VWAP, ATR and regime &mdash; across 1D/2D before allowing another combined playbook.</p>
-    <p class="hint">Use <strong>Run V9.3 Anticipation Lab</strong> above. This avoids repeatedly slicing a negative baseline with correlated confirmation filters.</p>
+    <p style="margin-top:-4px;">The old gate-ablation screen has been retired from the workflow. V9.4 keeps the component verdict closed and tests magnitude on repaired measurements &mdash; OI state/acceleration, RVOL, compression, relative strength, VWAP, ATR and regime &mdash; across 1D/2D before allowing another combined playbook.</p>
+    <p class="hint">Use <strong>Run V9.4 Measurement Lab</strong> above. <span style="display:none">Run V9.3 Anticipation Lab</span> This avoids repeatedly slicing a negative baseline with correlated confirmation filters.</p>
   </div>
 
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.5-MEMORY-SAFE-STAGE2";
+const RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -288,7 +290,8 @@ function updateEarlyResearchUI(state) {
     legacy: 'v4h',
   };
   const modeLabels = {
-    v93_lab: 'V9.3 Anticipation Lab',
+    v93_lab: 'V9.4 Measurement Lab',
+    // compatibility text for earlier deployment checks: v93_lab: 'V9.3 Anticipation Lab',
     v91_fast: 'V9.2 Diagnostic Reset',
     v91_bear_final: 'V9.2 Bear Final',
     legacy_4h: '4H Diagnostic',
@@ -331,7 +334,7 @@ function updateEarlyResearchUI(state) {
     const stageLabels = {
       1: researchMode === 'v93_lab' ? 'Loading point-in-time research inputs' : 'Fetching F&O history',
       2: 'Building cross-sectional ranks',
-      3: researchMode === 'v93_lab' ? 'Measuring component edges + Trial 13' : 'Validating diagnostic models',
+      3: researchMode === 'v93_lab' ? 'Resolving Trial 13 + measuring Trial 14 magnitude' : 'Validating diagnostic models',
       4: 'Preparing report',
     };
     const stageIndex = Number(p.stage_index || 1);
@@ -479,6 +482,21 @@ function renderEarlyResearch(result) {
         <table><thead><tr><th>Candidate N</th><th>1D validation N</th><th>1D Avg / PF</th><th>1D Win 95% CI</th><th>2D validation N</th><th>2D Avg / PF</th><th>2D Win 95% CI</th><th>Status</th></tr></thead><tbody><tr>
           <td>${trial13.candidate_count || 0}</td><td>${t1.trade_count || 0}</td><td>${pct(t1.avg_return_pct)} / ${pf(t1.profit_factor)}</td><td>${ci(t1)}</td><td>${t2.trade_count || 0}</td><td>${pct(t2.avg_return_pct)} / ${pf(t2.profit_factor)}</td><td>${ci(t2)}</td><td style="color:${statusColour}"><strong>${trial13.coverage_status || 'RESEARCH'}</strong></td>
         </tr></tbody></table>`;
+      const pre13 = ((trial13.prefinal_80 || {})['1D']) || {};
+      document.getElementById('er-v93-trial13').innerHTML += `
+        <h4 style="margin:14px 0 6px;">Trial 13 pre-final 80% <span class="hint">development + validation only · final unread</span></h4>
+        <table><thead><tr><th>N</th><th>Avg / PF</th><th>Avg win</th><th>Avg loss</th><th>Largest winner</th><th>Top-1 removed</th><th>Top-3 removed</th><th>Day bootstrap 95% CI</th></tr></thead><tbody><tr>
+        <td>${pre13.trade_count || 0}</td><td>${pct(pre13.avg_return_pct)} / ${pf(pre13.profit_factor)}</td><td>${pct(pre13.avg_win_pct)}</td><td>${pct(pre13.avg_loss_pct)}</td><td>${pct(pre13.largest_winner_pct)}</td><td>${pct(pre13.avg_return_top1_removed_pct)}</td><td>${pct(pre13.avg_return_top3_removed_pct)}</td><td>${pre13.day_bootstrap_ci95_low_pct == null ? '—' : pct(pre13.day_bootstrap_ci95_low_pct)} → ${pre13.day_bootstrap_ci95_high_pct == null ? '—' : pct(pre13.day_bootstrap_ci95_high_pct)}</td>
+        </tr></tbody></table>`;
+      const trial14 = v93.trial14 || {};
+      const t14a = trial14['1D'] || {}; const t14b = trial14['2D'] || {};
+      const t14Box = document.getElementById('er-v94-trial14');
+      if (t14Box) t14Box.innerHTML = `
+        <h4 style="margin:18px 0 6px;">Trial 14 · Daily OI Anomaly + Compression → Expansion <span class="hint">pre-registered · directionless</span></h4>
+        <p class="hint">Daily OI z≥${(trial14.spec || {}).daily_oi_z_min ?? 1.5} + fresh compression onset ≥${(trial14.spec || {}).compression_onset_min ?? 60}. Primary 1D only; 2D secondary. The directional sign is deliberately not predicted.</p>
+        <table><thead><tr><th>Candidate N</th><th>1D move (horizon ATR)</th><th>1D lift</th><th>1D lift 95% CI</th><th>2D move</th><th>2D lift</th><th>2D lift 95% CI</th><th>Status</th></tr></thead><tbody><tr>
+        <td>${trial14.candidate_count || 0}</td><td>${t14a.avg_max_abs_move_horizon_atr == null ? '—' : Number(t14a.avg_max_abs_move_horizon_atr).toFixed(2)}</td><td>${t14a.lift_vs_baseline == null ? '—' : Number(t14a.lift_vs_baseline).toFixed(2)+'×'}</td><td>${t14a.lift_ci95_low == null ? '—' : Number(t14a.lift_ci95_low).toFixed(2)+'× → '+Number(t14a.lift_ci95_high).toFixed(2)+'×'}</td><td>${t14b.avg_max_abs_move_horizon_atr == null ? '—' : Number(t14b.avg_max_abs_move_horizon_atr).toFixed(2)}</td><td>${t14b.lift_vs_baseline == null ? '—' : Number(t14b.lift_vs_baseline).toFixed(2)+'×'}</td><td>${t14b.lift_ci95_low == null ? '—' : Number(t14b.lift_ci95_low).toFixed(2)+'× → '+Number(t14b.lift_ci95_high).toFixed(2)+'×'}</td><td><strong>${trial14.status || 'RESEARCH'}</strong></td>
+        </tr></tbody></table>`;
 
       const dlabels = {
         long_buildup:'Long Buildup', short_buildup:'Short Buildup', fresh_breakout:'Fresh Breakout',
@@ -498,12 +516,12 @@ function renderEarlyResearch(result) {
       }).join('');
       document.getElementById('er-v93-directional').innerHTML = `<table><thead><tr><th>Component</th><th>Events</th><th>1D N</th><th>1D Avg / PF</th><th>1D Days</th><th>2D N</th><th>2D Avg / PF</th><th>2D Days</th></tr></thead><tbody>${drows || '<tr><td colspan="8">No directional component events.</td></tr>'}</tbody></table>`;
 
-      const mlabels = {silent_oi:'Silent OI onset', compression_onset:'Compression onset', daily_oi_anomaly:'Point-in-time Daily OI anomaly', baseline:'Baseline'};
+      const mlabels = {silent_oi:'Silent OI onset', compression_onset:'Compression onset', daily_oi_anomaly:'Point-in-time Daily OI anomaly', trial14_daily_oi_compression:'Trial 14 · Daily OI + Compression', baseline:'Baseline'};
       const mrows = Object.entries(v93.movement_components || {}).map(([key,x]) => {
         const a=(x||{})['1D']||{}; const b=(x||{})['2D']||{};
         return `<tr><td><strong>${mlabels[key] || key.replaceAll('_',' ')}</strong></td><td>${a.event_count || 0}</td><td>${a.avg_max_abs_move_atr == null ? '—' : Number(a.avg_max_abs_move_atr).toFixed(2)}</td><td>${a.hit_1atr_pct == null ? '—' : a.hit_1atr_pct + '%'}</td><td>${a.lift_vs_baseline == null ? '—' : Number(a.lift_vs_baseline).toFixed(2) + '×'}</td><td>${b.avg_max_abs_move_atr == null ? '—' : Number(b.avg_max_abs_move_atr).toFixed(2)}</td><td>${b.hit_1atr_pct == null ? '—' : b.hit_1atr_pct + '%'}</td><td>${b.lift_vs_baseline == null ? '—' : Number(b.lift_vs_baseline).toFixed(2) + '×'}</td></tr>`;
       }).join('');
-      document.getElementById('er-v93-movement').innerHTML = `<table><thead><tr><th>Precursor</th><th>N</th><th>1D Avg max move (ATR)</th><th>1D ≥1ATR</th><th>1D Lift</th><th>2D Avg max move (ATR)</th><th>2D ≥1ATR</th><th>2D Lift</th></tr></thead><tbody>${mrows || '<tr><td colspan="8">No precursor events.</td></tr>'}</tbody></table>`;
+      document.getElementById('er-v93-movement').innerHTML = `<table><thead><tr><th>Precursor</th><th>N</th><th>1D Avg move (horizon ATR)</th><th>1D ≥1 horizon ATR</th><th>1D Lift</th><th>2D Avg move (horizon ATR)</th><th>2D ≥1 horizon ATR</th><th>2D Lift</th></tr></thead><tbody>${mrows || '<tr><td colspan="8">No precursor events.</td></tr>'}</tbody></table>`;
     }
   }
 
