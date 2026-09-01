@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION"
+RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION"
 
 
 
@@ -1571,18 +1571,21 @@ def aggregate_v91_compact_events(events, confirmation_summary=None, holdout_pct=
             "coverage_pct": round(available / total * 100.0, 1) if total else 0.0,
         },
         "confirmation_diagnostics": diag,
-        "v91_goal": v91_goal_report(
-            rows,
-            run_context=run_context,
-            reveal_bear_final=(mode == "v91_bear_final"),
-            progress_cb=stage3_progress_cb,
-        ),
     }
     if mode == "v93_lab":
         from . import v93_component_lab
         if stage3_progress_cb:
             stage3_progress_cb("V9.3 Component Edge Laboratory + pre-registered Trial 13", 95)
         result["v93_component_lab"] = v93_component_lab.build_report(rows, run_context=run_context)
+    else:
+        # V9.2 is a separate, explicitly-invoked diagnostic path.  Do not
+        # silently execute it as part of the V9.3 Anticipation Lab.
+        result["v91_goal"] = v91_goal_report(
+            rows,
+            run_context=run_context,
+            reveal_bear_final=(mode == "v91_bear_final"),
+            progress_cb=stage3_progress_cb,
+        )
     return result
 
 

@@ -1,6 +1,6 @@
 # DBIndicator — V9.3 Anticipation Research
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION`
+**Build:** `2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION`
 
 V9.3 keeps the live V9 evidence gate intact while changing the research question from **“which extra confirmation gate rescues a weak setup?”** to **“which independent evidence stream predicts movement before the move, and at what holding horizon?”**
 

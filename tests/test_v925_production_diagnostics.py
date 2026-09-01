@@ -86,11 +86,12 @@ def test_settings_and_dashboard_expose_valid_counts_failures_and_live_market_sta
     assert "market_state" in web
 
 
-def test_backtest_copy_matches_v92_architecture_and_build_is_bumped():
+def test_backtest_copy_matches_current_research_architecture_and_build_is_bumped():
     text = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V9.1 focuses" not in text
-    assert "V9.2 focuses" in text
-    assert "V9.3.0" in text
+    assert "V9.3 Anticipation Lab is the primary research architecture" in text
+    assert "V9.2 is retained as a manual diagnostic only" in text
+    assert "V9.3.1" in text
 
 
 def test_scan_watchlist_tags_failure_stage(monkeypatch):

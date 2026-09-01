@@ -53,7 +53,7 @@ def test_backtest_template_exposes_research_build_marker():
 def test_aggregate_research_includes_build_id():
     from app.early_research import aggregate_research
     result = aggregate_research([])
-    assert result['research_build_id'] == '2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION'
+    assert result['research_build_id'] == '2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION'
 
 
 def test_dashboard_scan_health_exposes_attempted_valid_and_error_counts():

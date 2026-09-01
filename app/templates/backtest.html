@@ -67,12 +67,12 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION</div>
     <p>
-      <strong>V9.2 Diagnostic Reset is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.2 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
+      <strong>V9.3 Anticipation Lab is the primary research architecture.</strong> It tests independent component edges and the pre-registered Silent OI Build → Ignition hypothesis without silently invoking older playbooks.
     </p>
     <p>
-      Use <strong>Run V9.2 Diagnostic Reset</strong> to identify the Bull Institutional Accumulation bottleneck and explain the already-consumed Bear FSB validation-vs-final regime shift. The rejected Bear final cannot be rerun from this page. Bull Catalyst Continuation remains live/shadow until point-in-time historical event/news data exists.
+      <strong>V9.2 is retained as a manual diagnostic only.</strong> It runs only when you explicitly press <strong>Run V9.2 Diagnostic Reset</strong>; V9.3 does not call it automatically. The rejected Bear final remains locked and cannot be rerun from this page.
     </p>
     <p class="hint" style="border-left:3px solid #f0b90b;padding-left:10px;">
       <strong>V8.2 Derivative Intelligence is live/shadow only.</strong> Kite's normal historical interface does not provide a point-in-time stock-option chain with the bid/ask, IV surface and signed flow needed for an honest historical option-P&amp;L replay. The backtest below therefore validates the <em>underlying Bull/Bear screener</em>; live V8.2 records option-chain snapshots separately for forward validation instead of fabricating historical option data.
@@ -272,7 +272,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION";
+const RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -627,13 +627,21 @@ function updateEarlyResearchUI(state) {
     };
     const stageIndex = Number(p.stage_index || 1);
     const stageTotal = Number(p.stage_total || 4);
+    const modeLabels = {
+      v93_lab: 'V9.3 Anticipation Lab',
+      v91_fast: 'V9.2 Diagnostic Reset',
+      v91_bear_final: 'V9.2 Bear Final',
+      legacy_4h: 'Legacy 4H Diagnostic',
+      legacy: 'Legacy 4H Diagnostic',
+    };
+    const modeLabel = modeLabels[((state.params || {}).research_mode)] || 'Research';
     const stage = p.stage || stageLabels[stageIndex] || 'Research';
     const pctDone = Number.isFinite(Number(p.overall_pct)) ? Number(p.overall_pct) :
       (total ? Math.max(1, Math.min(70, Math.round(done / total * 70))) : 1);
     fill.style.width = Math.max(1, Math.min(100, pctDone)) + '%';
     const symbolText = stageIndex === 1 ? ` · ${done}/${total || '?'}${p.symbol ? ' · ' + p.symbol : ''}` : '';
     const resumeText = p.resume_summary ? ` · Resume data: ${p.resume_summary}` : '';
-    label.textContent = `Stage ${stageIndex}/${stageTotal} · ${stage}${symbolText}${resumeText}`;
+    label.textContent = `${modeLabel} · Stage ${stageIndex}/${stageTotal} · ${stage}${symbolText}${resumeText}`;
     hint.textContent = 'Keep this page open or come back later — the server job continues while you browse other pages.';
     return;
   }
