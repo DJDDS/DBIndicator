@@ -13,7 +13,7 @@ from typing import Iterable
 
 import numpy as np
 
-BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY"
+BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION"
 BEAR_RULE_ID = "BEAR_FSB_15M_NEXTBAR_1D_V91"
 BULL_PLAYBOOK = "Bull Institutional Accumulation"
 
@@ -21,7 +21,7 @@ BULL_PLAYBOOK = "Bull Institutional Accumulation"
 # registry is disclosure/protocol metadata only until a calibrated p-value or
 # Deflated-Sharpe/FDR statistic is implemented; it must not be confused with a
 # significance result.
-HISTORICAL_MODEL_TRIALS_COUNTED = 12
+HISTORICAL_MODEL_TRIALS_COUNTED = 13
 FAMILYWISE_ALPHA = 0.05
 BONFERRONI_ALPHA = FAMILYWISE_ALPHA / HISTORICAL_MODEL_TRIALS_COUNTED
 POWER_REFERENCE_55_VS_50_N = 782

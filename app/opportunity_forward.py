@@ -4,7 +4,7 @@ This is intentionally *not* a historical backtest and does not promote the
 research/shadow radar into a production strategy.  It records the first time a
 symbol+direction enters the displayed top-5 on a trading day and measures the
 underlying's direction-adjusted return from the first available live scan at or
-after 30m, 1h, 2h, 4h and the next-session same-time (1D) horizon.
+after 30m, 1h, 2h, 4h plus the first and second later trading-session same-time horizons (1D/2D).
 
 The state is persisted by background.py inside the existing SCAN_RESULTS_FILE,
 so it survives the same Railway restarts/redeploys as the scanner state.
@@ -21,8 +21,8 @@ INTRADAY_HORIZONS_MINUTES = {
     "2h": 120,
     "4h": 240,
 }
-ALL_HORIZONS = ("30m", "1h", "2h", "4h", "1D")
-STATE_VERSION = 1
+ALL_HORIZONS = ("30m", "1h", "2h", "4h", "1D", "2D")
+STATE_VERSION = 2
 MAX_EVENTS = 2500
 RESEARCH_FRICTION_PCT = 0.18  # 0.08% costs + 0.05% slippage per side
 
@@ -112,6 +112,17 @@ def _resolve_event(event, price, now):
             if value is not None:
                 outcomes["1D"] = value
 
+    # 2D = first available scan on a *second distinct later trading session*
+    # at/after the original clock time.  We anchor it to the date on which 1D
+    # actually matured rather than adding 48 calendar hours, so weekends and
+    # exchange holidays do not corrupt the holding-period definition.
+    if "2D" not in outcomes and "1D" in outcomes:
+        first_later = _parse_dt((outcomes.get("1D") or {}).get("observed_at"))
+        if first_later is not None and now.date() > first_later.date() and now.time() >= started.time():
+            value = _outcome(event, price, now)
+            if value is not None:
+                outcomes["2D"] = value
+
 
 def _score_band(score):
     try:
@@ -125,7 +136,20 @@ def _score_band(score):
     return "<55"
 
 
-def process_scan(state, radar, results, *, now=None):
+def _swing_horizon_map(swing_research):
+    mapping = {}
+    for horizon in ("1D", "2D"):
+        block = (swing_research or {}).get(horizon) or {}
+        for bucket in ("bullish", "bearish"):
+            for row in block.get(bucket) or []:
+                symbol = str(row.get("symbol") or "")
+                direction = row.get("direction")
+                if symbol and direction in ("Bullish", "Bearish"):
+                    mapping[(symbol, direction)] = horizon
+    return mapping
+
+
+def process_scan(state, radar, results, *, now=None, swing_research=None):
     """Resolve existing events and capture new displayed radar events.
 
     Dedupe contract: one event per symbol+direction per trading date, using the
@@ -149,6 +173,7 @@ def process_scan(state, radar, results, *, now=None):
     existing = {str(event.get("key")) for event in state["events"] if event.get("key")}
     market_bias = (radar or {}).get("market_bias")
     market_strength = (radar or {}).get("market_bias_strength_pct")
+    horizon_map = _swing_horizon_map(swing_research)
     for bucket in ("bullish", "bearish"):
         for rank, row in enumerate((radar or {}).get(bucket) or [], 1):
             symbol = str(row.get("symbol") or "")
@@ -174,6 +199,7 @@ def process_scan(state, radar, results, *, now=None):
                 "entry_price": round(float(price), 4),
                 "market_bias": market_bias,
                 "market_bias_strength_pct": market_strength,
+                "research_horizon": horizon_map.get((symbol, direction)),
                 "outcomes": {},
                 "expired_horizons": [],
             })
@@ -270,6 +296,13 @@ def summarize(state, *, today=None):
         band: {h: _aggregate([e for e in events if e.get("score_band") == band], h) for h in ALL_HORIZONS}
         for band in ("70+", "55-69", "<55")
     }
+    by_research_horizon = {
+        target: {
+            h: _aggregate([e for e in events if e.get("research_horizon") == target], h)
+            for h in ALL_HORIZONS
+        }
+        for target in ("1D", "2D")
+    }
     trade_days = sorted({str(e.get("trade_date")) for e in events if e.get("trade_date")})
     return {
         "events": len(events),
@@ -280,5 +313,6 @@ def summarize(state, *, today=None):
         "horizons": horizon_stats,
         "by_direction": by_direction,
         "score_bands": score_bands,
+        "by_research_horizon": by_research_horizon,
         "method": "First displayed top-5 appearance per symbol+direction/day; first live scan at/after each horizon.",
     }

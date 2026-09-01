@@ -130,7 +130,7 @@
         <div>
           <label for="max_entry_extension_atr">Maximum breakout extension (ATR)</label>
           <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.25" max="1.25" step="0.05" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
-          <div class="hint">V9.2.10 anti-chase ceiling: 1.25 ATR. You may tighten it, but the live scanner will not allow a looser value.</div>
+          <div class="hint">V9.3.0 anti-chase ceiling: 1.25 ATR. You may tighten it, but the live scanner will not allow a looser value.</div>
         </div>
         <div>
           <label for="shortlist_max">Maximum Best Entries</label>
@@ -147,7 +147,7 @@
 
     <details class="card">
       <summary><strong>Legacy / research-only parameters</strong></summary>
-      <p class="hint" style="margin-top:10px;">Candlestick patterns, strong-close, big-candle, delivery %, breadth, generic ADX-regime volume and BTST/STBT controls no longer drive Best Entries. They remain in the code only so old charts and backtests can still reproduce historical experiments.</p>
+      <p class="hint" style="margin-top:10px;">Candlestick patterns, strong-close, big-candle, delivery %, breadth, generic ADX-regime volume no longer drive Best Entries. They remain in the code only so old charts and backtests can still reproduce historical experiments.</p>
     </details>
 
     <details class="card">

@@ -69,6 +69,7 @@ from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
     _OPENING_WINDOW_TIMEFRAMES,
     _compute_adx, _classify_regime, _in_opening_window, _in_4hour_warmup, _HTF_RESAMPLE,
+    effective_min_atr_pct,
 )
 from . import scanner as scanner_mod
 from .scanner import _load_instrument_map, _load_index_token, now_ist
@@ -450,6 +451,29 @@ def _aggregate_history_coverage(rows, *, timeframe, requested_days):
             "Intraday OI uses the currently live near-expiry futures token; expired-contract "
             "15-minute OI is not reconstructed. Missing history remains missing and lowers coverage."
         ),
+    }
+
+
+def _daily_oi_coverage_summary(daily_oi_map, symbols):
+    rows = []
+    for symbol in symbols or []:
+        ser = (daily_oi_map or {}).get(symbol)
+        if ser is None:
+            continue
+        s = pd.Series(ser).dropna()
+        if s.empty:
+            continue
+        rows.append((symbol, s))
+    first = [pd.Timestamp(s.index[0]).isoformat() for _, s in rows]
+    last = [pd.Timestamp(s.index[-1]).isoformat() for _, s in rows]
+    return {
+        "symbols_measured": len(list(symbols or [])),
+        "symbols_with_daily_oi": len(rows),
+        "daily_oi_observations": int(sum(len(s) for _, s in rows)),
+        "first_timestamp": min(first) if first else None,
+        "last_timestamp": max(last) if last else None,
+        "source": "Kite daily futures OI with continuous=True; mapped point-in-time only after each completed session",
+        "lookahead_guard": "same-day morning bars can see only the previous completed daily OI observation",
     }
 
 
@@ -2152,13 +2176,21 @@ _V91_COMPACT_EVENT_KEYS = (
     "symbol", "signal_time", "entry_time", "timestamp", "direction", "v8_direction",
     "v91_accumulation_probe", "v91_accumulation_seed_direction", "v92_accumulation_seed",
     "fresh_breakout", "breakout_source", "breakout_direction", "breakout_extension_atr",
-    "price_chg_60m_pct", "oi_chg_60m_pct", "oi_chg_30m_pct", "oi_acceleration", "basis_acceleration",
+    "entry_is_extended", "compression_score",
+    "atr_pct",
+    "price_chg_60m_pct", "price_move_60m_atr", "oi_z",
+    "oi_chg_60m_pct", "oi_chg_30m_pct", "oi_acceleration", "basis_acceleration",
+    "daily_oi_z_pti", "daily_oi_chg_pct_pti",
     "future_price_chg_60m_pct", "future_oi_chg_60m_pct",
-    "vwap_side_agrees", "bull_vwap_available", "bull_above_vwap", "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
-    "turnover_notional", "rs_pct", "stock_sector_lead_pct", "stock_index_lead_pct",
+    "vwap_side_agrees", "bull_vwap_available", "bull_above_vwap", "vwap_distance_atr",
+    "tod_rvol", "opening_rvol", "bar_range_atr", "gap_atr",
+    "turnover_notional", "rs_pct", "rs_acceleration", "stock_sector_lead_pct", "stock_index_lead_pct",
     "market_regime", "index_ret_8_pct", "index_vol_20bar_pct", "sector_rank_percentile", "basis_pct",
     "close_position_pct", "high", "low", "close",
     "intraday_returns", "swing_returns", "mfe_atr", "mae_atr",
+    "v93_event_type", "movement_outcomes",
+    "v93_silent_oi_lead", "v93_silent_oi_lead_bars", "v93_silent_compression_score",
+    "v93_absolute_regime_aligned", "v93_trial13_candidate",
 )
 
 
@@ -2172,7 +2204,9 @@ def _compact_v91_events(replay):
     out = []
     for raw in (replay or {}).get("v9_playbook_events") or []:
         keep = False
-        if raw.get("v92_accumulation_seed") is True:
+        if raw.get("v93_event_type") is not None or raw.get("v93_trial13_candidate") is True:
+            keep = True
+        elif raw.get("v92_accumulation_seed") is True:
             # Diagnostic V9.2 seed must survive even when a later Bull gate fails;
             # otherwise the funnel cannot identify the population bottleneck.
             keep = True
@@ -2248,13 +2282,26 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     days = max(lo, min(int(days or default), hi))
     symbols = list(symbols or settings.WATCHLIST)
     horizons = DEFAULT_HORIZONS
-    streaming_v91 = bool(fast_v8 and research_mode in ("v91_fast", "v91_bear_final"))
+    streaming_v91 = bool(fast_v8 and research_mode in ("v91_fast", "v91_bear_final", "v93_lab"))
     run_dir = (Path(resume_run_dir) if resume_run_dir is not None else
         _early_research_run_dir(
             symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
             cost_pct=cost_pct, slippage_pct=slippage_pct, research_mode=research_mode,
         )) if fast_v8 else None
     completed_shards = _completed_research_symbol_shards(run_dir) if run_dir is not None else {}
+    daily_oi_map = {}
+    daily_oi_coverage = {}
+    if research_mode == "v93_lab":
+        if stage_cb:
+            stage_cb(1, 4, "Loading point-in-time daily continuous OI baseline", 2)
+        try:
+            daily_oi_map = scanner_mod.fetch_oi_history(
+                kite, symbols, timeframe="day", days_override=days + WARMUP_DAYS
+            )
+        except Exception as exc:  # noqa: BLE001 - daily OI is disclosed, never fabricated
+            log.warning("V9.3 daily continuous OI baseline unavailable: %s", exc)
+            daily_oi_map = {}
+        daily_oi_coverage = _daily_oi_coverage_summary(daily_oi_map, symbols)
     if streaming_v91 and run_dir is not None and _v91_ranked_events_path(run_dir).exists():
         try:
             ranked_v91_payload = _load_v91_ranked_events_checkpoint(_v91_ranked_events_path(run_dir))
@@ -2271,9 +2318,17 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 "universe_is_full_fno": bool(universe_is_full_fno),
                 "fast_v8": True,
                 "research_mode": research_mode,
+                "history_coverage": dict(ranked_v91_payload.get("history_coverage") or {}),
+                "daily_oi_coverage": daily_oi_coverage,
+                "effective_atr_floor_pct": effective_min_atr_pct(timeframe),
             }
             if stage_cb:
-                stage_cb(3, 4, "Running frozen Bear FSB final test" if research_mode == "v91_bear_final" else "Validating V9.1 goal-focused models", 86)
+                if research_mode == "v91_bear_final":
+                    stage_cb(3, 4, "Running frozen Bear FSB final test", 86)
+                elif research_mode == "v93_lab":
+                    stage_cb(3, 4, "Running V9.3 Component Edge Laboratory + Trial 13", 86)
+                else:
+                    stage_cb(3, 4, "Validating V9.2 goal-focused models", 86)
             research = early_research.aggregate_v91_compact_events(
                 ranked_v91_payload.get("events") or [],
                 ranked_v91_payload.get("confirmation") or {},
@@ -2296,13 +2351,16 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 "cost_pct": float(cost_pct),
                 "slippage_pct": float(slippage_pct),
                 "research": research,
+                "history_coverage": dict(ranked_v91_payload.get("history_coverage") or {}),
                 "fast_v8": True,
                 "research_notes": [
                     "Historical OI uses Kite's available futures-history series; live ranking aggregates near/next/far expiries, so rollover-era historical OI is an approximation rather than a reconstructed three-expiry book.",
-                    "15-minute setups retain next-bar execution; V9.1 streaming reuses the same point-in-time event logic.",
+                    "15-minute setups retain next-bar execution; V9.3 streaming reuses the same point-in-time event logic.",
+                    "V9.3 separately maps daily continuous-futures OI only after the completed session close; same-day morning bars cannot see that day's daily OI.",
                     "Stage 2 loads each completed symbol shard once, retains only compact feature frames for the seven cross-sectional ranks, and checkpoints after every completed rank.",
                     "A Stage-2 rank-progress checkpoint resumes after the last completed rank; a completed ranked-events checkpoint resumes directly at validation after a worker restart.",
                     "Historical membership uses the current NSE stock-F&O universe replayed backward; point-in-time F&O membership is not available in the present data source, so survivorship bias is explicitly disclosed rather than hidden.",
+                    "V9.3 daily continuous-OI features are point-in-time and swing-oriented; intraday current-contract OI remains partial and is never backfilled from invented expired-contract 15-minute data.",
                 ],
                 "generated_at": now_ist().isoformat(timespec="seconds"),
             }
@@ -2382,6 +2440,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                         completed_shards[symbol] = path
                     continue
             oi = _fetch_oi_history_for_backtest(kite, symbol, timeframe, days=days)
+            cov = None
             try:
                 window_floor = pd.Timestamp(window_start)
                 price_cov = df.loc[pd.DatetimeIndex(df.index) >= early_research._align_timestamp_to_index(window_floor, df.index)]
@@ -2392,6 +2451,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                     oi_cov = oi
                 cov = _history_coverage_summary(price_cov, oi_cov, requested_days=days)
                 cov["symbol"] = symbol
+                cov["timeframe"] = timeframe
                 history_coverage_rows.append(cov)
             except Exception as coverage_exc:  # coverage is diagnostic, never a run blocker
                 log.debug("Coverage diagnostic failed for %s: %s", symbol, coverage_exc)
@@ -2405,7 +2465,8 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             )
             feat = early_research.build_feature_frame(
                 df, timeframe, oi_series=oi, index_df=index_df, sector_df=sector_df,
-                sector_rank_series=sector_rank_series, futures_df=futures_df)
+                sector_rank_series=sector_rank_series, futures_df=futures_df,
+                daily_oi_series=daily_oi_map.get(symbol) if daily_oi_map else None)
             if feat.empty:
                 notes[symbol] = "not enough history for early-movement features"
                 if fast_v8:
@@ -2435,6 +2496,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                     run_dir, i, symbol, compact_frame=compact_v8,
                     replay=(None if streaming_v91 else replay), note=None,
                     v91_events=v91_events, v91_confirmation=v91_confirmation,
+                    history_coverage=cov,
                 )
                 completed_shards[symbol] = path
                 # The shard owns the compact feature/replay payload now; keep the
@@ -2548,12 +2610,18 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         "fast_v8": bool(fast_v8),
         "research_mode": research_mode or ("v9_fast" if fast_v8 else "legacy"),
         "history_coverage": history_coverage,
+        "daily_oi_coverage": daily_oi_coverage,
+        "effective_atr_floor_pct": effective_min_atr_pct(timeframe),
     }
     if stage_cb:
-        stage_cb(3, 4, (
-            "Running frozen Bear FSB final test" if research_mode == "v91_bear_final"
-            else ("Validating V9.1 goal-focused models" if research_mode == "v91_fast" else "Validating V9 professional playbooks")
-        ), 86)
+        if research_mode == "v91_bear_final":
+            stage_cb(3, 4, "Running frozen Bear FSB final test", 86)
+        elif research_mode == "v93_lab":
+            stage_cb(3, 4, "Running V9.3 Component Edge Laboratory + Trial 13", 86)
+        elif research_mode == "v91_fast":
+            stage_cb(3, 4, "Validating V9.2 goal-focused models", 86)
+        else:
+            stage_cb(3, 4, "Validating V9 professional playbooks", 86)
     if streaming_v91:
         research = early_research.aggregate_v91_compact_events(
             ranked_v91_payload.get("events") or [],
@@ -2613,7 +2681,7 @@ _EARLY_RESEARCH_STATE_PATH = Path(
 _EARLY_RESEARCH_WORK_ROOT = Path(
     os.environ.get("EARLY_RESEARCH_WORK_ROOT", "/tmp/dbindicator-early-research-work")
 )
-_RESEARCH_RESUME_SCHEMA = "v929-resume-shards-2"
+_RESEARCH_RESUME_SCHEMA = "v930-resume-shards-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -2651,7 +2719,7 @@ def _research_symbol_shard_path(run_dir, index, symbol):
 
 
 def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, replay, note,
-                                 v91_events=None, v91_confirmation=None):
+                                 v91_events=None, v91_confirmation=None, history_coverage=None):
     """Atomically persist one completed symbol so a worker restart can resume."""
     path = _research_symbol_shard_path(run_dir, index, symbol)
     payload = {
@@ -2661,6 +2729,7 @@ def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, repla
         "note": note,
         "v91_events": v91_events,
         "v91_confirmation": v91_confirmation,
+        "history_coverage": history_coverage,
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("wb") as fh:
@@ -2723,7 +2792,7 @@ def _load_research_replays_from_shards(shard_map, symbols):
     return replays, notes, usable
 
 
-_V91_RANKED_EVENTS_SCHEMA = "v929-ranked-events-2"
+_V91_RANKED_EVENTS_SCHEMA = "v930-ranked-events-1"
 
 
 def _v91_ranked_events_path(run_dir):
@@ -2753,7 +2822,7 @@ def _v91_rank_progress_path(run_dir):
     return Path(run_dir) / "rank-progress.pkl"
 
 
-_V91_RANK_PROGRESS_SCHEMA = "v91-rank-progress-1"
+_V91_RANK_PROGRESS_SCHEMA = "v930-rank-progress-1"
 
 
 def _save_v91_rank_progress(run_dir, *, rows, confirmations, notes, completed_rank_keys, symbols_completed):
@@ -2827,6 +2896,7 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
         confirmations = [progress.get("confirmation") or {}]
     notes = dict((progress or {}).get("notes") or {})
     completed_rank_keys = list((progress or {}).get("completed_rank_keys") or [])
+    history_coverage_rows = []
     already_loaded_events = bool(progress)
 
     if stage_cb and completed_rank_keys:
@@ -2844,6 +2914,8 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
         payload = _load_research_symbol_shard(shard_path)
         if payload.get("note") and symbol not in notes:
             notes[symbol] = str(payload["note"])
+        if payload.get("history_coverage"):
+            history_coverage_rows.append(dict(payload["history_coverage"]))
         if not already_loaded_events:
             shard_events = payload.get("v91_events")
             shard_confirmation = payload.get("v91_confirmation")
@@ -2977,12 +3049,21 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
 
     if stage_cb:
         stage_cb(2, 4, "Writing Stage-2 checkpoint", 85)
+    if history_coverage_rows:
+        requested_days_cov = max(int(r.get("requested_days") or 0) for r in history_coverage_rows)
+        timeframe_cov = next((str(r.get("timeframe")) for r in history_coverage_rows if r.get("timeframe")), "15minute")
+        checkpoint_history_coverage = _aggregate_history_coverage(
+            history_coverage_rows, timeframe=timeframe_cov, requested_days=requested_days_cov
+        )
+    else:
+        checkpoint_history_coverage = {}
     final_path = _atomic_pickle(path, {
         "schema": _V91_RANKED_EVENTS_SCHEMA,
         "events": rows,
         "confirmation": _merge_v91_confirmation_summaries(confirmations),
         "notes": notes,
         "symbols_completed": len(shard_map or {}),
+        "history_coverage": checkpoint_history_coverage,
     })
     _v91_rank_progress_path(run_dir).unlink(missing_ok=True)
     return final_path

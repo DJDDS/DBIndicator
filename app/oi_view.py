@@ -512,6 +512,13 @@ def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_
             "vwap_agrees": vwap_agrees,
             "extension_atr": extension,
             "chase_guard": chase_guard,
+            # V9.3 research-only horizon routing inputs.  These are copied
+            # through unchanged so the Swing Research Console can distinguish
+            # an active ignition from a quieter positioning/compression build.
+            "compression_score": _num(row.get("compression_score")),
+            "shadow_movement_stage": row.get("shadow_movement_stage"),
+            "oi_z": _num(row.get("oi_z")),
+            "price_move_60m_atr": _num(row.get("price_move_60m_atr")),
         }
         buckets[direction].append(item)
 
@@ -544,3 +551,63 @@ def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_
             "displayed": len(bullish) + len(bearish),
         },
     }
+
+
+def swing_research_console(radar, *, limit=5):
+    """Route live opportunity names to a research-only 1D *or* 2D horizon.
+
+    This is deliberately not a production classifier.  It makes the dashboard's
+    1D/2D swing tab observable while V9.3 learns which holding period actually
+    owns each precursor.  A fast ignition is routed to 1D; a quiet abnormal-OI
+    / compression build is routed to 2D so the same symbol is never counted in
+    both buckets.  The routing is descriptive and remains shadow-only.
+    """
+    radar = radar or {}
+    out = {
+        "label": "RESEARCH / SHADOW",
+        "is_trade_signal": False,
+        "market_bias": radar.get("market_bias"),
+        "market_bias_strength_pct": radar.get("market_bias_strength_pct"),
+        "1D": {"bullish": [], "bearish": []},
+        "2D": {"bullish": [], "bearish": []},
+    }
+
+    for side_key, target_side in (("bullish", "bullish"), ("bearish", "bearish")):
+        routed = {"1D": [], "2D": []}
+        for raw in radar.get(side_key) or []:
+            row = dict(raw)
+            stage = str(row.get("shadow_movement_stage") or "")
+            oi_z = _num(row.get("oi_z"))
+            price_flat = _num(row.get("price_move_60m_atr"))
+            compression = _num(row.get("compression_score"), 0.0)
+            rvol = max(_num(row.get("tod_rvol"), 0.0), _num(row.get("vol_multiple"), 0.0))
+            recent_oi = max(_num(row.get("oi_30m_chg_pct"), 0.0), _num(row.get("oi_60m_chg_pct"), 0.0))
+            base = _num(row.get("score"), 0.0)
+            silent_positioning = bool(oi_z is not None and oi_z >= 1.5 and price_flat is not None and abs(price_flat) <= 0.5)
+            ignition = stage in ("Ignition", "Best Entry")
+
+            score_1d = base + (8.0 if ignition else 0.0) + min(6.0, max(0.0, rvol - 1.0) * 3.0) + min(5.0, max(0.0, recent_oi) * 2.0)
+            score_2d = base + (10.0 if silent_positioning else 0.0) + min(6.0, compression / 15.0)
+            if row.get("htf_direction") == row.get("direction"):
+                score_2d += 4.0
+            if row.get("chase_guard") == "EXTENDED":
+                score_1d -= 8.0
+                score_2d -= 8.0
+
+            # Quiet positioning/compression is intentionally allowed to win the
+            # 2D route even if the generic opportunity score is already high.
+            # Otherwise a real ignition belongs to 1D.
+            horizon = "2D" if (silent_positioning and not ignition and score_2d >= score_1d) else "1D"
+            row["research_horizon"] = horizon
+            row["horizon_score"] = round(max(score_1d, score_2d), 1)
+            row["horizon_reason"] = (
+                "Quiet abnormal OI / compression build — allow more time"
+                if horizon == "2D" else
+                "Ignition / active participation — earlier swing resolution"
+            )
+            routed[horizon].append(row)
+
+        for horizon in ("1D", "2D"):
+            routed[horizon].sort(key=lambda x: (float(x.get("horizon_score") or 0.0), float(x.get("score") or 0.0)), reverse=True)
+            out[horizon][target_side] = routed[horizon][:max(0, int(limit))]
+    return out

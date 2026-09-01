@@ -1,61 +1,78 @@
-# DBIndicator — V9.2 Diagnostic Reset
+# DBIndicator — V9.3 Anticipation Research
 
-**Build:** `2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY`
+**Build:** `2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION`
 
-V9.2 is a diagnostic research build. It does not promote a new production rule and does not retune the rejected Bear final sample.
+V9.3 keeps the live V9 evidence gate intact while changing the research question from **“which extra confirmation gate rescues a weak setup?”** to **“which independent evidence stream predicts movement before the move, and at what holding horizon?”**
 
-Primary jobs:
+## What to run first
 
-- **Bull Gate Funnel:** starts from the broad point-in-time `price up + OI up / Long Buildup` population and reports cumulative survivors through VWAP acceptance, TOD RVOL, Participation, Relative Strength, Derivatives, Bull CLV, basis and final consensus. The duplicate price+OI/Long-Buildup evidence is shown once. Bull final 20% remains locked.
-- **Bear FSB Regime Decomposition:** explains why the previously validated Bear Fresh Short Buildup rule failed its already-consumed final 20%. It compares validation vs final by market regime, index trend, market volatility, futures-basis direction, stock-vs-sector state, time of day, OI magnitude, OI persistence and post-signal 60-minute positioning. These cohorts are descriptive only and must not become replacement rules.
-- **Historical breadth:** explicitly marked unavailable in the current point-in-time dataset rather than inferred or fabricated.
+Open **Backtest → Run V9.3 Anticipation Lab**.
 
-The rejected Bear FSB final test is disabled on the Backtest page. Its frozen fingerprint is preserved for audit continuity only.
+The V9.3 research run is fixed to the current NSE stock-F&O universe, 15-minute setup/execution and 180 calendar days. Primary evidence is **1D / 2D**; 2H / 4H remain diagnostics. Historical price fetching is chunked and the Stage-2 pipeline retains the V9.2.9 single-load/checkpoint design.
 
-Derivative Intelligence remains downstream/live-shadow: CE/PE expression, IV/RV, expected move, liquidity, DTE and Greeks are not fabricated into the historical backtest.
+## Component Edge Laboratory
 
-## Backtest
+V9.3 measures independent streams separately before any new combination is considered:
 
-Open **Backtest → Run V9.2 Diagnostic Reset**.
+- OI acceleration (fixed reference ≥ +0.5 percentage points)
+- Long Buildup / Short Buildup episode onset
+- time-of-day RVOL (fixed reference ≥ 1.3x)
+- compression / Coil (fixed reference ≥ 60)
+- relative direction alignment
+- VWAP direction alignment
+- scaled minimum-ATR regime
+- 1.25 ATR anti-chase / not-extended state
+- fresh breakout with and without an absolute NIFTY 8-bar regime gate
+- Silent OI → Ignition without chasing
+- directionless Silent-OI onset, compression onset, point-in-time daily-OI anomaly and a fixed-time baseline
 
-The diagnostic run remains fixed to the full NSE F&O universe, 15-minute setup/execution and 180 calendar days. The streaming/checkpoint architecture from V9.1.2 is retained for Railway reliability.
+Directional rows report N, distinct trading days, net expectancy after the existing **0.18% research friction**, profit factor, win-rate Wilson interval, day-cluster average-return interval, MFE and MAE at 2H / 4H / 1D / 2D. Directionless precursor rows measure future expansion in ATR and lift versus baseline.
 
-## V9.2.4 live production repair
-The live Dashboard/Watchlist/OI surfaces are evidence-gated: research or rejected playbooks do not generate production candidates. The dashboard reports attempted/valid/error scan counts, and the OI Screener uses a compact JSON-safe API payload so restored state cannot break browser number formatting.
+## Pre-registered Trial 13 — Silent OI Build → Ignition
 
+Trial 13 is declared before viewing its result:
 
-## V9.2.6 live opportunity radar (retained)
+1. intraday OI z-score ≥ 1.5;
+2. absolute 60-minute price displacement ≤ 0.5 ATR;
+3. first fresh breakout within four completed 15-minute bars;
+4. completed NIFTY 8-bar return sign must agree with breakout direction;
+5. entry must remain inside the existing 1.25 ATR chase ceiling;
+6. primary horizon 1D, secondary horizon 2D;
+7. chronological 60/20/20 split is done by **whole trading days** so one session cannot leak across development and validation;
+8. final 20% remains locked.
 
-This release keeps every V9 evidence gate unchanged but separates **production validation** from **live market attention**. The main Dashboard now has a **Live Opportunity Radar — RESEARCH / SHADOW** that can surface bullish and bearish stocks even while `ACTIVE_PLAYBOOKS` is empty.
+Trial 13 is historical model trial 13. Family-wise alpha remains 0.05, making the Bonferroni reference alpha 0.003846. The trial is **RESEARCH / SHADOW only** and cannot activate a production playbook.
 
-The radar ranks current F&O names using price + OI structure, day/recent OI expansion, OI acceleration, RVOL/participation, relative strength or weakness, VWAP acceptance, technical structure, 4H context and current F&O breadth. The 4H read is context only, never a veto. Names extended beyond 1.25 ATR remain visible but receive a clear anti-chase penalty.
+## OI evidence integrity
 
-The **Opportunity Score is an attention/ranking score, not probability of profit and not a validated entry signal**. Rejected Bear Fresh Short Buildup remains rejected; Bull Institutional Accumulation/Catalyst remain shadow-only; alerts and validated TRADE/WATCH shortlists stay evidence-gated.
+V9.3 does not invent expired-contract intraday OI. Intraday OI coverage is displayed explicitly and may cover only the current near-expiry era. To obtain a longer point-in-time OI stream for swing research, V9.3 separately loads Kite continuous **daily** futures OI and maps a daily observation to intraday rows only after the corresponding session has completed.
 
-V9.2.5 scan-health diagnostics are retained: exact per-symbol failure stage, last successful scan, valid/attempted universe counts, current failure details, and the Live Market State OI breadth strip.
+The historical stock-F&O universe is still today's membership replayed backward until a true point-in-time F&O membership dataset is supplied; the UI continues to disclose that survivorship limitation.
 
+## 4H Diagnostic repaired
 
-## V9.2.8 backtest-integrity + shadow-radar upgrade
+**Run 4H Diagnostic** is a dedicated path. It cannot inherit a stale 15-minute scope value. It is fixed to 180 days, forms signals only from completed 4H candles and maps execution/outcomes to the first available 15-minute bar after the setup candle closes.
 
-V9.2.8 keeps the V9.2.7 regime and forward-validation architecture but fixes the research-integrity issues found in the production audit: correct two-sided slippage, rising-edge Bull accumulation episodes, chunked historical retrieval, completed-candle-only replay, and explicit price/OI history coverage. The Production Early Radar stays evidence-gated; a separate Shadow Early Radar now exposes Energy Building / Ignition research stages without creating TRADE/WATCH alerts. Legacy dashboard diagnostic columns are labelled explicitly so they cannot be confused with the 0–100 Live Opportunity Score.
+## BTST/STBT retired
 
-## V9.2.7 regime + forward-validation upgrade
+The dedicated overnight-test workflow and its API/UI surface are removed. Session-aware 1D and 2D outcome machinery remains because it is required for genuine swing research; it is not an overnight-gap strategy.
 
-V9.2.7 keeps the V9.2.6 Live Opportunity Radar but fixes the three production-integrity issues found in the live deployment:
+## Dashboard 1D / 2D Swing Research
 
-- the live NSE stock-F&O universe is cross-checked against the NSE cash instrument map, so non-stock derivative names such as `NIFTYFPI` are excluded before scanning;
-- persisted breakout-extension settings above **1.25 ATR** are migrated back to 1.25 and the Settings page cannot loosen the anti-chase ceiling beyond 1.25;
-- Market Bias is now a weighted, missing-data-aware regime score from **NIFTY trend (25%) + watchlist price breadth (20%) + F&O OI breadth (20%) + sector breadth (15%) + relative-strength distribution (10%) + VWAP participation (10%)**. Regime remains ranking context only, never a veto.
+The Dashboard now contains a separate **Swing Research / Shadow** console:
 
-The build also starts honest **forward validation** for Live Opportunity Radar names. The first top-5 Bull/Bear appearance for each symbol+direction per trading day is recorded with its original score/rank/entry price. Outcomes are then measured from the first available live scan at/after **30m, 1h, 2h, 4h and next-session same-time (1D)**. Intraday horizons that do not mature before the session ends are marked unavailable rather than contaminated with an overnight move. The forward state is persisted inside the normal scanner state and can be exported from the Dashboard.
+- active Ignition-type attention is routed to a 1D research horizon;
+- quiet abnormal-OI / compression positioning can be routed to 2D;
+- a symbol is routed to one research horizon only;
+- live forward validation matures 30m / 1h / 2h / 4h / 1D / 2D and records the routed 1D/2D horizon so its actual net expectancy and PF can be measured separately.
 
-## V9.2.9 pipeline-reliability + audit-hardening upgrade
+This routing is a research hypothesis, not a production signal. The validated production Swing tab remains empty until a playbook survives validation and its untouched final test.
 
-V9.2.9 fixes the Stage-2 research bottleneck that could leave the production backtest apparently stuck at cross-sectional rank 6/7. Each symbol shard is now deserialized once per Stage-2 run, compact feature frames are ranked in memory, granular progress/elapsed-time messages are emitted, and rank-level checkpoints allow Railway restarts to resume after the last completed rank. A full 210-symbol × 5,000-bar regression test protects the workload.
+## Production safety
 
-The build also adopts the low-risk measurement recommendations from the external validation audit: forward validation now headlines net expectancy, net profit factor and 95% Wilson confidence intervals; duplicate Price+OI/Long-Buildup evidence is collapsed in the Bull diagnostic funnel; Bear frozen thresholds are applied at one freeze boundary rather than duplicated in the compactor; historical trial count/Bonferroni alpha and current-universe survivorship bias are disclosed explicitly. No Deflated Sharpe/FDR, MWPL history, point-in-time F&O membership or new Bear strategy is fabricated without the required data/protocol.
-
-
-## V9.2.10 Bull-population integrity
-
-V9.2.10 makes the Bull Gate Funnel and Bull Institutional Accumulation backtest use one exact event population. The funnel now exposes stable event keys, its survivors directly feed the 60/20/20 split, and any future count/identity mismatch aborts the research result with `DATA/LOGIC ERROR` instead of silently printing zero trades. Historical price/OI coverage is also shown directly in the V9.2 result block.
+- `ACTIVE_PLAYBOOKS = ()` remains unchanged.
+- Bear Fresh Short Buildup remains rejected and is not retuned.
+- Bull Institutional Accumulation remains research-only; its final sample is not unlocked.
+- 1.25 ATR anti-chase remains active.
+- 0.18% historical research friction remains active.
+- Live Opportunity Radar and Shadow Early Radar remain attention/research layers, not probability-of-profit labels.

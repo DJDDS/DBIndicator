@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION</div>
     <p>
       <strong>V9.2 Diagnostic Reset is the primary research architecture.</strong> Failed V9 playbooks are retired from the primary path. V9.2 focuses on one new bullish hypothesis—Bull Institutional Accumulation—and one frozen bearish candidate—Bear Fresh Short Buildup. 15-minute generates entries; 4H is context only; OI/basis remain evidence rather than universal vetoes.
     </p>
@@ -118,14 +118,23 @@
     </div>
   </div>
 
+  <div class="card" style="border-color:#69c3a5;">
+    <h2>1 &middot; V9.3 Component Edge Laboratory</h2>
+    <p style="margin-top:-4px;"><strong>Anticipation first: measure which independent evidence streams actually predict movement before combining them into another playbook.</strong></p>
+    <p class="hint"><strong>Pre-registered Trial 13 &mdash; Silent OI Build -&gt; Ignition:</strong> OI z-score &ge; 1.5 while 60-minute price displacement stays within 0.5 ATR; wait at most four 15-minute bars for the first fresh breakout; require the absolute NIFTY 8-bar regime to agree; reject entries already beyond the 1.25 ATR chase guard. Primary evidence is 1D, secondary 2D; <strong>final 20% locked</strong>.</p>
+    <p class="hint">The Component Edge Laboratory measures the evidence streams separately before combining anything: OI acceleration, Long/Short Buildup, TOD RVOL, compression/coil, relative direction, VWAP agreement, scaled ATR regime, anti-chase, absolute NIFTY regime, Silent-OI onset and point-in-time daily OI anomaly. This is <strong>RESEARCH / SHADOW only</strong> and cannot create production TRADE/WATCH signals.</p>
+    <button type="button" class="btn" id="er-v93-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.3 Anticipation Lab</button>
+    <span class="hint" style="margin-left:10px;">Full F&amp;O · 15-minute · 180 days · 1D/2D primary · Trial 13 final locked.</span>
+  </div>
+
   <div class="card" style="border-color:#9bc5e8;">
-    <h2>1 &middot; V9.2 Diagnostic Reset</h2>
+    <h2>2 &middot; V9.2 Diagnostic Reset</h2>
     <p style="margin-top:-4px;"><strong>This is the primary V9.2 research path for the actual objective: Bull + Bear F&amp;O opportunities for intraday and 1&ndash;2D swing.</strong> The weak V9 playbooks are retired instead of retuned.</p>
     <p class="hint"><strong>Bull:</strong> Institutional Accumulation = price up + OI up, above-VWAP acceptance, abnormal participation, relative leadership and non-deteriorating basis. Its final 20% stays locked. <strong>Bear:</strong> Fresh Short Buildup is frozen exactly as validated; its dedicated final button reveals only that rule's untouched final 20%.</p>
     <button type="button" class="btn" id="er-v91-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.2 Diagnostic Reset</button>
     <button type="button" class="btn" id="er-v91-bear-final-btn" disabled style="background:#777;cursor:not-allowed;">Bear FSB Final: REJECTED</button>
-    <button type="button" class="btn secondary" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run Legacy / 4H Diagnostic</button>
-    <span class="hint" id="er-form-hint" style="margin-left:10px;">Both V9.1 buttons lock the run to full F&amp;O, 15-minute signals and 180 calendar days. The Bear final button cannot change the frozen rule or thresholds.</span>
+    <button type="button" class="btn secondary" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run 4H Diagnostic</button>
+    <span class="hint" id="er-form-hint" style="margin-left:10px;">V9.2/V9.3 primary research is fixed to 15-minute / 180 days. The 4H Diagnostic is independently fixed to completed 4H setup candles with 15-minute execution mapping.</span>
     <div class="progress-wrap" id="er-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="er-progress-fill"></div></div>
       <div class="progress-label" id="er-progress-label">Starting…</div>
@@ -147,6 +156,16 @@
       <p class="hint">Focused research only: Recent Range vs bullish/bearish, TOD volume, OI, 4H, no-chase, VWAP proximity, one-bar retention and retest. It is intentionally <strong>not</strong> a Cartesian parameter grid. The live Best Entry is now restricted to sponsored Recent-Range escapes while this table decides which confirmation sequence deserves promotion.</p>
       <div class="hint" id="er-recent-range-note" style="margin-bottom:8px;"></div>
       <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
+      </div>
+
+      <div id="er-v93-results" style="display:none;">
+        <h3 class="bt-group-title" style="margin-top:18px;">V9.3 Component Edge Laboratory</h3>
+        <div id="er-v93-protocol" class="hint" style="margin:10px 0 12px;"></div>
+        <div id="er-v93-trial13"></div>
+        <h4 style="margin:18px 0 6px;">Independent directional components</h4>
+        <div id="er-v93-directional"></div>
+        <h4 style="margin:18px 0 6px;">Directionless precursor expansion</h4>
+        <div id="er-v93-movement"></div>
       </div>
 
       <h3 class="bt-group-title" style="margin-top:18px;">V9.2 Goal-Focused Evidence</h3>
@@ -177,59 +196,10 @@
     </div>
   </div>
 
-  <div class="card">
-    <h2>2 &middot; Legacy gate audit</h2>
-    <p style="margin-top:-4px;">Runs a baseline with every gate off, then one pass per gate with only that gate on, and
-    reports what each did to expectancy and profit factor &mdash; net of costs, on your own watchlist. <strong>Start here:</strong> it
-    measures the filters you're actually running instead of assuming more filters are better.</p>
-    <p class="hint">Each gate is tested alone plus a few targeted OI combinations. A <strong>30% chronological holdout</strong>
-    is kept untouched and is the primary ranking column, so a gate that only looks good in-sample does not float to the top.
-    Gates that cannot apply to your scope are skipped rather than reported as "no change".</p>
-    <div style="margin-top:14px;">
-      <button type="button" class="btn" id="ab-run-btn" {{ 'disabled' if not logged_in else '' }}>Run gate sweep</button>
-      <span class="hint" id="ab-form-hint" style="margin-left:10px;"></span>
-    </div>
-    <div class="progress-wrap" id="ab-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="ab-progress-fill"></div></div>
-      <div class="progress-label" id="ab-progress-label">Starting…</div>
-    </div>
-    <div class="msg-err" id="ab-error" style="display:none; margin-top:16px;"></div>
-    <div id="ab-results" style="display:none; margin-top:18px;">
-      <p class="hint" id="ab-meta"></p>
-      <table>
-        <thead><tr>
-          <th>Gate</th><th>Full avg</th><th>&Delta; avg</th><th>PF</th>
-          <th>Holdout avg</th><th>Holdout PF</th><th>Win rate</th><th>Trades</th><th>Cut</th>
-        </tr></thead>
-        <tbody id="ab-table-body"></tbody>
-      </table>
-      <div id="ab-skipped" class="hint" style="margin-top:12px;"></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>3 &middot; Does the BTST/STBT premise hold?</h2>
-    <p style="margin-top:-4px;">The overnight panel picks stocks that closed at the extreme of their range on a day
-    that went their way, and holds them overnight. <strong>Nothing in this app could measure that trade until now</strong>
-    &mdash; the primary breakout research uses session-aware intraday/swing horizons and enters at the next executable bar, while an
-    overnight idea must enter at the signal close to measure the gap itself.</p>
-    <p style="margin-top:8px;">This enters at the <strong>signal bar's own close</strong> and exits at the next open and
-    the next close &mdash; the trade as you would actually take it. It applies only the two hard gates, not the soft
-    checks, and automatically compares the original <strong>continuation</strong> direction with the exact opposite
-    <strong>reversal</strong> direction. If the sign is wrong, the research says so instead of trying to rescue it with more gates.</p>
-    <p class="hint" style="margin-top:8px;">Worth knowing what you might find: this setup buys the most extended point
-    of the session, and short-horizon <em>reversal</em> is a well-documented effect &mdash; momentum tends to work over
-    months, while over one to five days strong recent returns often give back. If the win rate lands meaningfully
-    below 50%, the premise is inverted rather than merely weak, and no amount of tightening the other checks fixes it.
-    A result near 50% after costs means there is no edge here either way.</p>
-    <div style="margin-top:14px;">
-      <label class="chk" style="display:flex;">
-        <input type="checkbox" id="on-upday" checked> Require the day itself to have gone the signal's way
-      </label>
-    </div>
-    <button class="btn" id="on-run" style="margin-top:14px;">Run the overnight test</button>
-    <div class="hint" id="on-hint" style="margin-top:8px;"></div>
-    <div id="on-results" style="margin-top:16px;"></div>
+  <div class="card" style="border-color:#69c3a5;">
+    <h2>3 &middot; Component Edge Laboratory replaces the old gate sweep</h2>
+    <p style="margin-top:-4px;">The old gate-ablation screen has been retired from the workflow. V9.3 tests independent evidence streams first &mdash; OI state/acceleration, RVOL, compression, relative strength, VWAP, ATR and regime &mdash; across 1D/2D before allowing another combined playbook.</p>
+    <p class="hint">Use <strong>Run V9.3 Anticipation Lab</strong> above. This avoids repeatedly slicing a negative baseline with correlated confirmation filters.</p>
   </div>
 
 <details class="card">
@@ -302,7 +272,7 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.2.10-BULL-POPULATION-INTEGRITY";
+const RESEARCH_BUILD_ID = "2026-08-31-INSTITUTIONAL-V9.3.0-COMPONENT-EDGE-ANTICIPATION";
 
 // --- shared scope --------------------------------------------------------
 // One source of truth for universe / timeframe / days / horizons, read by all
@@ -635,6 +605,7 @@ function updateEarlyResearchUI(state) {
   const errorBox = document.getElementById('er-error');
   const runBtn = document.getElementById('er-run-btn');
   const v91RunBtn = document.getElementById('er-v91-run-btn');
+  const v93RunBtn = document.getElementById('er-v93-run-btn');
   const v91FinalBtn = document.getElementById('er-v91-bear-final-btn');
   const hint = document.getElementById('er-form-hint');
   const p = state.progress || {};
@@ -642,6 +613,7 @@ function updateEarlyResearchUI(state) {
   if (state.status === 'running') {
     runBtn.disabled = true;
     v91RunBtn.disabled = true;
+    v93RunBtn.disabled = true;
     v91FinalBtn.disabled = true;
     progress.style.display = 'block';
     errorBox.style.display = 'none';
@@ -668,6 +640,7 @@ function updateEarlyResearchUI(state) {
 
   runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
   v91RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v93RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
   v91FinalBtn.disabled = true;
   progress.style.display = 'none';
   if (state.status === 'error') {
@@ -760,6 +733,62 @@ function renderEarlyResearch(result) {
     : 'No Recent-Range variant has at least 30 holdout trades yet.';
 
 
+
+  const v93 = r.v93_component_lab || {};
+  const v93Wrap = document.getElementById('er-v93-results');
+  if (v93Wrap) {
+    if (!v93.build_id) {
+      v93Wrap.style.display = 'none';
+    } else {
+      v93Wrap.style.display = 'block';
+      const protocol93 = v93.protocol || {};
+      const trial13 = v93.trial13 || {};
+      const coverage = protocol93.daily_oi_coverage || {};
+      const ci = x => {
+        if (!x || x.win_rate_ci95_low_pct == null || x.win_rate_ci95_high_pct == null) return '—';
+        return `${Number(x.win_rate_ci95_low_pct).toFixed(1)}–${Number(x.win_rate_ci95_high_pct).toFixed(1)}%`;
+      };
+      const stat93 = (payload, horizon) => (((payload || {})[horizon] || {}).validation || {});
+      const t1 = stat93(trial13, '1D');
+      const t2 = stat93(trial13, '2D');
+      document.getElementById('er-v93-protocol').innerHTML =
+        `<strong>Build:</strong> ${v93.build_id} · <strong>Trial ${((trial13.spec || {}).trial_number || 13)}</strong> pre-registered · family-wise α ${protocol93.familywise_alpha ?? '—'} · Bonferroni α ${protocol93.bonferroni_alpha == null ? '—' : Number(protocol93.bonferroni_alpha).toFixed(6)} · ` +
+        `<strong>Intraday OI coverage:</strong> ${protocol93.intraday_oi_coverage_pct == null ? '—' : protocol93.intraday_oi_coverage_pct + '%'} · <strong>Daily continuous OI:</strong> ${coverage.symbols_with_daily_oi || 0}/${coverage.symbols_measured || 0} symbols. ` +
+        `<span style="color:#d9a441"><strong>Research/shadow only; no production activation.</strong></span>`;
+      const statusColour = trial13.coverage_status === 'MEASURED' ? '#d9a441' : 'var(--red)';
+      document.getElementById('er-v93-trial13').innerHTML = `
+        <h4 style="margin:12px 0 6px;">Trial 13 · Silent OI Build → Ignition <span class="hint">final 20% locked</span></h4>
+        <p class="hint">OI z≥${(trial13.spec || {}).oi_z_min ?? 1.5} while 60m price displacement ≤${(trial13.spec || {}).price_flat_max_atr ?? 0.5} ATR → first breakout within ${(trial13.spec || {}).lead_window_bars || 4} bars → NIFTY absolute regime aligned → no chase beyond ${(trial13.spec || {}).max_entry_extension_atr ?? 1.25} ATR.</p>
+        <table><thead><tr><th>Candidate N</th><th>1D validation N</th><th>1D Avg / PF</th><th>1D Win 95% CI</th><th>2D validation N</th><th>2D Avg / PF</th><th>2D Win 95% CI</th><th>Status</th></tr></thead><tbody><tr>
+          <td>${trial13.candidate_count || 0}</td><td>${t1.trade_count || 0}</td><td>${pct(t1.avg_return_pct)} / ${pf(t1.profit_factor)}</td><td>${ci(t1)}</td><td>${t2.trade_count || 0}</td><td>${pct(t2.avg_return_pct)} / ${pf(t2.profit_factor)}</td><td>${ci(t2)}</td><td style="color:${statusColour}"><strong>${trial13.coverage_status || 'RESEARCH'}</strong></td>
+        </tr></tbody></table>`;
+
+      const dlabels = {
+        long_buildup:'Long Buildup', short_buildup:'Short Buildup', fresh_breakout:'Fresh Breakout',
+        fresh_breakout_regime_aligned:'Fresh Breakout + Absolute Regime',
+        oi_acceleration_moderate_plus:'OI acceleration ≥ 0.5pp',
+        tod_rvol_1_3_plus:'TOD RVOL ≥ 1.3×',
+        compression_60_plus:'Compression / Coil ≥ 60',
+        relative_direction_aligned:'Relative direction aligned',
+        vwap_aligned:'VWAP direction aligned',
+        atr_floor_scaled:'Scaled ATR floor',
+        not_extended:'Inside 1.25 ATR anti-chase',
+        silent_oi_to_ignition_no_chase:'Silent OI → Ignition · No-Chase'
+      };
+      const drows = Object.entries(v93.directional_components || {}).map(([key,x]) => {
+        const a = (x || {})['1D'] || {}; const b = (x || {})['2D'] || {};
+        return `<tr><td><strong>${dlabels[key] || key.replaceAll('_',' ')}</strong></td><td>${x.event_count || 0}</td><td>${a.trade_count || 0}</td><td>${pct(a.avg_return_pct)} / ${pf(a.profit_factor)}</td><td>${a.distinct_days || 0}</td><td>${b.trade_count || 0}</td><td>${pct(b.avg_return_pct)} / ${pf(b.profit_factor)}</td><td>${b.distinct_days || 0}</td></tr>`;
+      }).join('');
+      document.getElementById('er-v93-directional').innerHTML = `<table><thead><tr><th>Component</th><th>Events</th><th>1D N</th><th>1D Avg / PF</th><th>1D Days</th><th>2D N</th><th>2D Avg / PF</th><th>2D Days</th></tr></thead><tbody>${drows || '<tr><td colspan="8">No directional component events.</td></tr>'}</tbody></table>`;
+
+      const mlabels = {silent_oi:'Silent OI onset', compression_onset:'Compression onset', daily_oi_anomaly:'Point-in-time Daily OI anomaly', baseline:'Baseline'};
+      const mrows = Object.entries(v93.movement_components || {}).map(([key,x]) => {
+        const a=(x||{})['1D']||{}; const b=(x||{})['2D']||{};
+        return `<tr><td><strong>${mlabels[key] || key.replaceAll('_',' ')}</strong></td><td>${a.event_count || 0}</td><td>${a.avg_max_abs_move_atr == null ? '—' : Number(a.avg_max_abs_move_atr).toFixed(2)}</td><td>${a.hit_1atr_pct == null ? '—' : a.hit_1atr_pct + '%'}</td><td>${a.lift_vs_baseline == null ? '—' : Number(a.lift_vs_baseline).toFixed(2) + '×'}</td><td>${b.avg_max_abs_move_atr == null ? '—' : Number(b.avg_max_abs_move_atr).toFixed(2)}</td><td>${b.hit_1atr_pct == null ? '—' : b.hit_1atr_pct + '%'}</td><td>${b.lift_vs_baseline == null ? '—' : Number(b.lift_vs_baseline).toFixed(2) + '×'}</td></tr>`;
+      }).join('');
+      document.getElementById('er-v93-movement').innerHTML = `<table><thead><tr><th>Precursor</th><th>N</th><th>1D Avg max move (ATR)</th><th>1D ≥1ATR</th><th>1D Lift</th><th>2D Avg max move (ATR)</th><th>2D ≥1ATR</th><th>2D Lift</th></tr></thead><tbody>${mrows || '<tr><td colspan="8">No precursor events.</td></tr>'}</tbody></table>`;
+    }
+  }
 
   const v91 = r.v91_goal || {};
   const v91Box = document.getElementById('er-v91-goal');
@@ -944,213 +973,26 @@ function renderEarlyResearch(result) {
 function pollEarlyResearch() {
   fetch('/api/early-research/status').then(r => r.json()).then(st => { updateEarlyResearchUI(st); if (st.status === 'running') setTimeout(pollEarlyResearch, 2500); }).catch(() => setTimeout(pollEarlyResearch, 5000));
 }
+document.getElementById('er-v93-run-btn').addEventListener('click', function () {
+  document.getElementById('scope-timeframe').value = '15minute';
+  document.getElementById('scope-days').value = '180';
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v93_lab'}, 'er-form-hint', pollEarlyResearch);
+});
 document.getElementById('er-v91-run-btn').addEventListener('click', function () {
   document.getElementById('scope-timeframe').value = '15minute';
   document.getElementById('scope-days').value = '180';
   startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v91_fast'}, 'er-form-hint', pollEarlyResearch);
 });
 document.getElementById('er-run-btn').addEventListener('click', function () {
-  const scope = readScope();
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:scope.timeframe, days:scope.days, horizons:[]}, {mode:'legacy'}, 'er-form-hint', pollEarlyResearch);
+  document.getElementById('scope-timeframe').value = '4hour';
+  document.getElementById('scope-days').value = '180';
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'er-form-hint', pollEarlyResearch);
 });
 const initialEarlyResearchState = {{ early_research_state | tojson }};
 updateEarlyResearchUI(initialEarlyResearchState);
 if (initialEarlyResearchState.status === 'running') pollEarlyResearch();
 
-// --- Gate ablation sweep -----------------------------------------------
-function renderAblation(result) {
-  const wrap = document.getElementById('ab-results');
-  wrap.style.display = 'block';
-  const b = result.baseline || {};
-  const pct = v => (v === null || v === undefined) ? '\u2014' : v + '%';
-  const signed = (v, suf) => (v === null || v === undefined) ? '\u2014' : (v > 0 ? '+' : '') + v + (suf || '');
-  const bh = b.holdout || {};
-  document.getElementById('ab-meta').textContent =
-    `Baseline: ${pct(b.avg_return_pct)} full avg \u00b7 PF ${b.profit_factor ?? '\u2014'} \u00b7 ` +
-    `${pct(bh.avg_return_pct)} holdout avg \u00b7 holdout PF ${bh.profit_factor ?? '\u2014'} \u00b7 ` +
-    `${b.trade_count || 0} trades \u2014 ${result.timeframe}, ${result.days} days, ${result.symbols_count} symbols, ` +
-    `${result.ref_horizon}-bar reference, 30% chronological holdout, net of ${result.cost_pct}% costs + ${result.slippage_pct}% slippage/side`;
-  const skipWrap = document.getElementById('ab-skipped');
-  const skipped = result.skipped || [];
-  skipWrap.innerHTML = skipped.length
-    ? '<strong>Not tested (' + skipped.length + '):</strong> ' +
-      skipped.map(sk => sk.label + ' \u2014 ' + sk.reason).join('<br>')
-    : '';
-  const body = document.getElementById('ab-table-body');
-  body.innerHTML = '';
-  (result.rows || []).forEach(r => {
-    const d = r.holdout_avg_return_delta;
-    const colour = (d === null || d === undefined) ? '' :
-      (d > 0 ? 'color:var(--green);font-weight:600;' : (d < 0 ? 'color:var(--red);' : ''));
-    const tr = document.createElement('tr');
-
-    // A gate that reported coverage and had NONE never actually ran. Its
-    // numbers are not a result, and showing them beside real ones invites
-    // exactly the wrong conclusion - that the gate was checked and found
-    // harmless. Strike the row and say why instead.
-    if (r.fired === false) {
-      tr.innerHTML = `
-        <td>${r.label}</td>
-        <td colspan="8" style="color:var(--amber);">
-          <strong>Did not run.</strong> The reading this gate depends on was unavailable for every
-          signal bar, so it passed everything through untested. Its 0% is not a finding &mdash; fix the
-          data path, then re-run. Nothing here tells you whether this gate helps.
-        </td>`;
-      body.appendChild(tr);
-      return;
-    }
-
-    // Two numbers, because they mean opposite things. Low DATA coverage is a
-    // broken gate. Low VERDICT coverage with good data is a working gate
-    // that is simply strict - a finding, not a fault.
-    let cov = '';
-    if (r.data_coverage !== null && r.data_coverage !== undefined) {
-      const dp = Math.round(r.data_coverage * 100);
-      const vp = Math.round((r.reading_coverage || 0) * 100);
-      if (dp < 50) {
-        cov = ` <span class="hint" style="color:var(--amber);" title="The reading this gate needs was missing on ${100 - dp}% of signal bars, so it passed those through untested. This is a data problem, not a result.">data on only ${dp}%</span>`;
-      } else if (vp < 10) {
-        cov = ` <span class="hint" title="The reading existed on ${dp}% of signal bars but was decisive on only ${vp}%. The gate is working and simply very strict - it rarely has an opinion, so it rarely changes anything.">decisive on ${vp}% of ${dp}%</span>`;
-      } else if (vp < 95) {
-        cov = ` <span class="hint" title="Decisive on ${vp}% of signal bars (data present on ${dp}%).">decisive ${vp}%</span>`;
-      }
-    } else if (r.reading_coverage !== null && r.reading_coverage !== undefined && r.reading_coverage < 0.95) {
-      cov = ` <span class="hint">${Math.round(r.reading_coverage * 100)}% read</span>`;
-    }
-
-    let oiCounts = '';
-    if (r.oi_passed !== null && r.oi_passed !== undefined) {
-      oiCounts = ` <span class="hint" title="OI verdicts among candidate bars">pass ${r.oi_passed} / fail ${r.oi_failed ?? 0} / missing ${r.oi_missing ?? 0}</span>`;
-    }
-    tr.innerHTML = `
-      <td>${r.kind === 'pair' ? '<strong>PAIR</strong> ' : ''}${r.label}${cov}${oiCounts}</td>
-      <td>${pct(r.avg_return_pct)}</td>
-      <td>${signed(r.avg_return_delta, '%')}</td>
-      <td>${r.profit_factor ?? '\u2014'}</td>
-      <td style="${colour}">${pct(r.holdout_avg_return_pct)}</td>
-      <td>${r.holdout_profit_factor ?? '\u2014'}</td>
-      <td>${pct(r.win_rate_pct)}</td>
-      <td>${r.trade_count ?? 0}</td>
-      <td>${r.trades_removed_pct === null || r.trades_removed_pct === undefined ? '\u2014' : r.trades_removed_pct + '%'}</td>
-    `;
-    body.appendChild(tr);
-  });
-}
-
-function pollAblation() {
-  fetch('/api/ablation/status').then(r => r.json()).then(state => {
-    updateAblationUI(state);
-    if (state.status === 'running') setTimeout(pollAblation, 2500);
-  }).catch(() => setTimeout(pollAblation, 5000));
-}
-
-function updateAblationUI(state) {
-  const progress = document.getElementById('ab-progress');
-  const errorBox = document.getElementById('ab-error');
-  const runBtn = document.getElementById('ab-run-btn');
-  if (state.status === 'running') {
-    runBtn.disabled = true;
-    progress.style.display = 'block';
-    errorBox.style.display = 'none';
-    const p = state.progress || {};
-    const phaseTotal = p.phase_total || 10;
-    const phaseIndex = p.phase_index || 0;
-    const withinPct = p.total ? (p.done / p.total) * (100 / phaseTotal) : 0;
-    const pctDone = Math.min(100, Math.round((phaseIndex / phaseTotal) * 100 + withinPct));
-    document.getElementById('ab-progress-fill').style.width = pctDone + '%';
-    document.getElementById('ab-progress-label').textContent =
-      `${p.phase_label || 'Starting'} (${phaseIndex + 1}/${phaseTotal}) - ${p.symbol ? p.symbol + ' ' : ''}${p.done ?? 0}/${p.total ?? 0}\u2026`;
-  } else {
-    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
-    progress.style.display = 'none';
-  }
-  if (state.status === 'error') {
-    errorBox.style.display = 'block';
-    errorBox.textContent = 'Gate sweep failed: ' + (state.error || 'unknown error');
-  }
-  if (state.status === 'done' && state.result) renderAblation(state.result);
-}
-
-document.getElementById('ab-run-btn').addEventListener('click', function () {
-  const scope = readScope();
-  startJob('/api/ablation/start', scope, { ref_horizon: String(scope.refHorizon) }, 'ab-form-hint', pollAblation);
-});
-
-const initialAblationState = {{ ablation_state | tojson }};
-updateAblationUI(initialAblationState);
-if (initialAblationState.status === 'running') pollAblation();
-else if (initialAblationState.status === 'done' && initialAblationState.result) renderAblation(initialAblationState.result);
-
-
-// --- Overnight (BTST/STBT) premise test ----------------------------------
-// Enter at the SIGNAL BAR's close, exit next open and next close. The normal
-// backtest also reports short 1-3 bar horizons, but enters at the next open;
-// that still cannot measure the overnight gap captured from today's close.
-document.getElementById('on-run').addEventListener('click', function () {
-  const scope = readScope();
-  const hint = document.getElementById('on-hint');
-  hint.textContent = 'Starting\u2026';
-  const body = new URLSearchParams({
-    universe: scope.universe || 'watchlist',
-    days: String(scope.days || 365),
-    require_up_day: document.getElementById('on-upday').checked ? 'on' : 'off',
-  });
-  fetch('/api/overnight/start', { method: 'POST', body })
-    .then(r => r.json())
-    .then(d => {
-      if (!d.started) { hint.textContent = 'Could not start: ' + (d.reason || 'unknown'); return; }
-      hint.textContent = 'Running\u2026';
-      pollOvernight();
-    })
-    .catch(e => { hint.textContent = 'Failed: ' + e; });
-});
-
-function pollOvernight() {
-  fetch('/api/overnight/status').then(r => r.json()).then(st => {
-    const hint = document.getElementById('on-hint');
-    if (st.status === 'running') {
-      const p = st.progress;
-      hint.textContent = p ? ('Running\u2026 ' + p.done + '/' + p.total + ' (' + p.symbol + ')') : 'Running\u2026';
-      setTimeout(pollOvernight, 2000);
-      return;
-    }
-    if (st.status === 'error') { hint.textContent = 'Error: ' + st.error; return; }
-    if (st.status !== 'done' || !st.result) { hint.textContent = ''; return; }
-    hint.textContent = 'Done.';
-    renderOvernight(st.result);
-  }).catch(function () { setTimeout(pollOvernight, 3000); });
-}
-
-function renderOvernight(res) {
-  const el = document.getElementById('on-results');
-  const s = res.summary || {};
-  function row(strategy, label, st) {
-    if (!st || !st.trade_count) return '<tr><td>' + strategy + '</td><td>' + label + '</td><td colspan="3">no trades</td></tr>';
-    const thin = st.trade_count < 30 ? ' <span class="hint">thin</span>' : '';
-    return '<tr><td><strong>' + strategy + '</strong></td><td><strong>' + label + '</strong></td>' +
-      '<td style="text-align:right;">' + st.trade_count + thin + '</td>' +
-      '<td style="text-align:right;">' + st.win_rate_pct + '%</td>' +
-      '<td style="text-align:right;">' + st.avg_return_pct + '%</td></tr>';
-  }
-  const cont = s.continuation || {};
-  const rev = s.reversal || {};
-  const c = cont.next_open || {}, r = rev.next_open || {};
-  let verdict = '';
-  if ((c.trade_count || 0) >= 100 && c.avg_return_pct != null && r.avg_return_pct != null) {
-    if (c.avg_return_pct <= 0 && r.avg_return_pct > 0) {
-      verdict = '<p class="hint"><strong>Reversal is stronger on this window.</strong> Do not force the old continuation BTST rule. Validate the reversal leg on a different/holdout period before using it live.</p>';
-    } else if (c.avg_return_pct > 0 && c.win_rate_pct >= 50) {
-      verdict = '<p class="hint"><strong>Continuation has positive expectancy on this window.</strong> Confirm it on a holdout period before enabling live BTST alerts.</p>';
-    } else {
-      verdict = '<p class="hint"><strong>No robust overnight edge is visible.</strong> Keep BTST alerts disabled and use the Intraday Best Entry / Swing 1–2D engines instead.</p>';
-    }
-  }
-  el.innerHTML = '<table class="tbl"><thead><tr><th>Strategy</th><th>Exit</th><th style="text-align:right;">Trades</th>'
-    + '<th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return (net)</th></tr></thead><tbody>'
-    + row('Continuation', 'Next open', cont.next_open) + row('Continuation', 'Next close', cont.next_close)
-    + row('Reversal', 'Next open', rev.next_open) + row('Reversal', 'Next close', rev.next_close)
-    + '</tbody></table>' + verdict;
-}
+// Retired legacy research workflows are intentionally not exposed in V9.3.
 
 </script>
 </body>

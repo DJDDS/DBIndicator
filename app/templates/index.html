@@ -522,7 +522,19 @@
         </section>
       </div>
       <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
-      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.2.10 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
+      <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.3.0 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
+    </div>
+    <div id="swing-research-console" class="live-opportunity-radar" aria-label="Swing Research Shadow 1D 2D">
+      <div class="lor-head">
+        <div><div class="lor-kicker">Swing Research / Shadow · 1D / 2D</div>
+        <div class="lor-sub">Research-only horizon routing: active ignition is evaluated as 1D attention; quiet abnormal-OI/compression positioning is evaluated as 2D attention. A symbol is routed to one horizon only. This is not a production trade signal.</div></div>
+      </div>
+      <div class="lor-grid">
+        <section class="lor-side bull"><div class="lor-side-head">1D Attention</div><div id="swing-1d-list" class="lor-list"><div class="v8-empty">Waiting for 1D research candidates…</div></div></section>
+        <section class="lor-side bear"><div class="lor-side-head">2D Attention</div><div id="swing-2d-list" class="lor-list"><div class="v8-empty">Waiting for 2D research candidates…</div></div></section>
+      </div>
+      <div id="swing-forward-evidence" class="lor-forward"><strong>Horizon forward evidence:</strong> waiting for routed 1D/2D events to mature.</div>
+      <div class="lor-note">Horizon routing is a V9.3 research hypothesis. 1D/2D forward outcomes are measured separately before any production use.</div>
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
@@ -696,14 +708,14 @@
             {% if r.vol_contracting or r.nr7 or (r.big_candle_recent_direction is defined and r.big_candle_recent_direction) or (r.close_position_pct is defined and r.close_position_pct is not none) or (r.delivery_pct is defined and r.delivery_pct is not none) %}
             <div class="atr-risk">
               {% if r.vol_contracting %}<span style="color:var(--accent); margin-right:6px;" title="Bollinger Band width is at the {{ r.bb_width_percentile }}th percentile of its own last {{ vol_contraction_lookback }} bars - a tight, coiled range that has historically preceded bigger breakouts more often than an already-wide one (Volatility Contraction Pattern)">🎯 Coiling</span>{% endif %}
-              {% if r.nr7 %}<span class="{{ '' if is_btst_timeframe else 'tf-offmeaning' }}" style="margin-right:6px;" title="{% if is_btst_timeframe %}Narrowest {{ timeframe_label }} range of the last 7 bars - the classic NR7 squeeze{% else %}Narrowest of the last 7 {{ timeframe_label }} bars. NOT the classic daily NR7 - on this timeframe it reads intraday compression, not a day-scale squeeze. Switch Timeframe to day for the BTST meaning.{% endif %}">NR7</span>{% endif %}
+              {% if r.nr7 %}<span class="{{ '' if is_daily_timeframe else 'tf-offmeaning' }}" style="margin-right:6px;" title="{% if is_daily_timeframe %}Narrowest {{ timeframe_label }} range of the last 7 bars - the classic NR7 squeeze{% else %}Narrowest of the last 7 {{ timeframe_label }} bars. NOT the classic daily NR7 - on this timeframe it reads intraday compression, not a day-scale squeeze. Switch Timeframe to day for the classic daily interpretation.{% endif %}">NR7</span>{% endif %}
               {% if r.big_candle_recent_direction is defined and r.big_candle_recent_direction %}
               <span class="{{ 'bull' if r.big_candle_recent_direction == 'Bullish' else 'bear' }}" style="margin-right:6px;"
                     title="{% if r.big_candle_recent_bars_ago == 0 %}This bar is a range-expansion big candle{% else %}Big candle {{ r.big_candle_recent_bars_ago }} bar(s) ago{% endif %}, level {{ r.big_candle_recent_level }}.{% if r.big_candle_continuation is not none %} {{ 'Price has continued through it.' if r.big_candle_continuation else 'Not yet cleared.' }}{% endif %}{% if r.big_candle_agrees is defined and r.big_candle_agrees == false %} Disagrees with this row's own direction.{% endif %}">
                 💥{{ '▲' if r.big_candle_recent_direction == 'Bullish' else '▼' }} {{ r.big_candle_recent_level }}{% if r.big_candle_continuation %} ✓{% endif %}
               </span>
               {% endif %}
-              {% if r.close_position_pct is defined and r.close_position_pct is not none %}<span class="{{ '' if is_btst_timeframe else 'tf-offmeaning' }}" style="margin-right:6px;" title="Close landed at {{ r.close_position_pct }}% of this {{ timeframe_label }} bar's own high-low range (100% = closed at the high).{% if not is_btst_timeframe %} On this timeframe that means the last {{ timeframe_label }} bar, NOT the trading day - it is not the BTST 'closed strong on the day' read. Switch Timeframe to day for that.{% endif %}{% if r.strong_close_agrees is defined and r.strong_close_agrees == false %} Not extreme enough to agree with this row's own direction.{% endif %}">Close@{{ r.close_position_pct }}%</span>{% endif %}
+              {% if r.close_position_pct is defined and r.close_position_pct is not none %}<span class="{{ '' if is_daily_timeframe else 'tf-offmeaning' }}" style="margin-right:6px;" title="Close landed at {{ r.close_position_pct }}% of this {{ timeframe_label }} bar's own high-low range (100% = closed at the high).{% if not is_daily_timeframe %} On this timeframe that means the last {{ timeframe_label }} bar, NOT the trading day - it is not a full-session 'closed strong on the day' read. Switch Timeframe to day for that.{% endif %}{% if r.strong_close_agrees is defined and r.strong_close_agrees == false %} Not extreme enough to agree with this row's own direction.{% endif %}">Close@{{ r.close_position_pct }}%</span>{% endif %}
               {% if r.delivery_pct is defined and r.delivery_pct is not none %}<span title="NSE delivery %: {{ r.delivery_pct }} (as of {{ r.delivery_date }}) - always a DAILY figure from NSE's own bhavcopy, unaffected by your scan timeframe, and never a live intraday number{% if r.delivery_agrees is defined and r.delivery_agrees == false %} - below your configured threshold{% endif %}">Deliv {{ r.delivery_pct }}%</span>{% endif %}
             </div>
             {% endif %}
@@ -833,8 +845,8 @@
     <strong>Live ranking is not the old indicator vote.</strong> Best Entries is NSE stock-F&amp;O only and ranks seven evidence groups:
     OI velocity/acceleration (25%), compression/BB-coil energy (20%), time-of-day participation (15%), momentum inflection/fresh trigger (15%),
     stock/sector/NIFTY relative-strength acceleration (10%), VWAP/entry structure (10%) and higher-timeframe context (5%).
-    The table below keeps extra diagnostics for investigation, but candlestick patterns, delivery %, breadth, big-candle/strong-close and BTST/STBT do not drive Best Entries.
-    Overnight ideas stay research-only until they show positive chronological holdout expectancy after costs.
+    The table below keeps extra diagnostics for investigation, but candlestick patterns, delivery %, breadth and legacy big-candle/strong-close diagnostics do not drive Best Entries.
+    Legacy confirmation diagnostics stay research-only and do not create production candidates.
   </div>
   </div>
 </div>
@@ -1205,7 +1217,7 @@
     }
     var days = Number(summary.distinct_trade_days || 0);
     el.textContent = 'Captured ' + (summary.events ?? 0) + ' events (' + (summary.captured_today ?? 0) + ' today · ' + days + ' trading day' + (days === 1 ? '' : 's') + ') · ' +
-      ['30m','1h','2h','4h','1D'].map(one).join(' | ');
+      ['30m','1h','2h','4h','1D','2D'].map(one).join(' | ');
   }
 
   (function bindScanFailureToggle() {
@@ -1355,9 +1367,48 @@
     '</article>';
   }
 
+  function renderSwingResearch(consoleData, forwardData) {
+    consoleData = consoleData || {};
+    function cards(rows, horizon) {
+      rows = rows || [];
+      if (!rows.length) return '<div class="v8-empty">No ' + horizon + ' research attention name right now.</div>';
+      return rows.map(function (row, i) {
+        var side = row.direction === 'Bearish' ? 'bear' : 'bull';
+        var reason = row.horizon_reason || 'Research horizon routing';
+        return '<article class="lor-card ' + side + '">' +
+          '<div class="lor-rank">#' + (i+1) + '</div>' +
+          '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + horizon + ' · ' + v8Esc(row.direction || '—') + '</small></div>' +
+          '<div class="lor-score"><strong>' + v8Num(row.horizon_score,0) + '</strong><span class="building">RESEARCH</span></div>' +
+          '<div class="lor-evidence"><div class="lor-reasons"><span class="lor-reason">' + v8Esc(reason) + '</span></div></div>' +
+        '</article>';
+      }).join('');
+    }
+    var one = ((consoleData['1D'] || {}).bullish || []).concat(((consoleData['1D'] || {}).bearish || []));
+    var two = ((consoleData['2D'] || {}).bullish || []).concat(((consoleData['2D'] || {}).bearish || []));
+    one.sort(function(a,b){ return Number(b.horizon_score||0)-Number(a.horizon_score||0); });
+    two.sort(function(a,b){ return Number(b.horizon_score||0)-Number(a.horizon_score||0); });
+    var oneBox = document.getElementById('swing-1d-list');
+    var twoBox = document.getElementById('swing-2d-list');
+    if (oneBox) oneBox.innerHTML = cards(one, '1D');
+    if (twoBox) twoBox.innerHTML = cards(two, '2D');
+    var evidence = document.getElementById('swing-forward-evidence');
+    if (evidence) {
+      var routed = (forwardData || {}).by_research_horizon || {};
+      function summary(target) {
+        var x = ((routed[target] || {})[target]) || {};
+        if (!x.n) return target + ' · n 0';
+        var avg = x.avg_net_return_pct == null ? '—' : ((x.avg_net_return_pct >= 0 ? '+' : '') + v8Num(x.avg_net_return_pct,2) + '%');
+        var pf = x.net_profit_factor == null ? '—' : v8Num(x.net_profit_factor,2);
+        return target + ' · n ' + x.n + ' · net ' + avg + ' · PF ' + pf;
+      }
+      evidence.innerHTML = '<strong>Horizon forward evidence:</strong> ' + summary('1D') + ' &nbsp; | &nbsp; ' + summary('2D');
+    }
+  }
+
   function renderV8Leaders(payload) {
     lastV8Payload = payload || {};
     renderLiveOpportunityRadar(lastV8Payload.opportunity_radar);
+    renderSwingResearch(lastV8Payload.swing_research, lastV8Payload.opportunity_forward);
     var view = (lastV8Payload[v8View] || {});
     var bull = view.bullish || [];
     var bear = view.bearish || [];

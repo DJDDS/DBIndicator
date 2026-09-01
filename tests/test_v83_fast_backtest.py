@@ -65,7 +65,7 @@ def test_primary_v8_button_requests_fast_mode_and_ui_has_staged_progress():
 def test_legacy_diagnostic_button_explicitly_requests_full_mode():
     template = (ROOT / "app" / "templates" / "backtest.html").read_text(encoding="utf-8")
     body = template[template.index("document.getElementById('er-run-btn')"):]
-    assert "mode:'legacy'" in body.replace(" ", "")
+    assert "mode:'legacy_4h'" in body.replace(" ", "")
 
 
 def test_fast_result_hides_legacy_research_sections_in_ui():

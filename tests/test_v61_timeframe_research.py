@@ -156,9 +156,10 @@ def test_primary_research_respects_4hour_setup_and_fetches_15minute_execution(mo
     assert replay_seen['execution_rows'] == len(execution)
 
 
-def test_diagnostic_research_uses_selected_scope_while_v81_primary_is_fixed_15m():
+def test_legacy_4hour_diagnostic_is_fixed_4h_while_v92_primary_is_fixed_15m():
     text = open('app/templates/backtest.html', encoding='utf-8').read().replace(' ', '')
-    assert "timeframe:scope.timeframe" in text
+    assert "mode:'legacy_4h'" in text
+    assert "timeframe:'4hour'" in text
     assert "timeframe:'15minute'" in text
     assert 'er-v91-run-btn' in text
     assert 'er-v7-run-btn' not in text

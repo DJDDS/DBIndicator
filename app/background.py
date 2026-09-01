@@ -1666,6 +1666,7 @@ def _run_loop():
                         results, index_direction=index_direction, index_chg_pct=index_chg_pct,
                         market_breadth=breadth,
                     )
+                    swing_snapshot = oi_view.swing_research_console(radar_snapshot)
                     with _state_lock:
                         _state["results"] = results
                         _state["index_direction"] = index_direction
@@ -1676,7 +1677,8 @@ def _run_loop():
                             _state.get("scan_symbol_health") or {}, results, scan_ts
                         )
                         _state["opportunity_forward"] = opportunity_forward.process_scan(
-                            _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now
+                            _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
+                            swing_research=swing_snapshot,
                         )
                         _state["last_scan"] = scan_ts
                         _state["last_error"] = None

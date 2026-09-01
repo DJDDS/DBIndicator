@@ -9,7 +9,7 @@ from . import alerts, backtest, background, config, delivery, early_signal, indi
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
-from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar
+from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console
 
 log = logging.getLogger(__name__)
 
@@ -130,9 +130,6 @@ def dashboard():
         git_commit=config.GIT_COMMIT,
         git_message=config.GIT_MESSAGE,
         started_at=_STARTED_AT,
-        btst_window=scanner.btst_read_window(),
-        btst_now=scanner.now_ist().strftime("%H:%M"),
-        btst_alert_time=settings.BTST_ALERT_TIME,
         screen_param_defs=background.SCREEN_PARAM_DEFS,
         opening_window_minutes=indicators.OPENING_WINDOW_MINUTES,
         opening_window_end="9:%02d" % (15 + indicators.OPENING_WINDOW_MINUTES),
@@ -152,11 +149,8 @@ def dashboard():
         vol_contraction_lookback=settings.VOL_CONTRACTION_LOOKBACK,
         max_entry_extension_atr=settings.MAX_ENTRY_EXTENSION_ATR,
         min_atr_pct=settings.MIN_ATR_PCT,
-        # Drives the BTST-meaning honesty layer on the dashboard - see
-        # config.BTST_TIMEFRAMES for why a Close@/NR7 reading taken on a
-        # 15-minute bar must not be presented as the daily one.
         timeframe_label=config.TIMEFRAME_LABELS.get(config.WATCHLIST_TIMEFRAME, config.WATCHLIST_TIMEFRAME),
-        is_btst_timeframe=config.WATCHLIST_TIMEFRAME in config.BTST_TIMEFRAMES,
+        is_daily_timeframe=config.WATCHLIST_TIMEFRAME == "day",
     )
 
 
@@ -182,6 +176,10 @@ def api_dashboard_state():
             rows, index_direction=state.get("index_direction"),
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
         ),
+        "swing_research": swing_research_console(live_opportunity_radar(
+            rows, index_direction=state.get("index_direction"),
+            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        )),
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
         "counts": _dashboard_counts(
             rows, index_direction=state.get("index_direction"),
@@ -207,6 +205,7 @@ def api_v8_dashboard():
         rows, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
+    payload["swing_research"] = swing_research_console(payload["opportunity_radar"])
     payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()
@@ -217,10 +216,10 @@ def api_v8_dashboard():
 @app.route("/api/opportunity-forward/export")
 @require_dashboard_password
 def api_opportunity_forward_export():
-    """Download the raw V9.2.10 live-opportunity forward-validation state."""
+    """Download the raw V9.3.0 live-opportunity forward-validation state."""
     state = get_state().get("opportunity_forward") or opportunity_forward.empty_state()
     body = json.dumps(state, indent=2, default=str)
-    headers = {"Content-Disposition": "attachment; filename=v929_opportunity_forward_validation.json"}
+    headers = {"Content-Disposition": "attachment; filename=v930_opportunity_forward_validation.json"}
     return Response(body, mimetype="application/json", headers=headers)
 
 
@@ -341,9 +340,6 @@ def settings_page():
         min_early_score=settings.MIN_EARLY_SCORE,
         shortlist_max=settings.SHORTLIST_MAX,
         require_oi_agreement=settings.REQUIRE_OI_AGREEMENT,
-        btst_window=scanner.btst_read_window(),
-        btst_now=scanner.now_ist().strftime("%H:%M"),
-        btst_alert_time=settings.BTST_ALERT_TIME,
         telegram_token_set=bool(config.TELEGRAM_BOT_TOKEN),
         delivery_status=delivery.get_status(),
     )
@@ -588,14 +584,21 @@ def api_early_research_start():
     if not symbols:
         return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
     mode = request.form.get("mode", "legacy")
-    if mode not in ("legacy", "v8_fast", "v9_fast", "v91_fast", "v91_bear_final"):
+    if mode not in ("legacy", "legacy_4h", "v8_fast", "v9_fast", "v91_fast", "v91_bear_final", "v93_lab"):
         return jsonify({"started": False, "reason": "unsupported research mode"}), 400
-    if mode in ("v91_fast", "v91_bear_final"):
+    if mode in ("v91_fast", "v91_bear_final", "v93_lab"):
         timeframe = "15minute"
         days = 180
+    if mode == "legacy_4h":
+        # Dedicated diagnostic: never inherit a stale 15-minute scope value.
+        # 4H signals are formed only on completed 4H candles and execute on
+        # the first available 15-minute bar after the setup candle closes.
+        timeframe = "4hour"
+        days = 180
+        mode = "legacy"
     return jsonify(backtest.start_early_movement_research(
         kite, symbols=symbols, timeframe=timeframe, days=days, universe_is_full_fno=True,
-        fast_v8=(mode in ("v8_fast", "v9_fast", "v91_fast", "v91_bear_final")),
+        fast_v8=(mode in ("v8_fast", "v9_fast", "v91_fast", "v91_bear_final", "v93_lab")),
         research_mode=mode,
     ))
 
@@ -801,37 +804,6 @@ def api_weights_start():
 @require_dashboard_password
 def api_weights_status():
     return jsonify(backtest.get_weights_state())
-
-
-@app.route("/api/overnight/start", methods=["POST"])
-@require_dashboard_password
-def api_overnight_start():
-    """Does the BTST/STBT premise hold? Enter at the signal bar's close,
-    exit next open and next close - the trade as actually taken, which no
-    other endpoint here can express."""
-    kite = kite_auth.get_kite_client()
-    if kite is None:
-        return jsonify({"started": False, "reason": "not logged in to Kite"}), 400
-    form = request.form
-    universe = form.get("universe", "watchlist")
-    symbols = list(settings.WATCHLIST) if universe == "watchlist" else list(settings.WATCHLIST)
-    try:
-        days = int(form.get("days", 365))
-    except (TypeError, ValueError):
-        days = 365
-    lo, hi, _d = backtest.backtest_day_bounds("day")
-    if not (lo <= days <= hi):
-        return jsonify({"started": False,
-                        "reason": f"days must be between {lo} and {hi} for daily candles"}), 400
-    return jsonify(backtest.start_overnight_backtest(
-        kite, symbols, timeframe="day", days=days,
-        require_up_day=form.get("require_up_day", "on") == "on"))
-
-
-@app.route("/api/overnight/status")
-@require_dashboard_password
-def api_overnight_status():
-    return jsonify(backtest.get_overnight_state())
 
 
 @app.route("/api/ablation/start", methods=["POST"])
