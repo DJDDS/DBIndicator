@@ -2266,7 +2266,7 @@ def _compact_v8_feature_frame(frame):
 
 def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
                                 cost_pct=DEFAULT_COST_PCT, slippage_pct=DEFAULT_SLIPPAGE_PCT,
-                                progress_cb=None, stage_cb=None, universe_is_full_fno=False,
+                                progress_cb=None, stage_cb=None, input_progress_cb=None, universe_is_full_fno=False,
                                 fast_v8=False, research_mode=None, resume_run_dir=None) -> dict:
     """Replay the primary V6 research on a real 15m or 4H setup timeframe.
 
@@ -2293,10 +2293,11 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     daily_oi_coverage = {}
     if research_mode == "v93_lab":
         if stage_cb:
-            stage_cb(1, 4, "Loading point-in-time daily continuous OI baseline", 2)
+            stage_cb(1, 4, "Loading point-in-time daily continuous OI baseline", 1)
         try:
             daily_oi_map = scanner_mod.fetch_oi_history(
-                kite, symbols, timeframe="day", days_override=days + WARMUP_DAYS
+                kite, symbols, timeframe="day", days_override=days + WARMUP_DAYS,
+                progress_cb=input_progress_cb,
             )
         except Exception as exc:  # noqa: BLE001 - daily OI is disclosed, never fabricated
             log.warning("V9.3 daily continuous OI baseline unavailable: %s", exc)
@@ -3176,7 +3177,10 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
 
     def _progress(done, total, symbol):
         with _early_research_lock:
-            pct = 1 if not total else max(1, min(70, round((done / total) * 70)))
+            if research_mode == "v93_lab":
+                pct = 8 if not total else max(8, min(70, 8 + round((done / total) * 62)))
+            else:
+                pct = 1 if not total else max(1, min(70, round((done / total) * 70)))
             current_resume = (_early_research_state.get("progress") or {}).get("resume_summary")
             _early_research_state["progress"] = {
                 "done": done, "total": total, "symbol": symbol,
@@ -3186,6 +3190,23 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             }
         # Checkpoint periodically; do not turn every Kite symbol into a disk fsync.
         if done == 0 or done == total or done % 5 == 0:
+            _persist_early_research_state()
+
+    def _input_progress(done, total, symbol):
+        if research_mode != "v93_lab":
+            return
+        with _early_research_lock:
+            pct = 1 if not total else max(1, min(8, 1 + round((done / total) * 7)))
+            current_resume = (_early_research_state.get("progress") or {}).get("resume_summary")
+            _early_research_state["progress"] = {
+                "done": done, "total": total, "symbol": symbol,
+                "stage": "Loading point-in-time daily continuous OI baseline",
+                "stage_index": 1, "stage_total": 4, "overall_pct": pct,
+                "resume_summary": current_resume,
+            }
+        # Update memory on every heartbeat so polling shows the active symbol,
+        # but persist only every five completed symbols to avoid hot-loop fsync I/O.
+        if done == 0 or done == total or (done > 0 and done % 5 == 0):
             _persist_early_research_state()
 
     def _stage(stage_index, stage_total, stage, overall_pct):
@@ -3204,6 +3225,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             result = run_early_movement_research(
                 kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
                 cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress, stage_cb=_stage,
+                input_progress_cb=_input_progress if research_mode == "v93_lab" else None,
                 universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8, research_mode=research_mode,
                 resume_run_dir=job_run_dir)
             with _early_research_lock:

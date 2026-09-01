@@ -1,8 +1,12 @@
-# V9.3.2 Research UI Isolation
+# V9.3.2 — Research UI Isolation
 
-- Isolates V9.3, V9.2 manual diagnostic, and 4H diagnostic into separate progress/error/result channels.
-- V9.3 progress can no longer render inside the V9.2 card.
-- Relabels V9.2 as manual diagnostic only.
-- Gives 4H Diagnostic its own card and status channel.
-- Removes the public Custom Backtest UI and `/api/backtest/start` + `/api/backtest/status` routes.
-- Leaves fixed research engines, production evidence gate, Trial 13 preregistration, 0.18% friction, 1.25 ATR guard, and final-sample locks unchanged.
+Build: `2026-09-01-INSTITUTIONAL-V9.3.2-RESEARCH-UI-ISOLATION`
+
+## Fixes
+- V9.3 Anticipation Lab now owns its progress, error, status, and result area inside the V9.3 card.
+- V9.2 Diagnostic Reset is explicitly labelled a manual legacy diagnostic and owns a separate progress/error/result area.
+- 4H Diagnostic is a separate card with its own progress/error/status and legacy diagnostic results.
+- The shared backend research job is routed by `research_mode`; only the owning card can render the current job state.
+- V9.3 can no longer visually appear to be a V9.2 run simply because the shared status object is active.
+
+No strategy thresholds, evidence gates, costs, final-sample locks, Trial 13 rules, or production playbooks changed.

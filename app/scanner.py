@@ -250,7 +250,7 @@ def _resample_oi(rows, rule):
     return ser
 
 
-def fetch_oi_history(kite, symbols, timeframe="day", throttle=None, days_override=None):
+def fetch_oi_history(kite, symbols, timeframe="day", throttle=None, days_override=None, progress_cb=None):
     """{symbol: pandas Series of OI indexed by bar timestamp} for a timeframe.
 
     Never raises: a symbol Kite refuses simply gets no entry, and every
@@ -276,6 +276,8 @@ def fetch_oi_history(kite, symbols, timeframe="day", throttle=None, days_overrid
 
     todo = [sym for sym in symbols if sym not in entry]
     if not todo:
+        if progress_cb:
+            progress_cb(len(symbols), len(symbols), None)
         return dict(entry)
 
     # Serialise the sweeps. Whichever thread gets here first does the work;
@@ -284,34 +286,46 @@ def fetch_oi_history(kite, symbols, timeframe="day", throttle=None, days_overrid
     with _oi_history_lock:
         todo = [sym for sym in symbols if sym not in entry]
         if not todo:
+            if progress_cb:
+                progress_cb(len(symbols), len(symbols), None)
             return dict(entry)
         spec_for_run = dict(spec)
         spec_for_run["days"] = requested_days
-        return _sweep_oi_history(kite, todo, entry, spec_for_run, timeframe, throttle)
+        return _sweep_oi_history(kite, todo, entry, spec_for_run, timeframe, throttle, progress_cb=progress_cb, total_symbols=len(symbols))
 
 
-def _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle):
+def _sweep_oi_history(kite, todo, entry, spec, timeframe, throttle, progress_cb=None, total_symbols=None):
     tokens = _fut_token_map(kite)
     to_date = now_ist()
     from_date = to_date - dt.timedelta(days=spec["days"])
     pause = _OI_HISTORY_THROTTLE_SECONDS if throttle is None else throttle
 
     fetched = 0
+    total = int(total_symbols or (len(entry) + len(todo)))
+    done = max(0, total - len(todo))
+    if progress_cb:
+        progress_cb(done, total, None)
     for sym in todo:
+        # Emit a heartbeat before the network call so the UI shows the exact
+        # symbol currently being requested even if Kite is slow on that call.
+        if progress_cb:
+            progress_cb(done, total, sym)
         token = tokens.get(sym)
-        if not token:
-            continue
         try:
-            rows = _fetch_historical_chunked(kite, token, from_date, to_date,
-                                             spec["interval"], oi=True,
-                                             continuous=spec.get("continuous", False))
+            if token:
+                rows = _fetch_historical_chunked(kite, token, from_date, to_date,
+                                                 spec["interval"], oi=True,
+                                                 continuous=spec.get("continuous", False))
+                ser = _resample_oi(rows, spec["resample"])
+                if ser is not None and len(ser) >= 3:
+                    entry[sym] = ser
+                    fetched += 1
         except Exception as exc:  # noqa: BLE001 - one bad symbol must not stop the sweep
             log.debug("OI history failed for %s (%s): %s", sym, timeframe, exc)
-            continue
-        ser = _resample_oi(rows, spec["resample"])
-        if ser is not None and len(ser) >= 3:
-            entry[sym] = ser
-            fetched += 1
+        finally:
+            done += 1
+            if progress_cb:
+                progress_cb(done, total, sym)
         if pause:
             time.sleep(pause)
 

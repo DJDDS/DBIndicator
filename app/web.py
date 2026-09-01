@@ -523,9 +523,18 @@ def backtest_page():
         logged_in=kite_auth.is_logged_in_today(),
         valid_timeframes=config.VALID_TIMEFRAMES,
         default_timeframe=config.WATCHLIST_TIMEFRAME,
+        param_defs=backtest.PARAM_DEFS,
+        default_params=list(backtest.DEFAULT_PARAMS),
+        default_required=backtest.DEFAULT_REQUIRED,
+        filter_defs=backtest.FILTER_DEFS,
+        state=backtest.get_backtest_state(),
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         backtest_day_bounds={tf: backtest.backtest_day_bounds(tf) for tf in config.VALID_TIMEFRAMES},
+        weights_state=backtest.get_weights_state(),
+        ablation_state=backtest.get_ablation_state(),
         early_research_state=backtest.get_early_research_state(),
+        ablation_gate_count=len(backtest.ABLATION_GATES),
+        index_symbols=backtest.INDEX_SYMBOLS,
         watchlist_count=len(settings.WATCHLIST),
     )
 
@@ -538,8 +547,9 @@ _BACKTEST_UNIVERSES = {
 
 
 def _resolve_backtest_symbols(form):
-    """Resolve the research universe for retained internal diagnostic tools.
-    The public Custom Backtest surface was retired in V9.3.2. Exactly one of three options:
+    """Which symbols to backtest, per the "Backtest universe" radio on
+    the Backtest page - shared by both /api/backtest/start and
+    /api/weights/start. Exactly one of three options, not a mix:
     "watchlist" (your normal F&O WATCHLIST, the default), "nifty50"
     (NIFTY 50 alone), or "sensex" (SENSEX alone) - kept as separate,
     single-symbol runs rather than lumping an index in with 100+ F&O
@@ -599,10 +609,79 @@ def api_early_research_status():
     return jsonify(backtest.get_early_research_state())
 
 
+@app.route("/api/backtest/start", methods=["POST"])
+@require_dashboard_password
+def api_backtest_start():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+
+    form = request.form
+    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
+    if timeframe not in config.VALID_TIMEFRAMES:
+        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
+    try:
+        days = int(form.get("days", 30))
+    except ValueError:
+        return jsonify({"started": False, "reason": "days must be a number"}), 400
+    horizons_raw = form.get("horizons", "5,10,20")
+    try:
+        horizons = tuple(int(h.strip()) for h in horizons_raw.split(",") if h.strip())
+    except ValueError:
+        return jsonify({"started": False, "reason": "horizons must be comma-separated numbers"}), 400
+    if not horizons:
+        return jsonify({"started": False, "reason": "at least one horizon is required"}), 400
+
+    params_raw = form.get("params", "")
+    params = tuple(p.strip() for p in params_raw.split(",") if p.strip())
+    params = tuple(p for p in params if p in backtest.PARAM_IDS)
+    if not params:
+        return jsonify({"started": False, "reason": "select at least one parameter"}), 400
+    try:
+        required = int(form.get("required", backtest.DEFAULT_REQUIRED))
+    except ValueError:
+        return jsonify({"started": False, "reason": "required must be a number"}), 400
+    if not (1 <= required <= len(params)):
+        return jsonify({
+            "started": False,
+            "reason": f"required must be between 1 and {len(params)} (the number of parameters you selected)",
+        }), 400
+
+    # The optional live-parity gates (FILTER_DEFS) - same comma-separated
+    # convention as "params" above, sent as a "filters" field so a run that
+    # opts into none of them (the default, every prior form submission)
+    # behaves identically to before this was added.
+    filters_raw = form.get("filters", "")
+    filters = {f.strip() for f in filters_raw.split(",") if f.strip() and f.strip() in backtest.FILTER_IDS}
+
+    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
+    if days < lo:
+        return jsonify({"started": False, "reason":
+            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
+            f"so every symbol would be skipped. Use at least {lo} days."}), 400
+    days = min(days, hi)
+
+    result = backtest.start_backtest(
+        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, horizons=horizons,
+        params=params, required=required,
+        require_htf="require_htf" in filters,
+        require_regime_volume="require_regime_volume" in filters,
+        exclude_opening_window="exclude_opening_window" in filters,
+        require_candle_pattern="require_candle_pattern" in filters,
+        require_macd_hist="require_macd_hist" in filters,
+        require_big_candle="require_big_candle" in filters,
+        require_strong_close="require_strong_close" in filters,
+        require_entry_location="require_entry_location" in filters,
+        require_atr_floor="require_atr_floor" in filters,
+        require_oi_agreement="require_oi_agreement" in filters,
+    )
+    return jsonify(result)
 
 
-# V9.3.2: public Custom Backtest endpoints retired to reduce overfitting surface.
-# Internal backtest primitives remain available to the fixed research diagnostics.
+@app.route("/api/backtest/status")
+@require_dashboard_password
+def api_backtest_status():
+    return jsonify(backtest.get_backtest_state())
 
 
 @app.route("/journal")

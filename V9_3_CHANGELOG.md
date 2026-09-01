@@ -1,6 +1,6 @@
 # V9.3.0 — Component Edge + Anticipation Research
 
-Build: `2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION`
+Build: `2026-09-01-INSTITUTIONAL-V9.3.3-V93-INPUT-PROGRESS`
 
 ## Research architecture
 - Added Component Edge Laboratory: independent OI acceleration, OI state, TOD RVOL, Coil/compression, relative direction, VWAP, scaled ATR and anti-chase component measurement across 2H/4H/1D/2D.

@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.3.2-RESEARCH-UI-ISOLATION</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.3.3-V93-INPUT-PROGRESS</div>
     <p>
       <strong>V9.3 Anticipation Lab is the primary research architecture.</strong> It tests independent component edges and the pre-registered Silent OI Build → Ignition hypothesis without silently invoking older playbooks.
     </p>
@@ -120,88 +120,170 @@
 
   <div class="card" style="border-color:#69c3a5;">
     <h2>1 &middot; V9.3 Component Edge Laboratory</h2>
-    <p style="margin-top:-4px;"><strong>Primary research path: anticipation first.</strong> Measure which independent evidence streams predict movement before combining them into another playbook.</p>
+    <p style="margin-top:-4px;"><strong>Anticipation first: measure which independent evidence streams actually predict movement before combining them into another playbook.</strong></p>
     <p class="hint"><strong>Pre-registered Trial 13 &mdash; Silent OI Build -&gt; Ignition:</strong> OI z-score &ge; 1.5 while 60-minute price displacement stays within 0.5 ATR; wait at most four 15-minute bars for the first fresh breakout; require the absolute NIFTY 8-bar regime to agree; reject entries already beyond the 1.25 ATR chase guard. Primary evidence is 1D, secondary 2D; <strong>final 20% locked</strong>.</p>
-    <p class="hint">Independent streams: OI acceleration, Long/Short Buildup, TOD RVOL, compression/coil, relative direction, VWAP agreement, scaled ATR regime, anti-chase, absolute NIFTY regime, Silent-OI onset and point-in-time daily OI anomaly. <strong>RESEARCH / SHADOW only</strong>.</p>
+    <p class="hint">The Component Edge Laboratory measures the evidence streams separately before combining anything: OI acceleration, Long/Short Buildup, TOD RVOL, compression/coil, relative direction, VWAP agreement, scaled ATR regime, anti-chase, absolute NIFTY regime, Silent-OI onset and point-in-time daily OI anomaly. This is <strong>RESEARCH / SHADOW only</strong> and cannot create production TRADE/WATCH signals.</p>
     <button type="button" class="btn" id="er-v93-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.3 Anticipation Lab</button>
-    <span class="hint" id="er-v93-form-hint" style="margin-left:10px;">Full F&amp;O · 15-minute · 180 days · 1D/2D primary · Trial 13 final locked.</span>
-    <div class="progress-wrap" id="er-v93-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="er-v93-progress-fill"></div></div>
-      <div class="progress-label" id="er-v93-progress-label">Starting V9.3…</div>
+    <span class="hint" id="v93-form-hint" style="margin-left:10px;">Full F&amp;O · 15-minute · 180 days · 1D/2D primary · Trial 13 final locked.</span>
+    <div class="progress-wrap" id="v93-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v93-progress-fill"></div></div>
+      <div class="progress-label" id="v93-progress-label">Starting…</div>
     </div>
-    <div class="msg-err" id="er-v93-error" style="display:none; margin-top:16px;"></div>
-    <div id="er-v93-results" style="display:none; margin-top:18px;">
-      <h3 class="bt-group-title">V9.3 Component Edge Laboratory</h3>
-      <div id="er-v93-protocol" class="hint" style="margin:10px 0 12px;"></div>
-      <div id="er-v93-trial13"></div>
-      <h4 style="margin:18px 0 6px;">Independent directional components</h4>
-      <div id="er-v93-directional"></div>
-      <h4 style="margin:18px 0 6px;">Directionless precursor expansion</h4>
-      <div id="er-v93-movement"></div>
-    </div>
+    <div class="msg-err" id="v93-error" style="display:none; margin-top:16px;"></div>
+<div id="er-v93-results" style="display:none;">
+        <h3 class="bt-group-title" style="margin-top:18px;">V9.3 Component Edge Laboratory</h3>
+        <div id="er-v93-protocol" class="hint" style="margin:10px 0 12px;"></div>
+        <div id="er-v93-trial13"></div>
+        <h4 style="margin:18px 0 6px;">Independent directional components</h4>
+        <div id="er-v93-directional"></div>
+        <h4 style="margin:18px 0 6px;">Directionless precursor expansion</h4>
+        <div id="er-v93-movement"></div>
+      </div>
   </div>
 
   <div class="card" style="border-color:#9bc5e8;">
-    <h2>2 &middot; V9.2 Manual Diagnostic</h2>
-    <p style="margin-top:-4px;"><strong>V9.2 is retained as a manual diagnostic only.</strong> It does not run unless you explicitly click this button, and V9.3 never invokes it.</p>
-    <p class="hint"><strong>Bull:</strong> Institutional Accumulation remains research-only with final 20% locked. <strong>Bear:</strong> Fresh Short Buildup remains rejected and cannot be revived from this screen.</p>
+    <h2>2 &middot; V9.2 Diagnostic Reset</h2>
+    <p style="margin-top:-4px;"><strong>Manual legacy diagnostic only.</strong> V9.2 is retained to inspect the already-defined Bull gate funnel and the rejected Bear FSB regime shift. It does not run unless you explicitly click this button.</p>
+    <p class="hint"><strong>Bull:</strong> Institutional Accumulation = price up + OI up, above-VWAP acceptance, abnormal participation, relative leadership and non-deteriorating basis. Its final 20% stays locked. <strong>Bear:</strong> Fresh Short Buildup remains frozen and rejected.</p>
     <button type="button" class="btn" id="er-v91-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.2 Diagnostic Reset</button>
     <button type="button" class="btn" id="er-v91-bear-final-btn" disabled style="background:#777;cursor:not-allowed;">Bear FSB Final: REJECTED</button>
-    <span class="hint" id="er-v92-form-hint" style="margin-left:10px;">Manual diagnostic · fixed 15-minute / 180 days.</span>
-    <div class="progress-wrap" id="er-v92-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="er-v92-progress-fill"></div></div>
-      <div class="progress-label" id="er-v92-progress-label">Starting V9.2…</div>
+    <span class="hint" id="v92-form-hint" style="margin-left:10px;">Manual diagnostic · 15-minute · 180 days · runs only on explicit click.</span>
+    <div class="progress-wrap" id="v92-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v92-progress-fill"></div></div>
+      <div class="progress-label" id="v92-progress-label">Starting…</div>
     </div>
-    <div class="msg-err" id="er-v92-error" style="display:none; margin-top:16px;"></div>
-    <div id="er-v92-results" style="display:none; margin-top:18px;">
-      <h3 class="bt-group-title">V9.2 Goal-Focused Evidence</h3>
-      <p class="hint">Bull Institutional Accumulation remains development/validation only. Bear Fresh Short Buildup remains rejected.</p>
+    <div class="msg-err" id="v92-error" style="display:none; margin-top:16px;"></div>
+    <div id="v92-results" style="display:none; margin-top:18px;">
+      <h3 class="bt-group-title" style="margin-top:18px;">V9.2 Goal-Focused Evidence</h3>
+      <p class="hint">Bull Institutional Accumulation remains development/validation only. Bear Fresh Short Buildup is frozen; only the dedicated final-test run can reveal its final 20%.</p>
       <div id="er-v91-history-coverage" class="hint" style="margin:10px 0 14px;"></div>
       <div id="er-v91-goal"></div>
     </div>
   </div>
 
-  <div class="card" style="border-color:#d8b86a;">
+  <div class="card" style="border-color:#c7a35b;">
     <h2>3 &middot; 4H Diagnostic</h2>
-    <p style="margin-top:-4px;"><strong>Independent 4H diagnostic path.</strong> Setup is formed only after a completed 4H candle; execution/outcomes map to the first available 15-minute bar after that close.</p>
+    <p style="margin-top:-4px;"><strong>Independent 4H research path.</strong> Uses completed 4H setup candles and maps execution to the first subsequent 15-minute executable candle.</p>
     <button type="button" class="btn secondary" id="er-run-btn" {{ 'disabled' if not logged_in else '' }}>Run 4H Diagnostic</button>
-    <span class="hint" id="er-4h-form-hint" style="margin-left:10px;">Fixed 4H setup · 180 days · 15-minute execution mapping.</span>
-    <div class="progress-wrap" id="er-4h-progress" style="display:none;">
-      <div class="progress-bar"><div class="progress-bar-fill" id="er-4h-progress-fill"></div></div>
-      <div class="progress-label" id="er-4h-progress-label">Starting 4H diagnostic…</div>
+    <span class="hint" id="v4h-form-hint" style="margin-left:10px;">Completed 4H setup candles · 15-minute execution mapping · separate from V9.2 and V9.3.</span>
+    <div class="progress-wrap" id="v4h-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v4h-progress-fill"></div></div>
+      <div class="progress-label" id="v4h-progress-label">Starting…</div>
     </div>
-    <div class="msg-err" id="er-4h-error" style="display:none; margin-top:16px;"></div>
-    <div id="er-4h-results" style="display:none; margin-top:18px;">
+    <div class="msg-err" id="v4h-error" style="display:none; margin-top:16px;"></div>
+<div id="er-results" style="display:none; margin-top:18px;">
       <div id="er-legacy-research-pre" class="er-legacy-research">
-        <div class="stat-tiles" id="er-tiles"></div>
-        <div id="er-history-coverage" class="hint" style="margin:10px 0 16px;"></div>
-        <h3 class="bt-group-title">Intraday holdout &mdash; actual breakout direction</h3>
-        <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-intraday"></tbody></table>
-        <h3 class="bt-group-title" style="margin-top:18px;">Swing holdout &mdash; 1&ndash;2 sessions</h3>
-        <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-swing"></tbody></table>
-        <h3 class="bt-group-title" style="margin-top:18px;">Compression lift vs unconditional F&amp;O baseline</h3>
-        <div id="er-lift"></div>
-        <h3 class="bt-group-title" style="margin-top:18px;">Which sponsorship combination helps?</h3>
-        <table><thead><tr><th>Variant</th><th>Holdout N</th><th>Win</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-interactions"></tbody></table>
-        <h3 class="bt-group-title" style="margin-top:18px;">Recent-Range Edge Lab</h3>
-        <div class="hint" id="er-recent-range-note" style="margin-bottom:8px;"></div>
-        <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
+      <div class="stat-tiles" id="er-tiles"></div>
+      <div id="er-history-coverage" class="hint" style="margin:10px 0 16px;"></div>
+      <h3 class="bt-group-title">Intraday holdout &mdash; actual breakout direction</h3>
+      <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-intraday"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Swing holdout &mdash; 1&ndash;2 sessions</h3>
+      <table><thead><tr><th>Horizon</th><th>Trades</th><th>Win rate</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-swing"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Compression lift vs unconditional F&amp;O baseline</h3>
+      <div id="er-lift"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Which sponsorship combination helps?</h3>
+      <table><thead><tr><th>Variant</th><th>Holdout N</th><th>Win</th><th>Avg net</th><th>PF</th></tr></thead><tbody id="er-interactions"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Recent-Range Edge Lab</h3>
+      <p class="hint">Focused research only: Recent Range vs bullish/bearish, TOD volume, OI, 4H, no-chase, VWAP proximity, one-bar retention and retest. It is intentionally <strong>not</strong> a Cartesian parameter grid. The live Best Entry is now restricted to sponsored Recent-Range escapes while this table decides which confirmation sequence deserves promotion.</p>
+      <div class="hint" id="er-recent-range-note" style="margin-bottom:8px;"></div>
+      <table><thead><tr><th>Variant</th><th>Entry</th><th>Holdout N</th><th>2h avg / PF</th><th>1D avg / PF</th><th>Status</th></tr></thead><tbody id="er-recent-range-lab"></tbody></table>
       </div>
+
+      
+
       <div id="er-v8-audit" style="display:none;">
-        <div id="er-v8-dual"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">V8.1 Evidence-Locked <span class="hint">Bull Top-K + Bear Pressure Top-K · final 20% locked</span></h3>
+      <p class="hint">No fitted weights and no score-threshold hunt. Bull: Recent-Range + participation floor, ranked Top 1/3/5 by Bull Alpha. Bear: any bearish breakout source + participation floor, ranked Top 1/3/5 by selling pressure = Participation + Relative Weakness + Derivatives + Bear CLV. Top 3 is the predeclared operational breadth.</p>
+      <div id="er-v8-dual"></div>
       </div>
       <div id="er-legacy-research" class="er-legacy-research">
-        <h3 class="bt-group-title" style="margin-top:18px;">V6 Institutional Edge Lab <span class="hint">legacy 4H diagnostic only · Final 20% locked</span></h3>
-        <table><thead><tr><th>Variant</th><th>Validation N</th><th>Validation win</th><th>Avg net</th><th>PF</th><th>Final</th></tr></thead><tbody id="er-v6-edge-lab"></tbody></table>
-        <h3 class="bt-group-title" style="margin-top:18px;">Path-aware Exit Lab</h3>
-        <table><thead><tr><th>Exit rule</th><th>Validation N</th><th>Win</th><th>Avg net</th><th>PF</th><th>Final</th></tr></thead><tbody id="er-v6-exit-lab"></tbody></table>
-        <h3 class="bt-group-title" style="margin-top:18px;">Promotion Benchmark</h3>
-        <div id="er-promotion-benchmark"></div>
-        <h3 class="bt-group-title" style="margin-top:18px;">Excursion / speed diagnostics</h3>
-        <div id="er-excursions"></div>
-        <h3 class="bt-group-title" style="margin-top:18px;">Breakout source / direction diagnostics</h3>
-        <div id="er-diagnostics"></div>
-        <div class="hint" id="er-notes" style="margin-top:14px;"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">V6 Institutional Edge Lab <span class="hint">(diagnostic only; final stays locked)</span></h3>
+      <p class="hint">Development 60% &middot; validation 20% &middot; <strong>Final 20% locked</strong> until the model is frozen. V6 asks whether high turnover, catalyst-like participation, leadership/price location and soft OI-or-basis sponsorship improve the strongest Recent-Range long subgroup without repeatedly peeking at the final sample.</p>
+      <table><thead><tr><th>V6 variant</th><th>Validation N</th><th>Validation win</th><th>Avg net</th><th>PF</th><th>Final test</th></tr></thead><tbody id="er-v6-edge-lab"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Path-aware Exit Lab</h3>
+      <p class="hint">Conservative first-touch simulation: if target and stop are both inside the same OHLC bar, the stop wins. This tests whether the old fixed-horizon exits were giving favorable movement back.</p>
+      <table><thead><tr><th>Exit rule</th><th>Validation N</th><th>Win</th><th>Avg net</th><th>PF</th><th>Final test</th></tr></thead><tbody id="er-v6-exit-lab"></tbody></table>
+      <h3 class="bt-group-title" style="margin-top:18px;">Promotion Benchmark</h3>
+      <p class="hint">A live rule earns <strong>Benchmark</strong> only after positive net holdout expectancy, PF &ge; 1.25, adequate sample size, favorable MFE/MAE and stable chronological blocks. Otherwise it remains <strong>Promising</strong> or <strong>Research</strong>.</p>
+      <div id="er-promotion-benchmark"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Excursion / speed diagnostics</h3>
+      <div id="er-excursions"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Breakout source / direction diagnostics</h3>
+      <div id="er-diagnostics"></div>
+      <div class="hint" id="er-notes" style="margin-top:14px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-color:#69c3a5;">
+    <h2>4 &middot; Component Edge Laboratory replaces the old gate sweep</h2>
+    <p style="margin-top:-4px;">The old gate-ablation screen has been retired from the workflow. V9.3 tests independent evidence streams first &mdash; OI state/acceleration, RVOL, compression, relative strength, VWAP, ATR and regime &mdash; across 1D/2D before allowing another combined playbook.</p>
+    <p class="hint">Use <strong>Run V9.3 Anticipation Lab</strong> above. This avoids repeatedly slicing a negative baseline with correlated confirmation filters.</p>
+  </div>
+
+<details class="card">
+    <summary><strong>5 &middot; Custom backtest</strong> &mdash; test your own combination</summary>
+    <p class="hint" style="margin-top:10px;">Exploratory. The tool above answers one specific question; this one lets you ask your own. Worth knowing it's also the easiest way to overfit &mdash; tune here, then confirm on a holdout.</p>
+    <form id="bt-form" style="margin-top:14px;">
+      <label>Parameters</label>
+      <div class="horizons" id="bt-params">
+        {% for p in param_defs %}
+        <label class="chk" style="display:flex; margin-bottom:6px;">
+          <input type="checkbox" name="param" value="{{ p.id }}" {{ 'checked' if p.id in default_params else '' }}> {{ p.label }}
+        </label>
+        {% endfor %}
+      </div>
+      <div style="margin-top:16px;">
+        <label>Live-parity filters (all off by default)</label>
+        <div class="horizons" id="bt-filters">
+          {% for f in filter_defs %}
+          <label class="chk" style="display:flex; margin-bottom:6px;">
+            <input type="checkbox" name="filter" value="{{ f.id }}"> {{ f.label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="row" style="grid-template-columns: 1fr 3fr; margin-top:6px;">
+        <div>
+          <label for="bt-required">Required (of selected)</label>
+          <input type="number" id="bt-required" name="required" value="{{ default_required }}" min="1" max="{{ param_defs|length }}">
+          <div class="hint" id="bt-required-hint"></div>
+        </div>
+      </div>
+      <div style="margin-top:18px;">
+        <button type="submit" class="btn" id="bt-run-btn" {{ 'disabled' if not logged_in else '' }}>Run backtest</button>
+        <span class="hint" id="bt-form-hint" style="margin-left:10px;"></span>
+      </div>
+    </form>
+    <div class="progress-wrap" id="bt-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="bt-progress-fill"></div></div>
+      <div class="progress-label" id="bt-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="bt-error" style="display:none; margin-top:16px;"></div>
+  </details>
+
+  <div class="card" id="bt-results">
+    <h2>Results</h2>
+    <div id="bt-target"></div>
+    <div id="bt-bands"></div>
+    <p class="hint" id="bt-signal-desc" style="margin:-4px 0 14px;"></p>
+    <div class="stat-tiles" id="bt-tiles"></div>
+    <div id="bt-groups"></div>
+
+    <div id="bt-skipped-wrap" style="margin-top:18px; display:none;">
+      <h2 style="font-size:13px;">Symbols skipped</h2>
+      <div class="skip-list" id="bt-skipped"></div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <h2 style="font-size:13px;">Individual trades</h2>
+      <div class="trades-scroll">
+        <table>
+          <thead>
+            <tr><th>Symbol</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th id="bt-trade-return-headers"></th><th>Worst drawdown</th></tr>
+          </thead>
+          <tbody id="bt-trades-body"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -209,17 +291,35 @@
 </div>
 
 <script>
-const RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.2-RESEARCH-UI-ISOLATION";
+const RESEARCH_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.3.3-V93-INPUT-PROGRESS";
+
+// --- shared scope --------------------------------------------------------
+// One source of truth for universe / timeframe / days / horizons, read by all
+// three tools. Previously each form carried its own copy of these inputs,
+// which meant three chances to run a tool against a scope you didn't mean.
 const BACKTEST_DAY_BOUNDS = {{ backtest_day_bounds | tojson }};
 function applyDayBounds(resetValue) {
   const tf = document.getElementById('scope-timeframe').value;
   const days = document.getElementById('scope-days');
   const b = BACKTEST_DAY_BOUNDS[tf] || [5, 365, 90];
-  days.min = b[0]; days.max = b[1];
+  days.min = b[0];
+  days.max = b[1];
   if (resetValue || Number(days.value) < b[0] || Number(days.value) > b[1]) days.value = b[2];
 }
 document.getElementById('scope-timeframe').addEventListener('change', function () { applyDayBounds(true); });
 applyDayBounds(false);
+
+function readScope() {
+  const picked = document.querySelector('#scope-universe input[name=universe]:checked');
+  const horizons = Array.from(document.querySelectorAll('input[name=horizon]:checked')).map(el => el.value);
+  return {
+    universe: picked ? picked.value : 'watchlist',
+    timeframe: document.getElementById('scope-timeframe').value,
+    days: document.getElementById('scope-days').value,
+    horizons: horizons,
+    refHorizon: horizons.includes('3') ? 3 : (horizons.length ? Math.min.apply(null, horizons.map(Number)) : 3),
+  };
+}
 
 function startJob(url, scope, extra, hintId, onStarted) {
   const body = new URLSearchParams();
@@ -227,68 +327,310 @@ function startJob(url, scope, extra, hintId, onStarted) {
   body.set('timeframe', scope.timeframe);
   body.set('days', scope.days);
   Object.keys(extra || {}).forEach(k => body.set(k, extra[k]));
-  const hint = document.getElementById(hintId);
-  if (hint) hint.textContent = '';
+  document.getElementById(hintId).textContent = '';
   fetch(url, { method: 'POST', body: body })
     .then(r => r.json())
     .then(res => {
-      if (!res.started) {
-        if (hint) hint.textContent = res.reason || 'Could not start.';
-      } else onStarted();
+      if (!res.started) document.getElementById(hintId).textContent = res.reason || 'Could not start.';
+      else onStarted();
     })
-    .catch(() => { if (hint) hint.textContent = 'Could not reach the server.'; });
+    .catch(() => { document.getElementById(hintId).textContent = 'Could not reach the server.'; });
+}
+
+const initialState = {{ state | tojson }};
+const PARAM_LABELS = {};
+{% for p in param_defs %}PARAM_LABELS['{{ p.id }}'] = {{ p.label | tojson }};
+{% endfor %}
+const FILTER_LABELS = {
+  require_oi_agreement: 'OI positioning agreement',
+  require_htf: 'HTF agreement',
+  require_regime_volume: 'Regime-adaptive volume',
+  exclude_opening_window: 'Opening-window excluded',
+  require_candle_pattern: 'Candlestick-pattern agreement',
+  require_macd_hist: 'MACD histogram momentum',
+  require_big_candle: 'Big-candle agreement',
+  require_strong_close: 'Strong-close agreement',
+  require_entry_location: 'Entry-location (not extended)',
+  require_atr_floor: 'Minimum-ATR floor',
+};
+
+function fmtPct(v) {
+  if (v === null || v === undefined) return '—';
+  return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+
+function renderGroup(label, groupSummary, horizons) {
+  groupSummary = groupSummary || {};
+  const ov = groupSummary.overall || {};
+  let rows = '';
+  horizons.forEach(h => {
+    const row = groupSummary[String(h)] || {};
+    const wr = row.win_rate_pct;
+    const wrClass = wr === undefined ? '' : (wr >= 50 ? 'win-good' : 'win-bad');
+    rows += `
+      <tr>
+        <td>${h}</td>
+        <td>${row.trade_count ?? 0}</td>
+        <td class="${wrClass}">${row.trade_count ? row.win_rate_pct.toFixed(1) + '%' : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.avg_return_pct) : '—'}</td>
+        <td>${row.trade_count && row.profit_factor != null ? (row.profit_factor === Infinity ? '∞' : row.profit_factor) : '—'}</td>
+        <td>${row.trade_count && row.payoff_ratio != null ? row.payoff_ratio : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.best_return_pct) : '—'}</td>
+        <td>${row.trade_count ? fmtPct(row.worst_return_pct) : '—'}</td>
+      </tr>`;
+  });
+  return `
+    <div class="bt-group">
+      <h3 class="bt-group-title">${label} <span class="bt-group-count">(${ov.total_trades ?? 0} trades)</span></h3>
+      <table>
+        <thead>
+          <tr><th>Horizon (bars)</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Profit factor</th><th>Payoff</th><th>Best</th><th>Worst</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="bt-group-drawdown">Avg drawdown: ${fmtPct(ov.avg_drawdown_pct)} &middot; Worst drawdown: ${fmtPct(ov.worst_drawdown_pct)}</p>
+    </div>`;
+}
+
+// Does a higher Early Score actually win more often? This is the one thing
+// the score bands assert and nothing has ever checked. If win rate climbs
+// across the bands, the score ranks something real. If it is flat, the
+// score is ranking noise and the bands are decoration - which is a finding
+// worth having, not a failure, and the honest thing is to show it either
+// way rather than quietly dropping the table.
+// The one number that answers the question actually written down in
+// config.py. Everything else on this page reports "average return after N
+// bars", which is not how the trade is taken.
+function renderTarget(result) {
+  const el = document.getElementById('bt-target');
+  if (!el) return;
+  const t = result.vs_target;
+  if (!t) { el.innerHTML = ''; return; }
+  const good = t.hit_rate_pct != null && t.sample_sufficient && t.hit_rate_pct >= t.required_win_rate;
+  const colour = !t.sample_sufficient ? 'var(--muted)' : (good ? 'var(--green)' : 'var(--red)');
+  el.innerHTML = `
+    <h3 style="margin-top:22px;">Against your written target</h3>
+    <p class="hint" style="margin-top:-4px;">Reach +${t.target_atr} ATR before &minus;${t.stop_atr} ATR,
+      within ${t.horizon_bars} bars. Needs ${t.required_win_rate}% across ${t.min_sample}+ trades;
+      breakeven at this risk-reward is ${t.breakeven_win_rate}%.</p>
+    <table class="tbl"><tbody>
+      <tr><td>Resolved to a stop or target</td><td style="text-align:right;">${t.resolved_count}</td></tr>
+      <tr><td>Still open at the horizon</td><td style="text-align:right;">${t.unresolved_at_horizon}</td></tr>
+      <tr><td>Hit the target first</td><td style="text-align:right;color:${colour};font-weight:600;">${t.hit_rate_pct == null ? '\u2014' : t.hit_rate_pct + '%'}</td></tr>
+    </tbody></table>
+    <p style="margin-top:10px;color:${colour};"><strong>${t.verdict}</strong></p>`;
+}
+
+function renderBands(result) {
+  const el = document.getElementById('bt-bands');
+  if (!el) return;
+  const bands = (result.by_band || []).filter(b => b.trade_count > 0);
+  if (!bands.length) { el.innerHTML = ''; return; }
+  const hs = result.horizons || [];
+  const h = hs.includes(3) ? 3 : hs[0];
+  const rows = bands.map(b => {
+    const st = (b.by_horizon || {})[String(h)] || {};
+    const thin = (st.trade_count || 0) < 20;
+    return `<tr>
+      <td><strong>${b.band}</strong> <span class="hint">${b.min_score}-${b.max_score}</span></td>
+      <td style="text-align:right;">${b.trade_count}${thin ? ' <span class="hint" title="Under 20 trades - the confidence interval on this rate is too wide to act on.">thin</span>' : ''}</td>
+      <td style="text-align:right;">${st.win_rate_pct != null ? st.win_rate_pct + '%' : '—'}</td>
+      <td style="text-align:right;">${st.avg_return_pct != null ? st.avg_return_pct + '%' : '—'}</td>
+    </tr>`;
+  }).join('');
+  const rates = bands.map(b => ((b.by_horizon || {})[String(h)] || {}).win_rate_pct).filter(v => v != null);
+  let verdict = '';
+  if (rates.length >= 2) {
+    const rising = rates.every((v, i) => i === 0 || v <= rates[i - 1]);
+    verdict = rising
+      ? '<p class="hint">Win rate falls as the score falls, which is what the bands claim. Check the trade counts before leaning on it &mdash; a clean gradient across thin buckets is not yet evidence.</p>'
+      : '<p class="hint"><strong>Win rate does NOT fall consistently with the score.</strong> On this window the bands are not ranking outcomes, so treat the score as a filter rather than a ranking until a larger sample says otherwise.</p>';
+  }
+  el.innerHTML = `<h3 style="margin-top:22px;">Outcomes by Early Score band <span class="hint">(at ${h} bars)</span></h3>
+    <table class="tbl"><thead><tr><th>Band</th><th style="text-align:right;">Trades</th>
+    <th style="text-align:right;">Win rate</th><th style="text-align:right;">Avg return</th></tr></thead>
+    <tbody>${rows}</tbody></table>${verdict}`;
+}
+
+function renderResult(result) {
+  const wrap = document.getElementById('bt-results');
+  wrap.style.display = 'block';
+
+  const summary = result.summary || {};
+  const allOv = (summary.all || {}).overall || {};
+  const bullOv = (summary.bullish || {}).overall || {};
+  const bearOv = (summary.bearish || {}).overall || {};
+
+  const chosenParams = result.params || [];
+  const chosenLabels = chosenParams.map(p => PARAM_LABELS[p] || p);
+  const activeFilters = Object.keys(FILTER_LABELS)
+    .filter(k => result[k]).map(k => FILTER_LABELS[k] || k);
+  const filterSuffix = activeFilters.length ? ` — filters: ${activeFilters.join(', ')}` : ' — no live-parity filters (backtest default)';
+  document.getElementById('bt-signal-desc').textContent =
+    `Signal: ${result.required ?? '?'} of ${chosenParams.length} required — ${chosenLabels.join(', ')}${filterSuffix}`;
+
+  renderTarget(result);
+  renderBands(result);
+
+  const tiles = document.getElementById('bt-tiles');
+  tiles.innerHTML = `
+    <div class="tile"><div class="tv">${allOv.total_trades ?? 0}</div><div class="tl">Total trades</div></div>
+    <div class="tile"><div class="tv">${bullOv.total_trades ?? 0}</div><div class="tl">Bullish</div></div>
+    <div class="tile"><div class="tv">${bearOv.total_trades ?? 0}</div><div class="tl">Bearish</div></div>
+    <div class="tile"><div class="tv">${result.symbols_with_trades ?? 0}/${result.symbols_scanned ?? 0}</div><div class="tl">Symbols w/ trades</div></div>
+  `;
+
+  const horizons = result.horizons || [];
+
+  document.getElementById('bt-groups').innerHTML =
+    renderGroup('All Trades', summary.all, horizons) +
+    renderGroup('▲ Bullish Only', summary.bullish, horizons) +
+    renderGroup('▼ Bearish Only', summary.bearish, horizons);
+
+  const skippedWrap = document.getElementById('bt-skipped-wrap');
+  const skipped = result.symbols_skipped || {};
+  const skipKeys = Object.keys(skipped);
+  if (skipKeys.length) {
+    skippedWrap.style.display = 'block';
+    document.getElementById('bt-skipped').textContent =
+      skipKeys.map(s => `${s}: ${skipped[s]}`).join('  •  ');
+  } else {
+    skippedWrap.style.display = 'none';
+  }
+
+  document.getElementById('bt-trade-return-headers').textContent =
+    horizons.map(h => h + 'b return').join(' / ');
+  const tradesBody = document.getElementById('bt-trades-body');
+  tradesBody.innerHTML = '';
+  const trades = (result.trades || []).slice(-200).reverse();
+  trades.forEach(t => {
+    const tr = document.createElement('tr');
+    const dirClass = t.direction === 'Bullish' ? 'bull' : 'bear';
+    const returnsText = horizons.map(h => fmtPct(t.returns_pct[h] ?? t.returns_pct[String(h)])).join(' / ');
+    tr.innerHTML = `
+      <td>${t.symbol}</td>
+      <td class="${dirClass}">${t.direction === 'Bullish' ? '▲' : '▼'}</td>
+      <td>${t.entry_time.replace('T', ' ')}</td>
+      <td>${t.entry_price}</td>
+      <td>${returnsText}</td>
+      <td>${fmtPct(t.mae_pct)}</td>
+    `;
+    tradesBody.appendChild(tr);
+  });
+  const totalCount = result.total_trade_count ?? (result.trades || []).length;
+  if (totalCount > 200) {
+    const note = document.createElement('tr');
+    note.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);">
+      showing the most recent 200 of ${totalCount} trades - win rate/return stats above use all of them</td>`;
+    tradesBody.appendChild(note);
+  }
+}
+
+function poll() {
+  fetch('/api/backtest/status').then(r => r.json()).then(state => {
+    updateUI(state);
+    if (state.status === 'running') {
+      setTimeout(poll, 2000);
+    }
+  }).catch(() => setTimeout(poll, 4000));
+}
+
+function updateUI(state) {
+  const progress = document.getElementById('bt-progress');
+  const errorBox = document.getElementById('bt-error');
+  const runBtn = document.getElementById('bt-run-btn');
+
+  if (state.status === 'running') {
+    runBtn.disabled = true;
+    progress.style.display = 'block';
+    errorBox.style.display = 'none';
+    const p = state.progress || {};
+    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+    document.getElementById('bt-progress-fill').style.width = pct + '%';
+    document.getElementById('bt-progress-label').textContent =
+      p.symbol ? `Scanning ${p.symbol} (${p.done}/${p.total})…` : `${p.done}/${p.total} symbols done…`;
+  } else {
+    runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+    progress.style.display = 'none';
+  }
+
+  if (state.status === 'error') {
+    errorBox.style.display = 'block';
+    errorBox.textContent = 'Backtest failed: ' + (state.error || 'unknown error');
+  }
+
+  if (state.status === 'done' && state.result) {
+    renderResult(state.result);
+  }
+}
+
+function selectedParamCheckboxes() {
+  return Array.from(document.querySelectorAll('input[name=param]'));
+}
+
+function syncRequiredMax() {
+  const checked = selectedParamCheckboxes().filter(el => el.checked);
+  const requiredInput = document.getElementById('bt-required');
+  const hint = document.getElementById('bt-required-hint');
+  requiredInput.max = Math.max(checked.length, 1);
+  if (checked.length && Number(requiredInput.value) > checked.length) {
+    requiredInput.value = checked.length;
+  }
+  hint.textContent = checked.length ? `1–${checked.length} (you've selected ${checked.length})` : 'Select at least one parameter above.';
+}
+selectedParamCheckboxes().forEach(el => el.addEventListener('change', syncRequiredMax));
+syncRequiredMax();
+
+document.getElementById('bt-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  const scope = readScope();
+  if (!scope.horizons.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one horizon in Scope above.';
+    return;
+  }
+  const params = selectedParamCheckboxes().filter(el => el.checked).map(el => el.value);
+  if (!params.length) {
+    document.getElementById('bt-form-hint').textContent = 'Pick at least one parameter.';
+    return;
+  }
+  const required = Number(document.getElementById('bt-required').value) || 1;
+  if (required < 1 || required > params.length) {
+    document.getElementById('bt-form-hint').textContent =
+      `Required must be between 1 and ${params.length} (the number of parameters you selected).`;
+    return;
+  }
+  const filters = Array.from(document.querySelectorAll('input[name=filter]:checked')).map(el => el.value);
+  startJob('/api/backtest/start', scope, {
+    horizons: scope.horizons.join(','),
+    params: params.join(','),
+    required: String(required),
+    filters: filters.join(','),
+  }, 'bt-form-hint', poll);
+});
+
+updateUI(initialState);
+if (initialState.status === 'running') {
+  poll();
+} else if (initialState.status === 'done' && initialState.result) {
+  renderResult(initialState.result);
 }
 
 // --- F&O Early Movement Research ----------------------------------------
-const researchChannels = {
-  v93_lab: 'er-v93',
-  v91_fast: 'er-v92',
-  v91_bear_final: 'er-v92',
-  legacy_4h: 'er-4h',
-  legacy: 'er-4h',
-};
-
-function effectiveResearchMode(state) {
-  const params = (state || {}).params || {};
-  if (params.research_mode === 'legacy' && params.timeframe === '4hour') return 'legacy_4h';
-  return params.research_mode || (params.timeframe === '4hour' ? 'legacy_4h' : 'v93_lab');
-}
-
-function activeResearchChannel(state) {
-  return researchChannels[effectiveResearchMode(state)] || 'er-v93';
-}
-
 function updateEarlyResearchUI(state) {
   state = state || {};
-  const mode = effectiveResearchMode(state);
-  const channel = activeResearchChannel(state);
-  const prefixes = ['er-v93', 'er-v92', 'er-4h'];
   const runBtn = document.getElementById('er-run-btn');
   const v91RunBtn = document.getElementById('er-v91-run-btn');
   const v93RunBtn = document.getElementById('er-v93-run-btn');
   const v91FinalBtn = document.getElementById('er-v91-bear-final-btn');
   const p = state.progress || {};
-
-  prefixes.forEach(prefix => {
-    const progress = document.getElementById(prefix + '-progress');
-    const error = document.getElementById(prefix + '-error');
-    if (progress) progress.style.display = 'none';
-    if (error) error.style.display = 'none';
-  });
-
-  const setButtons = disabled => {
-    if (runBtn) runBtn.disabled = disabled || {{ 'true' if not logged_in else 'false' }};
-    if (v91RunBtn) v91RunBtn.disabled = disabled || {{ 'true' if not logged_in else 'false' }};
-    if (v93RunBtn) v93RunBtn.disabled = disabled || {{ 'true' if not logged_in else 'false' }};
-    if (v91FinalBtn) v91FinalBtn.disabled = true;
+  const researchMode = ((state.params || {}).research_mode) || '';
+  const modePrefixes = {
+    v93_lab: 'v93',
+    v91_fast: 'v92',
+    v91_bear_final: 'v92',
+    legacy_4h: 'v4h',
+    legacy: 'v4h',
   };
-
-  const progress = document.getElementById(channel + '-progress');
-  const fill = document.getElementById(channel + '-progress-fill');
-  const label = document.getElementById(channel + '-progress-label');
-  const errorBox = document.getElementById(channel + '-error');
-  const hint = document.getElementById(channel + '-form-hint');
-
   const modeLabels = {
     v93_lab: 'V9.3 Anticipation Lab',
     v91_fast: 'V9.2 Diagnostic Reset',
@@ -296,63 +638,89 @@ function updateEarlyResearchUI(state) {
     legacy_4h: '4H Diagnostic',
     legacy: '4H Diagnostic',
   };
+  const activePrefix = modePrefixes[researchMode] || 'v93';
+  const activeLabel = modeLabels[researchMode] || 'Research';
+  const prefixes = ['v93', 'v92', 'v4h'];
+
+  const ui = prefix => ({
+    progress: document.getElementById(prefix + '-progress'),
+    fill: document.getElementById(prefix + '-progress-fill'),
+    label: document.getElementById(prefix + '-progress-label'),
+    error: document.getElementById(prefix + '-error'),
+    hint: document.getElementById(prefix + '-form-hint'),
+  });
+  const active = {
+    progress: document.getElementById(activePrefix + '-progress'),
+    fill: document.getElementById(activePrefix + '-progress-fill'),
+    label: document.getElementById(activePrefix + '-progress-label'),
+    error: document.getElementById(activePrefix + '-error'),
+    hint: document.getElementById(activePrefix + '-form-hint'),
+  };
+
+  // A shared backend job may exist, but only its owning card may render it.
+  prefixes.forEach(prefix => {
+    const x = ui(prefix);
+    if (x.progress) x.progress.style.display = 'none';
+    if (x.error) x.error.style.display = 'none';
+  });
 
   if (state.status === 'running') {
-    setButtons(true);
-    if (progress) progress.style.display = 'block';
+    runBtn.disabled = true;
+    v91RunBtn.disabled = true;
+    v93RunBtn.disabled = true;
+    v91FinalBtn.disabled = true;
+    if (active.progress) active.progress.style.display = 'block';
     const total = Number(p.total || 0);
     const done = Number(p.done || 0);
-    const stageIndex = Number(p.stage_index || 1);
-    const stageTotal = Number(p.stage_total || 4);
-    const pctDone = Number.isFinite(Number(p.overall_pct)) ? Number(p.overall_pct) :
-      (total ? Math.max(1, Math.min(70, Math.round(done / total * 70))) : 1);
-    if (fill) fill.style.width = Math.max(1, Math.min(100, pctDone)) + '%';
     const stageLabels = {
-      1: 'Fetching F&O history',
+      1: researchMode === 'v93_lab' ? 'Loading point-in-time research inputs' : 'Fetching F&O history',
       2: 'Building cross-sectional ranks',
-      3: mode === 'v93_lab' ? 'Running V9.3 Component Edge Laboratory + Trial 13' : (mode === 'v91_fast' ? 'Validating V9.2 goal-focused models' : 'Running 4H diagnostics'),
+      3: researchMode === 'v93_lab' ? 'Measuring component edges + Trial 13' : 'Validating diagnostic models',
       4: 'Preparing report',
     };
+    const stageIndex = Number(p.stage_index || 1);
+    const stageTotal = Number(p.stage_total || 4);
     const stage = p.stage || stageLabels[stageIndex] || 'Research';
+    const pctDone = Number.isFinite(Number(p.overall_pct)) ? Number(p.overall_pct) :
+      (total ? Math.max(1, Math.min(70, Math.round(done / total * 70))) : 1);
+    if (active.fill) active.fill.style.width = Math.max(1, Math.min(100, pctDone)) + '%';
     const symbolText = stageIndex === 1 ? ` · ${done}/${total || '?'}${p.symbol ? ' · ' + p.symbol : ''}` : '';
     const resumeText = p.resume_summary ? ` · Resume data: ${p.resume_summary}` : '';
-    if (label) label.textContent = `${modeLabels[mode] || 'Research'} · Stage ${stageIndex}/${stageTotal} · ${stage}${symbolText}${resumeText}`;
-    if (hint) hint.textContent = 'Server-side job is running. You can leave this page and return later.';
+    if (active.label) active.label.textContent = `${activeLabel} · Stage ${stageIndex}/${stageTotal} · ${stage}${symbolText}${resumeText}`;
+    if (active.hint) active.hint.textContent = `${activeLabel} is running on the server. You may leave this page and return later.`;
     return;
   }
 
-  setButtons(false);
+  runBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v91RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v93RunBtn.disabled = {{ 'true' if not logged_in else 'false' }};
+  v91FinalBtn.disabled = true;
   if (state.status === 'error') {
-    if (errorBox) {
-      errorBox.style.display = 'block';
-      errorBox.textContent = `${modeLabels[mode] || 'Research'} failed: ` + (state.error || 'unknown error');
+    if (active.error) {
+      active.error.style.display = 'block';
+      active.error.textContent = `${activeLabel} failed: ` + (state.error || 'unknown error');
     }
-    if (hint) hint.textContent = 'The exact failing research path is preserved here; no other research card is marked as running.';
+    if (active.hint) active.hint.textContent = 'The exact job error is preserved in this card; other research cards are unaffected.';
     return;
   }
-
   if (state.status === 'done' && state.result) {
     const buildId = ((state.result || {}).research || {}).research_build_id || RESEARCH_BUILD_ID;
     const setupTf = state.result.setup_timeframe || state.result.timeframe || '15minute';
     const execTf = state.result.execution_timeframe || setupTf;
-    if (hint) hint.textContent = `Complete · build ${buildId} · setup ${setupTf} · execution ${execTf}`;
-    renderEarlyResearch(state.result, mode);
+    if (active.hint) active.hint.textContent = `${activeLabel} complete · build ${buildId} · setup ${setupTf} · execution ${execTf}`;
+    renderEarlyResearch(state.result);
   }
 }
-function renderEarlyResearch(result, mode) {
-  const resultWraps = {
-    v93_lab: document.getElementById('er-v93-results'),
-    v91_fast: document.getElementById('er-v92-results'),
-    v91_bear_final: document.getElementById('er-v92-results'),
-    legacy_4h: document.getElementById('er-4h-results'),
-    legacy: document.getElementById('er-4h-results'),
-  };
-  ['er-v93-results','er-v92-results','er-4h-results'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.style.display = 'none';
-  });
-  const activeWrap = resultWraps[mode] || resultWraps.v93_lab;
-  if (activeWrap) activeWrap.style.display = 'block';
+function renderEarlyResearch(result) {
   const r = result.research || {};
+  const isV93 = !!r.v93_component_lab;
+  const isV92 = !!r.v91_goal && !isV93;
+  const v93Wrap = document.getElementById('er-v93-results');
+  const v92Wrap = document.getElementById('v92-results');
+  const v4hWrap = document.getElementById('er-results');
+  if (v93Wrap) v93Wrap.style.display = isV93 ? 'block' : 'none';
+  if (v92Wrap) v92Wrap.style.display = isV92 ? 'block' : 'none';
+  if (v4hWrap) v4hWrap.style.display = (!isV93 && !isV92) ? 'block' : 'none';
   const isFastV8 = !!r.fast_v8;
   ['er-legacy-research-pre', 'er-legacy-research'].forEach(id => {
     const el = document.getElementById(id);
@@ -426,8 +794,12 @@ function renderEarlyResearch(result, mode) {
 
 
   const v93 = r.v93_component_lab || {};
-  const v93Wrap = document.getElementById('er-v93-results');
-  if (v93Wrap && mode === 'v93_lab' && v93.build_id) {
+  const v93ResultsWrap = document.getElementById('er-v93-results');
+  if (v93ResultsWrap) {
+    if (!v93.build_id) {
+      v93ResultsWrap.style.display = 'none';
+    } else {
+      v93ResultsWrap.style.display = 'block';
       const protocol93 = v93.protocol || {};
       const trial13 = v93.trial13 || {};
       const coverage = protocol93.daily_oi_coverage || {};
@@ -474,6 +846,7 @@ function renderEarlyResearch(result, mode) {
         return `<tr><td><strong>${mlabels[key] || key.replaceAll('_',' ')}</strong></td><td>${a.event_count || 0}</td><td>${a.avg_max_abs_move_atr == null ? '—' : Number(a.avg_max_abs_move_atr).toFixed(2)}</td><td>${a.hit_1atr_pct == null ? '—' : a.hit_1atr_pct + '%'}</td><td>${a.lift_vs_baseline == null ? '—' : Number(a.lift_vs_baseline).toFixed(2) + '×'}</td><td>${b.avg_max_abs_move_atr == null ? '—' : Number(b.avg_max_abs_move_atr).toFixed(2)}</td><td>${b.hit_1atr_pct == null ? '—' : b.hit_1atr_pct + '%'}</td><td>${b.lift_vs_baseline == null ? '—' : Number(b.lift_vs_baseline).toFixed(2) + '×'}</td></tr>`;
       }).join('');
       document.getElementById('er-v93-movement').innerHTML = `<table><thead><tr><th>Precursor</th><th>N</th><th>1D Avg max move (ATR)</th><th>1D ≥1ATR</th><th>1D Lift</th><th>2D Avg max move (ATR)</th><th>2D ≥1ATR</th><th>2D Lift</th></tr></thead><tbody>${mrows || '<tr><td colspan="8">No precursor events.</td></tr>'}</tbody></table>`;
+    }
   }
 
   const v91 = r.v91_goal || {};
@@ -662,17 +1035,17 @@ function pollEarlyResearch() {
 document.getElementById('er-v93-run-btn').addEventListener('click', function () {
   document.getElementById('scope-timeframe').value = '15minute';
   document.getElementById('scope-days').value = '180';
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v93_lab'}, 'er-v93-form-hint', pollEarlyResearch);
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v93_lab'}, 'v93-form-hint', pollEarlyResearch);
 });
 document.getElementById('er-v91-run-btn').addEventListener('click', function () {
   document.getElementById('scope-timeframe').value = '15minute';
   document.getElementById('scope-days').value = '180';
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v91_fast'}, 'er-v92-form-hint', pollEarlyResearch);
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'15minute', days:'180', horizons:[]}, {mode:'v91_fast'}, 'v92-form-hint', pollEarlyResearch);
 });
 document.getElementById('er-run-btn').addEventListener('click', function () {
   document.getElementById('scope-timeframe').value = '4hour';
   document.getElementById('scope-days').value = '180';
-  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'er-4h-form-hint', pollEarlyResearch);
+  startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'v4h-form-hint', pollEarlyResearch);
 });
 const initialEarlyResearchState = {{ early_research_state | tojson }};
 updateEarlyResearchUI(initialEarlyResearchState);
