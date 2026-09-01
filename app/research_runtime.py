@@ -13,6 +13,8 @@ available because only heavy scanning work is paused.
 """
 from contextlib import contextmanager
 import datetime as dt
+import ctypes
+import gc
 import os
 import threading
 
@@ -47,6 +49,31 @@ def current_rss_mb():
         pass
     return None
 
+
+
+def _load_libc():
+    """Best-effort glibc handle for returning freed heap pages to Linux."""
+    try:
+        return ctypes.CDLL("libc.so.6")
+    except Exception:
+        return None
+
+
+def release_memory_pressure():
+    """Collect Python cycles and ask glibc to release free arenas to the OS.
+
+    Historical pandas/NumPy work can free objects without reducing process RSS.
+    Railway enforces memory at the process/container level, so this explicit trim
+    keeps long research sweeps from accumulating allocator high-water memory.
+    """
+    gc.collect()
+    libc = _load_libc()
+    if libc is not None:
+        try:
+            libc.malloc_trim(0)
+        except Exception:
+            pass
+    return current_rss_mb()
 
 def begin_research(mode):
     now = _iso_now()

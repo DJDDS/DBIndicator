@@ -2532,8 +2532,10 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 # The shard owns the compact feature/replay payload now; keep the
                 # 211-stock fetch stage essentially constant-memory.
                 del replay, compact_v8, feat, df, execution_df, oi, futures_df, v91_events, v91_confirmation, daily_oi_series
-                if (i + 1) % 10 == 0:
-                    gc.collect()
+                # Pandas/NumPy may leave freed arenas mapped. Trim after every
+                # completed symbol so a 210-stock Railway sweep does not grow
+                # toward the worker/container memory ceiling across Stage 1.
+                research_runtime.release_memory_pressure()
             else:
                 replays.append(replay)
         except Exception as exc:  # noqa: BLE001
@@ -3148,7 +3150,7 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
             daily_oi_coverage_rows=daily_oi_coverage_rows,
         )
         del bull_rank, bear_rank
-        gc.collect()
+        research_runtime.release_memory_pressure()
 
     if stage_cb:
         stage_cb(2, 4, f"Finalizing breakout-strength ranks · elapsed {elapsed()}", 84)
