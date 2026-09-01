@@ -91,7 +91,7 @@ def test_backtest_copy_matches_current_research_architecture_and_build_is_bumped
     assert "V9.1 focuses" not in text
     assert "V9.3 Anticipation Lab is the primary research architecture" in text
     assert "V9.2 is retained as a manual diagnostic only" in text
-    assert "V9.3.1" in text
+    assert "V9.3.2" in text
 
 
 def test_scan_watchlist_tags_failure_stage(monkeypatch):

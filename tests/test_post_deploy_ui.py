@@ -12,8 +12,10 @@ def test_15minute_research_can_request_one_year():
 def test_backtest_template_defines_early_research_ui_controller():
     text = Path('app/templates/backtest.html').read_text(encoding='utf-8')
     assert 'function updateEarlyResearchUI(state)' in text
-    assert "document.getElementById('er-progress-fill')" in text
-    assert "document.getElementById('er-error')" in text
+    assert "document.getElementById(channel + '-progress-fill')" in text
+    assert "document.getElementById(channel + '-error')" in text
+    assert "v93_lab: 'er-v93'" in text
+    assert "v91_fast: 'er-v92'" in text
 
 
 def test_settings_template_shows_live_and_research_symbol_counts():
@@ -53,7 +55,7 @@ def test_backtest_template_exposes_research_build_marker():
 def test_aggregate_research_includes_build_id():
     from app.early_research import aggregate_research
     result = aggregate_research([])
-    assert result['research_build_id'] == '2026-09-01-INSTITUTIONAL-V9.3.1-V93-ISOLATION'
+    assert result['research_build_id'] == '2026-09-01-INSTITUTIONAL-V9.3.2-RESEARCH-UI-ISOLATION'
 
 
 def test_dashboard_scan_health_exposes_attempted_valid_and_error_counts():
