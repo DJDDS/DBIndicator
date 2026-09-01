@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, journal, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -90,6 +90,7 @@ def dashboard():
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
     forward_validation = opportunity_forward.summarize(state.get("opportunity_forward"))
+    research_state = backtest.get_early_research_state()
 
     return render_template(
         "index.html",
@@ -103,6 +104,8 @@ def dashboard():
         market_state=market_state,
         opportunity_radar=opportunity_radar,
         forward_validation=forward_validation,
+        research_active=(research_state.get("status") == "running"),
+        research_worker=research_state.get("worker") or {},
         live_counts=_dashboard_counts(
             all_results, index_direction=state.get("index_direction"),
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
@@ -145,7 +148,7 @@ def dashboard():
         atr_length=settings.ATR_LENGTH,
         atr_stop_multiplier=settings.ATR_STOP_MULTIPLIER,
         atr_target_multiplier=settings.ATR_TARGET_MULTIPLIER,
-        risk_budget=journal.get_risk_budget_state(),
+        risk_budget={"account_capital": settings.ACCOUNT_CAPITAL, "risk_per_trade_pct": settings.RISK_PER_TRADE_PCT},
         vol_contraction_lookback=settings.VOL_CONTRACTION_LOOKBACK,
         max_entry_extension_atr=settings.MAX_ENTRY_EXTENSION_ATR,
         min_atr_pct=settings.MIN_ATR_PCT,
@@ -160,8 +163,11 @@ def api_dashboard_state():
     state = get_state()
     rows = state.get("results") or []
     health = v9_playbooks.scan_health_counts(rows)
+    research_state = backtest.get_early_research_state()
     return jsonify({
         "last_scan": state.get("last_scan"),
+        "research_active": research_state.get("status") == "running",
+        "research_worker": research_state.get("worker") or {},
         "last_error": state.get("last_error"),
         "total_scanned": health["attempted"],
         "valid_scanned": health["valid"],
@@ -462,12 +468,6 @@ def api_alerts_recent():
     return jsonify({"alerts": alerts.get_recent(limit=20)})
 
 
-@app.route("/api/alerts/oi_recent")
-@require_dashboard_password
-def api_alerts_oi_recent():
-    return jsonify({"alerts": alerts.get_recent_oi(limit=20)})
-
-
 
 @app.route("/oi-screener")
 @require_dashboard_password
@@ -523,17 +523,9 @@ def backtest_page():
         logged_in=kite_auth.is_logged_in_today(),
         valid_timeframes=config.VALID_TIMEFRAMES,
         default_timeframe=config.WATCHLIST_TIMEFRAME,
-        param_defs=backtest.PARAM_DEFS,
-        default_params=list(backtest.DEFAULT_PARAMS),
-        default_required=backtest.DEFAULT_REQUIRED,
-        filter_defs=backtest.FILTER_DEFS,
-        state=backtest.get_backtest_state(),
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         backtest_day_bounds={tf: backtest.backtest_day_bounds(tf) for tf in config.VALID_TIMEFRAMES},
-        weights_state=backtest.get_weights_state(),
-        ablation_state=backtest.get_ablation_state(),
         early_research_state=backtest.get_early_research_state(),
-        ablation_gate_count=len(backtest.ABLATION_GATES),
         index_symbols=backtest.INDEX_SYMBOLS,
         watchlist_count=len(settings.WATCHLIST),
     )
@@ -548,8 +540,7 @@ _BACKTEST_UNIVERSES = {
 
 def _resolve_backtest_symbols(form):
     """Which symbols to backtest, per the "Backtest universe" radio on
-    the Backtest page - shared by both /api/backtest/start and
-    /api/weights/start. Exactly one of three options, not a mix:
+    the historical research helpers. Exactly one of three options, not a mix:
     "watchlist" (your normal F&O WATCHLIST, the default), "nifty50"
     (NIFTY 50 alone), or "sensex" (SENSEX alone) - kept as separate,
     single-symbol runs rather than lumping an index in with 100+ F&O
@@ -607,247 +598,6 @@ def api_early_research_start():
 @require_dashboard_password
 def api_early_research_status():
     return jsonify(backtest.get_early_research_state())
-
-
-@app.route("/api/backtest/start", methods=["POST"])
-@require_dashboard_password
-def api_backtest_start():
-    kite = kite_auth.get_kite_client()
-    if kite is None:
-        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
-
-    form = request.form
-    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
-    if timeframe not in config.VALID_TIMEFRAMES:
-        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
-    try:
-        days = int(form.get("days", 30))
-    except ValueError:
-        return jsonify({"started": False, "reason": "days must be a number"}), 400
-    horizons_raw = form.get("horizons", "5,10,20")
-    try:
-        horizons = tuple(int(h.strip()) for h in horizons_raw.split(",") if h.strip())
-    except ValueError:
-        return jsonify({"started": False, "reason": "horizons must be comma-separated numbers"}), 400
-    if not horizons:
-        return jsonify({"started": False, "reason": "at least one horizon is required"}), 400
-
-    params_raw = form.get("params", "")
-    params = tuple(p.strip() for p in params_raw.split(",") if p.strip())
-    params = tuple(p for p in params if p in backtest.PARAM_IDS)
-    if not params:
-        return jsonify({"started": False, "reason": "select at least one parameter"}), 400
-    try:
-        required = int(form.get("required", backtest.DEFAULT_REQUIRED))
-    except ValueError:
-        return jsonify({"started": False, "reason": "required must be a number"}), 400
-    if not (1 <= required <= len(params)):
-        return jsonify({
-            "started": False,
-            "reason": f"required must be between 1 and {len(params)} (the number of parameters you selected)",
-        }), 400
-
-    # The optional live-parity gates (FILTER_DEFS) - same comma-separated
-    # convention as "params" above, sent as a "filters" field so a run that
-    # opts into none of them (the default, every prior form submission)
-    # behaves identically to before this was added.
-    filters_raw = form.get("filters", "")
-    filters = {f.strip() for f in filters_raw.split(",") if f.strip() and f.strip() in backtest.FILTER_IDS}
-
-    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
-    if days < lo:
-        return jsonify({"started": False, "reason":
-            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
-            f"so every symbol would be skipped. Use at least {lo} days."}), 400
-    days = min(days, hi)
-
-    result = backtest.start_backtest(
-        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, horizons=horizons,
-        params=params, required=required,
-        require_htf="require_htf" in filters,
-        require_regime_volume="require_regime_volume" in filters,
-        exclude_opening_window="exclude_opening_window" in filters,
-        require_candle_pattern="require_candle_pattern" in filters,
-        require_macd_hist="require_macd_hist" in filters,
-        require_big_candle="require_big_candle" in filters,
-        require_strong_close="require_strong_close" in filters,
-        require_entry_location="require_entry_location" in filters,
-        require_atr_floor="require_atr_floor" in filters,
-        require_oi_agreement="require_oi_agreement" in filters,
-    )
-    return jsonify(result)
-
-
-@app.route("/api/backtest/status")
-@require_dashboard_password
-def api_backtest_status():
-    return jsonify(backtest.get_backtest_state())
-
-
-@app.route("/journal")
-@require_dashboard_password
-def journal_page():
-    return render_template(
-        "journal.html",
-        logged_in=kite_auth.is_logged_in_today(),
-        default_horizon_bars=journal.DEFAULT_HORIZON_BARS,
-        state=journal.get_journal_state(),
-        confidence=journal.get_confidence_stats(),
-    )
-
-
-@app.route("/api/journal/log", methods=["POST"])
-@require_dashboard_password
-def api_journal_log():
-    """Logs a paper trade from a CURRENT live dashboard row - re-reads
-    the row straight from background.get_state()["results"] server-side
-    (looked up by symbol) rather than trusting any indicator values the
-    client might submit, so a stale/tampered form can't log a trade with
-    fabricated readings."""
-    form = request.form
-    symbol = form.get("symbol", "")
-    row = next((r for r in get_state()["results"] if r.get("symbol") == symbol), None)
-    if row is None or row.get("error") or row.get("direction") not in ("Bullish", "Bearish"):
-        return jsonify({"logged": False, "reason": "No current signal for this symbol to log."}), 400
-
-    try:
-        horizon_bars = int(form.get("horizon_bars", journal.DEFAULT_HORIZON_BARS))
-    except ValueError:
-        return jsonify({"logged": False, "reason": "horizon_bars must be a number"}), 400
-    try:
-        cost_pct = max(0.0, float(form.get("cost_pct", 0) or 0))
-    except ValueError:
-        return jsonify({"logged": False, "reason": "cost_pct must be a number"}), 400
-    try:
-        slippage_pct = max(0.0, float(form.get("slippage_pct", 0) or 0))
-    except ValueError:
-        return jsonify({"logged": False, "reason": "slippage_pct must be a number"}), 400
-
-    try:
-        trade = journal.log_paper_trade(
-            row, timeframe=config.WATCHLIST_TIMEFRAME, horizon_bars=horizon_bars,
-            cost_pct=cost_pct, slippage_pct=slippage_pct,
-        )
-    except ValueError as exc:
-        return jsonify({"logged": False, "reason": str(exc)}), 400
-    return jsonify({"logged": True, "trade": trade})
-
-
-@app.route("/api/journal/delete", methods=["POST"])
-@require_dashboard_password
-def api_journal_delete():
-    trade_id = request.form.get("id", "")
-    removed = journal.delete_trade(trade_id)
-    return jsonify({"deleted": removed})
-
-
-@app.route("/journal/export.csv")
-@require_dashboard_password
-def journal_export_csv():
-    import csv
-    import io
-
-    trades = journal.get_journal_state()["trades"]
-    buf = io.StringIO()
-    fieldnames = [
-        "id", "symbol", "timeframe", "direction", "horizon_bars", "status",
-        "signal_time", "entry_time", "entry_price", "exit_time", "exit_price",
-        "return_pct", "mae_pct", "outcome", "cost_pct", "slippage_pct", "logged_at",
-    ]
-    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    for t in trades:
-        writer.writerow(t)
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=signal_journal.csv"},
-    )
-
-
-@app.route("/api/weights/start", methods=["POST"])
-@require_dashboard_password
-def api_weights_start():
-    kite = kite_auth.get_kite_client()
-    if kite is None:
-        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
-
-    form = request.form
-    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
-    if timeframe not in config.VALID_TIMEFRAMES:
-        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
-    try:
-        days = int(form.get("days", 30))
-    except ValueError:
-        return jsonify({"started": False, "reason": "days must be a number"}), 400
-    try:
-        ref_horizon = int(form.get("ref_horizon", 3))
-    except ValueError:
-        return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
-    if ref_horizon <= 0:
-        return jsonify({"started": False, "reason": "ref_horizon must be positive"}), 400
-
-    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
-    if days < lo:
-        return jsonify({"started": False, "reason":
-            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
-            f"so every symbol would be skipped. Use at least {lo} days."}), 400
-    days = min(days, hi)
-
-    result = backtest.start_weight_computation(
-        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe, days=days, ref_horizon=ref_horizon,
-    )
-    return jsonify(result)
-
-
-@app.route("/api/weights/status")
-@require_dashboard_password
-def api_weights_status():
-    return jsonify(backtest.get_weights_state())
-
-
-@app.route("/api/ablation/start", methods=["POST"])
-@require_dashboard_password
-def api_ablation_start():
-    """Kicks off the gate-ablation sweep: one baseline backtest with every
-    optional gate off, then one run per gate with only that gate on, so
-    each gate's real contribution is measurable instead of assumed."""
-    kite = kite_auth.get_kite_client()
-    if kite is None:
-        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
-
-    form = request.form
-    timeframe = form.get("timeframe", config.WATCHLIST_TIMEFRAME)
-    if timeframe not in config.VALID_TIMEFRAMES:
-        return jsonify({"started": False, "reason": "invalid timeframe"}), 400
-    try:
-        days = int(form.get("days", 30))
-    except ValueError:
-        return jsonify({"started": False, "reason": "days must be a number"}), 400
-    try:
-        ref_horizon = int(form.get("ref_horizon", 3))
-    except ValueError:
-        return jsonify({"started": False, "reason": "ref_horizon must be a number"}), 400
-    if ref_horizon <= 0:
-        return jsonify({"started": False, "reason": "ref_horizon must be positive"}), 400
-
-    lo, hi, _ = backtest.backtest_day_bounds(timeframe)
-    if days < lo:
-        return jsonify({"started": False, "reason":
-            f"{days} days is too short for {timeframe} candles - the indicators can't warm up, "
-            f"so every symbol would be skipped. Use at least {lo} days."}), 400
-    days = min(days, hi)
-
-    return jsonify(backtest.start_gate_ablation(
-        kite, symbols=_resolve_backtest_symbols(form), timeframe=timeframe,
-        days=days, ref_horizon=ref_horizon,
-    ))
-
-
-@app.route("/api/ablation/status")
-@require_dashboard_password
-def api_ablation_status():
-    return jsonify(backtest.get_ablation_state())
 
 
 def create_app():

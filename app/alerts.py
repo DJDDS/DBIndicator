@@ -36,7 +36,6 @@ log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _seen = set()
 _recent = collections.deque(maxlen=100)
-_recent_oi = collections.deque(maxlen=100)
 _recent_news = collections.deque(maxlen=100)
 
 _TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
@@ -262,49 +261,6 @@ def get_recent(limit=20):
     return list(reversed(items))
 
 
-def _format_oi_message(r, timeframe):
-    break_note = f" - {r['oi_break_signal']}" if r.get("oi_break_signal") else ""
-    chg = r.get("oi_chg_today_pct")
-    chg_note = f", {chg:+.1f}% today" if chg is not None else ""
-    accel = r.get("oi_acceleration")
-    accel_note = f" - accel {accel:+.2f}pp (30m)" if accel is not None else ""
-    dir_note = f" ({r['direction']} confluence)" if r.get("direction") else ""
-    label = r.get("oi_accel_label") or "Accelerating"
-    return f"\U0001F4C8 {r['symbol']} OI just started {label}{break_note}{chg_note}{accel_note}{dir_note} on {timeframe}"
-
-
-def process_oi_events(events, timeframe):
-    """Records OI-acceleration transition events (background.py's
-    _detect_oi_accel_events - fires once when a symbol's OI trend just
-    turned "Strong acceleration" or "Moderate acceleration", not every
-    scan while it stays that way) to a small in-app rolling log the
-    dashboard polls via /api/alerts/oi_recent for a toast pop. Kept
-    separate from the price-signal alerts above since these fire on a
-    different condition (OI acceleration, not RSI/MACD/EMA confluence)
-    and In-app only for now - not pushed to Telegram, to avoid doubling
-    up phone notifications for something that isn't a trade signal by
-    itself."""
-    for r in events or []:
-        entry = {
-            "symbol": r.get("symbol"), "timeframe": timeframe, "close": r.get("close"),
-            "direction": r.get("direction"), "oi": r.get("oi"),
-            "oi_chg_today_pct": r.get("oi_chg_today_pct"),
-            "oi_acceleration": r.get("oi_acceleration"),
-            "oi_accel_label": r.get("oi_accel_label"),
-            "oi_break_signal": r.get("oi_break_signal"),
-            "text": _format_oi_message(r, timeframe),
-            "detected_at": now_ist().isoformat(timespec="seconds"),
-        }
-        with _lock:
-            _recent_oi.append(entry)
-
-
-def get_recent_oi(limit=20):
-    with _lock:
-        items = list(_recent_oi)[-limit:]
-    return list(reversed(items))
-
-
 def _format_news_message(symbol, article):
     src = article.get("source") or "news"
     sent = article.get("sentiment_score")
@@ -316,11 +272,8 @@ def process_news_articles(new_items, timeframe):
     """new_items: [(symbol, article_dict), ...] from news.
     detect_new_articles - fires once per genuinely new article (deduped
     by Marketaux's own article uuid) for a symbol that was Confirmed at
-    the time it was fetched (see background._run_loop). Sent to BOTH
-    Telegram and the in-app rolling log - unlike OI-acceleration events
-    above (in-app only, since those aren't a trade signal by
-    themselves), fresh news on a Confirmed symbol IS exactly the "move
-    fast" signal this feature was built for, so it gets the same
+    the time it was fetched (see background._run_loop). Sent to BOTH Telegram and the in-app rolling log. Fresh news on a
+    Confirmed symbol is a distinct event-driven alert and keeps the same
     push-notification treatment as a fresh confluence signal."""
     for symbol, article in new_items or []:
         entry = {

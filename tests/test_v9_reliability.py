@@ -130,7 +130,7 @@ def test_research_symbol_shards_round_trip_and_report_completed_symbols(tmp_path
     assert str(loaded["compact_frame"]["tod_rvol"].dtype) == "float32"
 
 
-def test_interrupted_restart_message_says_rerun_will_resume_saved_batches(tmp_path, monkeypatch):
+def test_interrupted_restart_without_checkpoint_does_not_promise_resume(tmp_path, monkeypatch):
     path = tmp_path / "research-state.json"
     monkeypatch.setattr(backtest, "_EARLY_RESEARCH_STATE_PATH", path)
     path.write_text(json.dumps({
@@ -145,8 +145,9 @@ def test_interrupted_restart_message_says_rerun_will_resume_saved_batches(tmp_pa
     loaded = backtest._load_early_research_state()
 
     assert loaded["status"] == "error"
-    assert "resume" in loaded["error"].lower()
-    assert "saved" in loaded["error"].lower()
+    assert "interrupted" in loaded["error"].lower()
+    assert "no durable checkpoint" in loaded["error"].lower()
+    assert "resume" not in loaded["error"].lower()
 
 
 def test_disk_backed_cross_sectional_ranks_match_in_memory(tmp_path, monkeypatch):

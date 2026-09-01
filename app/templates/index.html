@@ -197,7 +197,6 @@
   .oi-break-badge.down { background: var(--red-bg); color: var(--red); border-color: rgba(234,57,67,0.4); }
   .chart-link { font-size: 11px; color: var(--accent); text-decoration: none; font-family: var(--sans); }
   .chart-link:hover { text-decoration: underline; }
-  .journal-log-link { display: block; margin-top: 3px; color: var(--dim); }
   .atr-risk { margin-top: 3px; font-size: 10px; white-space: nowrap; }
   .atr-risk .dim-sep { color: var(--dim); }
 
@@ -388,7 +387,7 @@
       </button>
     </div>
     {% endif %}
-    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/journal">Journal</a><a href="/settings">Settings</a></nav>
+    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -538,7 +537,7 @@
     </div>
     <div class="v8-grid">
       <section class="v8-side bull" aria-label="Bullish leaders">
-        <div class="v8-side-head">Validated Bullish Models <span>production: none validated · research remains shadow-only</span></div>
+        <div class="v8-side-head">Validated Bullish Models <span>production: none validated · Bull Institutional Accumulation remains research/shadow</span></div>
         <div id="v8-bull-leaders" class="v8-leader-list"><div class="v8-empty">Loading bullish evidence…</div></div>
       </section>
       <section class="v8-side bear" aria-label="Bearish leaders">
@@ -602,7 +601,11 @@
 
   <div class="card" style="border-color:#273d55;">
     <h2>Production model status <span class="sub">No validated V9 production playbook is active</span></h2>
-    <p class="sl-empty"><strong>Live market data remains active:</strong> the Watchlist and OI Screener continue scanning the F&amp;O universe. Bull Institutional Accumulation/Catalyst are research-shadow only, and rejected Bear FSB is blocked from alerts/shortlists. Research diagnostics remain on the <a href="/backtest">Backtest page</a>.</p>
+    {% if research_active %}
+    <p class="sl-empty"><strong>Historical research is running:</strong> the heavy live rescan is temporarily paused so V9.3/4H research can finish without competing for Kite/worker resources. The dashboard keeps the last completed live scan visible. Research worker{% if research_worker.rss_mb is not none %}: RSS {{ research_worker.rss_mb }} MB{% endif %}.</p>
+    {% else %}
+    <p class="sl-empty"><strong>Live market data remains active:</strong> the Watchlist and OI Screener continue scanning the F&amp;O universe. Research models remain shadow/evidence-gated and rejected Bear FSB is blocked from alerts/shortlists.</p>
+    {% endif %}
   </div>
 
   {% if insights_enabled %}
@@ -806,12 +809,6 @@
             {% if r.breadth_agrees is defined and r.breadth_agrees == false %}
             <span title="Against the watchlist's own current advance/decline breadth" style="color:var(--amber);">⚖</span>
             {% endif %}
-            {% if r.journal_confidence %}
-            <span class="{{ 'bull' if r.journal_confidence.win_rate_pct >= 50 else 'bear' }}" style="font-size:11px; margin-left:3px;"
-                  title="Your own Signal Journal: {{ r.direction }} + {{ r.aligned }}/4 aligned has resolved {{ r.journal_confidence.count }} paper trades at a {{ r.journal_confidence.win_rate_pct }}% win rate ({{ '{:+.2f}'.format(r.journal_confidence.avg_return_pct) }}% avg return) so far - realized history, not a guarantee. Sample is {{ r.journal_confidence.tier }} (n={{ r.journal_confidence.count }}): under 20 trades a win rate's confidence interval is too wide to act on, 50 is informative, 100+ is reasonably tight. See /journal for the full breakdown.">
-              📓{{ r.journal_confidence.win_rate_pct }}%<span style="color:var(--dim);font-size:9.5px;">&nbsp;n={{ r.journal_confidence.count }}</span>
-            </span>
-            {% endif %}
           </td>
           <td data-sort="{{ r.regime or '' }}">
             {% if r.regime %}
@@ -823,11 +820,6 @@
           </td>
           <td>
             <a class="chart-link" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">Chart →</a>
-            {% if r.direction in ('Bullish', 'Bearish') %}
-            <a class="chart-link journal-log-link" href="#" data-symbol="{{ r.symbol }}"
-               onclick="event.stopPropagation(); logPaperTrade(this); return false;"
-               title="Log this as a paper trade in the Signal Journal">Log</a>
-            {% endif %}
           </td>
           {% endif %}
         </tr>
@@ -870,29 +862,6 @@
     });
   }
   loadInsights();
-
-  function logPaperTrade(link) {
-    var symbol = link.dataset.symbol;
-    var original = link.textContent;
-    link.textContent = '…';
-    var body = new URLSearchParams();
-    body.set('symbol', symbol);
-    fetch('/api/journal/log', { method: 'POST', body: body })
-      .then(function (r) { return r.json(); })
-      .then(function (res) {
-        if (res.logged) {
-          link.textContent = 'Logged ✓';
-          link.title = 'Logged - view it on the Signal Journal page';
-        } else {
-          link.textContent = original;
-          alert(res.reason || 'Could not log this trade.');
-        }
-      })
-      .catch(function () {
-        link.textContent = original;
-        alert('Could not log this trade - network error.');
-      });
-  }
 
   (function () {
     var toggle = document.getElementById('desktop-alert-toggle');
@@ -1001,37 +970,6 @@
     poll();
     setInterval(poll, 20000);
 
-    // Separate pop for OI-acceleration events (background.py fires one
-    // the moment a symbol's OI trend transitions INTO "Accelerating",
-    // not every scan while it stays that way) - own seen-set/toast style
-    // (amber) since this isn't a Bullish/Bearish confluence signal.
-    var seenOi = new Set();
-    var firstOiLoad = true;
-
-    function showOiToast(a) {
-      var t = document.createElement('div');
-      t.className = 'toast oi';
-      t.textContent = a.text || ('\u{1F4C8} ' + a.symbol + ' OI accelerating (' + a.timeframe + ')');
-      wrap.appendChild(t);
-      setTimeout(function () { t.remove(); }, 12000);
-    }
-
-    function pollOi() {
-      fetch('/api/alerts/oi_recent').then(function (r) { return r.json(); }).then(function (data) {
-        (data.alerts || []).forEach(function (a) {
-          var key = a.symbol + '|' + a.timeframe + '|' + a.detected_at;
-          if (seenOi.has(key)) return;
-          seenOi.add(key);
-          if (!firstOiLoad) {
-            showOiToast(a);
-            beep();
-          }
-        });
-        firstOiLoad = false;
-      }).catch(function () { /* ignore transient errors */ });
-    }
-    pollOi();
-    setInterval(pollOi, 20000);
 
   })();
 

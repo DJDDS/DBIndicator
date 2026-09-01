@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, journal, kite_auth, scanner, news, oi_view, opportunity_forward
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1314,21 +1314,6 @@ def _apply_weighted_score(results):
 
 # --------------------------------------------------------------------------
 
-def _apply_journal_confidence(results):
-    """Mutates each result dict in place, attaching journal_confidence -
-    a REALIZED win rate/avg return/count from YOUR OWN Signal Journal
-    history for rows sharing this row's (direction, aligned) setup (see
-    journal.get_setup_confidence/CONFIDENCE_MIN_SAMPLE). None whenever
-    that exact setup hasn't cleared the minimum sample yet - shown as
-    nothing on the dashboard rather than a misleadingly precise number
-    from a handful of trades. Cheap (in-memory list comprehensions over a
-    personal-sized journal, no I/O) - safe to call every scan cycle."""
-    for r in results:
-        if r.get("error") or not r.get("direction") or r.get("aligned") is None:
-            r["journal_confidence"] = None
-            continue
-        r["journal_confidence"] = journal.get_setup_confidence(r["direction"], r["aligned"])
-
 
 _state_lock = threading.Lock()
 _state = {
@@ -1339,7 +1324,6 @@ _state = {
     "basis_history": {},
     "oi_day_baseline": {},
     "oi_structure_prev": {},
-    "oi_label_prev": {},
     "index_direction": None,
     "index_close": None,
     "index_chg_pct": None,
@@ -1500,32 +1484,6 @@ def _apply_oi_screener_fields(results):
 
 
 
-_ACCELERATING_LABELS = ("Strong acceleration", "Moderate acceleration")
-
-
-def _detect_oi_accel_events(results):
-    """Returns the rows whose oi_accel_label (see
-    scanner.compute_oi_acceleration) just transitioned INTO "Strong
-    acceleration" or "Moderate acceleration" on this scan, compared to
-    what it was last scan - i.e. the moment OI starts accelerating for
-    that symbol, not every scan while it stays accelerating. Must be
-    called after _apply_oi_trend (needs this scan's oi_accel_label
-    already set) and while holding _state_lock, same as the OI
-    functions above - it reads and updates _state["oi_label_prev"]."""
-    prev = _state["oi_label_prev"]
-    events = []
-    for r in results:
-        symbol = r.get("symbol")
-        if not symbol or r.get("error"):
-            continue
-        label = r.get("oi_accel_label")
-        if label in _ACCELERATING_LABELS and prev.get(symbol) not in _ACCELERATING_LABELS:
-            events.append(r)
-        if label:
-            prev[symbol] = label
-    return events
-
-
 def _load_persisted_state():
     """Restores the last scan from disk on startup, so a restart (a
     redeploy, the host restarting the container, etc.) doesn't wipe the
@@ -1544,7 +1502,6 @@ def _load_persisted_state():
                 _state["basis_history"] = saved.get("basis_history", {})
                 _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
-                _state["oi_label_prev"] = saved.get("oi_label_prev", {})
                 _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
                 _state["opportunity_forward"] = saved.get("opportunity_forward") or opportunity_forward.empty_state()
                 _state["last_error"] = None
@@ -1561,7 +1518,6 @@ def _save_persisted_state():
             "basis_history": _state["basis_history"],
             "oi_day_baseline": _state["oi_day_baseline"],
             "oi_structure_prev": _state["oi_structure_prev"],
-            "oi_label_prev": _state["oi_label_prev"],
             "scan_symbol_health": _state["scan_symbol_health"],
             "opportunity_forward": _state.get("opportunity_forward") or opportunity_forward.empty_state(),
         }
@@ -1598,123 +1554,114 @@ def _run_loop():
         try:
             kite = kite_auth.get_kite_client()
             if kite is not None and is_market_open():
+                # Full historical research has priority over the expensive live scan.
+                # Dashboard/API serving remains available; only Kite-heavy scanning yields.
+                if research_runtime.is_research_active() or not research_runtime.live_scan_slot():
+                    _rescan_event.wait(timeout=5)
+                    _rescan_event.clear()
+                    continue
                 try:
-                    fno_symbols = scanner.get_fno_stock_list(kite)
-                    results = scan_watchlist(kite, timeframe=WATCHLIST_TIMEFRAME, symbols=fno_symbols)
-                    # One extra Kite call per cycle for the Index/Market-
-                    # trend filter - fetch_index_direction swallows its
-                    # own exceptions and returns (None, None, None) on
-                    # any failure, so a bad index fetch can never cost
-                    # this cycle's actual stock results.
-                    index_direction, index_close, index_chg_pct = fetch_index_direction(kite, WATCHLIST_TIMEFRAME)
-                    # One more Kite call PER DISTINCT SECTOR actually
-                    # present in this cycle's results (typically well
-                    # under a dozen, not one per watchlist symbol) for
-                    # the sector relative-strength filter - see
-                    # scanner.fetch_sector_directions, same swallow-all-
-                    # failures contract as the index fetch above.
-                    sectors_needed = {SYMBOL_SECTOR_MAP[r["symbol"]] for r in results
-                                       if r.get("symbol") in SYMBOL_SECTOR_MAP}
-                    sector_contexts = fetch_sector_contexts(kite, sectors_needed, WATCHLIST_TIMEFRAME) \
-                        if sectors_needed else {}
-                    sector_directions = {k: (v or {}).get("direction") for k, v in sector_contexts.items()}
-                    # OI history and index returns feed the early-signal
-                    # layer. Both are fetched OUTSIDE the state lock - the
-                    # OI sweep is throttled and can take a minute on a full
-                    # F&O universe, and holding the lock through it would
-                    # stall every dashboard request for that whole time.
                     try:
-                        oi_history = scanner.fetch_oi_history(
-                            kite, fno_symbols, timeframe=WATCHLIST_TIMEFRAME)
-                    except Exception:  # noqa: BLE001 - a missing baseline must not stop the scan
-                        log.exception("OI history fetch failed")
-                        oi_history = {}
-                    index_returns = scanner.fetch_index_returns(kite)
-
-                    # Build V6 evidence outside the state lock so 5-minute finalist
-                    # fetches never freeze dashboard requests. Legacy research fields
-                    # remain attached for diagnostics, but live ranking is V6-only.
-                    _apply_early_signal(results, oi_history,
-                                        index_ret_20=index_returns.get(20),
-                                        index_ret_10=index_returns.get(10),
-                                        intraday=scanner.oi_is_intraday(WATCHLIST_TIMEFRAME))
-                    _apply_sector_filter(results, sector_directions)
-                    breadth = _compute_breadth(results)
-                    _apply_oi_trend(results)
-                    _apply_oi_screener_fields(results)
-                    _apply_v6_cross_sectional_context(
-                        results, index_chg_pct=index_chg_pct, breadth=breadth,
-                        sector_contexts=sector_contexts,
-                    )
-                    _apply_v6_basis(results, history=_v6_basis_history, now=now_ist())
-                    _apply_v8_dual_alpha(results, now=now_ist())
-                    # Refresh real event headlines only for already-strong bullish
-                    # attention names, then classify the explicit V9 playbooks.
-                    _refresh_v9_catalyst_news(results)
-                    # V9 converts cross-sectional evidence into explicit Bull/Bear
-                    # playbooks. It is now the single production shortlist source.
-                    _apply_v9_playbooks(results, now=now_ist())
-                    _apply_shadow_early_radar(results)
-                    _apply_v9_operational_shortlists(results)
-                    # V8.2 Derivative Intelligence remains downstream: it decides
-                    # option expression and cannot create an underlying playbook.
-                    _apply_derivative_intelligence(kite, results, now=now_ist())
-                    oi_events = _detect_oi_accel_events(results)
-                    scan_now = now_ist()
-                    scan_ts = scan_now.isoformat(timespec="seconds")
-                    radar_snapshot = oi_view.live_opportunity_radar(
-                        results, index_direction=index_direction, index_chg_pct=index_chg_pct,
-                        market_breadth=breadth,
-                    )
-                    swing_snapshot = oi_view.swing_research_console(radar_snapshot)
-                    with _state_lock:
-                        _state["results"] = results
-                        _state["index_direction"] = index_direction
-                        _state["index_close"] = index_close
-                        _state["index_chg_pct"] = index_chg_pct
-                        _state["breadth"] = breadth
-                        _state["scan_symbol_health"] = v9_playbooks.update_symbol_scan_health(
-                            _state.get("scan_symbol_health") or {}, results, scan_ts
-                        )
-                        _state["opportunity_forward"] = opportunity_forward.process_scan(
-                            _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
-                            swing_research=swing_snapshot,
-                        )
-                        _state["last_scan"] = scan_ts
-                        _state["last_error"] = None
-                    try:
-                        alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
-                    except Exception:  # noqa: BLE001 - alerting must never break scanning
-                        log.exception("Alert processing failed")
-                    if oi_events:
+                        fno_symbols = scanner.get_fno_stock_list(kite)
+                        results = scan_watchlist(kite, timeframe=WATCHLIST_TIMEFRAME, symbols=fno_symbols)
+                        # One extra Kite call per cycle for the Index/Market-
+                        # trend filter - fetch_index_direction swallows its
+                        # own exceptions and returns (None, None, None) on
+                        # any failure, so a bad index fetch can never cost
+                        # this cycle's actual stock results.
+                        index_direction, index_close, index_chg_pct = fetch_index_direction(kite, WATCHLIST_TIMEFRAME)
+                        # One more Kite call PER DISTINCT SECTOR actually
+                        # present in this cycle's results (typically well
+                        # under a dozen, not one per watchlist symbol) for
+                        # the sector relative-strength filter - see
+                        # scanner.fetch_sector_directions, same swallow-all-
+                        # failures contract as the index fetch above.
+                        sectors_needed = {SYMBOL_SECTOR_MAP[r["symbol"]] for r in results
+                                           if r.get("symbol") in SYMBOL_SECTOR_MAP}
+                        sector_contexts = fetch_sector_contexts(kite, sectors_needed, WATCHLIST_TIMEFRAME) \
+                            if sectors_needed else {}
+                        sector_directions = {k: (v or {}).get("direction") for k, v in sector_contexts.items()}
+                        # OI history and index returns feed the early-signal
+                        # layer. Both are fetched OUTSIDE the state lock - the
+                        # OI sweep is throttled and can take a minute on a full
+                        # F&O universe, and holding the lock through it would
+                        # stall every dashboard request for that whole time.
                         try:
-                            alerts.process_oi_events(oi_events, WATCHLIST_TIMEFRAME)
-                        except Exception:  # noqa: BLE001 - alerting must never break scanning
-                            log.exception("OI acceleration alert processing failed")
-                    # Forward-testing signal journal (NEXT_HORIZON_RESEARCH.md
-                    # Finding 3): fills entries and resolves exits for any
-                    # open paper trades, using freshly-fetched candles - same
-                    # per-cycle cadence as everything else in this branch, and
-                    # deliberately only attempted while the market is open
-                    # (see journal.resolve_open_trades) since no new candles
-                    # close otherwise, so an off-hours attempt would just be a
-                    # wasted no-op fetch.
-                    try:
-                        journal.resolve_open_trades(kite)
-                    except Exception:  # noqa: BLE001 - journal resolution must never break scanning
-                        log.exception("Signal journal resolution failed")
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("Background scan failed")
-                    with _state_lock:
-                        _state["last_error"] = str(exc)
+                            oi_history = scanner.fetch_oi_history(
+                                kite, fno_symbols, timeframe=WATCHLIST_TIMEFRAME)
+                        except Exception:  # noqa: BLE001 - a missing baseline must not stop the scan
+                            log.exception("OI history fetch failed")
+                            oi_history = {}
+                        index_returns = scanner.fetch_index_returns(kite)
 
-                _save_persisted_state()
-                # wait() instead of a plain sleep() so a Quick Settings /
-                # Settings change (web.py calls trigger_rescan()) wakes
-                # this loop immediately instead of leaving the dashboard
-                # showing results from the OLD settings for up to
-                # SCAN_INTERVAL_SECONDS - that delay is what made a
-                # timeframe switch look like it "wasn't working".
+                        # Build V6 evidence outside the state lock so 5-minute finalist
+                        # fetches never freeze dashboard requests. Legacy research fields
+                        # remain attached for diagnostics, but live ranking is V6-only.
+                        _apply_early_signal(results, oi_history,
+                                            index_ret_20=index_returns.get(20),
+                                            index_ret_10=index_returns.get(10),
+                                            intraday=scanner.oi_is_intraday(WATCHLIST_TIMEFRAME))
+                        _apply_sector_filter(results, sector_directions)
+                        breadth = _compute_breadth(results)
+                        _apply_oi_trend(results)
+                        _apply_oi_screener_fields(results)
+                        _apply_v6_cross_sectional_context(
+                            results, index_chg_pct=index_chg_pct, breadth=breadth,
+                            sector_contexts=sector_contexts,
+                        )
+                        _apply_v6_basis(results, history=_v6_basis_history, now=now_ist())
+                        _apply_v8_dual_alpha(results, now=now_ist())
+                        # Refresh real event headlines only for already-strong bullish
+                        # attention names, then classify the explicit V9 playbooks.
+                        _refresh_v9_catalyst_news(results)
+                        # V9 converts cross-sectional evidence into explicit Bull/Bear
+                        # playbooks. It is now the single production shortlist source.
+                        _apply_v9_playbooks(results, now=now_ist())
+                        _apply_shadow_early_radar(results)
+                        _apply_v9_operational_shortlists(results)
+                        # V8.2 Derivative Intelligence remains downstream: it decides
+                        # option expression and cannot create an underlying playbook.
+                        _apply_derivative_intelligence(kite, results, now=now_ist())
+                        scan_now = now_ist()
+                        scan_ts = scan_now.isoformat(timespec="seconds")
+                        radar_snapshot = oi_view.live_opportunity_radar(
+                            results, index_direction=index_direction, index_chg_pct=index_chg_pct,
+                            market_breadth=breadth,
+                        )
+                        swing_snapshot = oi_view.swing_research_console(radar_snapshot)
+                        with _state_lock:
+                            _state["results"] = results
+                            _state["index_direction"] = index_direction
+                            _state["index_close"] = index_close
+                            _state["index_chg_pct"] = index_chg_pct
+                            _state["breadth"] = breadth
+                            _state["scan_symbol_health"] = v9_playbooks.update_symbol_scan_health(
+                                _state.get("scan_symbol_health") or {}, results, scan_ts
+                            )
+                            _state["opportunity_forward"] = opportunity_forward.process_scan(
+                                _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
+                                swing_research=swing_snapshot,
+                            )
+                            _state["last_scan"] = scan_ts
+                            _state["last_error"] = None
+                        try:
+                            alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
+                        except Exception:  # noqa: BLE001 - alerting must never break scanning
+                            log.exception("Alert processing failed")
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("Background scan failed")
+                        with _state_lock:
+                            _state["last_error"] = str(exc)
+
+                    _save_persisted_state()
+                finally:
+                    # Release the Kite-heavy slot immediately after the scan. Do not
+                    # hold it during the normal scan-interval sleep, or a research job
+                    # could wait minutes even though the live scan itself already ended.
+                    research_runtime.exit_live_scan()
+                # wait() instead of a plain sleep() so a Quick Settings / Settings
+                # change can wake the loop immediately. This wait deliberately happens
+                # outside the heavy-work slot so historical research can start now.
                 _rescan_event.wait(timeout=settings.SCAN_INTERVAL_SECONDS)
                 _rescan_event.clear()
             else:

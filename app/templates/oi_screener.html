@@ -104,7 +104,6 @@
     <div class="tile"><div class="tile-label">Strong Accel</div><div class="tile-value green" id="tile-strong-accel">—</div></div>
     <div class="tile"><div class="tile-label">Moderate Accel</div><div class="tile-value amber" id="tile-moderate-accel">—</div></div>
     <div class="tile"><div class="tile-label">Weakening / Unwinding</div><div class="tile-value red" id="tile-weakening">—</div></div>
-    <div class="tile"><div class="tile-label">Active Alerts</div><div class="tile-value muted" id="tile-alerts">—</div></div>
   </div>
 
   <div class="toolbar">
@@ -367,9 +366,6 @@
       applyFilters();
       updateScrollShadow();
       document.getElementById('updated-at').textContent = 'updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      fetch('/api/alerts/oi_recent').then(function (r) { return r.json(); }).then(function (d) {
-        document.getElementById('tile-alerts').textContent = (d.alerts || []).length;
-      }).catch(function () {});
     }).catch(function () {
       document.getElementById('updated-at').textContent = 'update failed - retrying...';
     });

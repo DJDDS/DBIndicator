@@ -123,20 +123,6 @@ MULTI_TF_RESULTS_FILE = os.getenv("MULTI_TF_RESULTS_FILE", "multi_tf_results.jso
 # scratch if the day's data was already pulled successfully.
 DELIVERY_DATA_FILE = os.getenv("DELIVERY_DATA_FILE", "delivery_data.json")
 
-# Where the forward-testing signal journal's logged paper trades are
-# persisted (also gitignored) - same restart-resilience reasoning as
-# SCAN_RESULTS_FILE above, kept in its own file since journal.py owns an
-# independent, small, hand-curated list rather than a full scan's worth
-# of rows every cycle. NOTE (see journal.py's module docstring): unlike
-# a real database, this is still just a local file on the container's
-# disk - with no persistent Railway volume attached, any trade that is
-# still OPEN (not yet resolved) at the moment of a redeploy is lost, the
-# same limitation SCAN_RESULTS_FILE/PARAM_WEIGHTS_FILE already have.
-# Already-RESOLVED trades survive a redeploy just fine (they're written
-# back to this file the moment they resolve); the /journal page's CSV
-# export exists specifically so you can save a permanent copy before a
-# deploy if you have trades you don't want to risk.
-JOURNAL_FILE = os.getenv("JOURNAL_FILE", "signal_journal.json")
 
 # Live V8.2 option-chain snapshots for honest future walk-forward validation.
 OPTION_SHADOW_FILE = os.getenv("OPTION_SHADOW_FILE", "option_shadow.jsonl")
@@ -203,7 +189,7 @@ VALID_TIMEFRAMES = ["15minute", "60minute", "4hour", "day", "week"]
 #
 #   WATCHLIST_TIMEFRAME  - the main watchlist table, OI Screener, Best
 #                          Entries, High Conviction, Matching Now, alerts
-#                          and the signal journal. Daily, because that is
+#                          and forward-validation research. Daily, because that is
 #                          the bar a BTST/swing decision is actually made
 #                          on and the bar every BTST read is defined for.
 #   MULTI_TF_TIMEFRAMES  - the always-on intraday panel (background.py).
@@ -384,9 +370,6 @@ def _env_defaults():
         # F&O's embedded leverage means a given price move is a bigger
         # swing in effective exposure - Kelly-criterion sizing is
         # explicitly NOT recommended by that same research until the
-        # journal has enough resolved trades to estimate win-rate/payoff
-        # honestly). MAX_DAILY_RISK_PCT and MAX_CONCURRENT_POSITIONS feed
-        # journal.get_risk_budget_state's dashboard banner - informational
         # only, this app can't and doesn't block you from logging another
         # trade past either limit.
         "ACCOUNT_CAPITAL": float(os.getenv("ACCOUNT_CAPITAL", 100000.0)),

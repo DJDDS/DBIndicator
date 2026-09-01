@@ -152,10 +152,7 @@
 
     <details class="card">
       <summary><strong>Risk &amp; position sizing</strong> &mdash; does not affect which stocks appear</summary>
-      <p class="hint" style="margin-top:10px;">This app never touches your funds, positions or orders. Account capital is a
-      number <em>you</em> tell it, used to turn the ATR stop into a suggested quantity. The daily limits feed an
-      informational banner computed from trades you logged in the <a href="/journal">Signal Journal</a> - nothing here
-      blocks you from logging another trade past a limit.</p>
+      <p class="hint" style="margin-top:10px;">This app never touches your funds, positions or orders. Account capital and risk-per-trade are used only to turn the ATR stop into a suggested quantity.</p>
       <div class="row2" style="margin-top:12px;">
         <div>
           <label for="account_capital">Account capital (₹)</label>
@@ -165,27 +162,6 @@
           <label for="risk_per_trade_pct">Risk per trade (%)</label>
           <input type="number" id="risk_per_trade_pct" name="risk_per_trade_pct" min="0.1" max="100" step="0.1" value="{{ s.RISK_PER_TRADE_PCT }}">
           <div class="hint">1-2% is the typical F&amp;O starting point.</div>
-        </div>
-        <div>
-          <label for="max_daily_risk_pct">Max daily risk (%)</label>
-          <input type="number" id="max_daily_risk_pct" name="max_daily_risk_pct" min="0.1" max="100" step="0.1" value="{{ s.MAX_DAILY_RISK_PCT }}">
-        </div>
-        <div>
-          <label for="max_concurrent_positions">Max concurrent positions</label>
-          <input type="number" id="max_concurrent_positions" name="max_concurrent_positions" min="1" step="1" value="{{ s.MAX_CONCURRENT_POSITIONS }}">
-        </div>
-        <div>
-          <label for="atr_length">ATR length</label>
-          <input type="number" id="atr_length" name="atr_length" min="2" value="{{ s.ATR_LENGTH }}">
-        </div>
-        <div>
-          <label for="atr_stop_multiplier">Stop distance (&times; ATR)</label>
-          <input type="number" id="atr_stop_multiplier" name="atr_stop_multiplier" min="0.1" step="0.1" value="{{ s.ATR_STOP_MULTIPLIER }}">
-        </div>
-        <div>
-          <label for="atr_target_multiplier">Target distance (&times; ATR)</label>
-          <input type="number" id="atr_target_multiplier" name="atr_target_multiplier" min="0.1" step="0.1" value="{{ s.ATR_TARGET_MULTIPLIER }}">
-          <div class="hint">Default 1.5 / 3.0 = a 1:2 risk-reward.</div>
         </div>
       </div>
     </details>

@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import early_signal, early_research, v6_edge, v8_dual
+from . import early_signal, early_research, v6_edge, v8_dual, research_runtime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -473,6 +473,23 @@ def _daily_oi_coverage_summary(daily_oi_map, symbols):
         "first_timestamp": min(first) if first else None,
         "last_timestamp": max(last) if last else None,
         "source": "Kite daily futures OI with continuous=True; mapped point-in-time only after each completed session",
+        "lookahead_guard": "same-day morning bars can see only the previous completed daily OI observation",
+    }
+
+
+def _merge_daily_oi_coverage(rows, symbols_measured):
+    rows = [dict(r) for r in (rows or []) if isinstance(r, dict)]
+    with_oi = sum(1 for r in rows if int(r.get("symbols_with_daily_oi") or 0) > 0)
+    observations = sum(int(r.get("daily_oi_observations") or 0) for r in rows)
+    first = [r.get("first_timestamp") for r in rows if r.get("first_timestamp")]
+    last = [r.get("last_timestamp") for r in rows if r.get("last_timestamp")]
+    return {
+        "symbols_measured": int(symbols_measured or 0),
+        "symbols_with_daily_oi": int(with_oi),
+        "daily_oi_observations": int(observations),
+        "first_timestamp": min(first) if first else None,
+        "last_timestamp": max(last) if last else None,
+        "source": "Kite daily futures OI with continuous=True; fetched per symbol and mapped point-in-time only after each completed session",
         "lookahead_guard": "same-day morning bars can see only the previous completed daily OI observation",
     }
 
@@ -2289,20 +2306,13 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             cost_pct=cost_pct, slippage_pct=slippage_pct, research_mode=research_mode,
         )) if fast_v8 else None
     completed_shards = _completed_research_symbol_shards(run_dir) if run_dir is not None else {}
-    daily_oi_map = {}
+    # V9.3 fetches daily continuous OI *inside* each symbol batch.  The old
+    # full-universe pre-sweep meant a Railway restart at symbol 190 lost the
+    # whole 210-symbol daily-OI pass before a single resumable symbol shard had
+    # been written.  Per-symbol acquisition makes every completed symbol a
+    # durable unit of work and keeps the research stage essentially constant-memory.
     daily_oi_coverage = {}
-    if research_mode == "v93_lab":
-        if stage_cb:
-            stage_cb(1, 4, "Loading point-in-time daily continuous OI baseline", 1)
-        try:
-            daily_oi_map = scanner_mod.fetch_oi_history(
-                kite, symbols, timeframe="day", days_override=days + WARMUP_DAYS,
-                progress_cb=input_progress_cb,
-            )
-        except Exception as exc:  # noqa: BLE001 - daily OI is disclosed, never fabricated
-            log.warning("V9.3 daily continuous OI baseline unavailable: %s", exc)
-            daily_oi_map = {}
-        daily_oi_coverage = _daily_oi_coverage_summary(daily_oi_map, symbols)
+    daily_oi_coverage_rows = []
     if streaming_v91 and run_dir is not None and _v91_ranked_events_path(run_dir).exists():
         try:
             ranked_v91_payload = _load_v91_ranked_events_checkpoint(_v91_ranked_events_path(run_dir))
@@ -2320,7 +2330,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 "fast_v8": True,
                 "research_mode": research_mode,
                 "history_coverage": dict(ranked_v91_payload.get("history_coverage") or {}),
-                "daily_oi_coverage": daily_oi_coverage,
+                "daily_oi_coverage": dict(ranked_v91_payload.get("daily_oi_coverage") or {}),
                 "effective_atr_floor_pct": effective_min_atr_pct(timeframe),
             }
             if stage_cb:
@@ -2413,7 +2423,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 progress_cb(i + 1, len(symbols), f"{symbol} · resumed")
             continue
         if progress_cb:
-            progress_cb(i, len(symbols), symbol)
+            progress_cb(i, len(symbols), f"{symbol} · daily OI + price/OI")
         token = instruments.get(symbol)
         if not token:
             notes[symbol] = "symbol not found on NSE"
@@ -2422,6 +2432,23 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                 completed_shards[symbol] = path
             continue
         try:
+            daily_oi_series = None
+            daily_cov = None
+            if research_mode == "v93_lab":
+                try:
+                    one_daily = scanner_mod.fetch_oi_history(
+                    kite, [symbol], timeframe="day", days_override=days + WARMUP_DAYS
+                    )
+                    daily_oi_series = one_daily.get(symbol)
+                    daily_cov = _daily_oi_coverage_summary(
+                        ({symbol: daily_oi_series} if daily_oi_series is not None else {}), [symbol]
+                    )
+                    daily_oi_coverage_rows.append(daily_cov)
+                except Exception as daily_exc:  # disclosed research input, never fabricated
+                    log.debug("V9.3 daily continuous OI unavailable for %s: %s", symbol, daily_exc)
+                    daily_oi_series = None
+                    daily_cov = _daily_oi_coverage_summary({}, [symbol])
+                    daily_oi_coverage_rows.append(daily_cov)
             df = _fetch_history(token, timeframe, days + WARMUP_DAYS, kite)
             if df is None or df.empty:
                 notes[symbol] = "no price history"
@@ -2467,7 +2494,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
             feat = early_research.build_feature_frame(
                 df, timeframe, oi_series=oi, index_df=index_df, sector_df=sector_df,
                 sector_rank_series=sector_rank_series, futures_df=futures_df,
-                daily_oi_series=daily_oi_map.get(symbol) if daily_oi_map else None)
+                daily_oi_series=daily_oi_series)
             if feat.empty:
                 notes[symbol] = "not enough history for early-movement features"
                 if fast_v8:
@@ -2498,11 +2525,12 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
                     replay=(None if streaming_v91 else replay), note=None,
                     v91_events=v91_events, v91_confirmation=v91_confirmation,
                     history_coverage=cov,
+                    daily_oi_coverage=daily_cov,
                 )
                 completed_shards[symbol] = path
                 # The shard owns the compact feature/replay payload now; keep the
                 # 211-stock fetch stage essentially constant-memory.
-                del replay, compact_v8, feat, df, execution_df, oi, futures_df, v91_events, v91_confirmation
+                del replay, compact_v8, feat, df, execution_df, oi, futures_df, v91_events, v91_confirmation, daily_oi_series
                 if (i + 1) % 10 == 0:
                     gc.collect()
             else:
@@ -2534,6 +2562,7 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
         checkpoint_path = _build_v91_ranked_events_checkpoint(run_dir, completed_shards, stage_cb=stage_cb)
         ranked_v91_payload = _load_v91_ranked_events_checkpoint(checkpoint_path)
         notes.update(ranked_v91_payload.get("notes") or {})
+        daily_oi_coverage = dict(ranked_v91_payload.get("daily_oi_coverage") or {})
         usable_shards = {}
     elif fast_v8:
         completed_shards = _completed_research_symbol_shards(run_dir)
@@ -2601,6 +2630,8 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     history_coverage = _aggregate_history_coverage(
         history_coverage_rows, timeframe=timeframe, requested_days=days
     )
+    if research_mode == "v93_lab" and not daily_oi_coverage:
+        daily_oi_coverage = _merge_daily_oi_coverage(daily_oi_coverage_rows, len(symbols))
     run_context = {
         "setup_timeframe": timeframe,
         "execution_timeframe": execution_timeframe,
@@ -2676,13 +2707,14 @@ def run_early_movement_research(kite, symbols=None, timeframe="15minute", days=3
     }
 
 
+_RESEARCH_STATE_DIR = Path(os.environ.get("RESEARCH_STATE_DIR", ".dbindicator-research"))
 _EARLY_RESEARCH_STATE_PATH = Path(
-    os.environ.get("EARLY_RESEARCH_STATE_PATH", "/tmp/dbindicator-early-research-state.json")
+    os.environ.get("EARLY_RESEARCH_STATE_PATH", str(_RESEARCH_STATE_DIR / "early-research-state.json"))
 )
 _EARLY_RESEARCH_WORK_ROOT = Path(
-    os.environ.get("EARLY_RESEARCH_WORK_ROOT", "/tmp/dbindicator-early-research-work")
+    os.environ.get("EARLY_RESEARCH_WORK_ROOT", str(_RESEARCH_STATE_DIR / "work"))
 )
-_RESEARCH_RESUME_SCHEMA = "v930-resume-shards-1"
+_RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -2720,7 +2752,8 @@ def _research_symbol_shard_path(run_dir, index, symbol):
 
 
 def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, replay, note,
-                                 v91_events=None, v91_confirmation=None, history_coverage=None):
+                                 v91_events=None, v91_confirmation=None, history_coverage=None,
+                                 daily_oi_coverage=None):
     """Atomically persist one completed symbol so a worker restart can resume."""
     path = _research_symbol_shard_path(run_dir, index, symbol)
     payload = {
@@ -2731,6 +2764,7 @@ def _write_research_symbol_shard(run_dir, index, symbol, *, compact_frame, repla
         "v91_events": v91_events,
         "v91_confirmation": v91_confirmation,
         "history_coverage": history_coverage,
+        "daily_oi_coverage": daily_oi_coverage,
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("wb") as fh:
@@ -2898,6 +2932,7 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
     notes = dict((progress or {}).get("notes") or {})
     completed_rank_keys = list((progress or {}).get("completed_rank_keys") or [])
     history_coverage_rows = []
+    daily_oi_coverage_rows = []
     already_loaded_events = bool(progress)
 
     if stage_cb and completed_rank_keys:
@@ -2917,6 +2952,8 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
             notes[symbol] = str(payload["note"])
         if payload.get("history_coverage"):
             history_coverage_rows.append(dict(payload["history_coverage"]))
+        if payload.get("daily_oi_coverage"):
+            daily_oi_coverage_rows.append(dict(payload["daily_oi_coverage"]))
         if not already_loaded_events:
             shard_events = payload.get("v91_events")
             shard_confirmation = payload.get("v91_confirmation")
@@ -3065,6 +3102,7 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
         "notes": notes,
         "symbols_completed": len(shard_map or {}),
         "history_coverage": checkpoint_history_coverage,
+        "daily_oi_coverage": _merge_daily_oi_coverage(daily_oi_coverage_rows, total_symbols),
     })
     _v91_rank_progress_path(run_dir).unlink(missing_ok=True)
     return final_path
@@ -3074,6 +3112,7 @@ def _default_early_research_state():
         "status": "idle",
         "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 4, "overall_pct": 0},
         "result": None, "error": None, "started_at": None, "finished_at": None,
+        "worker": {},
     }
 
 
@@ -3120,7 +3159,25 @@ def _load_early_research_state():
             base["progress"].update(state["progress"])
     if base.get("status") == "running":
         base["status"] = "error"
-        base["error"] = "Research job interrupted by server restart before completion. Run it again to resume from the saved symbol batches."
+        run_dir_raw = ((base.get("params") or {}).get("resume_run_dir"))
+        run_dir = Path(run_dir_raw) if run_dir_raw else None
+        durable = bool(
+            run_dir and run_dir.exists() and (
+                _v91_ranked_events_path(run_dir).exists()
+                or _v91_rank_progress_path(run_dir).exists()
+                or any(run_dir.glob("*.pkl"))
+            )
+        )
+        if durable:
+            base["error"] = (
+                "Research job was interrupted by a worker restart before completion. Durable checkpoint files were found; "
+                "run the same lab again and it will attempt to resume from the saved work."
+            )
+        else:
+            base["error"] = (
+                "Research job was interrupted by a worker restart before completion and no durable checkpoint was found. "
+                "Start a fresh run. Configure RESEARCH_STATE_DIR on a persistent Railway Volume to survive host replacement."
+            )
         base["finished_at"] = now_ist().isoformat(timespec="seconds")
         try:
             _atomic_write_early_research_state(base)
@@ -3145,7 +3202,9 @@ def _persist_early_research_state():
 
 def get_early_research_state():
     with _early_research_lock:
-        return dict(_early_research_state, progress=dict(_early_research_state["progress"]))
+        out = dict(_early_research_state, progress=dict(_early_research_state["progress"]))
+    out["worker"] = research_runtime.snapshot()
+    return out
 
 
 def start_early_movement_research(kite, symbols=None, timeframe="15minute", days=30, holdout_pct=30.0,
@@ -3171,11 +3230,13 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 "resume_summary": resume_summary,
             },
             "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
-            "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8), "research_mode": research_mode},
+            "finished_at": None, "params": {"timeframe": timeframe, "days": days, "fast_v8": bool(fast_v8), "research_mode": research_mode,
+                                                   "resume_run_dir": (str(job_run_dir) if job_run_dir is not None else None)},
         })
     _persist_early_research_state()
 
     def _progress(done, total, symbol):
+        research_runtime.heartbeat(stage="Fetching F&O history", symbol=symbol, done=done, total=total)
         with _early_research_lock:
             if research_mode == "v93_lab":
                 pct = 8 if not total else max(8, min(70, 8 + round((done / total) * 62)))
@@ -3195,6 +3256,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
     def _input_progress(done, total, symbol):
         if research_mode != "v93_lab":
             return
+        research_runtime.heartbeat(stage="Fetching per-symbol daily OI", symbol=symbol, done=done, total=total)
         with _early_research_lock:
             pct = 1 if not total else max(1, min(8, 1 + round((done / total) * 7)))
             current_resume = (_early_research_state.get("progress") or {}).get("resume_summary")
@@ -3210,6 +3272,7 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
             _persist_early_research_state()
 
     def _stage(stage_index, stage_total, stage, overall_pct):
+        research_runtime.heartbeat(stage=stage)
         with _early_research_lock:
             current = _early_research_state.get("progress") or {}
             _early_research_state["progress"] = {
@@ -3222,12 +3285,14 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
 
     def _job():
         try:
-            result = run_early_movement_research(
-                kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
-                cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress, stage_cb=_stage,
-                input_progress_cb=_input_progress if research_mode == "v93_lab" else None,
-                universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8, research_mode=research_mode,
-                resume_run_dir=job_run_dir)
+            with research_runtime.research_slot():
+                research_runtime.heartbeat(stage="Research worker acquired exclusive heavy-work slot")
+                result = run_early_movement_research(
+                    kite, symbols=symbols, timeframe=timeframe, days=days, holdout_pct=holdout_pct,
+                    cost_pct=cost_pct, slippage_pct=slippage_pct, progress_cb=_progress, stage_cb=_stage,
+                    input_progress_cb=_input_progress if research_mode == "v93_lab" else None,
+                    universe_is_full_fno=universe_is_full_fno, fast_v8=fast_v8, research_mode=research_mode,
+                    resume_run_dir=job_run_dir)
             with _early_research_lock:
                 _early_research_state["progress"] = {"done": len(symbols), "total": len(symbols), "symbol": None, "stage": "Complete", "stage_index": 4, "stage_total": 4, "overall_pct": 100}
                 _early_research_state["result"] = result
@@ -3248,7 +3313,10 @@ def start_early_movement_research(kite, symbols=None, timeframe="15minute", days
                 _early_research_state["error"] = str(exc)
                 _early_research_state["finished_at"] = now_ist().isoformat(timespec="seconds")
             _persist_early_research_state()
+        finally:
+            research_runtime.end_research()
 
+    research_runtime.begin_research(research_mode or "early_research")
     threading.Thread(target=_job, daemon=True).start()
     return {"started": True}
 

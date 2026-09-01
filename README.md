@@ -1,6 +1,6 @@
 # DBIndicator — V9.3 Anticipation Research
 
-**Build:** `2026-09-01-INSTITUTIONAL-V9.3.3-V93-INPUT-PROGRESS`
+**Build:** `2026-09-01-INSTITUTIONAL-V9.3.4-RESEARCH-WORKER-STABILITY-SLIM`
 
 V9.3 keeps the live V9 evidence gate intact while changing the research question from **“which extra confirmation gate rescues a weak setup?”** to **“which independent evidence stream predicts movement before the move, and at what holding horizon?”**
 
@@ -76,3 +76,7 @@ This routing is a research hypothesis, not a production signal. The validated pr
 - 1.25 ATR anti-chase remains active.
 - 0.18% historical research friction remains active.
 - Live Opportunity Radar and Shadow Early Radar remain attention/research layers, not probability-of-profit labels.
+
+
+### V9.3.4 alert scope
+OI acceleration remains a research/ranking feature. OI-acceleration-only popups are disabled; alerts are reserved for the remaining configured signal/news channels.
