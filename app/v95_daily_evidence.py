@@ -13,7 +13,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE"
+BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE"
 TRIAL15_NUMBER = 15
 TRIAL16_NUMBER = 16
 FAMILYWISE_ALPHA = 0.05
@@ -48,13 +48,38 @@ def trial15_spec() -> dict:
     }
 
 
+
+
+def trial15_terminal_status(metrics: Mapping, inconclusive_reasons: list[str] | tuple[str, ...]) -> tuple[str, bool]:
+    """Return the frozen Trial-15 terminal verdict with efficacy before controls.
+
+    Missing integrity controls can block an otherwise passing feature, but they
+    cannot hide a primary efficacy failure.  ``closed`` is true only for a
+    terminal efficacy rejection; inconclusive data-quality states remain open
+    to a data-layer repair without retuning the hypothesis.
+    """
+    if not bool(metrics.get("sample_ok")):
+        return "INCONCLUSIVE_SAMPLE", False
+    if not bool(metrics.get("lift_ok")):
+        return "FAIL_NO_INDEPENDENT_LIFT", True
+    if not bool(metrics.get("vol_ok")):
+        return "FAIL_VOL_REGIME_CONTROL", True
+    if not bool(metrics.get("tail_ok")):
+        return "FAIL_TAIL_DEPENDENCE", True
+    if not bool(metrics.get("stability_ok")):
+        return "FAIL_TIME_STABILITY", True
+    reasons = list(inconclusive_reasons or [])
+    if reasons:
+        return "INCONCLUSIVE_" + str(reasons[0]), False
+    return "PASS_VALIDATION", False
+
 def trial16_spec() -> dict:
     return {
         "trial_number": TRIAL16_NUMBER,
         "name": "Direction conditional on validated Daily OI shock",
         "locked": True,
         "auto_run": False,
-        "eligibility": "Trial 15 must first PASS_VALIDATION on independent history",
+        "eligibility": "Trial 15 is closed in V9.5.3; Trial 16 remains locked",
         "research_only": True,
     }
 
@@ -537,26 +562,22 @@ def evaluate_trial15(symbol_frames: Mapping[str, pd.DataFrame], *, controls=None
         and blocks and sum(1 for b in blocks if (b.get("lift") or 0) > 1.0) > len(blocks) / 2
     )
 
-    if inconclusive:
-        status = "INCONCLUSIVE_" + inconclusive[0]
-    elif r1.get("event_count", 0) < MIN_VALIDATION_EVENTS or r1.get("distinct_days", 0) < MIN_VALIDATION_DAYS:
-        status = "INCONCLUSIVE_SAMPLE"
-    elif (r1.get("lift") or 0) <= 1.0 or (r1.get("ci95_low") or 0) <= 1.0:
-        status = "FAIL_NO_INDEPENDENT_LIFT"
-    elif t_oi is None or not np.isfinite(t_oi) or t_oi < 3.0:
-        status = "FAIL_VOL_REGIME_CONTROL"
-    elif (tail.get("lift") or 0) <= 1.0:
-        status = "FAIL_TAIL_DEPENDENCE"
-    elif not blocks or sum(1 for b in blocks if (b.get("lift") or 0) > 1.0) <= len(blocks) / 2:
-        status = "FAIL_TIME_STABILITY"
-    else:
-        status = "PASS_VALIDATION"
+    status_metrics = {
+        "sample_ok": bool(r1.get("event_count", 0) >= MIN_VALIDATION_EVENTS and r1.get("distinct_days", 0) >= MIN_VALIDATION_DAYS),
+        "lift_ok": bool((r1.get("lift") or 0) > 1.0 and (r1.get("ci95_low") or 0) > 1.0),
+        "vol_ok": bool(t_oi is not None and np.isfinite(t_oi) and t_oi >= 3.0),
+        "tail_ok": bool((tail.get("lift") or 0) > 1.0),
+        "stability_ok": bool(blocks and sum(1 for b in blocks if (b.get("lift") or 0) > 1.0) > len(blocks) / 2),
+    }
+    status, trial15_closed = trial15_terminal_status(status_metrics, inconclusive)
 
     return {
         "build": BUILD_ID,
         "trial15": trial15_spec(),
         "trial16": trial16_spec(),
         "status": status,
+        "trial15_closed": bool(trial15_closed),
+        "closure_reason": status if trial15_closed else None,
         "primary_pass": bool(primary_pass and not inconclusive),
         "validation": {"1D": r1, "2D": r2},
         "diagnostics": diagnostics,

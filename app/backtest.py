@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, nse_futures_history, nse_mwpl
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, nse_futures_history, nse_mwpl
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -3553,15 +3553,23 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
         "research_only": True,
     }
 
+    contract_structure_research = v953_contract_structure.evaluate_contract_structure(frames) if frames else {
+        "build": v95_daily_evidence.BUILD_ID, "status": "NO_DATA", "research_only": True,
+        "trial_number": None, "final_20_locked": True, "features": {},
+    }
+
     # Archive completeness is an integrity gate of the data layer, not a new
     # research threshold.  A weak archive can never turn Trial 15 into PASS.
     if frames and not nse_coverage_ok:
         research["primary_pass"] = False
-        research["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"
         reasons = list(research.get("inconclusive_reasons") or [])
         if "NSE_HISTORY_COVERAGE" not in reasons:
             reasons.append("NSE_HISTORY_COVERAGE")
         research["inconclusive_reasons"] = reasons
+        # Data-quality gaps block a potential PASS but cannot hide an already
+        # demonstrated efficacy failure.
+        if not str(research.get("status") or "").startswith("FAIL_"):
+            research["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"
 
     structure_available = bool(frames) and all(
         isinstance(nse_histories.get(s), dict)
@@ -3593,7 +3601,7 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
             "current_universe_replay": not historical_membership_ok,
             "membership_basis": "NSE_POINT_IN_TIME_HISTORICAL_FUTSTK_UNION" if historical_membership_ok else "INCOMPLETE_HISTORICAL_FUTSTK_UNION",
             "expiry_calendar": "NSE_ACTUAL_CONTRACT_EXPIRIES",
-            "oi_normalization": "LEGACY_SHARE_EQUIVALENT_PLUS_UDIFF_CONTRACTS_X_BOARD_LOT",
+            "oi_normalization": "NSE_OPEN_INTEREST_QUANTITY_NORMALIZED_TO_SHARE_EQUIVALENT",
             "nse_oi_structure": {
                 "near_next_far_available": structure_available,
                 "primary_series": "near_oi_share_equivalent",
@@ -3607,6 +3615,7 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
             "resumed_symbol_shards": int(resumed_symbol_shards),
         },
         "research": research,
+        "contract_structure_research": contract_structure_research,
         "research_only": True,
     }
 

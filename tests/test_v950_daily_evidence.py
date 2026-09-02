@@ -24,7 +24,7 @@ def _oi(idx, seed=9):
 
 def test_v950_specs_are_research_only_and_trial16_locked():
     t15 = v95.trial15_spec()
-    assert v95.BUILD_ID == '2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE'
+    assert v95.BUILD_ID == '2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE'
     assert t15['trial_number'] == 15
     assert t15['primary_horizon'] == '1D'
     assert t15['secondary_2D_cannot_rescue_1D'] is True
@@ -131,7 +131,7 @@ def test_v950_missing_integrity_controls_fail_closed():
         'lot_size_normalization_available': False,
         'atm_iv_available': False,
     }, bootstrap_reps=50)
-    assert report['status'].startswith('INCONCLUSIVE_')
+    assert report['status'] == 'INCONCLUSIVE_SAMPLE'
     assert 'MISSING_MWPL_CONTROL' in report['inconclusive_reasons']
     assert 'SURVIVORSHIP_BIAS' in report['inconclusive_reasons']
     assert 'OI_NORMALIZATION_UNAVAILABLE' in report['inconclusive_reasons']

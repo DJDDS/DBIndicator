@@ -3,7 +3,7 @@ from pathlib import Path
 from app import v95_daily_evidence, v9_playbooks
 
 ROOT = Path(__file__).resolve().parents[1]
-V95_BUILD = '2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE'
+V95_BUILD = '2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE'
 V94_BUILD = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
 
 

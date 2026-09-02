@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import zipfile
 import logging
 import re
 from pathlib import Path
@@ -25,6 +26,7 @@ NSE_BASE = "https://www.nseindia.com"
 NSE_REPORTS_URL = f"{NSE_BASE}/api/reports"
 COMBINED_OI_REPORT = "F&O - Combine Open Interest across exchanges"
 SECBAN_REPORT = "F&O - Security in ban period"
+NCL_OI_REPORT = "F&O - NCL Open Interest"
 DEFAULT_TIMEOUT = 20
 
 
@@ -47,7 +49,18 @@ def parse_combined_oi_csv(content: bytes | str) -> dict[str, dict]:
     NSE Symbol, MWPL and Open Interest fields are required.
     """
     if isinstance(content, bytes):
-        text = content.decode("utf-8-sig", errors="replace")
+        payload = content
+        if payload[:2] == b"PK":
+            try:
+                with zipfile.ZipFile(io.BytesIO(payload), "r") as zf:
+                    names = [n for n in zf.namelist() if n.lower().endswith((".csv", ".txt"))]
+                    if not names:
+                        return {}
+                    name = max(names, key=lambda n: zf.getinfo(n).file_size)
+                    payload = zf.read(name)
+            except (zipfile.BadZipFile, KeyError):
+                return {}
+        text = payload.decode("utf-8-sig", errors="replace")
     else:
         text = str(content)
     if not text.strip():
@@ -61,7 +74,7 @@ def parse_combined_oi_csv(content: bytes | str) -> dict[str, dict]:
     cols = {_norm_col(c): c for c in df.columns}
     sym_col = cols.get("nsesymbol") or cols.get("symbol") or cols.get("tradingsymbol")
     mwpl_col = cols.get("mwpl") or cols.get("marketwidepositionlimit")
-    oi_col = cols.get("openinterest") or cols.get("marketwideopeninterest") or cols.get("combinedopeninterest")
+    oi_col = cols.get("openinterest") or cols.get("nseopeninterest") or cols.get("marketwideopeninterest") or cols.get("combinedopeninterest")
     if not sym_col or not mwpl_col or not oi_col:
         return {}
 
@@ -222,11 +235,17 @@ class NSEHistoricalReportClient:
         return content
 
     def fetch_combined_oi(self, day) -> dict[str, dict]:
-        content = self._fetch_report(COMBINED_OI_REPORT, day, report_key="combineoi")
-        rows = parse_combined_oi_csv(content)
-        if not rows:
-            raise ValueError(f"NSE Combined OI report could not be parsed for {self._day(day).date()}")
-        return rows
+        errors = []
+        for report_name, report_key in ((COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "nseoi")):
+            try:
+                content = self._fetch_report(report_name, day, report_key=report_key)
+                rows = parse_combined_oi_csv(content)
+                if rows:
+                    return rows
+                errors.append(f"{report_key}:unparseable")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{report_key}:{exc}")
+        raise ValueError(f"NSE MWPL/OI report unavailable for {self._day(day).date()}: {' | '.join(errors)}")
 
     def fetch_secban(self, day) -> set[str]:
         try:

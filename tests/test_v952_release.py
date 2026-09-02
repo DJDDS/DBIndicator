@@ -3,7 +3,7 @@ from pathlib import Path
 from app import backtest, v95_daily_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = '2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE'
+BUILD = '2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE'
 
 
 def test_v952_release_markers_and_checkpoint_schemas_are_nse_specific():

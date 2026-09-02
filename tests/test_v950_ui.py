@@ -55,8 +55,8 @@ def test_v950_state_is_separate_from_v94_and_research_only():
 
 def test_v950_page_header_marks_v95_as_current_research_architecture():
     text = _html()
-    assert '<strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE' in text
-    assert '<strong>V9.5 Daily OI Evidence Lab is the primary research architecture.</strong>' in text
+    assert '<strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE' in text
+    assert '<strong>V9.5.3 Daily OI Evidence + Contract Structure Lab is the primary research architecture.</strong>' in text
 
 
 def test_v950_results_surface_audit_diagnostics_and_discovery_overlap_guard():

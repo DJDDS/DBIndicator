@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE</div>
     <p>
-      <strong>V9.5 Daily OI Evidence Lab is the primary research architecture.</strong> It preserves the completed V9.4 audit path, moves the surviving Daily-OI question onto 3+ years of official NSE daily evidence, and refuses production activation unless the feature survives independent-history, volatility, expiry-cycle, clustering and integrity controls.
+      <strong>V9.5.3 Daily OI Evidence + Contract Structure Lab is the primary research architecture.</strong> It preserves the completed V9.4 audit path, moves the surviving Daily-OI question onto 3+ years of official NSE daily evidence, and refuses production activation unless the feature survives independent-history, volatility, expiry-cycle, clustering and integrity controls.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -119,11 +119,11 @@
   </div>
 
   <div class="card" style="border-color:#7b61a8;">
-    <h2>V9.5 Daily OI Evidence Lab</h2>
+    <h2>V9.5.3 Daily OI Evidence + Contract Structure Lab</h2>
     <p style="margin-top:-4px;"><strong>3-year daily evidence first: test whether an unexpected futures-OI shock contains independent 1D movement information before we allow another directional strategy.</strong></p>
     <p class="hint"><strong>Trial 15 &mdash; Unexpected Daily OI -&gt; Next-session Magnitude:</strong> the expected OI-change model is fitted only on the first 60% of dates; the next 20% is validation; the <strong>final 20% stays locked and unread</strong>. Primary horizon is 1D. 2D is secondary and cannot rescue a failed 1D result.</p>
     <p class="hint">Required evidence gates include day-cluster bootstrap, volatility-controlled regression, expiry-cycle adjustment, top-3-day sensitivity, chronological stability and honest MWPL/ban/membership/lot-size controls. Missing load-bearing controls force <strong>INCONCLUSIVE</strong>; they are never fabricated.</p>
-    <p class="hint"><strong>Trial 16 LOCKED:</strong> direction conditional on a validated OI shock is not run automatically. It becomes eligible only after Trial 15 passes independent validation. <strong>RESEARCH / SHADOW ONLY</strong>; no TRADE/WATCH activation.</p>
+    <p class="hint"><strong>Trial 16 LOCKED:</strong> direction conditional on a validated OI shock is not run automatically. Trial 15 efficacy failure closes that path; the new contract-structure section is <strong>feature research only</strong> and cannot rescue Trial 15 or activate TRADE/WATCH.</p>
     <label for="v95-days">Daily history window</label>
     <input type="number" id="v95-days" value="1095" min="1095" max="3650">
     <span class="hint" style="margin-left:8px;">1095 calendar days default; daily cash + official NSE stock-futures OI history.</span>
@@ -142,6 +142,7 @@
       <div id="v95-controls" class="hint" style="margin:10px 0 14px;"></div>
       <div id="v95-stats"></div>
       <div id="v95-robustness" class="hint" style="margin-top:12px;"></div>
+      <div id="v953-structure" style="margin-top:18px;"></div>
     </div>
   </div>
 
@@ -301,7 +302,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V95_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE";
+const V95_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE";
 
 function v95Fmt(v, digits=2) {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return '—';
@@ -365,10 +366,12 @@ function updateV95UI(state) {
   const finalTest = r.final_test || {};
   const reasons = r.inconclusive_reasons || [];
 
+  const trial15Closed = Boolean(r.trial15_closed);
+  const reasonText = reasons.map(x => x.replaceAll('_',' ')).join(' · ');
   document.getElementById('v95-verdict').innerHTML = `
     <div class="${pass ? 'win-good' : 'win-bad'}" style="font-size:16px;margin-bottom:6px;">${status.replaceAll('_',' ')}</div>
-    <div class="hint">Build ${r.build || out.build || V95_BUILD_ID} · ${out.symbols_completed || 0}/${out.symbols_scanned || 0} symbols · Trial 16 LOCKED · final 20% ${finalTest.locked ? 'LOCKED' : 'ERROR'}</div>
-    ${reasons.length ? `<div class="msg-warn" style="margin-top:10px;">Cannot establish the feature yet: ${reasons.map(x => x.replaceAll('_',' ')).join(' · ')}</div>` : ''}`;
+    <div class="hint">Build ${r.build || out.build || V95_BUILD_ID} · ${out.symbols_completed || 0}/${out.symbols_scanned || 0} symbols · Trial 15 ${trial15Closed ? 'CLOSED' : 'research'} · Trial 16 LOCKED · final 20% ${finalTest.locked ? 'LOCKED' : 'ERROR'}</div>
+    ${reasons.length ? `<div class="msg-warn" style="margin-top:10px;">${trial15Closed ? 'Additional integrity controls unavailable (audit only; they cannot rescue the failed primary edge): ' : 'Cannot establish the feature yet: '}${reasonText}</div>` : ''}`;
 
   const crows = [
     ['Realized-vol control', controls.realized_vol_control],
@@ -402,6 +405,17 @@ function updateV95UI(state) {
     <strong>Prior OI level z:</strong> ${v95Lift(levelZ.lift)}<br>
     Development ${parts.development_days ?? '—'} days · validation ${parts.validation_days ?? '—'} days · final ${parts.final_days ?? '—'} days locked.
     <strong>Diagnostics cannot rescue Trial 15. 2D cannot rescue a failed 1D result.</strong>`;
+  const structure = out.contract_structure_research || {};
+  const featureRows = Object.entries(structure.features || {}).map(([name, data]) => {
+    const one = (data || {})['1D'] || {};
+    const two = (data || {})['2D'] || {};
+    return `<tr><td><strong>${name.replaceAll('_',' ')}</strong><br><span class="hint">${(data || {}).definition || ''}</span></td><td>${one.event_count ?? 0}</td><td>${one.distinct_days ?? 0}</td><td>${v95Lift(one.lift)}</td><td>${v95Lift(one.ci95_low)} → ${v95Lift(one.ci95_high)}</td><td>${v95Lift(two.lift)}</td></tr>`;
+  }).join('');
+  document.getElementById('v953-structure').innerHTML = structure.research_only ? `
+    <h3 class="bt-group-title">V9.5.3 Contract Structure Feature Research</h3>
+    <div class="hint" style="margin-bottom:10px;"><strong>RESEARCH / SHADOW ONLY.</strong> Near/next/far OI decomposition after Trial 15 closure. This section has no trial number, cannot rescue Trial 15, cannot unlock Trial 16 and cannot generate TRADE/WATCH signals.</div>
+    <table><thead><tr><th>Feature</th><th>Events</th><th>Days</th><th>1D lift</th><th>1D 95% CI</th><th>2D lift</th></tr></thead><tbody>${featureRows || '<tr><td colspan="6">No contract-structure observations available.</td></tr>'}</tbody></table>` : '';
+
   results.style.display = 'block';
 }
 

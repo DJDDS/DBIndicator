@@ -200,6 +200,7 @@ def test_v951_runner_keeps_mwpl_fail_closed_when_auto_download_incomplete(monkey
     monkeypatch.setattr(backtest, 'nse_mwpl', StubLoader, raising=False)
     out = backtest.run_v95_daily_oi_evidence(FakeKite(), symbols=['AAA'], resume_run_dir=tmp_path)
     assert out['research']['controls']['mwpl_control'] == 'UNAVAILABLE'
-    assert out['research']['status'].startswith('INCONCLUSIVE_MISSING_MWPL_CONTROL')
+    assert out['research']['status'] == 'INCONCLUSIVE_SAMPLE'
+    assert 'MISSING_MWPL_CONTROL' in out['research']['inconclusive_reasons']
     assert out['integrity']['mwpl_date_coverage'] == 0.70
     assert 'INSUFFICIENT_MWPL_DATE_COVERAGE' in out['integrity']['mwpl_reason']

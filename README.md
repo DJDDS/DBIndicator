@@ -1,16 +1,23 @@
-# DBIndicator — V9.5.2 NSE Daily OI Evidence
+# DBIndicator — V9.5.3 Trial 15 Closure + Contract Structure Research
 
-**Build:** `2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE`
+**Build:** `2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE`
 
-## V9.5 Daily OI Evidence Lab
+## V9.5.3 Daily OI Evidence + Contract Structure Lab
+
+
+V9.5.3 changes the verdict hierarchy after the NSE-native validation run: a primary efficacy failure is now terminal **before** missing secondary integrity controls are considered. Trial 15 therefore closes when 1D lift/CI, volatility-control, tail or time-stability gates fail; missing MWPL remains visible for audit but cannot mask or rescue that failure. The final 20% remains permanently locked and Trial 16 remains LOCKED.
+
+The build also adds a separate **Contract Structure Feature Research** layer over point-in-time NSE near/next/far OI. It measures fresh near creation, rollover-dominant transfer, fresh total expansion and abnormal unwind as magnitude features only. This layer has no trial number, cannot rescue Trial 15, cannot unlock Trial 16 and cannot create production TRADE/WATCH signals.
+
+MWPL ingestion is hardened for zipped Combined-OI payloads and legacy `NSE Open Interest` column naming, with NCL Open Interest fallback parsing where the historical report generation differs.
 
 V9.5 adds a separate **research-only 3-year daily-OI evidence path**. It does not alter the live production gate or the completed V9.4 audit. `ACTIVE_PLAYBOOKS = ()` remains unchanged.
 
 - **Trial 13 is closed**; its final 20% remains permanently unread in this build.
 - **Trial 14 remains failed as pre-registered**; V9.5 never rescues it by deleting compression.
 - **Trial 15** asks whether a positive *unexpected* daily futures-OI shock predicts abnormal next-session magnitude after development-fitted OI expectations, realized-volatility controls, expiry-cycle controls, day-cluster inference, tail sensitivity and chronological stability. The final 20% is locked.
-- **Trial 16 LOCKED**: conditional direction is not run automatically. It becomes eligible only after Trial 15 passes independent validation.
-- Official NSE MWPL/ban data is loaded only for the frozen validation dates; historical F&O membership and lot-size normalization come from the NSE derivatives archive itself. Any incomplete load-bearing source keeps the verdict **INCONCLUSIVE** rather than fabricated. Historical ATM IV is used only if an honest point-in-time series is supplied.
+- **Trial 16 LOCKED**: Trial 15 is closed in V9.5.3, so the conditional-direction path remains locked and is not auto-run.
+- Official NSE MWPL/ban data is loaded only for the frozen validation dates; historical F&O membership and lot-size normalization come from the NSE derivatives archive itself. Any incomplete load-bearing source blocks an otherwise passing feature and remains disclosed; it does **not** mask or rescue an already-failed primary efficacy gate. Historical ATM IV is used only if an honest point-in-time series is supplied.
 - V9.5.2 uses official NSE daily stock-futures history as the primary OI source: the compact F&O Market Activity contract-wise futures report is preferred, with legacy/UDiFF F&O bhavcopies as date-appropriate fallbacks. It reconstructs actual near/next/far expiries, keeps UDiFF `OpnIntrst` in its published underlying-quantity units while deriving a contracts diagnostic from `NewBrdLotQty`, derives point-in-time FUTSTK membership from contract presence, and uses Kite only for daily cash prices/live cross-checks. Per-symbol daily evidence frames and raw NSE archives are cached for restart recovery.
 
 Open **Backtest → Run V9.5 Daily OI Evidence Lab**. V9.4 remains visible below it as the completed measurement/audit path.
