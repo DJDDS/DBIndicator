@@ -13,6 +13,7 @@ import json
 import zipfile
 import logging
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Iterable
 
@@ -93,6 +94,64 @@ def parse_combined_oi_csv(content: bytes | str) -> dict[str, dict]:
     return out
 
 
+
+def _xml_records_to_rows(text: str) -> dict[str, dict]:
+    """Parse legacy NSE NCL OI XML using normalized tag names.
+
+    Historical NSE specifications published ``nseoi_DDMMYYYY.xml`` with
+    Date/ISIN/Scrip Name/NSE Symbol/MWPL/NSE Open Interest fields.  The
+    exact container/record element names have varied, so parsing is based on
+    the stable field tags rather than a brittle XPath.
+    """
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for elem in root.iter():
+        children = list(elem)
+        if not children:
+            continue
+        row = {_norm_col(child.tag.split("}")[-1]): (child.text or "").strip() for child in children}
+        symbol = row.get("nsesymbol") or row.get("symbol") or row.get("tradingsymbol")
+        mwpl = _numeric(row.get("mwpl") or row.get("marketwidepositionlimit"))
+        oi = _numeric(row.get("openinterest") or row.get("nseopeninterest") or row.get("marketwideopeninterest") or row.get("combinedopeninterest"))
+        symbol = str(symbol or "").strip().upper()
+        if not symbol or not np.isfinite(mwpl) or mwpl <= 0 or not np.isfinite(oi) or oi < 0:
+            continue
+        out[symbol] = {
+            "mwpl": float(mwpl),
+            "open_interest": float(oi),
+            "mwpl_pct": float(oi / mwpl * 100.0),
+        }
+    return out
+
+
+def parse_combined_oi_payload(content: bytes | str) -> dict[str, dict]:
+    """Parse current/legacy combined-OI payloads across CSV, ZIP and XML."""
+    payload = content
+    if isinstance(payload, bytes):
+        raw = payload
+        if raw[:2] == b"PK":
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw), "r") as zf:
+                    names = [n for n in zf.namelist() if n.lower().endswith((".csv", ".txt", ".xml"))]
+                    if not names:
+                        return {}
+                    name = max(names, key=lambda n: zf.getinfo(n).file_size)
+                    raw = zf.read(name)
+            except (zipfile.BadZipFile, KeyError):
+                return {}
+        text = raw.decode("utf-8-sig", errors="replace")
+    else:
+        text = str(payload)
+    stripped = text.lstrip()
+    if stripped.startswith("<"):
+        rows = _xml_records_to_rows(text)
+        if rows:
+            return rows
+    return parse_combined_oi_csv(text)
+
 def parse_secban_csv(content: bytes | str) -> set[str]:
     """Return symbols listed by NSE as being in the F&O ban period."""
     if isinstance(content, bytes):
@@ -152,10 +211,12 @@ class NSEHistoricalReportClient:
         if self.cache_dir is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._warmed = False
+        self._legacy_route_hints: dict[str, str] = {}
         try:
             self.session.headers.update({
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122 Safari/537.36",
-                "Accept": "text/csv,application/json,text/plain,*/*",
+                "Accept": "text/csv,application/xml,text/xml,application/json,text/plain,*/*",
+                "Accept-Language": "en-GB,en;q=0.8",
                 "Referer": f"{NSE_BASE}/all-reports-derivatives",
             })
         except Exception:
@@ -237,54 +298,69 @@ class NSEHistoricalReportClient:
     def _fetch_direct_legacy(self, day, report_key: str) -> bytes:
         d = self._day(day)
         token = d.strftime("%d%m%Y")
-        names = [f"{report_key}_{token}.csv"]
+        filenames = [f"{report_key}_{token}.csv", f"{report_key}_{token}.xml"]
         bases = [
             "https://nsearchives.nseindia.com/content/nsccl",
+            "https://nsearchives.nseindia.com/archives/nsccl",
+            "https://nsearchives.nseindia.com/archives/fo",
             "https://archives.nseindia.com/content/nsccl",
+            "https://archives.nseindia.com/archives/nsccl",
+            "https://archives.nseindia.com/archives/fo",
         ]
+        candidates = [f"{base}/{name}" for base in bases for name in filenames]
+        hint = self._legacy_route_hints.get(report_key)
+        if hint:
+            hinted = hint.format(token=token)
+            candidates = [hinted] + [u for u in candidates if u != hinted]
         errors = []
-        for base in bases:
-            for name in names:
-                url = f"{base}/{name}"
-                try:
-                    resp = self.session.get(url, timeout=self.timeout)
-                    status = int(getattr(resp, "status_code", 200) or 200)
-                    if status == 404:
-                        errors.append(f"{url}:404")
-                        continue
-                    if hasattr(resp, "raise_for_status"):
-                        resp.raise_for_status()
-                    content = bytes(getattr(resp, "content", b"") or b"")
-                    if content.strip():
-                        path = self._cache_path(report_key, d)
-                        if path is not None:
-                            tmp = path.with_suffix(path.suffix + ".tmp")
-                            tmp.write_bytes(content); tmp.replace(path)
-                        return content
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(f"{url}:{exc}")
+        for url in candidates:
+            try:
+                resp = self.session.get(url, timeout=self.timeout)
+                status = int(getattr(resp, "status_code", 200) or 200)
+                if status == 404:
+                    errors.append(f"{url}:404")
+                    continue
+                if hasattr(resp, "raise_for_status"):
+                    resp.raise_for_status()
+                content = bytes(getattr(resp, "content", b"") or b"")
+                if content.strip():
+                    # Remember the route shape after the first success so a
+                    # multi-year build makes one request per date, not a probe
+                    # storm across obsolete archive locations.
+                    self._legacy_route_hints[report_key] = url.replace(token, "{token}")
+                    path = self._cache_path(report_key, d)
+                    if path is not None:
+                        tmp = path.with_suffix(path.suffix + ".tmp")
+                        tmp.write_bytes(content); tmp.replace(path)
+                    return content
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{url}:{exc}")
         raise FileNotFoundError(" | ".join(errors))
 
     def fetch_combined_oi(self, day) -> dict[str, dict]:
         errors = []
-        for report_name, report_key in ((COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "nseoi")):
-            try:
-                content = self._fetch_report(report_name, day, report_key=report_key)
-                rows = parse_combined_oi_csv(content)
-                if rows:
-                    return rows
-                errors.append(f"{report_key}:unparseable")
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"{report_key}:{exc}")
+        d = self._day(day)
+        report_pairs = [(COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "nseoi"), (NCL_OI_REPORT, "ncloi")]
+        # Once an old archive route is discovered, prefer that report family
+        # on subsequent dates. This turns a multi-year history run from many
+        # failed probes per day into a single cached-route request.
+        report_pairs.sort(key=lambda pair: 0 if pair[1] in self._legacy_route_hints else 1)
+        legacy_first = d < pd.Timestamp("2024-01-01")
+        for report_name, report_key in report_pairs:
+            loaders = ("direct", "api") if legacy_first else ("api", "direct")
+            for loader in loaders:
                 try:
-                    content = self._fetch_direct_legacy(day, report_key)
-                    rows = parse_combined_oi_csv(content)
+                    if loader == "direct":
+                        content = self._fetch_direct_legacy(day, report_key)
+                    else:
+                        content = self._fetch_report(report_name, day, report_key=report_key)
+                    rows = parse_combined_oi_payload(content)
                     if rows:
                         return rows
-                    errors.append(f"{report_key}:direct-unparseable")
-                except Exception as direct_exc:  # noqa: BLE001
-                    errors.append(f"{report_key}:direct:{direct_exc}")
-        raise ValueError(f"NSE MWPL/OI report unavailable for {self._day(day).date()}: {' | '.join(errors)}")
+                    errors.append(f"{report_key}:{loader}:unparseable")
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{report_key}:{loader}:{exc}")
+        raise ValueError(f"NSE MWPL/OI report unavailable for {d.date()}: {' | '.join(errors)}")
 
     def fetch_secban(self, day) -> set[str]:
         try:
@@ -294,7 +370,12 @@ class NSEHistoricalReportClient:
             d = self._day(day)
             token = d.strftime("%d%m%Y")
             candidates = [
+                f"https://nsearchives.nseindia.com/content/nsccl/fo_secban_{token}.csv",
+                f"https://nsearchives.nseindia.com/archives/nsccl/fo_secban_{token}.csv",
                 f"https://nsearchives.nseindia.com/archives/fo/sec_ban/fo_secban_{token}.csv",
+                f"https://nsearchives.nseindia.com/archives/fo/fo_secban_{token}.csv",
+                f"https://archives.nseindia.com/content/nsccl/fo_secban_{token}.csv",
+                f"https://archives.nseindia.com/archives/nsccl/fo_secban_{token}.csv",
                 f"https://archives.nseindia.com/archives/fo/sec_ban/fo_secban_{token}.csv",
             ]
             for url in candidates:

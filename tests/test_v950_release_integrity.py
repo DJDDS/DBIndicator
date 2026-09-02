@@ -9,8 +9,8 @@ V94_BUILD = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
 
 def test_v950_release_markers_are_current_but_v94_audit_id_is_preserved():
     assert v95_daily_evidence.BUILD_ID == V95_BUILD
-    assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-02-INSTITUTIONAL-V9.7.0-TRIAL19-NONLINEAR-EXTREME-OI'
-    assert (ROOT / 'PRODUCTION_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-02-INSTITUTIONAL-V9.7.0-TRIAL19-NONLINEAR-EXTREME-OI'
+    assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE'
+    assert (ROOT / 'PRODUCTION_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE'
     html = (ROOT / 'app/templates/backtest.html').read_text(encoding='utf-8')
     assert V95_BUILD in html
     # The V9.4 completed audit path keeps its own immutable build identity.
