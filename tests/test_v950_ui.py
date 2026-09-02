@@ -53,10 +53,11 @@ def test_v950_state_is_separate_from_v94_and_research_only():
     assert isinstance(backtest.get_early_research_state(), dict)
 
 
-def test_v950_page_header_marks_v95_as_current_research_architecture():
+def test_v950_page_preserves_v95_below_v96_primary_architecture():
     text = _html()
-    assert '<strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE' in text
-    assert '<strong>V9.5.3 Daily OI Evidence + Contract Structure Lab is the primary research architecture.</strong>' in text
+    assert '<strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI' in text
+    assert '<strong>V9.6 Trial 17 Independent Total-OI Validation is the primary research architecture.</strong>' in text
+    assert 'V9.5.3 Daily OI Evidence + Contract Structure Lab' in text
 
 
 def test_v950_results_surface_audit_diagnostics_and_discovery_overlap_guard():

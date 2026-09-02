@@ -1,3 +1,19 @@
+# DBIndicator — V9.6 Trial 17 Independent Total-OI Validation
+
+**Build:** `2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI`
+
+## V9.6 Trial 17
+
+V9.6 freezes the V9.5.3 exploratory **fresh total FUTSTK OI expansion** definition at `total OI z >= 1.5` and validates it once on older, non-overlapping official NSE history from **2021-09-01 through 2023-09-01**. The V9.5 discovery window and every previously locked final remain untouched.
+
+Trial 17 is directionless and research/shadow only. Its primary outcome is 1D horizon-scaled ATR movement; 2D is secondary and cannot rescue a failed 1D result. A PASS requires at least 250 event rows, at least 100 distinct event days, 1D lift >= 1.10x, day-cluster 95% CI lower bound > 1.00x, cluster-robust total-OI-z t-stat >= 3.0 after realized-volatility/ATR/DTE controls, top-3-day-removed lift > 1.00x, and at least 3/4 positive chronological blocks. Historical membership and OI normalization are mandatory; MWPL/ban is mandatory before a PASS can be declared.
+
+**Trial 18 remains LOCKED** until Trial 17 passes independent validation. `ACTIVE_PLAYBOOKS = ()` remains unchanged.
+
+Open **Backtest → Run V9.6 Trial 17**. V9.5.3 remains visible below it as the completed discovery/audit path.
+
+---
+
 # DBIndicator — V9.5.3 Trial 15 Closure + Contract Structure Research
 
 **Build:** `2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE`

@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, nse_futures_history, nse_mwpl
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, nse_futures_history, nse_mwpl
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2732,8 +2732,15 @@ _V95_DAILY_STATE_PATH = Path(
 _V95_DAILY_WORK_ROOT = Path(
     os.environ.get("V95_DAILY_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v95-daily-work"))
 )
+_V96_STATE_PATH = Path(
+    os.environ.get("V96_STATE_PATH", str(_RESEARCH_STATE_DIR / "v96-trial17-state.json"))
+)
+_V96_WORK_ROOT = Path(
+    os.environ.get("V96_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v96-trial17-work"))
+)
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 _V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
+_V96_RUN_SCHEMA = "v960-trial17-independent-total-oi-run-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -2784,6 +2791,24 @@ def _v95_daily_run_dir(*, symbols, days):
         os.replace(tmp, meta)
     return run_dir
 
+
+
+def _v96_run_dir(*, symbols):
+    payload = {
+        "schema": _V96_RUN_SCHEMA,
+        "symbols": list(symbols or []),
+        "build": v96_trial17.BUILD_ID,
+        "window": [str(v96_trial17.INDEPENDENT_START.date()), str(v96_trial17.INDEPENDENT_END.date())],
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    run_dir = Path(_V96_WORK_ROOT) / digest
+    run_dir.mkdir(parents=True, exist_ok=True)
+    meta = run_dir / "meta.json"
+    if not meta.exists():
+        tmp = run_dir / "meta.json.tmp"
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, meta)
+    return run_dir
 
 def _research_symbol_shard_path(run_dir, index, symbol):
     safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(symbol))
@@ -3619,6 +3644,182 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
         "research_only": True,
     }
 
+
+def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
+                     resume_run_dir=None, stage_cb=None) -> dict:
+    """Run frozen Trial 17 on older, non-overlapping official NSE history.
+
+    Evidence dates are fixed in :mod:`app.v96_trial17`; warm-up data is fetched
+    only before that window so the total-OI z-score and volatility controls are
+    point-in-time. No V9.5/Trial-15 evaluator or locked final partition is read.
+    """
+    symbols = [str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
+    integrity_data = dict(integrity_data or {})
+    cash_tokens = _load_instrument_map(kite)
+    warmup_start = v96_trial17.INDEPENDENT_START - pd.Timedelta(days=150)
+    archive_end = v96_trial17.INDEPENDENT_END
+    cash_end = archive_end + pd.Timedelta(days=7)
+    archive_days = pd.bdate_range(warmup_start, archive_end)
+
+    if stage_cb:
+        stage_cb(1, 4, "Loading official NSE Trial-17 independent-history archive", 4)
+
+    supplied_histories = integrity_data.get("nse_history_by_symbol")
+    if supplied_histories:
+        histories = dict(supplied_histories)
+        histories.setdefault("_meta", dict(integrity_data.get("nse_history_meta") or {}))
+    else:
+        client = nse_futures_history.NSEFuturesArchiveClient(cache_dir=_RESEARCH_STATE_DIR / "nse-fo-bhavcopy")
+        last = {"done": -1}
+        def _archive_progress(done, total, label):
+            if stage_cb and (done == 0 or done == total or done - last["done"] >= 20):
+                stage_cb(1, 4, f"NSE Trial17 archive {done}/{total} · {label}", min(28, 4 + round((done/max(total,1))*24)))
+                last["done"] = done
+        histories = nse_futures_history.build_symbol_histories(
+            archive_days, symbols, client, progress_cb=_archive_progress, discover_historical=True
+        )
+
+    meta = dict(histories.get("_meta") or {})
+    date_coverage = float(meta.get("date_coverage") or 0.0)
+    archive_ok = bool(date_coverage >= 0.95)
+    discovered = sorted(k for k in histories if k != "_meta")
+    research_symbols = discovered or symbols
+    priceable = [s for s in discovered if cash_tokens.get(s)]
+    price_coverage = float(len(priceable) / len(discovered)) if discovered else 0.0
+    membership_ok = bool(archive_ok and discovered and price_coverage >= 0.95)
+    controls = {
+        "historical_membership_available": membership_ok,
+        "lot_size_normalization_available": archive_ok,
+        "mwpl_available": False,
+    }
+
+    frames = {}
+    notes = {}
+    coverage = []
+    total = len(research_symbols)
+    resumed = 0
+    run_dir = Path(resume_run_dir) if resume_run_dir is not None else None
+    if run_dir is not None:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    if stage_cb:
+        stage_cb(2, 4, "Building Trial-17 cash + total-OI frames", 30)
+
+    for i, symbol in enumerate(research_symbols, start=1):
+        if progress_cb:
+            progress_cb(i-1, total, symbol)
+        shard = _v95_symbol_shard_path(run_dir, i-1, symbol) if run_dir is not None else None
+        cached = _load_v95_symbol_shard(shard, symbol) if shard is not None else None
+        if cached is not None:
+            frames[symbol] = cached
+            resumed += 1
+            if progress_cb:
+                progress_cb(i, total, symbol)
+            continue
+        hist = histories.get(symbol) or {}
+        token = cash_tokens.get(symbol)
+        near_oi = hist.get("near_oi")
+        total_oi = hist.get("total_oi")
+        if not token:
+            notes[symbol] = "Missing current NSE cash token for historical outcome series; not fabricated."
+            if progress_cb: progress_cb(i, total, symbol)
+            continue
+        if not isinstance(total_oi, pd.Series) or total_oi.dropna().empty or not isinstance(near_oi, pd.Series):
+            notes[symbol] = "Official NSE total/near FUTSTK OI history unavailable."
+            if progress_cb: progress_cb(i, total, symbol)
+            continue
+        try:
+            rows = scanner_mod._fetch_historical_chunked(
+                kite, token, warmup_start.to_pydatetime(), cash_end.to_pydatetime(), "day", oi=False, continuous=False
+            )
+            price = pd.DataFrame(rows)
+            if price.empty:
+                raise ValueError("daily cash history unavailable")
+            price = price.rename(columns={"date":"timestamp"}).set_index("timestamp")
+            price = price[~price.index.duplicated(keep="last")].sort_index()
+            frame = v95_daily_evidence.build_symbol_daily_frame(
+                price, near_oi, expiry_dates=hist.get("near_expiry")
+            )
+            membership = hist.get("membership")
+            if isinstance(membership, pd.Series):
+                m = membership.copy(); m.index = pd.to_datetime(m.index).normalize()
+                m = m.reindex(frame.index).astype("boolean").fillna(False).astype(bool)
+                frame["fno_member_pti"] = m
+                frame["eligible"] = frame["eligible"] & m
+            else:
+                frame["fno_member_pti"] = False
+                frame["eligible"] = False
+            for col, key in (("nse_total_oi","total_oi"),("nse_near_oi","near_oi"),("nse_next_oi","next_oi"),("nse_far_oi","far_oi"),("nse_near_dte","near_dte"),("nse_lot_size","lot_size")):
+                source = hist.get(key)
+                if isinstance(source, pd.Series):
+                    ser = pd.to_numeric(source.copy(), errors="coerce")
+                    ser.index = pd.to_datetime(ser.index).normalize()
+                    frame[col] = ser.reindex(frame.index)
+            frames[symbol] = frame
+            coverage.append({"symbol":symbol,"rows":int(len(frame)),"membership_days":int(frame["fno_member_pti"].sum())})
+            if shard is not None:
+                _save_v95_symbol_shard(shard, symbol, frame)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("V9.6 Trial17 frame failed for %s", symbol)
+            notes[symbol] = str(exc)
+        finally:
+            research_runtime.release_memory_pressure()
+            if progress_cb: progress_cb(i, total, symbol)
+
+    # Load MWPL only for Trial-17 evidence dates; no later V9.5 discovery/final dates are requested.
+    mwpl_result = None
+    if frames:
+        if stage_cb:
+            stage_cb(3, 4, "Loading Trial-17 NSE MWPL / ban controls", 82)
+        trial_dates = sorted({pd.Timestamp(d).normalize() for f in frames.values() for d in f.index
+                              if v96_trial17.INDEPENDENT_START <= pd.Timestamp(d).tz_localize(None).normalize() <= v96_trial17.INDEPENDENT_END})
+        try:
+            mwpl_client = nse_mwpl.NSEHistoricalReportClient(cache_dir=_RESEARCH_STATE_DIR / "nse-mwpl")
+            mwpl_result = nse_mwpl.build_validation_mwpl_controls(
+                validation_dates=trial_dates, symbols=list(frames), client=mwpl_client, min_date_coverage=0.95
+            )
+        except Exception as exc:  # noqa: BLE001
+            mwpl_result = {"available":False,"reason":f"MWPL_LOAD_ERROR:{exc}","date_coverage":0.0,
+                           "mwpl_by_symbol":{},"ban_by_symbol":{},"source":"NSE_F&O_COMBINED_OPEN_INTEREST","errors":{"load":str(exc)}}
+        controls["mwpl_available"] = bool(mwpl_result.get("available"))
+        if controls["mwpl_available"]:
+            for symbol, frame in frames.items():
+                mws=(mwpl_result.get("mwpl_by_symbol") or {}).get(symbol)
+                bans=(mwpl_result.get("ban_by_symbol") or {}).get(symbol)
+                if isinstance(mws,pd.Series):
+                    x=pd.to_numeric(mws.copy(), errors="coerce"); x.index=pd.to_datetime(x.index).normalize(); frame["mwpl_pct"]=x.reindex(frame.index)
+                if isinstance(bans,pd.Series):
+                    x=bans.copy(); x.index=pd.to_datetime(x.index).normalize(); frame["ban_flag"]=x.reindex(frame.index).fillna(False).astype(bool)
+
+    if stage_cb:
+        stage_cb(4, 4, "Evaluating frozen Trial 17 independent evidence gates", 94)
+    research = v96_trial17.evaluate_trial17(frames, controls=controls) if frames else v96_trial17.evaluate_trial17({}, controls=controls)
+    if frames and not archive_ok and not str(research.get("status") or "").startswith("FAIL_"):
+        research["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"
+        research["primary_pass"] = False
+
+    return {
+        "build": v96_trial17.BUILD_ID,
+        "symbols_scanned": len(research_symbols),
+        "symbols_completed": len(frames),
+        "symbols_skipped": notes,
+        "coverage": coverage,
+        "integrity": {
+            **controls,
+            "historical_oi_primary": "NSE_TOTAL_FUTSTK_OI_SHARE_EQUIVALENT",
+            "nse_oi_date_coverage": date_coverage,
+            "nse_oi_coverage_ok": archive_ok,
+            "historical_symbols_discovered": len(discovered),
+            "historical_membership_price_coverage": price_coverage,
+            "independent_window": {"start":str(v96_trial17.INDEPENDENT_START.date()),"end":str(v96_trial17.INDEPENDENT_END.date())},
+            "mwpl_date_coverage": float((mwpl_result or {}).get("date_coverage") or 0.0),
+            "mwpl_reason": (mwpl_result or {}).get("reason") or "UNAVAILABLE",
+            "resumed_symbol_shards": resumed,
+            "prior_locked_finals_read": False,
+        },
+        "research": research,
+        "research_only": True,
+    }
+
 def _default_v95_daily_state():
     return {
         "status": "idle",
@@ -3800,6 +4001,115 @@ def start_v95_daily_oi_evidence(kite, symbols=None, days=1095, integrity_data=No
     threading.Thread(target=_job, daemon=True).start()
     return {"started": True, "mode": "v95_daily", "resumed_symbol_shards": resumed_done}
 
+
+
+def _default_v96_state():
+    return {
+        "status": "idle", "mode": "v96_trial17", "research_only": True,
+        "progress": {"done":0,"total":0,"symbol":None,"stage":None,"stage_index":0,"stage_total":4,"overall_pct":0},
+        "result": None, "error": None, "started_at": None, "finished_at": None,
+        "params": {"resume_run_dir": None}, "worker": {},
+    }
+
+
+def _atomic_write_v96_state(state):
+    path = Path(_V96_STATE_PATH); path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(state, fh, default=_research_json_default, allow_nan=True, separators=(",", ":"))
+        fh.flush(); os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _load_v96_state():
+    path = Path(_V96_STATE_PATH)
+    if not path.exists(): return _default_v96_state()
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_v96_state()
+    base = _default_v96_state()
+    if isinstance(state, dict):
+        base.update(state)
+        if isinstance(state.get("progress"), dict): base["progress"].update(state["progress"])
+        if isinstance(state.get("params"), dict): base["params"].update(state["params"])
+    if base.get("status") == "running":
+        run_dir_raw=(base.get("params") or {}).get("resume_run_dir")
+        run_dir=Path(run_dir_raw) if run_dir_raw else None
+        durable=bool(run_dir and run_dir.exists() and any(run_dir.glob("*.pkl")))
+        base["status"]="error"
+        base["error"]=("V9.6 Trial 17 worker restarted before completion. Durable symbol checkpoints were found; run again to resume." if durable else "V9.6 Trial 17 worker restarted before completion; no durable symbol checkpoint was found.")
+    return base
+
+
+_v96_lock = threading.Lock()
+_v96_state = _load_v96_state()
+
+
+def _persist_v96_state():
+    with _v96_lock:
+        snapshot=dict(_v96_state); snapshot["progress"]=dict(_v96_state.get("progress") or {}); snapshot["params"]=dict(_v96_state.get("params") or {})
+    snapshot["worker"] = research_runtime.worker_snapshot()
+    _atomic_write_v96_state(snapshot)
+
+
+def get_v96_trial17_state():
+    with _v96_lock:
+        out=dict(_v96_state); out["progress"]=dict(_v96_state.get("progress") or {}); out["params"]=dict(_v96_state.get("params") or {})
+    out["worker"] = research_runtime.worker_snapshot()
+    return out
+
+
+def start_v96_trial17(kite, symbols=None, integrity_data=None):
+    symbols=[str(s).strip().upper() for s in (symbols or settings.WATCHLIST)]
+    with _v96_lock:
+        if _v96_state.get("status") == "running":
+            return {"started":False,"reason":"V9.6 Trial 17 is already running."}
+        if research_runtime.is_research_active():
+            return {"started":False,"reason":"Another historical research job is already running."}
+        run_dir=_v96_run_dir(symbols=symbols)
+        resumed=sum(1 for _ in run_dir.glob("*.pkl"))
+        _v96_state.update({
+            "status":"running","mode":"v96_trial17","research_only":True,
+            "progress":{"done":resumed,"total":len(symbols),"symbol":None,"stage":"Loading official NSE Trial-17 independent-history archive","stage_index":1,"stage_total":4,"overall_pct":max(1,min(80,round(resumed/max(len(symbols),1)*80)))},
+            "result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None,
+            "params":{"resume_run_dir":str(run_dir)},
+        })
+    _persist_v96_state()
+
+    def _progress(done,total,symbol):
+        research_runtime.heartbeat(stage="Building V9.6 Trial-17 frames", symbol=symbol, done=done, total=total)
+        with _v96_lock:
+            cur=_v96_state.get("progress") or {}
+            _v96_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building Trial-17 cash + total-OI frames","stage_index":2,"stage_total":4,"overall_pct":max(30,min(80,30+round(done/max(total,1)*50)))}
+        if done==0 or done==total or (done>0 and done%5==0): _persist_v96_state()
+
+    def _stage(stage_index,stage_total,stage,overall_pct):
+        research_runtime.heartbeat(stage=stage)
+        with _v96_lock:
+            cur=_v96_state.get("progress") or {}
+            _v96_state["progress"]={"done":cur.get("done",0),"total":cur.get("total",len(symbols)),"symbol":None,"stage":stage,"stage_index":int(stage_index),"stage_total":int(stage_total),"overall_pct":int(overall_pct)}
+        _persist_v96_state()
+
+    def _job():
+        try:
+            with research_runtime.research_slot():
+                result=run_v96_trial17(kite,symbols=symbols,progress_cb=_progress,integrity_data=integrity_data,resume_run_dir=run_dir,stage_cb=_stage)
+            with _v96_lock:
+                _v96_state["progress"]={"done":result.get("symbols_scanned",len(symbols)),"total":result.get("symbols_scanned",len(symbols)),"symbol":None,"stage":"Complete","stage_index":4,"stage_total":4,"overall_pct":100}
+                _v96_state["result"]=result; _v96_state["status"]="done"; _v96_state["error"]=None; _v96_state["finished_at"]=now_ist().isoformat(timespec="seconds")
+            _persist_v96_state(); shutil.rmtree(run_dir, ignore_errors=True)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("V9.6 Trial17 run failed")
+            with _v96_lock:
+                _v96_state["status"]="error"; _v96_state["error"]=str(exc); _v96_state["finished_at"]=now_ist().isoformat(timespec="seconds")
+            _persist_v96_state()
+        finally:
+            research_runtime.end_research(); research_runtime.release_memory_pressure()
+
+    research_runtime.begin_research("v96_trial17")
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started":True,"mode":"v96_trial17","resumed_symbol_shards":resumed}
 
 def _default_early_research_state():
     return {

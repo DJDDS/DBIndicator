@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI</div>
     <p>
-      <strong>V9.5.3 Daily OI Evidence + Contract Structure Lab is the primary research architecture.</strong> It preserves the completed V9.4 audit path, moves the surviving Daily-OI question onto 3+ years of official NSE daily evidence, and refuses production activation unless the feature survives independent-history, volatility, expiry-cycle, clustering and integrity controls.
+      <strong>V9.6 Trial 17 Independent Total-OI Validation is the primary research architecture.</strong> It tests the V9.5.3 fresh-total-OI discovery once on older, non-overlapping official NSE history before any directional research is allowed.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -115,6 +115,28 @@
         </div>
         <div class="hint">These bar-count horizons apply only to the legacy diagnostics below. The primary F&amp;O research uses clock/session-aware 30m / 1h / 2h / 4h / EOD and 1D / 2D exits.</div>
       </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-color:#e0a43b;">
+    <h2>V9.6 Trial 17 · Independent Fresh Total OI Validation</h2>
+    <p style="margin-top:-4px;"><strong>Freeze the V9.5.3 discovery and test it once on older evidence.</strong></p>
+    <p class="hint"><strong>Trial 17:</strong> total OI z &ge; <strong>1.5</strong> &rarr; next-session magnitude. Evidence window is fixed to <strong>1 Sep 2021 through 1 Sep 2023</strong>, ending before the V9.5 discovery window. Primary horizon is 1D; 2D cannot rescue a failed 1D result.</p>
+    <p class="hint"><strong>Trial 18 LOCKED.</strong> Direction is not tested unless Trial 17 passes independent validation. Prior Trial 13/15 finals remain untouched. <strong>RESEARCH / SHADOW ONLY</strong>; no TRADE/WATCH activation.</p>
+    <button type="button" class="btn" id="v96-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.6 Trial 17</button>
+    <span class="hint" id="v96-form-hint" style="margin-left:10px;">Official NSE total FUTSTK OI · fixed older window · historical membership · MWPL sensitivity · no retuning.</span>
+    <div class="progress-wrap" id="v96-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v96-progress-fill"></div></div>
+      <div class="progress-label" id="v96-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="v96-error" style="display:none; margin-top:16px;"></div>
+    <div id="v96-results" style="display:none; margin-top:18px;">
+      <h3 class="bt-group-title">Trial 17 Independent Validation</h3>
+      <div id="v96-verdict"></div>
+      <div id="v96-controls" class="hint" style="margin:10px 0 14px;"></div>
+      <div id="v96-stats"></div>
+      <div id="v96-robustness" class="hint" style="margin-top:12px;"></div>
+      <div id="v96-diagnostics" style="margin-top:14px;"></div>
     </div>
   </div>
 
@@ -301,6 +323,33 @@ function startJob(url, scope, extra, hintId, onStarted) {
 }
 
 
+
+const V96_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI";
+function v96Fmt(v,d=2){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
+function v96Lift(v){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(2)+'×';}
+function updateV96UI(state){
+  state=state||{}; const p=state.progress||{};
+  const btn=document.getElementById('v96-run-btn'), prog=document.getElementById('v96-progress'), fill=document.getElementById('v96-progress-fill'), label=document.getElementById('v96-progress-label'), err=document.getElementById('v96-error'), results=document.getElementById('v96-results');
+  if(!btn)return;
+  if(state.status==='running'){
+    btn.disabled=true; prog.style.display='block'; err.style.display='none'; results.style.display='none';
+    fill.style.width=Math.max(1,Math.min(100,Number(p.overall_pct)||0))+'%';
+    const w=state.worker||{}, mem=(w.rss_mb===null||w.rss_mb===undefined)?'':` · RSS ${w.rss_mb} MB`, pid=w.pid?` · PID ${w.pid}`:'', sym=p.symbol?` · ${p.symbol}`:'';
+    label.textContent=`${p.stage||'Running Trial 17'} · ${p.done||0}/${p.total||0}${sym}${mem}${pid}`; return;
+  }
+  btn.disabled=false; prog.style.display='none';
+  if(state.status==='error'){err.style.display='block';err.textContent=state.error||'V9.6 Trial 17 failed.';results.style.display='none';return;}
+  err.style.display='none'; if(state.status!=='done'||!state.result){results.style.display='none';return;}
+  const out=state.result||{}, r=out.research||{}, st=String(r.status||'INCONCLUSIVE'), pass=st==='PASS_INDEPENDENT_VALIDATION', v1=((r.validation||{})['1D'])||{}, v2=((r.validation||{})['2D'])||{}, reg=r.regression_1D||{}, t=((reg.t||{}).total_z), tail=r.top3_day_removed||{}, blocks=(r.chronological_blocks||[]).map(b=>`B${b.block}: ${v96Lift(b.lift)}`).join(' · ')||'—', c=r.controls||{}, win=r.evidence_window||{};
+  document.getElementById('v96-verdict').innerHTML=`<div class="${pass?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:6px;">${st.replaceAll('_',' ')}</div><div class="hint">Build ${r.build||out.build||V96_BUILD_ID} · ${out.symbols_completed||0}/${out.symbols_scanned||0} symbols · fixed evidence ${win.start||'2021-09-01'} → ${win.end||'2023-09-01'} · Trial 18 LOCKED</div>`;
+  document.getElementById('v96-controls').innerHTML=`<strong>Controls:</strong> historical membership <strong>${c.historical_membership||'UNAVAILABLE'}</strong> · OI normalization <strong>${c.lot_size_normalization||'UNAVAILABLE'}</strong> · MWPL/ban <strong>${c.mwpl_control||'UNAVAILABLE'}</strong> · prior locked finals <strong>UNTOUCHED</strong>`;
+  document.getElementById('v96-stats').innerHTML=`<table><thead><tr><th>Horizon</th><th>Events</th><th>Days</th><th>Event move</th><th>Baseline</th><th>Lift</th><th>95% CI</th></tr></thead><tbody><tr><td><strong>1D PRIMARY</strong></td><td>${v1.event_count??0}</td><td>${v1.distinct_days??0}</td><td>${v96Fmt(v1.avg_move_atr)} ATR</td><td>${v96Fmt(v1.baseline_avg_move_atr)} ATR</td><td>${v96Lift(v1.lift)}</td><td>${v96Lift(v1.ci95_low)} → ${v96Lift(v1.ci95_high)}</td></tr><tr><td>2D secondary</td><td>${v2.event_count??0}</td><td>${v2.distinct_days??0}</td><td>${v96Fmt(v2.avg_move_atr)} ATR</td><td>${v96Fmt(v2.baseline_avg_move_atr)} ATR</td><td>${v96Lift(v2.lift)}</td><td>${v96Lift(v2.ci95_low)} → ${v96Lift(v2.ci95_high)}</td></tr></tbody></table>`;
+  document.getElementById('v96-robustness').innerHTML=`<strong>Total-OI z cluster t-stat:</strong> ${v96Fmt(t)} (required ≥3.0) · <strong>Top-3-day removed lift:</strong> ${v96Lift(tail.lift)} · <strong>Chronological blocks:</strong> ${blocks} · <strong>1D pass bar:</strong> lift ≥1.10× and CI lower bound >1.00×.`;
+  const dte=r.dte_buckets||{}, conc=r.concentration||{};
+  document.getElementById('v96-diagnostics').innerHTML=`<div class="hint"><strong>DTE diagnostics:</strong> ${Object.entries(dte).map(([k,v])=>`${k}: ${v96Lift((v||{}).lift_1D)} (${(v||{}).events||0} events)`).join(' · ')||'—'}<br><strong>Concentration:</strong> ${conc.symbols||0} symbols · top-5 event share ${conc.top5_symbol_event_share===null||conc.top5_symbol_event_share===undefined?'—':(Number(conc.top5_symbol_event_share)*100).toFixed(1)+'%'}. Diagnostics cannot rescue a failed primary result.</div>`;
+  results.style.display='block';
+}
+function pollV96(){fetch('/api/v96/status').then(r=>r.json()).then(st=>{updateV96UI(st);if(st.status==='running')setTimeout(pollV96,2500);}).catch(()=>setTimeout(pollV96,5000));}
 
 const V95_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE";
 
@@ -877,6 +926,12 @@ document.getElementById('er-run-btn').addEventListener('click', function () {
   document.getElementById('scope-days').value = '180';
   startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'v4h-form-hint', pollEarlyResearch);
 });
+document.getElementById('v96-run-btn').addEventListener('click', function () {
+  startJob('/api/v96/start', {universe:'watchlist', timeframe:'day', days:'0', horizons:[]}, {}, 'v96-form-hint', pollV96);
+});
+const initialV96State = {{ v96_state | default(none) | tojson }};
+if (initialV96State) { updateV96UI(initialV96State); if (initialV96State.status === 'running') pollV96(); }
+
 document.getElementById('v95-run-btn').addEventListener('click', function () {
   const days = document.getElementById('v95-days').value || '1095';
   startJob('/api/v95/start', {universe:'watchlist', timeframe:'day', days:days, horizons:[]}, {}, 'v95-form-hint', pollV95);
