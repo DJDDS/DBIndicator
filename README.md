@@ -1,6 +1,6 @@
-# DBIndicator — V9.3 Anticipation Research
+# DBIndicator — V9.5.2 NSE Daily OI Evidence
 
-**Build:** `2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE`
+**Build:** `2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE`
 
 ## V9.5 Daily OI Evidence Lab
 
@@ -10,8 +10,8 @@ V9.5 adds a separate **research-only 3-year daily-OI evidence path**. It does no
 - **Trial 14 remains failed as pre-registered**; V9.5 never rescues it by deleting compression.
 - **Trial 15** asks whether a positive *unexpected* daily futures-OI shock predicts abnormal next-session magnitude after development-fitted OI expectations, realized-volatility controls, expiry-cycle controls, day-cluster inference, tail sensitivity and chronological stability. The final 20% is locked.
 - **Trial 16 LOCKED**: conditional direction is not run automatically. It becomes eligible only after Trial 15 passes independent validation.
-- Missing point-in-time MWPL/ban, historical F&O membership, lot-size normalization or other required integrity data is disclosed and keeps the verdict **INCONCLUSIVE** rather than fabricated. Historical ATM IV is used only if an honest point-in-time series is supplied.
-- V9.5 uses daily cash candles plus Kite continuous daily futures OI and bypasses the memory-heavy V9.4 15-minute cross-sectional rank pipeline. Per-symbol daily frames are checkpointed for restart recovery.
+- Official NSE MWPL/ban data is loaded only for the frozen validation dates; historical F&O membership and lot-size normalization come from the NSE derivatives archive itself. Any incomplete load-bearing source keeps the verdict **INCONCLUSIVE** rather than fabricated. Historical ATM IV is used only if an honest point-in-time series is supplied.
+- V9.5.2 uses official NSE daily stock-futures history as the primary OI source: the compact F&O Market Activity contract-wise futures report is preferred, with legacy/UDiFF F&O bhavcopies as date-appropriate fallbacks. It reconstructs actual near/next/far expiries, keeps UDiFF `OpnIntrst` in its published underlying-quantity units while deriving a contracts diagnostic from `NewBrdLotQty`, derives point-in-time FUTSTK membership from contract presence, and uses Kite only for daily cash prices/live cross-checks. Per-symbol daily evidence frames and raw NSE archives are cached for restart recovery.
 
 Open **Backtest → Run V9.5 Daily OI Evidence Lab**. V9.4 remains visible below it as the completed measurement/audit path.
 
@@ -19,7 +19,7 @@ V9.3 keeps the live V9 evidence gate intact while changing the research question
 
 ## What to run first
 
-Open **Backtest → Run V9.4 Measurement + Magnitude Lab**.
+Open **Backtest → Run V9.5 Daily OI Evidence Lab** for the current primary research path. V9.4 remains below it as the completed measurement/audit path and should not be rerun to retune Trial 14.
 
 The V9.3 research run is fixed to the current NSE stock-F&O universe, 15-minute setup/execution and 180 calendar days. Primary evidence is **1D / 2D**; 2H / 4H remain diagnostics. Historical price fetching is chunked. Stage 2 converts the completed symbol shards once into lean rank-only checkpoints, then streams one cross-sectional rank at a time so the full universe is never retained in RAM.
 

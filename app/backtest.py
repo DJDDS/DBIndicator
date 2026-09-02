@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, nse_futures_history, nse_mwpl
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2733,7 +2733,7 @@ _V95_DAILY_WORK_ROOT = Path(
     os.environ.get("V95_DAILY_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v95-daily-work"))
 )
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
-_V95_RUN_SCHEMA = "v950-daily-evidence-run-1"
+_V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -3228,7 +3228,7 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
 
 
 
-_V95_RESUME_SCHEMA = "v950-daily-evidence-shard-1"
+_V95_RESUME_SCHEMA = "v952-nse-daily-evidence-shard-1"
 
 
 def _v95_symbol_shard_path(run_dir, index, symbol):
@@ -3269,51 +3269,101 @@ def _save_v95_symbol_shard(path, symbol, frame):
 
 def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, integrity_data=None,
                                resume_run_dir=None, stage_cb=None) -> dict:
-    """Run the isolated V9.5 daily-OI evidence lab.
+    """Run the isolated V9.5 daily-OI evidence lab on official NSE OI history.
 
-    This path intentionally uses only daily cash candles plus continuous daily
-    stock-futures OI. It never invokes the 15-minute V9.4 rank/checkpoint path.
-    Optional integrity datasets are explicit inputs; absent datasets are disclosed
-    and force the research verdict to remain inconclusive rather than guessed.
+    Historical stock-futures OI comes from NSE's own daily F&O bhavcopies
+    (legacy + UDiFF).  The frozen Trial-15 primary series is the *near-month*
+    share-equivalent OI reconstructed from those contract files; next/far and
+    total OI remain diagnostics.  Kite is retained for daily cash prices only.
+
+    MWPL/ban data is loaded only for the already-declared validation dates and
+    is never requested for the locked final 20%.  Any missing load-bearing
+    integrity source fails closed rather than falling back to fabricated data.
     """
-    symbols = list(symbols or settings.WATCHLIST)
+    symbols = [str(s).strip().upper() for s in (symbols or settings.WATCHLIST)]
     days = max(1095, min(int(days or 1095), 3650))
     integrity_data = dict(integrity_data or {})
-    membership_map = integrity_data.get("membership_by_symbol") or {}
-    mwpl_map = integrity_data.get("mwpl_by_symbol") or {}
-    ban_map = integrity_data.get("ban_by_symbol") or {}
-    lot_map = integrity_data.get("lot_size_by_symbol") or {}
-    expiry_map = integrity_data.get("expiry_by_symbol") or {}
+    explicit_membership = integrity_data.get("membership_by_symbol") or {}
+    explicit_mwpl = integrity_data.get("mwpl_by_symbol") or {}
+    explicit_ban = integrity_data.get("ban_by_symbol") or {}
+    explicit_lot = integrity_data.get("lot_size_by_symbol") or {}
+    explicit_expiry = integrity_data.get("expiry_by_symbol") or {}
     atm_iv_map = integrity_data.get("atm_iv_by_symbol") or {}
 
+    cash_tokens = _load_instrument_map(kite)
+    to_date = now_ist()
+    research_start = (to_date - dt.timedelta(days=days)).date()
+    # Warmup is outside the measured window and exists only for expected-OI,
+    # 60-day shock z, 20-day realised vol and 14-day ATR features.
+    fetch_start = to_date - dt.timedelta(days=days + 150)
+    archive_days = pd.bdate_range(pd.Timestamp(fetch_start.date()), pd.Timestamp(to_date.date()))
+
+    if stage_cb:
+        stage_cb(1, 4, "Loading official NSE stock-futures OI archive", 3)
+
+    supplied_histories = integrity_data.get("nse_history_by_symbol")
+    if supplied_histories:
+        nse_histories = dict(supplied_histories)
+        if "_meta" not in nse_histories:
+            nse_histories["_meta"] = dict(integrity_data.get("nse_history_meta") or {})
+    else:
+        archive_client = nse_futures_history.NSEFuturesArchiveClient(
+            cache_dir=_RESEARCH_STATE_DIR / "nse-fo-bhavcopy"
+        )
+
+        last_archive_progress = {"done": -1}
+
+        def _archive_progress(done, total_days, label):
+            # Persisting UI state on every one of ~800 dates creates avoidable
+            # disk churn.  Report at coarse milestones while the client still
+            # caches every successfully downloaded archive independently.
+            if stage_cb and (done == 0 or done == total_days or done - last_archive_progress["done"] >= 20):
+                pct = 3 + round((done / max(total_days, 1)) * 27)
+                stage_cb(1, 4, f"NSE F&O archive {done}/{total_days} · {label}", min(30, pct))
+                last_archive_progress["done"] = done
+
+        nse_histories = nse_futures_history.build_symbol_histories(
+            archive_days, symbols, archive_client, progress_cb=_archive_progress, discover_historical=True
+        )
+
+    nse_meta = dict(nse_histories.get("_meta") or {})
+    nse_date_coverage = float(nse_meta.get("date_coverage") or 0.0)
+    nse_coverage_ok = bool(nse_date_coverage >= 0.95)
+    discovered_symbols = sorted(k for k in nse_histories if k != "_meta")
+    # The research population uses the historical FUTSTK union, not today's
+    # F&O membership replayed backward.  A symbol still needs an NSE cash
+    # token so its outcomes can be measured honestly.
+    research_symbols = sorted(set(discovered_symbols) | set(symbols))
+    priceable_discovered = [s for s in discovered_symbols if cash_tokens.get(s)]
+    historical_price_coverage = float(len(priceable_discovered) / len(discovered_symbols)) if discovered_symbols else 0.0
+    historical_membership_ok = bool(nse_coverage_ok and discovered_symbols and historical_price_coverage >= 0.95)
+
+    # NSE contract presence gives point-in-time eligibility; UDiFF lot
+    # quantity plus legacy share-equivalent OPEN_INT makes the near-month
+    # primary OI comparable across lot revisions.
     controls = {
-        "historical_membership_available": bool(membership_map),
-        "mwpl_available": bool(mwpl_map) and bool(ban_map),
-        "lot_size_normalization_available": bool(lot_map),
+        "historical_membership_available": historical_membership_ok,
+        "mwpl_available": bool(explicit_mwpl) and bool(explicit_ban),
+        "lot_size_normalization_available": bool(nse_coverage_ok),
         "atm_iv_available": bool(atm_iv_map),
         "independent_history_guard_required": True,
     }
-    cash_tokens = _load_instrument_map(kite)
-    fut_tokens = scanner_mod._fut_token_map(kite)
-    to_date = now_ist()
-    research_start = (to_date - dt.timedelta(days=days)).date()
-    # Warmup is outside the measured window and exists only for 60-day OI z,
-    # 20-day realised vol and 14-day ATR features.
-    fetch_start = to_date - dt.timedelta(days=days + 150)
 
     frames = {}
     notes = {}
     coverage = []
-    total = len(symbols)
+    total = len(research_symbols)
     resumed_symbol_shards = 0
     run_dir = Path(resume_run_dir) if resume_run_dir is not None else None
     if run_dir is not None:
         run_dir.mkdir(parents=True, exist_ok=True)
+
     if stage_cb:
-        stage_cb(1, 2, "Fetching 3-year daily cash + continuous futures OI", 5)
+        stage_cb(2, 4, "Building daily cash + NSE near-month OI evidence frames", 31)
     if progress_cb:
         progress_cb(0, total, None)
-    for i, symbol in enumerate(symbols, start=1):
+
+    for i, symbol in enumerate(research_symbols, start=1):
         if progress_cb:
             progress_cb(i - 1, total, symbol)
         shard_path = _v95_symbol_shard_path(run_dir, i - 1, symbol) if run_dir is not None else None
@@ -3327,68 +3377,89 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
                 "rows": int(len(frame)),
                 "first": str(frame.index.min().date()),
                 "last": str(frame.index.max().date()),
-                "derived_expiry_calendar": bool(frame.get("derived_expiry_calendar", pd.Series([True])).any()),
+                "derived_expiry_calendar": False,
+                "nse_near_oi_rows": int(pd.to_numeric(frame.get("nse_near_oi"), errors="coerce").notna().sum()) if "nse_near_oi" in frame else 0,
                 "resumed": True,
             })
             research_runtime.release_memory_pressure()
             if progress_cb:
                 progress_cb(i, total, symbol)
             continue
+
         cash_token = cash_tokens.get(symbol)
-        fut_token = fut_tokens.get(symbol)
-        if not cash_token or not fut_token:
-            notes[symbol] = "Missing cash or current futures token; daily evidence not fabricated."
+        hist = nse_histories.get(symbol) or {}
+        near_oi = hist.get("near_oi")
+        if not cash_token:
+            notes[symbol] = "Missing NSE cash token; cash history not fabricated."
             if progress_cb:
                 progress_cb(i, total, symbol)
             continue
+        if not isinstance(near_oi, pd.Series) or near_oi.dropna().empty:
+            notes[symbol] = "Official NSE near-month futures OI history unavailable; Kite OI fallback disabled."
+            if progress_cb:
+                progress_cb(i, total, symbol)
+            continue
+
         try:
             price_rows = scanner_mod._fetch_historical_chunked(
                 kite, cash_token, fetch_start, to_date, "day", oi=False, continuous=False
             )
-            oi_rows = scanner_mod._fetch_historical_chunked(
-                kite, fut_token, fetch_start, to_date, "day", oi=True, continuous=True
-            )
             price = pd.DataFrame(price_rows)
-            if price.empty or not oi_rows:
-                raise ValueError("daily cash price or continuous futures OI history unavailable")
+            if price.empty:
+                raise ValueError("daily cash price history unavailable")
             price = price.rename(columns={"date": "timestamp"}).set_index("timestamp")
             price = price[~price.index.duplicated(keep="last")].sort_index()
-            oi_idx = pd.to_datetime([r.get("date") for r in oi_rows])
-            oi = pd.Series([r.get("oi") for r in oi_rows], index=oi_idx, dtype="float64")
+
+            oi = pd.to_numeric(pd.Series(near_oi).copy(), errors="coerce")
+            oi.index = pd.to_datetime(oi.index).normalize()
             oi = oi.dropna()
             oi = oi[~oi.index.duplicated(keep="last")].sort_index()
 
-            lot = lot_map.get(symbol)
-            if lot is not None:
-                lser = pd.Series(lot).copy()
-                lser.index = pd.to_datetime(lser.index).normalize()
-                oi_naive = oi.copy()
-                oi_naive.index = pd.DatetimeIndex(oi_naive.index).tz_localize(None).normalize() if pd.DatetimeIndex(oi_naive.index).tz is not None else pd.DatetimeIndex(oi_naive.index).normalize()
-                # Underlying-share-equivalent OI removes known lot-size jumps.
-                aligned_lot = pd.to_numeric(lser.reindex(oi_naive.index, method="ffill"), errors="coerce")
-                oi = pd.Series(oi_naive.to_numpy() * aligned_lot.to_numpy(), index=oi_naive.index)
-
+            expiry_series = explicit_expiry.get(symbol) if symbol in explicit_expiry else hist.get("near_expiry")
+            mwpl_series = explicit_mwpl.get(symbol)
+            ban_series = explicit_ban.get(symbol)
             frame = v95_daily_evidence.build_symbol_daily_frame(
                 price, oi,
-                expiry_dates=expiry_map.get(symbol),
-                ban_series=ban_map.get(symbol),
-                mwpl_series=mwpl_map.get(symbol),
+                expiry_dates=expiry_series,
+                ban_series=ban_series,
+                mwpl_series=mwpl_series,
             )
-            membership = membership_map.get(symbol)
+
+            # Membership from an official daily bhavcopy is point-in-time and
+            # must never be forward-filled through a day on which the contract
+            # is absent.  Explicit caller data may override it for audits.
+            membership = explicit_membership.get(symbol) if symbol in explicit_membership else hist.get("membership")
             if membership is not None and not frame.empty:
                 m = pd.Series(membership).copy()
                 m.index = pd.to_datetime(m.index).normalize()
-                m = m.reindex(frame.index, method="ffill").astype("boolean").fillna(False).astype(bool)
+                m = m.reindex(frame.index).astype("boolean").fillna(False).astype(bool)
                 frame["eligible"] = frame["eligible"] & m
                 frame["fno_member_pti"] = m
             else:
-                frame["fno_member_pti"] = True
+                frame["fno_member_pti"] = False
+                frame["eligible"] = False
+
+            # Preserve the contract structure for diagnostics while keeping
+            # the frozen Trial-15 feature on near-month OI only.
+            for col, key in (
+                ("nse_total_oi", "total_oi"),
+                ("nse_near_oi", "near_oi"),
+                ("nse_next_oi", "next_oi"),
+                ("nse_far_oi", "far_oi"),
+                ("nse_lot_size", "lot_size"),
+                ("nse_near_dte", "near_dte"),
+            ):
+                source = hist.get(key)
+                if isinstance(source, pd.Series):
+                    ser = pd.to_numeric(source.copy(), errors="coerce")
+                    ser.index = pd.to_datetime(ser.index).normalize()
+                    frame[col] = ser.reindex(frame.index)
 
             iv = atm_iv_map.get(symbol)
             if iv is not None and not frame.empty:
                 ivs = pd.Series(iv).copy()
                 ivs.index = pd.to_datetime(ivs.index).normalize()
-                frame["atm_iv_pct_pti"] = pd.to_numeric(ivs.reindex(frame.index, method="ffill"), errors="coerce")
+                frame["atm_iv_pct_pti"] = pd.to_numeric(ivs.reindex(frame.index), errors="coerce")
 
             frame = frame[frame.index.date >= research_start]
             if frame.empty:
@@ -3399,21 +3470,71 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
                 "rows": int(len(frame)),
                 "first": str(frame.index.min().date()),
                 "last": str(frame.index.max().date()),
-                "derived_expiry_calendar": bool(frame.get("derived_expiry_calendar", pd.Series([True])).any()),
+                "derived_expiry_calendar": False,
+                "nse_near_oi_rows": int(frame["nse_near_oi"].notna().sum()) if "nse_near_oi" in frame else int(oi.notna().sum()),
+                "membership_days": int(frame["fno_member_pti"].sum()),
                 "resumed": False,
             })
             if shard_path is not None:
                 _save_v95_symbol_shard(shard_path, symbol, frame)
         except Exception as exc:  # noqa: BLE001
-            log.exception("V9.5 daily evidence fetch failed for %s", symbol)
+            log.exception("V9.5 NSE daily evidence fetch failed for %s", symbol)
             notes[symbol] = str(exc)
         finally:
             research_runtime.release_memory_pressure()
             if progress_cb:
                 progress_cb(i, total, symbol)
 
+    # Load MWPL/ban only for the pre-declared validation dates.  The locked
+    # final 20% is intentionally not touched by this integrity download.
+    mwpl_result = None
+    if frames and not controls["mwpl_available"]:
+        if stage_cb:
+            stage_cb(3, 4, "Loading validation-only NSE MWPL / ban controls", 82)
+        _, validation_dates, _ = v95_daily_evidence._partition_dates(frames)
+        try:
+            mwpl_client = nse_mwpl.NSEHistoricalReportClient(
+                cache_dir=_RESEARCH_STATE_DIR / "nse-mwpl"
+            )
+            mwpl_result = nse_mwpl.build_validation_mwpl_controls(
+                validation_dates=sorted(validation_dates),
+                symbols=list(frames),
+                client=mwpl_client,
+                min_date_coverage=0.95,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("V9.5 MWPL validation control load failed")
+            mwpl_result = {
+                "available": False,
+                "reason": f"MWPL_LOAD_ERROR:{exc}",
+                "date_coverage": 0.0,
+                "mwpl_by_symbol": {}, "ban_by_symbol": {},
+                "source": "NSE_F&O_COMBINED_OPEN_INTEREST", "errors": {"load": str(exc)},
+            }
+        controls["mwpl_available"] = bool(mwpl_result.get("available"))
+        if controls["mwpl_available"]:
+            for symbol, frame in frames.items():
+                mws = (mwpl_result.get("mwpl_by_symbol") or {}).get(symbol)
+                bans = (mwpl_result.get("ban_by_symbol") or {}).get(symbol)
+                if isinstance(mws, pd.Series):
+                    s = pd.to_numeric(mws.copy(), errors="coerce")
+                    s.index = pd.to_datetime(s.index).normalize()
+                    frame["mwpl_pct"] = s.reindex(frame.index)
+                if isinstance(bans, pd.Series):
+                    s = pd.Series(bans).copy()
+                    s.index = pd.to_datetime(s.index).normalize()
+                    # Missing/non-validation dates stay False only because
+                    # evaluate_trial15 selects validation rows; the values are
+                    # not interpreted outside that partition.
+                    frame["ban_flag"] = s.reindex(frame.index).fillna(False).astype(bool)
+    elif controls["mwpl_available"]:
+        mwpl_result = {
+            "available": True, "reason": "APPLIED_EXPLICIT_INPUT", "date_coverage": 1.0,
+            "source": "EXPLICIT_POINT_IN_TIME_INPUT", "errors": {},
+        }
+
     if stage_cb:
-        stage_cb(2, 2, "Evaluating Trial 15 evidence gates", 92)
+        stage_cb(4, 4, "Evaluating frozen Trial 15 evidence gates", 92)
     research_runtime.release_memory_pressure()
     research = v95_daily_evidence.evaluate_trial15(frames, controls=controls) if frames else {
         "build": v95_daily_evidence.BUILD_ID,
@@ -3431,32 +3552,70 @@ def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, i
         "final_test": {"locked": True, "rows_locked": 0},
         "research_only": True,
     }
+
+    # Archive completeness is an integrity gate of the data layer, not a new
+    # research threshold.  A weak archive can never turn Trial 15 into PASS.
+    if frames and not nse_coverage_ok:
+        research["primary_pass"] = False
+        research["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"
+        reasons = list(research.get("inconclusive_reasons") or [])
+        if "NSE_HISTORY_COVERAGE" not in reasons:
+            reasons.append("NSE_HISTORY_COVERAGE")
+        research["inconclusive_reasons"] = reasons
+
+    structure_available = bool(frames) and all(
+        isinstance(nse_histories.get(s), dict)
+        and isinstance(nse_histories[s].get("near_oi"), pd.Series)
+        and isinstance(nse_histories[s].get("next_oi"), pd.Series)
+        and isinstance(nse_histories[s].get("far_oi"), pd.Series)
+        for s in frames
+    )
     return {
         "build": v95_daily_evidence.BUILD_ID,
         "days": days,
         "timeframe": "day",
-        "symbols_scanned": len(symbols),
+        "symbols_scanned": len(research_symbols),
+        "current_symbols_requested": len(symbols),
         "symbols_completed": len(frames),
         "symbols_skipped": notes,
         "coverage": coverage,
         "integrity": {
             **controls,
             "intraday_pipeline_used": False,
-            "current_universe_replay": not controls["historical_membership_available"],
-            "expiry_calendar": "exact" if expiry_map else "derived Thursday/Tues regime; exchange-holiday adjustments unavailable",
+            "historical_oi_source": nse_meta.get("source") or "NSE_OFFICIAL_FO_BHAVCOPY",
+            "nse_oi_date_coverage": nse_date_coverage,
+            "nse_oi_coverage_ok": nse_coverage_ok,
+            "nse_archive_dates_requested": int(nse_meta.get("dates_requested") or 0),
+            "nse_archive_dates_loaded": int(nse_meta.get("dates_loaded") or 0),
+            "nse_archive_errors": dict(nse_meta.get("errors") or {}),
+            "historical_symbols_discovered": int(nse_meta.get("historical_symbols_discovered") or len(discovered_symbols)),
+            "historical_membership_price_coverage": historical_price_coverage,
+            "current_universe_replay": not historical_membership_ok,
+            "membership_basis": "NSE_POINT_IN_TIME_HISTORICAL_FUTSTK_UNION" if historical_membership_ok else "INCOMPLETE_HISTORICAL_FUTSTK_UNION",
+            "expiry_calendar": "NSE_ACTUAL_CONTRACT_EXPIRIES",
+            "oi_normalization": "LEGACY_SHARE_EQUIVALENT_PLUS_UDIFF_CONTRACTS_X_BOARD_LOT",
+            "nse_oi_structure": {
+                "near_next_far_available": structure_available,
+                "primary_series": "near_oi_share_equivalent",
+                "diagnostic_series": ["total_oi_share_equivalent", "next_oi_share_equivalent", "far_oi_share_equivalent"],
+            },
+            "mwpl_date_coverage": float((mwpl_result or {}).get("date_coverage") or 0.0),
+            "mwpl_reason": (mwpl_result or {}).get("reason") or ("APPLIED_EXPLICIT_INPUT" if controls["mwpl_available"] else "UNAVAILABLE"),
+            "mwpl_source": (mwpl_result or {}).get("source") or "UNAVAILABLE",
+            "mwpl_errors": dict((mwpl_result or {}).get("errors") or {}),
+            "atm_iv_source": "EXPLICIT_POINT_IN_TIME_INPUT" if atm_iv_map else "UNAVAILABLE_NOT_FABRICATED",
             "resumed_symbol_shards": int(resumed_symbol_shards),
         },
         "research": research,
         "research_only": True,
     }
 
-
 def _default_v95_daily_state():
     return {
         "status": "idle",
         "mode": "v95_daily",
         "research_only": True,
-        "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 2, "overall_pct": 0},
+        "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 4, "overall_pct": 0},
         "result": None,
         "error": None,
         "started_at": None,
@@ -3558,9 +3717,9 @@ def start_v95_daily_oi_evidence(kite, symbols=None, days=1095, integrity_data=No
                 "done": resumed_done,
                 "total": len(symbols),
                 "symbol": None,
-                "stage": "Fetching 3-year daily cash + continuous futures OI",
+                "stage": "Loading official NSE 3+ year stock-futures OI archive",
                 "stage_index": 1,
-                "stage_total": 2,
+                "stage_total": 4,
                 "overall_pct": max(1, min(90, round((resumed_done / len(symbols)) * 90))) if symbols else 1,
                 "resume_summary": {"completed_symbol_shards": resumed_done, "total_symbols": len(symbols)},
             },
@@ -3573,14 +3732,14 @@ def start_v95_daily_oi_evidence(kite, symbols=None, days=1095, integrity_data=No
     _persist_v95_daily_state()
 
     def _progress(done, total, symbol):
-        research_runtime.heartbeat(stage="Fetching V9.5 daily evidence inputs", symbol=symbol, done=done, total=total)
+        research_runtime.heartbeat(stage="Building V9.5 NSE daily evidence frames", symbol=symbol, done=done, total=total)
         with _v95_daily_lock:
             resume_summary = (_v95_daily_state.get("progress") or {}).get("resume_summary")
             _v95_daily_state["progress"] = {
                 "done": int(done), "total": int(total), "symbol": symbol,
-                "stage": "Fetching 3-year daily cash + continuous futures OI",
-                "stage_index": 1, "stage_total": 2,
-                "overall_pct": max(1, min(90, 1 + round((done / total) * 89))) if total else 1,
+                "stage": "Building daily cash + NSE near-month OI evidence frames",
+                "stage_index": 2, "stage_total": 4,
+                "overall_pct": max(31, min(80, 31 + round((done / total) * 49))) if total else 31,
                 "resume_summary": resume_summary,
             }
         if done == 0 or done == total or (done > 0 and done % 5 == 0):
@@ -3608,7 +3767,7 @@ def start_v95_daily_oi_evidence(kite, symbols=None, days=1095, integrity_data=No
             with _v95_daily_lock:
                 _v95_daily_state["progress"] = {
                     "done": len(symbols), "total": len(symbols), "symbol": None,
-                    "stage": "Complete", "stage_index": 2, "stage_total": 2, "overall_pct": 100,
+                    "stage": "Complete", "stage_index": 4, "stage_total": 4, "overall_pct": 100,
                     "resume_summary": {"completed_symbol_shards": len(symbols), "total_symbols": len(symbols)},
                 }
                 _v95_daily_state["result"] = result

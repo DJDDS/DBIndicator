@@ -92,7 +92,7 @@ def test_backtest_copy_matches_current_research_architecture_and_build_is_bumped
     assert "V9.5 Daily OI Evidence Lab is the primary research architecture" in text
     assert "V9.4 remains visible as the completed measurement/audit path" in text
     assert "V9.2 remains a manual diagnostic only" in text
-    assert "V9.5.0" in text
+    assert "V9.5.2" in text
     assert "V9.4.0" in text
 
 

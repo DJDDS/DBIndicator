@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE</div>
     <p>
-      <strong>V9.5 Daily OI Evidence Lab is the primary research architecture.</strong> It preserves the completed V9.4 audit path, moves the surviving Daily-OI question onto 3+ years of daily evidence, and refuses production activation unless the feature survives independent-history, volatility, expiry-cycle, clustering and integrity controls.
+      <strong>V9.5 Daily OI Evidence Lab is the primary research architecture.</strong> It preserves the completed V9.4 audit path, moves the surviving Daily-OI question onto 3+ years of official NSE daily evidence, and refuses production activation unless the feature survives independent-history, volatility, expiry-cycle, clustering and integrity controls.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -126,10 +126,10 @@
     <p class="hint"><strong>Trial 16 LOCKED:</strong> direction conditional on a validated OI shock is not run automatically. It becomes eligible only after Trial 15 passes independent validation. <strong>RESEARCH / SHADOW ONLY</strong>; no TRADE/WATCH activation.</p>
     <label for="v95-days">Daily history window</label>
     <input type="number" id="v95-days" value="1095" min="1095" max="3650">
-    <span class="hint" style="margin-left:8px;">1095 calendar days default; daily cash + continuous futures OI only.</span>
+    <span class="hint" style="margin-left:8px;">1095 calendar days default; daily cash + official NSE stock-futures OI history.</span>
     <div style="margin-top:12px;">
       <button type="button" class="btn" id="v95-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.5 Daily OI Evidence Lab</button>
-      <span class="hint" id="v95-form-hint" style="margin-left:10px;">Full live stock-F&amp;O universe · daily engine · V9.4 intraday rank pipeline bypassed.</span>
+      <span class="hint" id="v95-form-hint" style="margin-left:10px;">Official NSE 3+ year FUTSTK history · historical membership · actual contract expiries · near / next / far OI · Kite OI not used · V9.4 intraday rank pipeline bypassed.</span>
     </div>
     <div class="progress-wrap" id="v95-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v95-progress-fill"></div></div>
@@ -301,7 +301,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V95_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE";
+const V95_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE";
 
 function v95Fmt(v, digits=2) {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return '—';

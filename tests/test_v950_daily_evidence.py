@@ -24,7 +24,7 @@ def _oi(idx, seed=9):
 
 def test_v950_specs_are_research_only_and_trial16_locked():
     t15 = v95.trial15_spec()
-    assert v95.BUILD_ID == '2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE'
+    assert v95.BUILD_ID == '2026-09-02-INSTITUTIONAL-V9.5.2-NSE-DAILY-OI-EVIDENCE'
     assert t15['trial_number'] == 15
     assert t15['primary_horizon'] == '1D'
     assert t15['secondary_2D_cannot_rescue_1D'] is True
