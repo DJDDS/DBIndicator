@@ -45,8 +45,9 @@ def test_v92_manual_mode_still_runs_v92_goal_report(monkeypatch):
 def test_v93_backtest_copy_marks_v92_as_manual_diagnostic_only():
     from pathlib import Path
     text = Path('app/templates/backtest.html').read_text(encoding='utf-8')
-    assert 'V9.4 Measurement Repair is the primary research architecture' in text
-    assert 'V9.2 is retained as a manual diagnostic only' in text
+    assert 'V9.5 Daily OI Evidence Lab is the primary research architecture' in text
+    assert 'V9.4 remains visible as the completed measurement/audit path' in text
+    assert 'V9.2 remains a manual diagnostic only' in text
 
 
 def test_research_progress_identifies_the_explicit_job_mode():

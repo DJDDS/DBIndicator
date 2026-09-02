@@ -1,6 +1,19 @@
 # DBIndicator — V9.3 Anticipation Research
 
-**Build:** `2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14`
+**Build:** `2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE`
+
+## V9.5 Daily OI Evidence Lab
+
+V9.5 adds a separate **research-only 3-year daily-OI evidence path**. It does not alter the live production gate or the completed V9.4 audit. `ACTIVE_PLAYBOOKS = ()` remains unchanged.
+
+- **Trial 13 is closed**; its final 20% remains permanently unread in this build.
+- **Trial 14 remains failed as pre-registered**; V9.5 never rescues it by deleting compression.
+- **Trial 15** asks whether a positive *unexpected* daily futures-OI shock predicts abnormal next-session magnitude after development-fitted OI expectations, realized-volatility controls, expiry-cycle controls, day-cluster inference, tail sensitivity and chronological stability. The final 20% is locked.
+- **Trial 16 LOCKED**: conditional direction is not run automatically. It becomes eligible only after Trial 15 passes independent validation.
+- Missing point-in-time MWPL/ban, historical F&O membership, lot-size normalization or other required integrity data is disclosed and keeps the verdict **INCONCLUSIVE** rather than fabricated. Historical ATM IV is used only if an honest point-in-time series is supplied.
+- V9.5 uses daily cash candles plus Kite continuous daily futures OI and bypasses the memory-heavy V9.4 15-minute cross-sectional rank pipeline. Per-symbol daily frames are checkpointed for restart recovery.
+
+Open **Backtest → Run V9.5 Daily OI Evidence Lab**. V9.4 remains visible below it as the completed measurement/audit path.
 
 V9.3 keeps the live V9 evidence gate intact while changing the research question from **“which extra confirmation gate rescues a weak setup?”** to **“which independent evidence stream predicts movement before the move, and at what holding horizon?”**
 

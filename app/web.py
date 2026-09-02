@@ -527,6 +527,7 @@ def backtest_page():
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         backtest_day_bounds={tf: backtest.backtest_day_bounds(tf) for tf in config.VALID_TIMEFRAMES},
         early_research_state=backtest.get_early_research_state(),
+        v95_daily_state=backtest.get_v95_daily_oi_state(),
         index_symbols=backtest.INDEX_SYMBOLS,
         watchlist_count=len(settings.WATCHLIST),
     )
@@ -552,6 +553,35 @@ def _resolve_backtest_symbols(form):
     universe = form.get("universe", "watchlist")
     symbols = _BACKTEST_UNIVERSES.get(universe, _BACKTEST_UNIVERSES["watchlist"])
     return list(symbols) if symbols is not None else list(settings.WATCHLIST)
+
+
+@app.route("/api/v95/start", methods=["POST"])
+@require_dashboard_password
+def api_v95_start():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+    try:
+        days = int(request.form.get("days", 1095))
+    except ValueError:
+        return jsonify({"started": False, "reason": "days must be a number"}), 400
+    days = max(1095, min(days or 1095, 3650))
+    try:
+        symbols = scanner.get_fno_stock_list(kite)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"started": False, "reason": f"Could not load live F&O universe: {exc}"}), 400
+    if not symbols:
+        return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
+    # Historical MWPL/ban/membership/lot-size/ATM-IV controls are intentionally
+    # not fabricated. The V9.5 report remains INCONCLUSIVE until genuine
+    # point-in-time control datasets are supplied to the runner.
+    return jsonify(backtest.start_v95_daily_oi_evidence(kite, symbols=symbols, days=days))
+
+
+@app.route("/api/v95/status")
+@require_dashboard_password
+def api_v95_status():
+    return jsonify(backtest.get_v95_daily_oi_state())
 
 
 @app.route("/api/early-research/start", methods=["POST"])

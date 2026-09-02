@@ -67,12 +67,12 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE</div>
     <p>
-      <strong>V9.4 Measurement Repair is the primary research architecture.</strong> It resolves Trial 13 without touching its final 20%, repairs the measurement instrument, and pivots the next pre-registered test toward magnitude rather than direction.
+      <strong>V9.5 Daily OI Evidence Lab is the primary research architecture.</strong> It preserves the completed V9.4 audit path, moves the surviving Daily-OI question onto 3+ years of daily evidence, and refuses production activation unless the feature survives independent-history, volatility, expiry-cycle, clustering and integrity controls.
     </p>
     <p>
-      <strong>V9.2 is retained as a manual diagnostic only.</strong> It runs only when you explicitly press <strong>Run V9.2 Diagnostic Reset</strong>; V9.3 does not call it automatically. The rejected Bear final remains locked and cannot be rerun from this page.
+      <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
     </p>
     <p class="hint" style="border-left:3px solid #f0b90b;padding-left:10px;">
       <strong>V8.2 Derivative Intelligence is live/shadow only.</strong> Kite's normal historical interface does not provide a point-in-time stock-option chain with the bid/ask, IV surface and signed flow needed for an honest historical option-P&amp;L replay. The backtest below therefore validates the <em>underlying Bull/Bear screener</em>; live V8.2 records option-chain snapshots separately for forward validation instead of fabricating historical option data.
@@ -115,6 +115,33 @@
         </div>
         <div class="hint">These bar-count horizons apply only to the legacy diagnostics below. The primary F&amp;O research uses clock/session-aware 30m / 1h / 2h / 4h / EOD and 1D / 2D exits.</div>
       </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-color:#7b61a8;">
+    <h2>V9.5 Daily OI Evidence Lab</h2>
+    <p style="margin-top:-4px;"><strong>3-year daily evidence first: test whether an unexpected futures-OI shock contains independent 1D movement information before we allow another directional strategy.</strong></p>
+    <p class="hint"><strong>Trial 15 &mdash; Unexpected Daily OI -&gt; Next-session Magnitude:</strong> the expected OI-change model is fitted only on the first 60% of dates; the next 20% is validation; the <strong>final 20% stays locked and unread</strong>. Primary horizon is 1D. 2D is secondary and cannot rescue a failed 1D result.</p>
+    <p class="hint">Required evidence gates include day-cluster bootstrap, volatility-controlled regression, expiry-cycle adjustment, top-3-day sensitivity, chronological stability and honest MWPL/ban/membership/lot-size controls. Missing load-bearing controls force <strong>INCONCLUSIVE</strong>; they are never fabricated.</p>
+    <p class="hint"><strong>Trial 16 LOCKED:</strong> direction conditional on a validated OI shock is not run automatically. It becomes eligible only after Trial 15 passes independent validation. <strong>RESEARCH / SHADOW ONLY</strong>; no TRADE/WATCH activation.</p>
+    <label for="v95-days">Daily history window</label>
+    <input type="number" id="v95-days" value="1095" min="1095" max="3650">
+    <span class="hint" style="margin-left:8px;">1095 calendar days default; daily cash + continuous futures OI only.</span>
+    <div style="margin-top:12px;">
+      <button type="button" class="btn" id="v95-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.5 Daily OI Evidence Lab</button>
+      <span class="hint" id="v95-form-hint" style="margin-left:10px;">Full live stock-F&amp;O universe · daily engine · V9.4 intraday rank pipeline bypassed.</span>
+    </div>
+    <div class="progress-wrap" id="v95-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v95-progress-fill"></div></div>
+      <div class="progress-label" id="v95-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="v95-error" style="display:none; margin-top:16px;"></div>
+    <div id="v95-results" style="display:none; margin-top:18px;">
+      <h3 class="bt-group-title">V9.5 Trial 15 Validation</h3>
+      <div id="v95-verdict"></div>
+      <div id="v95-controls" class="hint" style="margin:10px 0 14px;"></div>
+      <div id="v95-stats"></div>
+      <div id="v95-robustness" class="hint" style="margin-top:12px;"></div>
     </div>
   </div>
 
@@ -270,6 +297,119 @@ function startJob(url, scope, extra, hintId, onStarted) {
       else onStarted();
     })
     .catch(() => { document.getElementById(hintId).textContent = 'Could not reach the server.'; });
+}
+
+
+
+const V95_BUILD_ID = "2026-09-01-INSTITUTIONAL-V9.5.0-DAILY-OI-EVIDENCE";
+
+function v95Fmt(v, digits=2) {
+  if (v === null || v === undefined || !Number.isFinite(Number(v))) return '—';
+  return Number(v).toFixed(digits);
+}
+function v95Lift(v) {
+  return (v === null || v === undefined || !Number.isFinite(Number(v))) ? '—' : (Number(v).toFixed(2) + '×');
+}
+function v95ControlLabel(v) {
+  return String(v || 'UNAVAILABLE').replaceAll('_', ' ');
+}
+function updateV95UI(state) {
+  state = state || {};
+  const p = state.progress || {};
+  const btn = document.getElementById('v95-run-btn');
+  const progress = document.getElementById('v95-progress');
+  const fill = document.getElementById('v95-progress-fill');
+  const label = document.getElementById('v95-progress-label');
+  const error = document.getElementById('v95-error');
+  const results = document.getElementById('v95-results');
+  if (!btn) return;
+
+  if (state.status === 'running') {
+    btn.disabled = true;
+    progress.style.display = 'block';
+    error.style.display = 'none';
+    results.style.display = 'none';
+    const pct = Number.isFinite(Number(p.overall_pct)) ? Number(p.overall_pct) : 0;
+    fill.style.width = Math.max(1, Math.min(100, pct)) + '%';
+    const worker = state.worker || {};
+    const mem = worker.rss_mb === null || worker.rss_mb === undefined ? '' : ` · RSS ${worker.rss_mb} MB`;
+    const pid = worker.pid ? ` · PID ${worker.pid}` : '';
+    const symbol = p.symbol ? ` · ${p.symbol}` : '';
+    label.textContent = `${p.stage || 'Running V9.5'} · ${p.done || 0}/${p.total || 0}${symbol}${mem}${pid}`;
+    return;
+  }
+
+  btn.disabled = false;
+  progress.style.display = 'none';
+  if (state.status === 'error') {
+    error.style.display = 'block';
+    error.textContent = state.error || 'V9.5 daily evidence failed.';
+    results.style.display = 'none';
+    return;
+  }
+  error.style.display = 'none';
+  if (state.status !== 'done' || !state.result) {
+    results.style.display = 'none';
+    return;
+  }
+
+  const out = state.result || {};
+  const r = out.research || {};
+  const status = String(r.status || 'INCONCLUSIVE');
+  const pass = status === 'PASS_VALIDATION';
+  const v1 = ((r.validation || {})['1D']) || {};
+  const v2 = ((r.validation || {})['2D']) || {};
+  const reg = r.regression_1D || {};
+  const oiT = ((reg.t || {}).unexpected_oi_z);
+  const controls = r.controls || {};
+  const finalTest = r.final_test || {};
+  const reasons = r.inconclusive_reasons || [];
+
+  document.getElementById('v95-verdict').innerHTML = `
+    <div class="${pass ? 'win-good' : 'win-bad'}" style="font-size:16px;margin-bottom:6px;">${status.replaceAll('_',' ')}</div>
+    <div class="hint">Build ${r.build || out.build || V95_BUILD_ID} · ${out.symbols_completed || 0}/${out.symbols_scanned || 0} symbols · Trial 16 LOCKED · final 20% ${finalTest.locked ? 'LOCKED' : 'ERROR'}</div>
+    ${reasons.length ? `<div class="msg-warn" style="margin-top:10px;">Cannot establish the feature yet: ${reasons.map(x => x.replaceAll('_',' ')).join(' · ')}</div>` : ''}`;
+
+  const crows = [
+    ['Realized-vol control', controls.realized_vol_control],
+    ['ATM IV control', controls.atm_iv_control],
+    ['MWPL / ban control', controls.mwpl_control],
+    ['Historical F&O membership', controls.historical_membership],
+    ['Lot-size OI normalization', controls.lot_size_normalization],
+  ];
+  document.getElementById('v95-controls').innerHTML = '<strong>Integrity controls:</strong> ' + crows.map(x => `${x[0]}: <strong>${v95ControlLabel(x[1])}</strong>`).join(' · ');
+
+  document.getElementById('v95-stats').innerHTML = `
+    <table><thead><tr><th>Horizon</th><th>Events</th><th>Days</th><th>Event move</th><th>Baseline</th><th>Lift</th><th>95% CI</th></tr></thead><tbody>
+      <tr><td><strong>1D PRIMARY</strong></td><td>${v1.event_count ?? 0}</td><td>${v1.distinct_days ?? 0}</td><td>${v95Fmt(v1.avg_move_atr)} ATR</td><td>${v95Fmt(v1.baseline_avg_move_atr)} ATR</td><td>${v95Lift(v1.lift)}</td><td>${v95Lift(v1.ci95_low)} → ${v95Lift(v1.ci95_high)}</td></tr>
+      <tr><td>2D secondary</td><td>${v2.event_count ?? 0}</td><td>${v2.distinct_days ?? 0}</td><td>${v95Fmt(v2.avg_move_atr)} ATR</td><td>${v95Fmt(v2.baseline_avg_move_atr)} ATR</td><td>${v95Lift(v2.lift)}</td><td>${v95Lift(v2.ci95_low)} → ${v95Lift(v2.ci95_high)}</td></tr>
+    </tbody></table>`;
+
+  const blocks = (r.chronological_blocks || []).map(b => `B${b.block}: ${v95Lift(b.lift)}`).join(' · ') || '—';
+  const tail = r.top3_day_removed || {};
+  const parts = r.partitions || {};
+  const diag = r.diagnostics || {};
+  const rawPos = (((diag.raw_positive_oi_z || {})['1D']) || {});
+  const negShock = (((diag.unexpected_negative_oi_z || {})['1D']) || {});
+  const levelZ = (((diag.high_oi_level_z || {})['1D']) || {});
+  document.getElementById('v95-robustness').innerHTML = `
+    <strong>Volatility-controlled OI t-stat:</strong> ${v95Fmt(oiT, 2)} (required ≥ 3.0) ·
+    <strong>Top-3-day removed lift:</strong> ${v95Lift(tail.lift)} ·
+    <strong>Chronological blocks:</strong> ${blocks}<br>
+    <strong>V9.4 discovery-window guard:</strong> ${v95ControlLabel(controls.v94_discovery_overlap_guard)} ·
+    <strong>Raw positive OI z:</strong> ${v95Lift(rawPos.lift)} ·
+    <strong>Unexpected negative OI z:</strong> ${v95Lift(negShock.lift)} ·
+    <strong>Prior OI level z:</strong> ${v95Lift(levelZ.lift)}<br>
+    Development ${parts.development_days ?? '—'} days · validation ${parts.validation_days ?? '—'} days · final ${parts.final_days ?? '—'} days locked.
+    <strong>Diagnostics cannot rescue Trial 15. 2D cannot rescue a failed 1D result.</strong>`;
+  results.style.display = 'block';
+}
+
+function pollV95() {
+  fetch('/api/v95/status').then(r => r.json()).then(st => {
+    updateV95UI(st);
+    if (st.status === 'running') setTimeout(pollV95, 2500);
+  }).catch(() => setTimeout(pollV95, 5000));
 }
 
 
@@ -723,6 +863,14 @@ document.getElementById('er-run-btn').addEventListener('click', function () {
   document.getElementById('scope-days').value = '180';
   startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'v4h-form-hint', pollEarlyResearch);
 });
+document.getElementById('v95-run-btn').addEventListener('click', function () {
+  const days = document.getElementById('v95-days').value || '1095';
+  startJob('/api/v95/start', {universe:'watchlist', timeframe:'day', days:days, horizons:[]}, {}, 'v95-form-hint', pollV95);
+});
+const initialV95State = {{ v95_daily_state | default(none) | tojson }};
+updateV95UI(initialV95State);
+if (initialV95State.status === 'running') pollV95();
+
 const initialEarlyResearchState = {{ early_research_state | tojson }};
 updateEarlyResearchUI(initialEarlyResearchState);
 if (initialEarlyResearchState.status === 'running') pollEarlyResearch();

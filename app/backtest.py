@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2726,7 +2726,14 @@ _EARLY_RESEARCH_STATE_PATH = Path(
 _EARLY_RESEARCH_WORK_ROOT = Path(
     os.environ.get("EARLY_RESEARCH_WORK_ROOT", str(_RESEARCH_STATE_DIR / "work"))
 )
+_V95_DAILY_STATE_PATH = Path(
+    os.environ.get("V95_DAILY_STATE_PATH", str(_RESEARCH_STATE_DIR / "v95-daily-state.json"))
+)
+_V95_DAILY_WORK_ROOT = Path(
+    os.environ.get("V95_DAILY_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v95-daily-work"))
+)
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
+_V95_RUN_SCHEMA = "v950-daily-evidence-run-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -2750,6 +2757,25 @@ def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, 
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
     run_dir = Path(_EARLY_RESEARCH_WORK_ROOT) / digest
+    run_dir.mkdir(parents=True, exist_ok=True)
+    meta = run_dir / "meta.json"
+    if not meta.exists():
+        tmp = run_dir / "meta.json.tmp"
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, meta)
+    return run_dir
+
+
+def _v95_daily_run_dir(*, symbols, days):
+    payload = {
+        "schema": _V95_RUN_SCHEMA,
+        "day": now_ist().date().isoformat(),
+        "symbols": list(symbols or []),
+        "days": int(days),
+        "build": v95_daily_evidence.BUILD_ID,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    run_dir = Path(_V95_DAILY_WORK_ROOT) / digest
     run_dir.mkdir(parents=True, exist_ok=True)
     meta = run_dir / "meta.json"
     if not meta.exists():
@@ -3199,6 +3225,413 @@ def _build_v91_ranked_events_checkpoint(run_dir, shard_map, stage_cb=None):
     })
     _v91_rank_progress_path(run_dir).unlink(missing_ok=True)
     return final_path
+
+
+
+_V95_RESUME_SCHEMA = "v950-daily-evidence-shard-1"
+
+
+def _v95_symbol_shard_path(run_dir, index, symbol):
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(symbol))
+    return Path(run_dir) / f"{int(index):04d}-{safe}.pkl"
+
+
+def _load_v95_symbol_shard(path, symbol):
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as fh:
+            payload = pickle.load(fh)
+        if not isinstance(payload, dict) or payload.get("schema") != _V95_RESUME_SCHEMA:
+            return None
+        if payload.get("symbol") != symbol:
+            return None
+        frame = payload.get("frame")
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            return None
+        return frame
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Ignoring invalid V9.5 symbol checkpoint %s: %s", path, exc)
+        return None
+
+
+def _save_v95_symbol_shard(path, symbol, frame):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("wb") as fh:
+        pickle.dump({"schema": _V95_RESUME_SCHEMA, "symbol": symbol, "frame": frame}, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def run_v95_daily_oi_evidence(kite, symbols=None, days=1095, progress_cb=None, integrity_data=None,
+                               resume_run_dir=None, stage_cb=None) -> dict:
+    """Run the isolated V9.5 daily-OI evidence lab.
+
+    This path intentionally uses only daily cash candles plus continuous daily
+    stock-futures OI. It never invokes the 15-minute V9.4 rank/checkpoint path.
+    Optional integrity datasets are explicit inputs; absent datasets are disclosed
+    and force the research verdict to remain inconclusive rather than guessed.
+    """
+    symbols = list(symbols or settings.WATCHLIST)
+    days = max(1095, min(int(days or 1095), 3650))
+    integrity_data = dict(integrity_data or {})
+    membership_map = integrity_data.get("membership_by_symbol") or {}
+    mwpl_map = integrity_data.get("mwpl_by_symbol") or {}
+    ban_map = integrity_data.get("ban_by_symbol") or {}
+    lot_map = integrity_data.get("lot_size_by_symbol") or {}
+    expiry_map = integrity_data.get("expiry_by_symbol") or {}
+    atm_iv_map = integrity_data.get("atm_iv_by_symbol") or {}
+
+    controls = {
+        "historical_membership_available": bool(membership_map),
+        "mwpl_available": bool(mwpl_map) and bool(ban_map),
+        "lot_size_normalization_available": bool(lot_map),
+        "atm_iv_available": bool(atm_iv_map),
+        "independent_history_guard_required": True,
+    }
+    cash_tokens = _load_instrument_map(kite)
+    fut_tokens = scanner_mod._fut_token_map(kite)
+    to_date = now_ist()
+    research_start = (to_date - dt.timedelta(days=days)).date()
+    # Warmup is outside the measured window and exists only for 60-day OI z,
+    # 20-day realised vol and 14-day ATR features.
+    fetch_start = to_date - dt.timedelta(days=days + 150)
+
+    frames = {}
+    notes = {}
+    coverage = []
+    total = len(symbols)
+    resumed_symbol_shards = 0
+    run_dir = Path(resume_run_dir) if resume_run_dir is not None else None
+    if run_dir is not None:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    if stage_cb:
+        stage_cb(1, 2, "Fetching 3-year daily cash + continuous futures OI", 5)
+    if progress_cb:
+        progress_cb(0, total, None)
+    for i, symbol in enumerate(symbols, start=1):
+        if progress_cb:
+            progress_cb(i - 1, total, symbol)
+        shard_path = _v95_symbol_shard_path(run_dir, i - 1, symbol) if run_dir is not None else None
+        cached_frame = _load_v95_symbol_shard(shard_path, symbol) if shard_path is not None else None
+        if cached_frame is not None:
+            frame = cached_frame
+            frames[symbol] = frame
+            resumed_symbol_shards += 1
+            coverage.append({
+                "symbol": symbol,
+                "rows": int(len(frame)),
+                "first": str(frame.index.min().date()),
+                "last": str(frame.index.max().date()),
+                "derived_expiry_calendar": bool(frame.get("derived_expiry_calendar", pd.Series([True])).any()),
+                "resumed": True,
+            })
+            research_runtime.release_memory_pressure()
+            if progress_cb:
+                progress_cb(i, total, symbol)
+            continue
+        cash_token = cash_tokens.get(symbol)
+        fut_token = fut_tokens.get(symbol)
+        if not cash_token or not fut_token:
+            notes[symbol] = "Missing cash or current futures token; daily evidence not fabricated."
+            if progress_cb:
+                progress_cb(i, total, symbol)
+            continue
+        try:
+            price_rows = scanner_mod._fetch_historical_chunked(
+                kite, cash_token, fetch_start, to_date, "day", oi=False, continuous=False
+            )
+            oi_rows = scanner_mod._fetch_historical_chunked(
+                kite, fut_token, fetch_start, to_date, "day", oi=True, continuous=True
+            )
+            price = pd.DataFrame(price_rows)
+            if price.empty or not oi_rows:
+                raise ValueError("daily cash price or continuous futures OI history unavailable")
+            price = price.rename(columns={"date": "timestamp"}).set_index("timestamp")
+            price = price[~price.index.duplicated(keep="last")].sort_index()
+            oi_idx = pd.to_datetime([r.get("date") for r in oi_rows])
+            oi = pd.Series([r.get("oi") for r in oi_rows], index=oi_idx, dtype="float64")
+            oi = oi.dropna()
+            oi = oi[~oi.index.duplicated(keep="last")].sort_index()
+
+            lot = lot_map.get(symbol)
+            if lot is not None:
+                lser = pd.Series(lot).copy()
+                lser.index = pd.to_datetime(lser.index).normalize()
+                oi_naive = oi.copy()
+                oi_naive.index = pd.DatetimeIndex(oi_naive.index).tz_localize(None).normalize() if pd.DatetimeIndex(oi_naive.index).tz is not None else pd.DatetimeIndex(oi_naive.index).normalize()
+                # Underlying-share-equivalent OI removes known lot-size jumps.
+                aligned_lot = pd.to_numeric(lser.reindex(oi_naive.index, method="ffill"), errors="coerce")
+                oi = pd.Series(oi_naive.to_numpy() * aligned_lot.to_numpy(), index=oi_naive.index)
+
+            frame = v95_daily_evidence.build_symbol_daily_frame(
+                price, oi,
+                expiry_dates=expiry_map.get(symbol),
+                ban_series=ban_map.get(symbol),
+                mwpl_series=mwpl_map.get(symbol),
+            )
+            membership = membership_map.get(symbol)
+            if membership is not None and not frame.empty:
+                m = pd.Series(membership).copy()
+                m.index = pd.to_datetime(m.index).normalize()
+                m = m.reindex(frame.index, method="ffill").astype("boolean").fillna(False).astype(bool)
+                frame["eligible"] = frame["eligible"] & m
+                frame["fno_member_pti"] = m
+            else:
+                frame["fno_member_pti"] = True
+
+            iv = atm_iv_map.get(symbol)
+            if iv is not None and not frame.empty:
+                ivs = pd.Series(iv).copy()
+                ivs.index = pd.to_datetime(ivs.index).normalize()
+                frame["atm_iv_pct_pti"] = pd.to_numeric(ivs.reindex(frame.index, method="ffill"), errors="coerce")
+
+            frame = frame[frame.index.date >= research_start]
+            if frame.empty:
+                raise ValueError("no eligible daily rows inside requested research window")
+            frames[symbol] = frame
+            coverage.append({
+                "symbol": symbol,
+                "rows": int(len(frame)),
+                "first": str(frame.index.min().date()),
+                "last": str(frame.index.max().date()),
+                "derived_expiry_calendar": bool(frame.get("derived_expiry_calendar", pd.Series([True])).any()),
+                "resumed": False,
+            })
+            if shard_path is not None:
+                _save_v95_symbol_shard(shard_path, symbol, frame)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("V9.5 daily evidence fetch failed for %s", symbol)
+            notes[symbol] = str(exc)
+        finally:
+            research_runtime.release_memory_pressure()
+            if progress_cb:
+                progress_cb(i, total, symbol)
+
+    if stage_cb:
+        stage_cb(2, 2, "Evaluating Trial 15 evidence gates", 92)
+    research_runtime.release_memory_pressure()
+    research = v95_daily_evidence.evaluate_trial15(frames, controls=controls) if frames else {
+        "build": v95_daily_evidence.BUILD_ID,
+        "trial15": v95_daily_evidence.trial15_spec(),
+        "trial16": v95_daily_evidence.trial16_spec(),
+        "status": "INCONCLUSIVE_NO_DATA", "primary_pass": False,
+        "controls": {
+            "realized_vol_control": "UNAVAILABLE",
+            "atm_iv_control": "APPLIED" if controls["atm_iv_available"] else "UNAVAILABLE_NOT_FABRICATED",
+            "mwpl_control": "APPLIED" if controls["mwpl_available"] else "UNAVAILABLE",
+            "historical_membership": "APPLIED" if controls["historical_membership_available"] else "CURRENT_UNIVERSE_REPLAY_SURVIVORSHIP_BIAS",
+            "lot_size_normalization": "APPLIED" if controls["lot_size_normalization_available"] else "UNAVAILABLE_DISCLOSED",
+            "v94_discovery_overlap_guard": "UNAVAILABLE_NO_DATA",
+        },
+        "final_test": {"locked": True, "rows_locked": 0},
+        "research_only": True,
+    }
+    return {
+        "build": v95_daily_evidence.BUILD_ID,
+        "days": days,
+        "timeframe": "day",
+        "symbols_scanned": len(symbols),
+        "symbols_completed": len(frames),
+        "symbols_skipped": notes,
+        "coverage": coverage,
+        "integrity": {
+            **controls,
+            "intraday_pipeline_used": False,
+            "current_universe_replay": not controls["historical_membership_available"],
+            "expiry_calendar": "exact" if expiry_map else "derived Thursday/Tues regime; exchange-holiday adjustments unavailable",
+            "resumed_symbol_shards": int(resumed_symbol_shards),
+        },
+        "research": research,
+        "research_only": True,
+    }
+
+
+def _default_v95_daily_state():
+    return {
+        "status": "idle",
+        "mode": "v95_daily",
+        "research_only": True,
+        "progress": {"done": 0, "total": 0, "symbol": None, "stage": None, "stage_index": 0, "stage_total": 2, "overall_pct": 0},
+        "result": None,
+        "error": None,
+        "started_at": None,
+        "finished_at": None,
+        "params": {"days": 1095, "resume_run_dir": None},
+        "worker": {},
+    }
+
+
+def _atomic_write_v95_daily_state(state):
+    path = Path(_V95_DAILY_STATE_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(state, fh, default=_research_json_default, allow_nan=True, separators=(",", ":"))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _load_v95_daily_state():
+    path = Path(_V95_DAILY_STATE_PATH)
+    if not path.exists():
+        return _default_v95_daily_state()
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            state = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not restore V9.5 daily state: %s", exc)
+        return _default_v95_daily_state()
+    base = _default_v95_daily_state()
+    if isinstance(state, dict):
+        base.update(state)
+        if isinstance(state.get("progress"), dict):
+            base["progress"].update(state["progress"])
+        if isinstance(state.get("params"), dict):
+            base["params"].update(state["params"])
+    if base.get("status") == "running":
+        run_dir_raw = (base.get("params") or {}).get("resume_run_dir")
+        run_dir = Path(run_dir_raw) if run_dir_raw else None
+        durable = bool(run_dir and run_dir.exists() and any(run_dir.glob("*.pkl")))
+        base["status"] = "error"
+        base["error"] = (
+            "V9.5 daily evidence was interrupted by a worker restart. Durable symbol checkpoints were found; "
+            "run the same V9.5 lab again to resume."
+            if durable else
+            "V9.5 daily evidence was interrupted by a worker restart and no durable symbol checkpoints were found. "
+            "Configure RESEARCH_STATE_DIR on a persistent Railway Volume to survive host replacement."
+        )
+        base["finished_at"] = now_ist().isoformat(timespec="seconds")
+        try:
+            _atomic_write_v95_daily_state(base)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not persist interrupted V9.5 state: %s", exc)
+    return base
+
+
+_v95_daily_lock = threading.Lock()
+_v95_daily_state = _load_v95_daily_state()
+
+
+def _persist_v95_daily_state():
+    with _v95_daily_lock:
+        snapshot = dict(_v95_daily_state)
+        snapshot["progress"] = dict(_v95_daily_state.get("progress") or {})
+        snapshot["params"] = dict(_v95_daily_state.get("params") or {})
+    try:
+        _atomic_write_v95_daily_state(snapshot)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not persist V9.5 daily state: %s", exc)
+
+
+def get_v95_daily_oi_state():
+    with _v95_daily_lock:
+        out = dict(_v95_daily_state)
+        out["progress"] = dict(_v95_daily_state.get("progress") or {})
+        out["params"] = dict(_v95_daily_state.get("params") or {})
+    out["worker"] = research_runtime.snapshot()
+    return out
+
+
+def start_v95_daily_oi_evidence(kite, symbols=None, days=1095, integrity_data=None):
+    symbols = list(symbols or settings.WATCHLIST)
+    days = max(1095, min(int(days or 1095), 3650))
+    if not symbols:
+        return {"started": False, "reason": "No F&O symbols supplied for V9.5."}
+    with _v95_daily_lock:
+        if _v95_daily_state.get("status") == "running":
+            return {"started": False, "reason": "V9.5 Daily OI Evidence Lab is already running."}
+        if research_runtime.is_research_active():
+            return {"started": False, "reason": "Another historical research job is already running."}
+        run_dir = _v95_daily_run_dir(symbols=symbols, days=days)
+        resumed_done = sum(1 for _ in run_dir.glob("*.pkl"))
+        _v95_daily_state.update({
+            "status": "running",
+            "mode": "v95_daily",
+            "research_only": True,
+            "progress": {
+                "done": resumed_done,
+                "total": len(symbols),
+                "symbol": None,
+                "stage": "Fetching 3-year daily cash + continuous futures OI",
+                "stage_index": 1,
+                "stage_total": 2,
+                "overall_pct": max(1, min(90, round((resumed_done / len(symbols)) * 90))) if symbols else 1,
+                "resume_summary": {"completed_symbol_shards": resumed_done, "total_symbols": len(symbols)},
+            },
+            "result": None,
+            "error": None,
+            "started_at": now_ist().isoformat(timespec="seconds"),
+            "finished_at": None,
+            "params": {"days": days, "resume_run_dir": str(run_dir)},
+        })
+    _persist_v95_daily_state()
+
+    def _progress(done, total, symbol):
+        research_runtime.heartbeat(stage="Fetching V9.5 daily evidence inputs", symbol=symbol, done=done, total=total)
+        with _v95_daily_lock:
+            resume_summary = (_v95_daily_state.get("progress") or {}).get("resume_summary")
+            _v95_daily_state["progress"] = {
+                "done": int(done), "total": int(total), "symbol": symbol,
+                "stage": "Fetching 3-year daily cash + continuous futures OI",
+                "stage_index": 1, "stage_total": 2,
+                "overall_pct": max(1, min(90, 1 + round((done / total) * 89))) if total else 1,
+                "resume_summary": resume_summary,
+            }
+        if done == 0 or done == total or (done > 0 and done % 5 == 0):
+            _persist_v95_daily_state()
+
+    def _stage(stage_index, stage_total, stage, overall_pct):
+        research_runtime.heartbeat(stage=stage)
+        with _v95_daily_lock:
+            current = _v95_daily_state.get("progress") or {}
+            _v95_daily_state["progress"] = {
+                "done": current.get("done", 0), "total": current.get("total", len(symbols)), "symbol": None,
+                "stage": stage, "stage_index": int(stage_index), "stage_total": int(stage_total),
+                "overall_pct": int(overall_pct), "resume_summary": current.get("resume_summary"),
+            }
+        _persist_v95_daily_state()
+
+    def _job():
+        try:
+            with research_runtime.research_slot():
+                research_runtime.heartbeat(stage="V9.5 worker acquired exclusive heavy-work slot")
+                result = run_v95_daily_oi_evidence(
+                    kite, symbols=symbols, days=days, progress_cb=_progress,
+                    integrity_data=integrity_data, resume_run_dir=run_dir, stage_cb=_stage,
+                )
+            with _v95_daily_lock:
+                _v95_daily_state["progress"] = {
+                    "done": len(symbols), "total": len(symbols), "symbol": None,
+                    "stage": "Complete", "stage_index": 2, "stage_total": 2, "overall_pct": 100,
+                    "resume_summary": {"completed_symbol_shards": len(symbols), "total_symbols": len(symbols)},
+                }
+                _v95_daily_state["result"] = result
+                _v95_daily_state["status"] = "done"
+                _v95_daily_state["error"] = None
+                _v95_daily_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+            _persist_v95_daily_state()
+            shutil.rmtree(run_dir, ignore_errors=True)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("V9.5 daily evidence run failed")
+            with _v95_daily_lock:
+                _v95_daily_state["status"] = "error"
+                _v95_daily_state["error"] = str(exc)
+                _v95_daily_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+            _persist_v95_daily_state()
+        finally:
+            research_runtime.end_research()
+            research_runtime.release_memory_pressure()
+
+    research_runtime.begin_research("v95_daily")
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "mode": "v95_daily", "resumed_symbol_shards": resumed_done}
+
 
 def _default_early_research_state():
     return {
