@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, nse_futures_history, nse_mwpl
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -3655,7 +3655,6 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
     """
     symbols = [str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
     integrity_data = dict(integrity_data or {})
-    cash_tokens = _load_instrument_map(kite)
     warmup_start = v96_trial17.INDEPENDENT_START - pd.Timedelta(days=150)
     archive_end = v96_trial17.INDEPENDENT_END
     cash_end = archive_end + pd.Timedelta(days=7)
@@ -3684,11 +3683,48 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
     archive_ok = bool(date_coverage >= 0.95)
     discovered = sorted(k for k in histories if k != "_meta")
     research_symbols = discovered or symbols
-    priceable = [s for s in discovered if cash_tokens.get(s)]
-    price_coverage = float(len(priceable) / len(discovered)) if discovered else 0.0
-    membership_ok = bool(archive_ok and discovered and price_coverage >= 0.95)
+    membership_ok = bool(archive_ok and discovered)
+
+    cash_days = pd.bdate_range(warmup_start, cash_end)
+    supplied_cash = integrity_data.get("nse_cash_by_symbol")
+    if supplied_cash:
+        cash_histories = dict(supplied_cash)
+        cash_histories.setdefault("_meta", dict(integrity_data.get("nse_cash_meta") or {}))
+    else:
+        cash_client = nse_cash_history.NSECashArchiveClient(cache_dir=_RESEARCH_STATE_DIR / "nse-cm-bhavcopy")
+        cash_last = {"done": -1}
+        def _cash_progress(done, total, label):
+            if stage_cb and (done == 0 or done == total or done - cash_last["done"] >= 20):
+                stage_cb(2, 4, f"NSE Trial17 cash archive {done}/{total} · {label}", min(48, 29 + round((done/max(total,1))*19)))
+                cash_last["done"] = done
+        cash_histories = nse_cash_history.build_symbol_price_histories(
+            cash_days, research_symbols, cash_client, progress_cb=_cash_progress
+        )
+
+    cash_meta = dict(cash_histories.get("_meta") or {})
+    cash_date_coverage = float(cash_meta.get("date_coverage") or 0.0)
+    cash_archive_ok = bool(cash_date_coverage >= 0.95)
+    member_points = 0
+    priced_member_points = 0
+    for symbol in research_symbols:
+        hist = histories.get(symbol) or {}
+        membership = hist.get("membership")
+        price = cash_histories.get(symbol)
+        if not isinstance(membership, pd.Series) or not isinstance(price, pd.DataFrame):
+            continue
+        m = membership.copy(); m.index = pd.to_datetime(m.index).normalize()
+        m = m[(m.index >= v96_trial17.INDEPENDENT_START) & (m.index <= v96_trial17.INDEPENDENT_END)].fillna(False).astype(bool)
+        closes = pd.to_numeric(price.get("close"), errors="coerce")
+        closes.index = pd.to_datetime(closes.index).normalize()
+        closes = closes.reindex(m.index)
+        member_points += int(m.sum())
+        priced_member_points += int((m & closes.notna()).sum())
+    membership_price_coverage = float(priced_member_points / member_points) if member_points else 0.0
+    historical_cash_ok = bool(cash_archive_ok and member_points > 0 and membership_price_coverage >= 0.95)
+
     controls = {
         "historical_membership_available": membership_ok,
+        "historical_cash_price_available": historical_cash_ok,
         "lot_size_normalization_available": archive_ok,
         "mwpl_available": False,
     }
@@ -3716,11 +3752,11 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
                 progress_cb(i, total, symbol)
             continue
         hist = histories.get(symbol) or {}
-        token = cash_tokens.get(symbol)
         near_oi = hist.get("near_oi")
         total_oi = hist.get("total_oi")
-        if not token:
-            notes[symbol] = "Missing current NSE cash token for historical outcome series; not fabricated."
+        price = cash_histories.get(symbol)
+        if not isinstance(price, pd.DataFrame) or price.empty:
+            notes[symbol] = "Official NSE historical cash OHLC unavailable; not replaced by current-universe Kite token."
             if progress_cb: progress_cb(i, total, symbol)
             continue
         if not isinstance(total_oi, pd.Series) or total_oi.dropna().empty or not isinstance(near_oi, pd.Series):
@@ -3728,14 +3764,10 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
             if progress_cb: progress_cb(i, total, symbol)
             continue
         try:
-            rows = scanner_mod._fetch_historical_chunked(
-                kite, token, warmup_start.to_pydatetime(), cash_end.to_pydatetime(), "day", oi=False, continuous=False
-            )
-            price = pd.DataFrame(rows)
-            if price.empty:
-                raise ValueError("daily cash history unavailable")
-            price = price.rename(columns={"date":"timestamp"}).set_index("timestamp")
+            price = price.copy()
+            price.index = pd.to_datetime(price.index).tz_localize(None).normalize()
             price = price[~price.index.duplicated(keep="last")].sort_index()
+            price = price.dropna(subset=["open", "high", "low", "close"])
             frame = v95_daily_evidence.build_symbol_daily_frame(
                 price, near_oi, expiry_dates=hist.get("near_expiry")
             )
@@ -3797,6 +3829,47 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
         research["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"
         research["primary_pass"] = False
 
+    # V9.6.2 promotion controls are separate from frozen Trial 17. They may
+    # unlock eligibility for a future Trial 18 preregistration, but never
+    # rewrite the Trial-17 result or activate production.
+    supplied_earnings = integrity_data.get("earnings_map")
+    supplied_regime = integrity_data.get("market_regime")
+    event_symbols = list(research.get("event_symbols") or [])
+    if supplied_earnings is not None:
+        earnings_map = dict(supplied_earnings)
+    elif event_symbols and str(research.get("status") or "") == "PASS_INDEPENDENT_VALIDATION":
+        if stage_cb:
+            stage_cb(4, 4, "Loading NSE financial-result calendar for promotion control", 95)
+        earnings_client = nse_earnings_history.NSEEarningsHistoryClient(cache_dir=_RESEARCH_STATE_DIR / "nse-earnings")
+        last = {"done": -1}
+        def _earnings_progress(done, total, symbol):
+            if stage_cb and (done == 0 or done == total or done - last["done"] >= 10):
+                stage_cb(4, 4, f"NSE earnings calendar {done}/{total} · {symbol}", min(97, 95 + round((done/max(total,1))*2)))
+                last["done"] = done
+        earnings_map = nse_earnings_history.build_earnings_map(
+            event_symbols,
+            v96_trial17.INDEPENDENT_START - pd.tseries.offsets.BDay(7),
+            v96_trial17.INDEPENDENT_END + pd.tseries.offsets.BDay(7),
+            earnings_client, progress_cb=_earnings_progress,
+        )
+    else:
+        earnings_map = {"_meta": {"loaded_symbols": [], "symbol_coverage": 0.0, "source": "NOT_LOADED_TRIAL17_NOT_PASSED"}}
+
+    if supplied_regime is not None:
+        market_regime = pd.DataFrame(supplied_regime).copy()
+    elif event_symbols and str(research.get("status") or "") == "PASS_INDEPENDENT_VALIDATION":
+        if stage_cb:
+            stage_cb(4, 4, "Loading India VIX + NIFTY regime controls", 98)
+        regime_client = nse_market_regime.NSEMarketRegimeClient(cache_dir=_RESEARCH_STATE_DIR / "nse-market-regime")
+        market_regime = regime_client.fetch(v96_trial17.INDEPENDENT_START - pd.Timedelta(days=45), v96_trial17.INDEPENDENT_END)
+    else:
+        market_regime = pd.DataFrame()
+
+    promotion = v96_trial17.evaluate_promotion_controls(
+        frames, frozen_result=research, controls=controls, earnings_map=earnings_map,
+        market_regime=market_regime,
+    ) if frames else {"status": "INCONCLUSIVE_NO_DATA", "trial18_eligible": False, "research_only": True}
+
     return {
         "build": v96_trial17.BUILD_ID,
         "symbols_scanned": len(research_symbols),
@@ -3809,7 +3882,11 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
             "nse_oi_date_coverage": date_coverage,
             "nse_oi_coverage_ok": archive_ok,
             "historical_symbols_discovered": len(discovered),
-            "historical_membership_price_coverage": price_coverage,
+            "historical_membership_available": membership_ok,
+            "historical_cash_price_available": historical_cash_ok,
+            "historical_membership_price_coverage": membership_price_coverage,
+            "historical_cash_date_coverage": cash_date_coverage,
+            "historical_cash_source": cash_meta.get("source") or "NSE_OFFICIAL_CM_LEGACY_BHAVCOPY",
             "independent_window": {"start":str(v96_trial17.INDEPENDENT_START.date()),"end":str(v96_trial17.INDEPENDENT_END.date())},
             "mwpl_date_coverage": float((mwpl_result or {}).get("date_coverage") or 0.0),
             "mwpl_reason": (mwpl_result or {}).get("reason") or "UNAVAILABLE",
@@ -3817,6 +3894,9 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
             "prior_locked_finals_read": False,
         },
         "research": research,
+        "promotion_controls": promotion,
+        "promotion_status": promotion.get("status"),
+        "trial18_eligible": bool(promotion.get("trial18_eligible")),
         "research_only": True,
     }
 

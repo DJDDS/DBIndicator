@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.6.2-TRIAL17-PROMOTION-CONTROLS</div>
     <p>
-      <strong>V9.6 Trial 17 Independent Total-OI Validation is the primary research architecture.</strong> It tests the V9.5.3 fresh-total-OI discovery once on older, non-overlapping official NSE history before any directional research is allowed.
+      <strong>V9.6.2 Trial 17 Promotion-Control Validation is the primary research architecture.</strong> Frozen Trial 17 remains unchanged; promotion controls decide only whether Trial 18 becomes eligible for preregistration.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -119,12 +119,12 @@
   </div>
 
   <div class="card" style="border-color:#e0a43b;">
-    <h2>V9.6 Trial 17 · Independent Fresh Total OI Validation</h2>
+    <h2>V9.6.2 Trial 17 · Promotion-Control Fresh Total OI Validation</h2>
     <p style="margin-top:-4px;"><strong>Freeze the V9.5.3 discovery and test it once on older evidence.</strong></p>
     <p class="hint"><strong>Trial 17:</strong> total OI z &ge; <strong>1.5</strong> &rarr; next-session magnitude. Evidence window is fixed to <strong>1 Sep 2021 through 1 Sep 2023</strong>, ending before the V9.5 discovery window. Primary horizon is 1D; 2D cannot rescue a failed 1D result.</p>
-    <p class="hint"><strong>Trial 18 LOCKED.</strong> Direction is not tested unless Trial 17 passes independent validation. Prior Trial 13/15 finals remain untouched. <strong>RESEARCH / SHADOW ONLY</strong>; no TRADE/WATCH activation.</p>
-    <button type="button" class="btn" id="v96-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.6 Trial 17</button>
-    <span class="hint" id="v96-form-hint" style="margin-left:10px;">Official NSE total FUTSTK OI · fixed older window · historical membership · MWPL sensitivity · no retuning.</span>
+    <p class="hint"><strong>Trial 18 LOCKED unless promotion controls pass.</strong> Earnings ±5 sessions, Same-day matched baseline, India VIX + NIFTY realized vol, Two-way clustered inference and DTE-matched baseline are promotion-only checks. Passing means <strong>ELIGIBLE FOR PREREGISTRATION</strong>, never auto-run. ATM IV remains <strong>UNAVAILABLE / NOT FABRICATED</strong>. Prior finals remain untouched. <strong>RESEARCH / SHADOW ONLY</strong>; no TRADE/WATCH activation.</p>
+    <button type="button" class="btn" id="v96-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.6.2 Trial 17</button>
+    <span class="hint" id="v96-form-hint" style="margin-left:10px;">Official NSE total FUTSTK OI · fixed older window · historical membership/MWPL · earnings and market-regime promotion controls · no retuning.</span>
     <div class="progress-wrap" id="v96-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v96-progress-fill"></div></div>
       <div class="progress-label" id="v96-progress-label">Starting…</div>
@@ -137,6 +137,8 @@
       <div id="v96-stats"></div>
       <div id="v96-robustness" class="hint" style="margin-top:12px;"></div>
       <div id="v96-diagnostics" style="margin-top:14px;"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Trial 18 Promotion Gate</h3>
+      <div id="v962-promotion"></div>
     </div>
   </div>
 
@@ -324,7 +326,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V96_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI";
+const V96_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.6.2-TRIAL17-PROMOTION-CONTROLS";
 function v96Fmt(v,d=2){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
 function v96Lift(v){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(2)+'×';}
 function updateV96UI(state){
@@ -342,11 +344,13 @@ function updateV96UI(state){
   err.style.display='none'; if(state.status!=='done'||!state.result){results.style.display='none';return;}
   const out=state.result||{}, r=out.research||{}, st=String(r.status||'INCONCLUSIVE'), pass=st==='PASS_INDEPENDENT_VALIDATION', v1=((r.validation||{})['1D'])||{}, v2=((r.validation||{})['2D'])||{}, reg=r.regression_1D||{}, t=((reg.t||{}).total_z), tail=r.top3_day_removed||{}, blocks=(r.chronological_blocks||[]).map(b=>`B${b.block}: ${v96Lift(b.lift)}`).join(' · ')||'—', c=r.controls||{}, win=r.evidence_window||{};
   document.getElementById('v96-verdict').innerHTML=`<div class="${pass?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:6px;">${st.replaceAll('_',' ')}</div><div class="hint">Build ${r.build||out.build||V96_BUILD_ID} · ${out.symbols_completed||0}/${out.symbols_scanned||0} symbols · fixed evidence ${win.start||'2021-09-01'} → ${win.end||'2023-09-01'} · Trial 18 LOCKED</div>`;
-  document.getElementById('v96-controls').innerHTML=`<strong>Controls:</strong> historical membership <strong>${c.historical_membership||'UNAVAILABLE'}</strong> · OI normalization <strong>${c.lot_size_normalization||'UNAVAILABLE'}</strong> · MWPL/ban <strong>${c.mwpl_control||'UNAVAILABLE'}</strong> · prior locked finals <strong>UNTOUCHED</strong>`;
+  document.getElementById('v96-controls').innerHTML=`<strong>Controls:</strong> historical membership <strong>${c.historical_membership||'UNAVAILABLE'}</strong> · historical cash <strong>${c.historical_cash_price||'UNAVAILABLE'}</strong> · OI normalization <strong>${c.lot_size_normalization||'UNAVAILABLE'}</strong> · MWPL/ban <strong>${c.mwpl_control||'UNAVAILABLE'}</strong> · prior locked finals <strong>UNTOUCHED</strong>`;
   document.getElementById('v96-stats').innerHTML=`<table><thead><tr><th>Horizon</th><th>Events</th><th>Days</th><th>Event move</th><th>Baseline</th><th>Lift</th><th>95% CI</th></tr></thead><tbody><tr><td><strong>1D PRIMARY</strong></td><td>${v1.event_count??0}</td><td>${v1.distinct_days??0}</td><td>${v96Fmt(v1.avg_move_atr)} ATR</td><td>${v96Fmt(v1.baseline_avg_move_atr)} ATR</td><td>${v96Lift(v1.lift)}</td><td>${v96Lift(v1.ci95_low)} → ${v96Lift(v1.ci95_high)}</td></tr><tr><td>2D secondary</td><td>${v2.event_count??0}</td><td>${v2.distinct_days??0}</td><td>${v96Fmt(v2.avg_move_atr)} ATR</td><td>${v96Fmt(v2.baseline_avg_move_atr)} ATR</td><td>${v96Lift(v2.lift)}</td><td>${v96Lift(v2.ci95_low)} → ${v96Lift(v2.ci95_high)}</td></tr></tbody></table>`;
   document.getElementById('v96-robustness').innerHTML=`<strong>Total-OI z cluster t-stat:</strong> ${v96Fmt(t)} (required ≥3.0) · <strong>Top-3-day removed lift:</strong> ${v96Lift(tail.lift)} · <strong>Chronological blocks:</strong> ${blocks} · <strong>1D pass bar:</strong> lift ≥1.10× and CI lower bound >1.00×.`;
   const dte=r.dte_buckets||{}, conc=r.concentration||{};
   document.getElementById('v96-diagnostics').innerHTML=`<div class="hint"><strong>DTE diagnostics:</strong> ${Object.entries(dte).map(([k,v])=>`${k}: ${v96Lift((v||{}).lift_1D)} (${(v||{}).events||0} events)`).join(' · ')||'—'}<br><strong>Concentration:</strong> ${conc.symbols||0} symbols · top-5 event share ${conc.top5_symbol_event_share===null||conc.top5_symbol_event_share===undefined?'—':(Number(conc.top5_symbol_event_share)*100).toFixed(1)+'%'}. Diagnostics cannot rescue a failed primary result.</div>`;
+  const promo=out.promotion_controls||{}, ps=String(promo.status||'INCONCLUSIVE'), pe=!!promo.trial18_eligible, er=promo.earnings_excluded_1D||{}, sm=promo.same_day_matched_1D||{}, tw=promo.two_way_regression_1D||{}, dtm=promo.dte_matched_1D||{}, pt=((tw.t||{}).total_z), pc=((tw.coef||{}).total_z), ec=Number(promo.earnings_symbol_coverage||0)*100, mc=Number(promo.market_regime_event_day_coverage||0)*100;
+  document.getElementById('v962-promotion').innerHTML=`<div class="${pe?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:8px;">${ps.replaceAll('_',' ')} · Trial 18 ${pe?'ELIGIBLE FOR PREREGISTRATION':'LOCKED'}</div><div class="hint"><strong>Earnings ±5 sessions:</strong> coverage ${v96Fmt(ec,1)}% · lift ${v96Lift(er.lift)} · CI ${v96Lift(er.ci95_low)} → ${v96Lift(er.ci95_high)} · removed ${er.events_removed??0} events<br><strong>Same-day matched:</strong> lift ${v96Lift(sm.lift)} · CI ${v96Lift(sm.ci95_low)} → ${v96Lift(sm.ci95_high)}<br><strong>India VIX + NIFTY realized vol:</strong> event-day coverage ${v96Fmt(mc,1)}% · <strong>Two-way clustered</strong> total-OI coef ${v96Fmt(pc,4)} · t ${v96Fmt(pt)}<br><strong>DTE-matched:</strong> lift ${v96Lift(dtm.lift)} · <strong>ATM IV:</strong> UNAVAILABLE / NOT FABRICATED. Promotion controls cannot create TRADE/WATCH signals.</div>`;
   results.style.display='block';
 }
 function pollV96(){fetch('/api/v96/status').then(r=>r.json()).then(st=>{updateV96UI(st);if(st.status==='running')setTimeout(pollV96,2500);}).catch(()=>setTimeout(pollV96,5000));}

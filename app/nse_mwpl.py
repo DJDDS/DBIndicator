@@ -234,6 +234,37 @@ class NSEHistoricalReportClient:
             tmp.replace(path)
         return content
 
+    def _fetch_direct_legacy(self, day, report_key: str) -> bytes:
+        d = self._day(day)
+        token = d.strftime("%d%m%Y")
+        names = [f"{report_key}_{token}.csv"]
+        bases = [
+            "https://nsearchives.nseindia.com/content/nsccl",
+            "https://archives.nseindia.com/content/nsccl",
+        ]
+        errors = []
+        for base in bases:
+            for name in names:
+                url = f"{base}/{name}"
+                try:
+                    resp = self.session.get(url, timeout=self.timeout)
+                    status = int(getattr(resp, "status_code", 200) or 200)
+                    if status == 404:
+                        errors.append(f"{url}:404")
+                        continue
+                    if hasattr(resp, "raise_for_status"):
+                        resp.raise_for_status()
+                    content = bytes(getattr(resp, "content", b"") or b"")
+                    if content.strip():
+                        path = self._cache_path(report_key, d)
+                        if path is not None:
+                            tmp = path.with_suffix(path.suffix + ".tmp")
+                            tmp.write_bytes(content); tmp.replace(path)
+                        return content
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{url}:{exc}")
+        raise FileNotFoundError(" | ".join(errors))
+
     def fetch_combined_oi(self, day) -> dict[str, dict]:
         errors = []
         for report_name, report_key in ((COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "nseoi")):
@@ -245,15 +276,43 @@ class NSEHistoricalReportClient:
                 errors.append(f"{report_key}:unparseable")
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{report_key}:{exc}")
+                try:
+                    content = self._fetch_direct_legacy(day, report_key)
+                    rows = parse_combined_oi_csv(content)
+                    if rows:
+                        return rows
+                    errors.append(f"{report_key}:direct-unparseable")
+                except Exception as direct_exc:  # noqa: BLE001
+                    errors.append(f"{report_key}:direct:{direct_exc}")
         raise ValueError(f"NSE MWPL/OI report unavailable for {self._day(day).date()}: {' | '.join(errors)}")
 
     def fetch_secban(self, day) -> set[str]:
         try:
             content = self._fetch_report(SECBAN_REPORT, day, report_key="secban")
-        except FileNotFoundError:
-            # A no-ban trading date may legitimately have no populated file.
+            return parse_secban_csv(content)
+        except Exception:
+            d = self._day(day)
+            token = d.strftime("%d%m%Y")
+            candidates = [
+                f"https://nsearchives.nseindia.com/archives/fo/sec_ban/fo_secban_{token}.csv",
+                f"https://archives.nseindia.com/archives/fo/sec_ban/fo_secban_{token}.csv",
+            ]
+            for url in candidates:
+                try:
+                    resp = self.session.get(url, timeout=self.timeout)
+                    status = int(getattr(resp, "status_code", 200) or 200)
+                    if status == 404:
+                        continue
+                    if hasattr(resp, "raise_for_status"):
+                        resp.raise_for_status()
+                    content = bytes(getattr(resp, "content", b"") or b"")
+                    if content.strip():
+                        return parse_secban_csv(content)
+                except Exception:
+                    continue
+            # The 95/80 MWPL state machine remains the primary historical ban
+            # derivation. Missing first-day secban is disclosed, never invented.
             return set()
-        return parse_secban_csv(content)
 
 
 def build_validation_mwpl_controls(*, validation_dates: Iterable, symbols: Iterable[str], client,

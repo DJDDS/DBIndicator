@@ -14,7 +14,7 @@ import pandas as pd
 from . import v95_daily_evidence as v95
 from . import v953_contract_structure as cs
 
-BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI"
+BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.6.2-TRIAL17-PROMOTION-CONTROLS"
 TRIAL17_NUMBER = 17
 TRIAL18_NUMBER = 18
 TOTAL_OI_Z_MIN = 1.5
@@ -86,6 +86,97 @@ def _stack(frames: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
+
+def same_day_matched_report(events: pd.DataFrame, baseline: pd.DataFrame, field: str, *, reps=1000) -> dict:
+    """Compare events only with eligible non-events from the same trading dates."""
+    if events is None or baseline is None or events.empty or baseline.empty:
+        return {"event_count": 0, "baseline_count": 0, "event_days": 0, "lift": None, "ci95_low": None, "ci95_high": None}
+    ev = events.copy(); ba = baseline.copy()
+    ev["date"] = pd.to_datetime(ev["date"]).dt.normalize(); ba["date"] = pd.to_datetime(ba["date"]).dt.normalize()
+    event_days = sorted(set(ev["date"].dropna()))
+    matched = ba[ba["date"].isin(event_days)].copy()
+    if "symbol" in ev.columns and "symbol" in matched.columns:
+        ev_keys = pd.MultiIndex.from_frame(ev[["date", "symbol"]].astype({"symbol": str}))
+        ba_keys = pd.MultiIndex.from_frame(matched[["date", "symbol"]].astype({"symbol": str}))
+        matched = matched.loc[~ba_keys.isin(ev_keys)].copy()
+    boot = v95.day_cluster_bootstrap_lift(ev, matched, field, reps=reps, seed=962) if len(matched) else {"lift": None, "ci95_low": None, "ci95_high": None, "clusters": 0, "reps": int(reps)}
+    return {
+        "event_count": int(len(ev)), "baseline_count": int(len(matched)), "event_days": int(len(event_days)),
+        "event_mean": float(pd.to_numeric(ev[field], errors="coerce").mean()) if len(ev) else None,
+        "matched_baseline_mean": float(pd.to_numeric(matched[field], errors="coerce").mean()) if len(matched) else None,
+        **boot,
+    }
+
+
+def _dte_bucket_series(frame: pd.DataFrame) -> pd.Series:
+    field = "nse_near_dte" if "nse_near_dte" in frame.columns else "days_to_expiry"
+    dte = pd.to_numeric(frame.get(field), errors="coerce")
+    return pd.cut(dte, bins=[-0.001, 5, 10, 20, np.inf], labels=["0-5", "6-10", "11-20", "21+"], include_lowest=True)
+
+
+def dte_matched_report(events: pd.DataFrame, baseline: pd.DataFrame, field: str) -> dict:
+    """Match the baseline to the event DTE-bucket distribution without dropping buckets."""
+    if events is None or baseline is None or events.empty or baseline.empty:
+        return {"event_count": 0, "baseline_count": 0, "dte_buckets_used": 0, "lift": None, "matched_baseline_mean": None}
+    ev = events.copy(); ba = baseline.copy()
+    if {"date", "symbol"}.issubset(ev.columns) and {"date", "symbol"}.issubset(ba.columns):
+        ev_keys = pd.MultiIndex.from_frame(ev[["date", "symbol"]].assign(date=lambda x: pd.to_datetime(x["date"]).dt.normalize(), symbol=lambda x: x["symbol"].astype(str)))
+        ba_keys = pd.MultiIndex.from_frame(ba[["date", "symbol"]].assign(date=lambda x: pd.to_datetime(x["date"]).dt.normalize(), symbol=lambda x: x["symbol"].astype(str)))
+        ba = ba.loc[~ba_keys.isin(ev_keys)].copy()
+    ev["_dte_bucket"] = _dte_bucket_series(ev); ba["_dte_bucket"] = _dte_bucket_series(ba)
+    evv = pd.to_numeric(ev[field], errors="coerce"); bav = pd.to_numeric(ba[field], errors="coerce")
+    event_mean = float(evv.mean()) if evv.notna().any() else None
+    counts = ev["_dte_bucket"].value_counts(dropna=True)
+    total = int(counts.sum())
+    weighted = 0.0; used = 0; details = {}
+    for bucket, count in counts.items():
+        vals = bav[ba["_dte_bucket"] == bucket].dropna()
+        if vals.empty:
+            continue
+        mean = float(vals.mean()); weight = float(count / total) if total else 0.0
+        weighted += weight * mean; used += 1
+        details[str(bucket)] = {"event_count": int(count), "baseline_count": int(len(vals)), "baseline_mean": mean, "weight": weight}
+    lift = float(event_mean / weighted) if event_mean is not None and weighted > 1e-12 else None
+    return {
+        "event_count": int(len(ev)), "baseline_count": int(len(ba)), "dte_buckets_used": int(used),
+        "event_mean": event_mean, "matched_baseline_mean": float(weighted) if used else None, "lift": lift, "buckets": details,
+    }
+
+
+def two_way_cluster_robust_ols(y, x: pd.DataFrame, date_clusters, symbol_clusters) -> dict:
+    """OLS with Cameron-Gelbach-Miller two-way clustered covariance (date + symbol)."""
+    y = pd.Series(y).reset_index(drop=True)
+    X = pd.DataFrame(x).reset_index(drop=True)
+    dc = pd.Series(date_clusters).reset_index(drop=True)
+    sc = pd.Series(symbol_clusters).reset_index(drop=True)
+    valid = y.notna() & dc.notna() & sc.notna() & X.notna().all(axis=1)
+    yv = y.loc[valid].astype(float).to_numpy(); Xv = X.loc[valid].astype(float)
+    dv = dc.loc[valid].astype(str).to_numpy(); sv = sc.loc[valid].astype(str).to_numpy()
+    names = list(Xv.columns)
+    if len(yv) <= len(names) + 2:
+        return {"n": int(len(yv)), "date_clusters": int(pd.Series(dv).nunique()), "symbol_clusters": int(pd.Series(sv).nunique()), "coef": {}, "se": {}, "t": {}}
+    A = np.column_stack([np.ones(len(Xv)), Xv.to_numpy()]); N, k = A.shape
+    bread = np.linalg.pinv(A.T @ A); beta = bread @ A.T @ yv; resid = yv - A @ beta
+
+    def _cluster_cov(labels):
+        labels = np.asarray(labels, dtype=object); uniq = pd.unique(labels); meat = np.zeros((k, k), dtype=float)
+        for g in uniq:
+            mask = labels == g; score = A[mask].T @ resid[mask]; meat += np.outer(score, score)
+        G = int(len(uniq)); corr = (G/(G-1))*((N-1)/(N-k)) if G > 1 and N > k else 1.0
+        return bread @ meat @ bread * corr
+
+    pair = np.asarray([f"{d}\x1f{s}" for d, s in zip(dv, sv)], dtype=object)
+    cov = _cluster_cov(dv) + _cluster_cov(sv) - _cluster_cov(pair)
+    se = np.sqrt(np.maximum(0.0, np.diag(cov)))
+    tvals = np.divide(beta, se, out=np.full_like(beta, np.nan), where=se > 0)
+    all_names = ["intercept"] + names
+    return {
+        "n": int(N), "date_clusters": int(pd.Series(dv).nunique()), "symbol_clusters": int(pd.Series(sv).nunique()),
+        "coef": {n: float(v) for n, v in zip(all_names, beta)},
+        "se": {n: float(v) for n, v in zip(all_names, se)},
+        "t": {n: float(v) for n, v in zip(all_names, tvals)},
+    }
+
 def _dte_bucket_reports(events: pd.DataFrame, baseline: pd.DataFrame) -> dict:
     dte_field = "nse_near_dte" if "nse_near_dte" in baseline.columns else "days_to_expiry"
     dte = pd.to_numeric(baseline.get(dte_field), errors="coerce")
@@ -145,6 +236,148 @@ def _mwpl_analysis(baseline: pd.DataFrame) -> dict:
     return out
 
 
+
+def promotion_verdict(*, frozen_status: str, integrity_ok: bool, earnings_coverage: float,
+                      earnings_report: dict, same_day_report: dict, two_way_reg: dict,
+                      market_regime_coverage: float, dte_report: dict) -> str:
+    """Fail-closed promotion gate declared before V9.6.2 results are read."""
+    if frozen_status != "PASS_INDEPENDENT_VALIDATION":
+        return "LOCKED_TRIAL17_NOT_PASSED"
+    if not integrity_ok:
+        return "INCONCLUSIVE_INTEGRITY_CONTROLS"
+    if float(earnings_coverage or 0.0) < 0.90:
+        return "INCONCLUSIVE_EARNINGS_COVERAGE"
+    if float(market_regime_coverage or 0.0) < 0.90:
+        return "INCONCLUSIVE_MARKET_REGIME_COVERAGE"
+    elift = earnings_report.get("lift")
+    eci = earnings_report.get("ci95_low")
+    if elift is None or eci is None or not (float(elift) > 1.0 and float(eci) > 1.0):
+        return "FAIL_EARNINGS_CONFOUND"
+    mlift = same_day_report.get("lift")
+    mci = same_day_report.get("ci95_low")
+    if mlift is None or mci is None or not (float(mlift) > 1.0 and float(mci) > 1.0):
+        return "FAIL_SAME_DAY_MATCH"
+    coef = (two_way_reg.get("coef") or {}).get("total_z")
+    tval = (two_way_reg.get("t") or {}).get("total_z")
+    if coef is None or tval is None or not np.isfinite(coef) or not np.isfinite(tval) or float(coef) <= 0 or float(tval) < T_STAT_HURDLE:
+        return "FAIL_TWO_WAY_INFERENCE"
+    dlift = dte_report.get("lift")
+    if dlift is None or not np.isfinite(dlift) or float(dlift) <= 1.0:
+        return "FAIL_DTE_MATCH"
+    return "PASS_PROMOTION_CONTROLS"
+
+
+def _earnings_window_mask(frame: pd.DataFrame, earnings_dates, *, sessions: int = 5) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index, dtype=bool)
+    dates = pd.DatetimeIndex(pd.to_datetime(frame["date"]).dt.normalize())
+    unique = pd.DatetimeIndex(sorted(set(dates)))
+    flagged = set()
+    raw_dates = [] if earnings_dates is None else list(earnings_dates)
+    for value in pd.DatetimeIndex(pd.to_datetime(raw_dates, errors="coerce")).dropna():
+        d = pd.Timestamp(value).tz_localize(None).normalize() if getattr(value, "tzinfo", None) else pd.Timestamp(value).normalize()
+        pos = int(unique.searchsorted(d, side="left"))
+        if pos >= len(unique):
+            continue
+        lo = max(0, pos - int(sessions)); hi = min(len(unique), pos + int(sessions) + 1)
+        flagged.update(unique[lo:hi])
+    return pd.Series(dates.isin(flagged), index=frame.index, dtype=bool)
+
+
+def evaluate_promotion_controls(symbol_frames: Mapping[str, pd.DataFrame], *, frozen_result: dict,
+                                controls=None, earnings_map=None, market_regime=None,
+                                bootstrap_reps=1000) -> dict:
+    """Evaluate V9.6.2 promotion controls without changing frozen Trial 17."""
+    controls = dict(controls or {}); earnings_map = dict(earnings_map or {})
+    stacked = _stack(symbol_frames)
+    if stacked.empty:
+        return {"status": "INCONCLUSIVE_NO_DATA", "trial18_eligible": False, "research_only": True}
+    baseline = stacked[stacked["trial17_eligible"].fillna(False).astype(bool)].copy()
+    baseline = baseline[baseline["movement_1d_atr"].notna()].copy()
+    if controls.get("mwpl_available") and {"mwpl_pct", "ban_flag"}.issubset(baseline.columns):
+        mwpl = pd.to_numeric(baseline["mwpl_pct"], errors="coerce")
+        ban = baseline["ban_flag"].fillna(False).astype(bool)
+        baseline = baseline[(~ban) & (mwpl < 95.0)].copy()
+    events = baseline[pd.to_numeric(baseline.get("total_z"), errors="coerce") >= TOTAL_OI_Z_MIN].copy()
+
+    # Same-day control removes market-wide day selection mechanically.
+    same_day = same_day_matched_report(events, baseline, "movement_1d_atr", reps=bootstrap_reps)
+    dte_matched = dte_matched_report(events, baseline, "movement_1d_atr")
+
+    # Earnings control uses only symbols whose NSE filing calendar fetch succeeded.
+    emeta = dict(earnings_map.get("_meta") or {})
+    loaded_symbols = set(str(s).upper() for s in emeta.get("loaded_symbols") or [])
+    event_symbols = set(events.get("symbol", pd.Series(dtype=str)).astype(str).str.upper())
+    earnings_coverage = float(len(event_symbols & loaded_symbols) / len(event_symbols)) if event_symbols else 0.0
+    ebase = baseline[baseline["symbol"].astype(str).str.upper().isin(loaded_symbols)].copy() if loaded_symbols else baseline.iloc[0:0].copy()
+    if not ebase.empty:
+        masks=[]
+        for symbol, group in ebase.groupby(ebase["symbol"].astype(str).str.upper(), sort=False):
+            mask = _earnings_window_mask(group, earnings_map.get(str(symbol).upper(), pd.DatetimeIndex([])), sessions=5)
+            masks.append(pd.Series(mask.to_numpy(), index=group.index))
+        near = pd.concat(masks).sort_index() if masks else pd.Series(False, index=ebase.index)
+        ebase = ebase.loc[~near.reindex(ebase.index).fillna(False)].copy()
+    eevents = ebase[pd.to_numeric(ebase.get("total_z"), errors="coerce") >= TOTAL_OI_Z_MIN].copy() if not ebase.empty else ebase.copy()
+    earnings_report = v95._horizon_report(eevents, ebase, "movement_1d_atr", reps=bootstrap_reps)
+    earnings_report["events_removed"] = int(max(0, len(events) - len(eevents)))
+
+    # Market regime: same-day India VIX plus lagged NIFTY realized volatility.
+    regime = pd.DataFrame(market_regime).copy() if market_regime is not None else pd.DataFrame()
+    if not regime.empty:
+        regime.index = pd.to_datetime(regime.index).tz_localize(None).normalize()
+        for col in ("india_vix", "nifty_rv20_prev"):
+            if col in regime:
+                mapper = pd.to_numeric(regime[col], errors="coerce")
+                baseline[col] = pd.to_datetime(baseline["date"]).dt.normalize().map(mapper)
+    event_days = pd.DatetimeIndex(pd.to_datetime(events.get("date", pd.Series(dtype="datetime64[ns]"))).dropna()).normalize().unique()
+    if len(event_days) and {"india_vix", "nifty_rv20_prev"}.issubset(baseline.columns):
+        daily = baseline.groupby(pd.to_datetime(baseline["date"]).dt.normalize())[["india_vix", "nifty_rv20_prev"]].first()
+        market_cov = float(daily.reindex(event_days).notna().all(axis=1).mean())
+    else:
+        market_cov = 0.0
+
+    dte_field = "nse_near_dte" if "nse_near_dte" in baseline.columns else "days_to_expiry"
+    reg_cols = [c for c in ("total_z", "realized_vol20_prev", "atr_pct_prev", dte_field, "india_vix", "nifty_rv20_prev") if c in baseline.columns]
+    tw = two_way_cluster_robust_ols(
+        pd.to_numeric(baseline.get("movement_1d_atr"), errors="coerce"),
+        baseline[reg_cols] if reg_cols else pd.DataFrame(index=baseline.index),
+        baseline.get("date", pd.Series(index=baseline.index, dtype=object)),
+        baseline.get("symbol", pd.Series(index=baseline.index, dtype=object)),
+    ) if "total_z" in reg_cols and len(reg_cols) >= 5 else {"n": 0, "date_clusters": 0, "symbol_clusters": 0, "coef": {}, "se": {}, "t": {}}
+
+    integrity_ok = all(bool(controls.get(k)) for k in (
+        "historical_membership_available", "historical_cash_price_available",
+        "lot_size_normalization_available", "mwpl_available",
+    ))
+    status = promotion_verdict(
+        frozen_status=str(frozen_result.get("status") or ""), integrity_ok=integrity_ok,
+        earnings_coverage=earnings_coverage, earnings_report=earnings_report,
+        same_day_report=same_day, two_way_reg=tw, market_regime_coverage=market_cov,
+        dte_report=dte_matched,
+    )
+    eligible = status == "PASS_PROMOTION_CONTROLS"
+    return {
+        "status": status, "trial18_eligible": eligible,
+        "trial18_state": "ELIGIBLE_FOR_PREREGISTRATION" if eligible else "LOCKED",
+        "research_only": True, "production_activation": False,
+        "frozen_trial17_status": frozen_result.get("status"),
+        "earnings_symbol_coverage": earnings_coverage,
+        "earnings_excluded_1D": earnings_report,
+        "same_day_matched_1D": same_day,
+        "two_way_regression_1D": tw,
+        "market_regime_event_day_coverage": market_cov,
+        "dte_matched_1D": dte_matched,
+        "controls": {
+            "historical_membership": "APPLIED" if controls.get("historical_membership_available") else "UNAVAILABLE",
+            "historical_cash_price": "APPLIED" if controls.get("historical_cash_price_available") else "UNAVAILABLE",
+            "lot_size_normalization": "APPLIED" if controls.get("lot_size_normalization_available") else "UNAVAILABLE",
+            "mwpl_control": "APPLIED" if controls.get("mwpl_available") else "UNAVAILABLE",
+            "earnings_calendar": "APPLIED" if earnings_coverage >= 0.90 else "INCOMPLETE",
+            "market_regime": "APPLIED" if market_cov >= 0.90 else "INCOMPLETE",
+            "atm_iv": "UNAVAILABLE_NOT_FABRICATED",
+        },
+    }
+
 def evaluate_trial17(symbol_frames: Mapping[str, pd.DataFrame], *, controls=None, bootstrap_reps=1000) -> dict:
     controls = dict(controls or {})
     stacked = _stack(symbol_frames)
@@ -198,6 +431,8 @@ def evaluate_trial17(symbol_frames: Mapping[str, pd.DataFrame], *, controls=None
         status = "FAIL_TIME_STABILITY"
     elif not controls.get("historical_membership_available"):
         status = "INCONCLUSIVE_SURVIVORSHIP_BIAS"
+    elif not controls.get("historical_cash_price_available"):
+        status = "INCONCLUSIVE_HISTORICAL_PRICE_COVERAGE"
     elif not controls.get("lot_size_normalization_available"):
         status = "INCONCLUSIVE_OI_NORMALIZATION"
     elif not controls.get("mwpl_available"):
@@ -222,6 +457,7 @@ def evaluate_trial17(symbol_frames: Mapping[str, pd.DataFrame], *, controls=None
             "days": int(pd.to_datetime(baseline.get("date", pd.Series(dtype="datetime64[ns]"))).dt.normalize().nunique()),
         },
         "validation": {"1D": r1, "2D": r2},
+        "event_symbols": sorted(events.get("symbol", pd.Series(dtype=str)).astype(str).str.upper().unique().tolist()) if not events.empty else [],
         "regression_1D": reg,
         "top3_day_removed": tail,
         "chronological_blocks": blocks,
@@ -230,6 +466,7 @@ def evaluate_trial17(symbol_frames: Mapping[str, pd.DataFrame], *, controls=None
         "mwpl_analysis": mwpl_analysis,
         "controls": {
             "historical_membership": "APPLIED" if controls.get("historical_membership_available") else "UNAVAILABLE",
+            "historical_cash_price": "APPLIED" if controls.get("historical_cash_price_available") else "UNAVAILABLE",
             "lot_size_normalization": "APPLIED" if controls.get("lot_size_normalization_available") else "UNAVAILABLE",
             "mwpl_control": "APPLIED" if controls.get("mwpl_available") else "UNAVAILABLE",
             "realized_vol_control": "APPLIED" if "realized_vol20_prev" in baseline.columns else "UNAVAILABLE",

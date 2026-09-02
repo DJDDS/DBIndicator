@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HTML = ROOT / 'app/templates/backtest.html'
-BUILD = '2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI'
+BUILD = '2026-09-02-INSTITUTIONAL-V9.6.2-TRIAL17-PROMOTION-CONTROLS'
 
 
 def test_v960_ui_exposes_trial17_as_primary_independent_validation():
