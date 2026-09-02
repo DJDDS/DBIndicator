@@ -12,3 +12,7 @@ Build: `2026-09-02-INSTITUTIONAL-V9.6.0-TRIAL17-INDEPENDENT-TOTAL-OI`
 - Trial 18 direction research remains locked.
 - Trial 15 and all earlier locked finals remain unread and untouched.
 - Research/shadow only; `ACTIVE_PLAYBOOKS = ()` remains unchanged.
+
+## Deployment hotfix
+- Fixes `/backtest` HTTP 500 introduced by V9.6 worker telemetry calling a non-existent `research_runtime.worker_snapshot()` interface. V9.6 now uses the established `research_runtime.snapshot()` API.
+- Adds a regression test that exercises the V9.6 state accessor used by the backtest route so this render-path failure cannot recur silently.

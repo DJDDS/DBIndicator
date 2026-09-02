@@ -4049,14 +4049,14 @@ _v96_state = _load_v96_state()
 def _persist_v96_state():
     with _v96_lock:
         snapshot=dict(_v96_state); snapshot["progress"]=dict(_v96_state.get("progress") or {}); snapshot["params"]=dict(_v96_state.get("params") or {})
-    snapshot["worker"] = research_runtime.worker_snapshot()
+    snapshot["worker"] = research_runtime.snapshot()
     _atomic_write_v96_state(snapshot)
 
 
 def get_v96_trial17_state():
     with _v96_lock:
         out=dict(_v96_state); out["progress"]=dict(_v96_state.get("progress") or {}); out["params"]=dict(_v96_state.get("params") or {})
-    out["worker"] = research_runtime.worker_snapshot()
+    out["worker"] = research_runtime.snapshot()
     return out
 
 
