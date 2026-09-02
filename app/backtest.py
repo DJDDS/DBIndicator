@@ -4019,7 +4019,16 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
         trial_dates=sorted({pd.Timestamp(d).normalize() for f in frames.values() for d in f.index if v97_trial19.INDEPENDENT_START<=pd.Timestamp(d).tz_localize(None).normalize()<=v97_trial19.INDEPENDENT_END})
         try:
             mwpl_client=nse_mwpl.NSEHistoricalReportClient(cache_dir=_RESEARCH_STATE_DIR/"nse-mwpl")
-            mwpl_result=nse_mwpl.build_validation_mwpl_controls(validation_dates=trial_dates,symbols=list(frames),client=mwpl_client,min_date_coverage=0.95)
+            last_mwpl={"done":-1}
+            def _mwpl_progress(done,total,label):
+                # Keep the UI alive during the long historical integrity pass.
+                # Update at start/end and every five dates to avoid excessive
+                # state writes while still proving forward progress.
+                if stage_cb and (done==0 or done==total or done-last_mwpl["done"]>=5):
+                    pct=min(93,82+round((done/max(total,1))*11))
+                    stage_cb(3,4,f"Trial-19 MWPL {done}/{total} · {label}",pct)
+                    last_mwpl["done"]=done
+            mwpl_result=nse_mwpl.build_validation_mwpl_controls(validation_dates=trial_dates,symbols=list(frames),client=mwpl_client,min_date_coverage=0.95,progress_cb=_mwpl_progress)
         except Exception as exc:
             mwpl_result={"available":False,"reason":f"MWPL_LOAD_ERROR:{exc}","date_coverage":0.0,"mwpl_by_symbol":{},"ban_by_symbol":{},"source":"NSE_F&O_COMBINED_OPEN_INTEREST","errors":{"load":str(exc)}}
         controls["mwpl_available"]=bool(mwpl_result.get("available"))

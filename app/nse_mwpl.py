@@ -298,8 +298,15 @@ class NSEHistoricalReportClient:
     def _fetch_direct_legacy(self, day, report_key: str) -> bytes:
         d = self._day(day)
         token = d.strftime("%d%m%Y")
-        filenames = [f"{report_key}_{token}.csv", f"{report_key}_{token}.xml"]
+        # Legacy MWPL/NCL OI was published as daily ZIP files under
+        # /archives/nsccl/mwpl/ (for example nseoi_DDMMYYYY.zip and
+        # combineoi_DDMMYYYY.zip).  Probe that real archive family first;
+        # the older CSV/XML locations remain as compatibility fallbacks.
+        filenames = [f"{report_key}_{token}.zip", f"{report_key}_{token}.csv", f"{report_key}_{token}.xml"]
         bases = [
+            "https://nsearchives.nseindia.com/archives/nsccl/mwpl",
+            "https://www.nseindia.com/archives/nsccl/mwpl",
+            "https://archives.nseindia.com/archives/nsccl/mwpl",
             "https://nsearchives.nseindia.com/content/nsccl",
             "https://nsearchives.nseindia.com/archives/nsccl",
             "https://nsearchives.nseindia.com/archives/fo",
@@ -340,7 +347,13 @@ class NSEHistoricalReportClient:
     def fetch_combined_oi(self, day) -> dict[str, dict]:
         errors = []
         d = self._day(day)
-        report_pairs = [(COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "nseoi"), (NCL_OI_REPORT, "ncloi")]
+        # Before 2024 the NCL ``nseoi`` archive is the canonical legacy
+        # family, so try it before combined-OI.  This avoids a large storm of
+        # dead probes on every historical date.
+        if d < pd.Timestamp("2024-01-01"):
+            report_pairs = [(NCL_OI_REPORT, "nseoi"), (COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "ncloi")]
+        else:
+            report_pairs = [(COMBINED_OI_REPORT, "combineoi"), (NCL_OI_REPORT, "nseoi"), (NCL_OI_REPORT, "ncloi")]
         # Once an old archive route is discovered, prefer that report family
         # on subsequent dates. This turns a multi-year history run from many
         # failed probes per day into a single cached-route request.
@@ -397,7 +410,7 @@ class NSEHistoricalReportClient:
 
 
 def build_validation_mwpl_controls(*, validation_dates: Iterable, symbols: Iterable[str], client,
-                                   min_date_coverage: float = 0.95) -> dict:
+                                   min_date_coverage: float = 0.95, progress_cb=None) -> dict:
     """Load MWPL only for the pre-declared validation window.
 
     This intentionally never fetches or inspects the locked final 20%.
@@ -414,13 +427,19 @@ def build_validation_mwpl_controls(*, validation_dates: Iterable, symbols: Itera
 
     snapshots: dict[pd.Timestamp, dict] = {}
     errors: dict[str, str] = {}
-    for d in dates:
+    total_dates = int(len(dates))
+    if progress_cb:
+        progress_cb(0, total_dates, str(dates[0].date()))
+    for i, d in enumerate(dates, start=1):
         try:
             rows = client.fetch_combined_oi(d.date())
             if rows:
                 snapshots[d] = rows
         except Exception as exc:  # noqa: BLE001
             errors[str(d.date())] = str(exc)
+        finally:
+            if progress_cb:
+                progress_cb(i, total_dates, str(d.date()))
 
     date_coverage = float(len(snapshots) / len(dates))
     mwpl_by_symbol: dict[str, pd.Series] = {}
