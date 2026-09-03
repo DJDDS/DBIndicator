@@ -14,3 +14,10 @@
 - Fixed `evaluate_earnings_promotion()` rejecting non-empty `pd.DatetimeIndex` earnings calendars via ambiguous boolean coercion (`dates or []`).
 - Iteration now uses an explicit `None` check; Trial 19 research math, thresholds, evidence window, MWPL/volatility/earnings controls, and Trial 18 lock are unchanged.
 - Added an exact regression test using a non-empty earnings `DatetimeIndex`.
+
+## Runtime render-state hotfix — 2026-09-03
+
+- Removed raw pandas Series/Index objects from the incomplete recent-MWPL diagnostic returned to V9.7 state.
+- Added a recursive JSON-safe boundary for V9.7 durable state persistence and UI/API state access so an unexpected pandas/numpy diagnostic cannot crash `/backtest` rendering.
+- Added regressions for scalar-only incomplete-MWPL output, atomic V9.7 persistence, and the Jinja `tojson` boundary used by the Backtest page.
+- No Trial-19 threshold, evidence window, matching rule, statistical gate, confound control, MWPL decision rule, Trial-18 lock, or production playbook changed.

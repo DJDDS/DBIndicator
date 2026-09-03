@@ -3925,6 +3925,30 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
         "research_only": True,
     }
 
+def _v97_recent_mwpl_incomplete_result(mwpl_result):
+    """Return only scalar diagnostics when recent-window MWPL is incomplete.
+
+    The raw MWPL payload contains pandas Series for per-symbol limits/ban
+    flags and must never be embedded in durable/UI research state.
+    """
+    mwpl_result = dict(mwpl_result or {})
+    def _num(key):
+        try:
+            return float(mwpl_result.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    return {
+        "status": "INCONCLUSIVE_RECENT_MWPL",
+        "non_load_bearing": False,
+        "reason": str(mwpl_result.get("reason") or "MWPL_UNAVAILABLE"),
+        "mwpl_date_coverage": _num("date_coverage"),
+        "mwpl_month_coverage": _num("month_coverage"),
+        "mwpl_observation_coverage": _num("observation_coverage"),
+        "secban_risk_date_coverage": _num("secban_risk_date_coverage"),
+        "mwpl_source": str(mwpl_result.get("source") or "UNAVAILABLE"),
+    }
+
+
 def _build_v97_recent_mwpl_bound(*, symbols, stage_cb=None):
     """Bound ban/MWPL sensitivity on the 2021-2023 independent window.
 
@@ -3972,7 +3996,7 @@ def _build_v97_recent_mwpl_bound(*, symbols, stage_cb=None):
         mwpl_client = nse_mwpl.NSEHistoricalReportClient(cache_dir=_RESEARCH_STATE_DIR/"nse-mwpl")
         mw = nse_mwpl.build_monthly_mwpl_controls(validation_dates=trial_dates, symbols=list(raw_frames), total_oi_by_symbol=total_oi_by_symbol, client=mwpl_client, min_date_coverage=0.95)
         if not mw.get("available"):
-            return {"status":"INCONCLUSIVE_RECENT_MWPL","non_load_bearing":False,"reason":mw.get("reason"),"mwpl":mw}
+            return _v97_recent_mwpl_incomplete_result(mw)
         for symbol,frame in raw_frames.items():
             x=v953_contract_structure.build_contract_structure_frame(frame).copy()
             x["date"]=pd.DatetimeIndex(x.index).tz_localize(None).normalize(); x=x[(x["date"]>=start)&(x["date"]<=end)].copy()
@@ -4454,10 +4478,46 @@ def _default_v97_state():
     return {"status":"idle","mode":"v97_trial19","research_only":True,"progress":{"done":0,"total":0,"symbol":None,"stage":None,"stage_index":0,"stage_total":4,"overall_pct":0},"result":None,"error":None,"started_at":None,"finished_at":None,"params":{"resume_run_dir":None},"worker":{}}
 
 
+def _research_state_json_safe(value):
+    """Recursively convert research state to JSON-safe builtins.
+
+    This is a last-resort persistence/render boundary. Research evaluators
+    should still return compact scalar diagnostics rather than raw frames.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, (pd.Timestamp, dt.datetime, dt.date)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, pd.Series):
+        return [_research_state_json_safe(v) for v in value.tolist()]
+    if isinstance(value, (pd.Index, np.ndarray)):
+        return [_research_state_json_safe(v) for v in value.tolist()]
+    if isinstance(value, pd.DataFrame):
+        return [_research_state_json_safe(row) for row in value.to_dict(orient="records")]
+    if isinstance(value, dict):
+        return {str(k): _research_state_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_research_state_json_safe(v) for v in value]
+    try:
+        json.dumps(value, allow_nan=True)
+        return value
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _atomic_write_v97_state(state):
     path=Path(_V97_STATE_PATH); path.parent.mkdir(parents=True,exist_ok=True); tmp=path.with_name(path.name+".tmp")
+    safe_state = _research_state_json_safe(state)
     with tmp.open("w",encoding="utf-8") as fh:
-        json.dump(state,fh,default=_research_json_default,allow_nan=True,separators=(",",":")); fh.flush(); os.fsync(fh.fileno())
+        json.dump(safe_state,fh,allow_nan=True,separators=(",",":")); fh.flush(); os.fsync(fh.fileno())
     os.replace(tmp,path)
 
 
@@ -4489,7 +4549,8 @@ def _persist_v97_state():
 def get_v97_trial19_state():
     with _v97_lock:
         out=dict(_v97_state); out["progress"]=dict(_v97_state.get("progress") or {}); out["params"]=dict(_v97_state.get("params") or {})
-    out["worker"]=research_runtime.snapshot(); return out
+    out["worker"]=research_runtime.snapshot()
+    return _research_state_json_safe(out)
 
 
 def start_v97_trial19(kite,symbols=None,integrity_data=None):
