@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2747,7 +2747,7 @@ _V97_WORK_ROOT = Path(
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 _V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
 _V96_RUN_SCHEMA = "v960-trial17-independent-total-oi-run-1"
-_V97_RUN_SCHEMA = "v972-trial19-confound-integrity-run-1"
+_V97_RUN_SCHEMA = "v980-incremental-oi-run-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -2822,6 +2822,7 @@ def _v97_run_dir(*, symbols):
         "schema": _V97_RUN_SCHEMA,
         "symbols": list(symbols or []),
         "build": v97_trial19.BUILD_ID,
+        "incremental_build": v98_incremental_oi.BUILD_ID,
         "window": [str(v97_trial19.INDEPENDENT_START.date()), str(v97_trial19.INDEPENDENT_END.date())],
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
@@ -4094,7 +4095,10 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
             continue
         try:
             price=price.copy(); price.index=pd.to_datetime(price.index).tz_localize(None).normalize(); price=price[~price.index.duplicated(keep="last")].sort_index(); price=price.dropna(subset=["open","high","low","close"])
-            frame=v95_daily_evidence.build_symbol_daily_frame(price,near_oi,expiry_dates=hist.get("near_expiry"))
+            frame=v95_daily_evidence.build_symbol_daily_frame(
+                price, near_oi, expiry_dates=hist.get("near_expiry"),
+                futures_volume_series=hist.get("total_volume"),
+            )
             membership=hist.get("membership")
             if isinstance(membership,pd.Series):
                 m=membership.copy(); m.index=pd.to_datetime(m.index).normalize(); m=m.reindex(frame.index).astype("boolean").fillna(False).astype(bool); frame["fno_member_pti"]=m; frame["eligible"]=frame["eligible"]&m
@@ -4162,6 +4166,18 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
     else:
         earnings_map={"_meta":{"loaded_symbols":[],"symbol_coverage":0.0,"source":"NOT_LOADED_EFFICACY_FAILED"}}
     earnings_control=v97_trial19.evaluate_earnings_promotion(frames,frozen_result=research,earnings_map=earnings_map) if frames else {"status":"INCONCLUSIVE_NO_DATA","trial18_eligible":False,"confound_pass":False,"research_only":True}
+
+    # V9.8 is an incremental-value layer on top of the frozen Trial-19 event.
+    # It cannot rewrite Trial 19 or unlock Trial 18 in this build.
+    if stage_cb: stage_cb(4,4,"V9.8 · Yang-Zhang + Full HAR + Volume horse race + Earnings audit",98)
+    incremental_core = v98_incremental_oi.evaluate_incremental_core(
+        frames, frozen_result=research, bootstrap_reps=500
+    ) if frames else {"status":"INCONCLUSIVE_NO_DATA","pass":False,"trial18_state":"LOCKED"}
+    earnings_split = v98_incremental_oi.evaluate_earnings_split(
+        frames, frozen_result=research, earnings_map=earnings_map, bootstrap_reps=500
+    ) if frames else {"status":"INCONCLUSIVE_NO_DATA","audit":{"audit_valid":False},"outside_earnings_pass":False}
+    v98_validation = v98_incremental_oi.finalize_v98(incremental_core, earnings_control=earnings_split)
+
     supplied_bound=integrity_data.get("recent_mwpl_bound")
     if controls.get("mwpl_available"):
         recent_bound={"status":"NOT_NEEDED_HISTORICAL_MWPL_APPLIED","non_load_bearing":False}
@@ -4172,13 +4188,25 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
     else:
         recent_bound={"status":"LOCKED_EFFICACY_FAILED","non_load_bearing":False}
     eligibility=v97_trial19.evaluate_trial18_eligibility(frozen_result=research,volatility_control=volatility_control,earnings_control=earnings_control,integrity_controls=controls,recent_mwpl_bound=recent_bound)
+    # V9.8 explicitly freezes direction even if older promotion logic would
+    # have made it eligible.  A separate human-reviewed preregistration is
+    # required after incremental validation.
+    eligibility = dict(eligibility or {})
+    eligibility["trial18_eligible"] = False
+    eligibility["trial18_state"] = "LOCKED"
+    eligibility["status"] = "LOCKED_V98_INCREMENTAL_REVIEW"
+    reasons = list(eligibility.get("reasons") or [])
+    if "V98_INCREMENTAL_REVIEW" not in reasons:
+        reasons.append("V98_INCREMENTAL_REVIEW")
+    eligibility["reasons"] = reasons
     return {
-        "build":v97_trial19.BUILD_ID,"symbols_scanned":len(research_symbols),"symbols_completed":len(frames),"symbols_skipped":notes,"coverage":coverage,
+        "build":v98_incremental_oi.BUILD_ID,"symbols_scanned":len(research_symbols),"symbols_completed":len(frames),"symbols_skipped":notes,"coverage":coverage,
         "integrity":{**controls,"historical_oi_primary":"NSE_TOTAL_FUTSTK_OI_SHARE_EQUIVALENT","nse_oi_date_coverage":date_coverage,"nse_oi_coverage_ok":archive_ok,"historical_symbols_discovered":len(discovered),"historical_membership_available":membership_ok,"historical_cash_price_available":historical_cash_ok,"historical_membership_price_coverage":membership_price_coverage,"historical_cash_date_coverage":cash_date_coverage,"historical_cash_source":cash_meta.get("source") or "NSE_OFFICIAL_CM_LEGACY_BHAVCOPY","independent_window":{"start":str(v97_trial19.INDEPENDENT_START.date()),"end":str(v97_trial19.INDEPENDENT_END.date())},"mwpl_date_coverage":float((mwpl_result or {}).get("date_coverage") or 0.0),"mwpl_month_coverage":float((mwpl_result or {}).get("month_coverage") or 0.0),"mwpl_observation_coverage":float((mwpl_result or {}).get("observation_coverage") or 0.0),"mwpl_source":(mwpl_result or {}).get("source") or "UNAVAILABLE","secban_risk_date_coverage":float((mwpl_result or {}).get("secban_risk_date_coverage") or 0.0),"mwpl_reason":(mwpl_result or {}).get("reason") or "UNAVAILABLE","resumed_symbol_shards":resumed,"prior_locked_finals_read":False},
         "research":research,
         "confound_controls":{"volatility":volatility_control,"earnings":earnings_control,"recent_mwpl_bound":recent_bound},
         "promotion_controls":eligibility,
-        "trial18_eligible":bool(eligibility.get("trial18_eligible")),
+        "v98_validation":v98_validation,
+        "trial18_eligible":False,
         "research_only":True,
     }
 
@@ -4556,14 +4584,14 @@ def get_v97_trial19_state():
 def start_v97_trial19(kite,symbols=None,integrity_data=None):
     symbols=[str(s).strip().upper() for s in (symbols or settings.WATCHLIST)]
     with _v97_lock:
-        if _v97_state.get("status")=="running": return {"started":False,"reason":"V9.7.2 Trial 19 is already running."}
+        if _v97_state.get("status")=="running": return {"started":False,"reason":"V9.8 Incremental OI Validation is already running."}
         if research_runtime.is_research_active(): return {"started":False,"reason":"Another historical research job is already running."}
         run_dir=_v97_run_dir(symbols=symbols); resumed=sum(1 for _ in run_dir.glob("*.pkl"))
-        _v97_state.update({"status":"running","mode":"v97_trial19","research_only":True,"progress":{"done":resumed,"total":len(symbols),"symbol":None,"stage":"Loading official NSE Trial-19 third-window archive","stage_index":1,"stage_total":4,"overall_pct":max(1,min(80,round(resumed/max(len(symbols),1)*80)))},"result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None,"params":{"resume_run_dir":str(run_dir)}})
+        _v97_state.update({"status":"running","mode":"v97_trial19","research_only":True,"progress":{"done":resumed,"total":len(symbols),"symbol":None,"stage":"Loading official NSE Trial-19 archive for V9.8","stage_index":1,"stage_total":4,"overall_pct":max(1,min(80,round(resumed/max(len(symbols),1)*80)))},"result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None,"params":{"resume_run_dir":str(run_dir)}})
     _persist_v97_state()
     def _progress(done,total,symbol):
-        research_runtime.heartbeat(stage="Building V9.7.2 Trial-19 frames",symbol=symbol,done=done,total=total)
-        with _v97_lock: _v97_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building Trial-19 cash + total-OI frames","stage_index":2,"stage_total":4,"overall_pct":max(30,min(80,30+round(done/max(total,1)*50)))}
+        research_runtime.heartbeat(stage="Building V9.8 Trial-19 incremental frames",symbol=symbol,done=done,total=total)
+        with _v97_lock: _v97_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building Trial-19 cash + OI + futures-volume frames","stage_index":2,"stage_total":4,"overall_pct":max(30,min(80,30+round(done/max(total,1)*50)))}
         if done==0 or done==total or (done>0 and done%5==0): _persist_v97_state()
     def _stage(stage_index,stage_total,stage,overall_pct):
         research_runtime.heartbeat(stage=stage)
@@ -4577,7 +4605,7 @@ def start_v97_trial19(kite,symbols=None,integrity_data=None):
                 _v97_state["progress"]={"done":result.get("symbols_scanned",len(symbols)),"total":result.get("symbols_scanned",len(symbols)),"symbol":None,"stage":"Complete","stage_index":4,"stage_total":4,"overall_pct":100}; _v97_state["result"]=result; _v97_state["status"]="done"; _v97_state["error"]=None; _v97_state["finished_at"]=now_ist().isoformat(timespec="seconds")
             _persist_v97_state(); shutil.rmtree(run_dir,ignore_errors=True)
         except Exception as exc:
-            log.exception("V9.7.2 Trial19 run failed")
+            log.exception("V9.8 incremental Trial19 run failed")
             with _v97_lock: _v97_state["status"]="error"; _v97_state["error"]=str(exc); _v97_state["finished_at"]=now_ist().isoformat(timespec="seconds")
             _persist_v97_state()
         finally: research_runtime.end_research(); research_runtime.release_memory_pressure()

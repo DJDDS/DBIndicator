@@ -456,6 +456,8 @@ def _empty_history(index: pd.DatetimeIndex) -> dict:
         "near_expiry": pd.Series(pd.NaT, index=index, dtype="datetime64[ns]"),
         "near_dte": pd.Series(np.nan, index=index, dtype=float),
         "lot_size": pd.Series(np.nan, index=index, dtype=float),
+        "total_volume": pd.Series(np.nan, index=index, dtype=float),
+        "near_volume": pd.Series(np.nan, index=index, dtype=float),
         "source_format": pd.Series(None, index=index, dtype=object),
     }
 
@@ -517,6 +519,13 @@ def build_symbol_histories(days: Iterable, symbols: Iterable[str], client, progr
                 lots = pd.to_numeric(grp.get("lot_size"), errors="coerce") if "lot_size" in grp else pd.Series(dtype=float)
                 if len(lots) and lots.notna().any():
                     payload["lot_size"].loc[d] = float(lots.dropna().iloc[0])
+                if "volume" in grp.columns:
+                    vols = pd.to_numeric(grp["volume"], errors="coerce")
+                    lot_for_vol = pd.to_numeric(grp.get("lot_size"), errors="coerce") if "lot_size" in grp.columns else pd.Series(np.nan, index=grp.index)
+                    share_vol = (vols * lot_for_vol).where(vols.notna() & lot_for_vol.notna())
+                    if share_vol.notna().any():
+                        payload["total_volume"].loc[d] = float(share_vol.sum(min_count=1))
+                        payload["near_volume"].loc[d] = float(share_vol.iloc[0]) if pd.notna(share_vol.iloc[0]) else np.nan
                 payload["source_format"].loc[d] = "+".join(sorted(set(str(x) for x in grp["source_format"].dropna())))
         except FileNotFoundError as exc:
             # Business-day calendars include exchange holidays.  A genuine

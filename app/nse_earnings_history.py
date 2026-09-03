@@ -178,14 +178,19 @@ class NSEEarningsHistoryClient:
 
 def build_earnings_map(symbols, start, end, client, progress_cb=None) -> dict:
     symbols = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
-    out = {}; loaded = 0; loaded_symbols = []; errors = {}
+    out = {}; loaded = 0; loaded_symbols = []; symbols_with_dates = 0; result_dates_loaded = 0; errors = {}
     for i, symbol in enumerate(symbols, start=1):
         if progress_cb:
             progress_cb(i - 1, len(symbols), symbol)
         try:
-            out[symbol] = client.fetch_symbol(symbol, start, end)
+            dates = client.fetch_symbol(symbol, start, end)
+            dates = pd.DatetimeIndex(pd.to_datetime(dates, errors="coerce")).dropna().normalize().unique().sort_values()
+            out[symbol] = dates
             loaded += 1
             loaded_symbols.append(symbol)
+            if len(dates):
+                symbols_with_dates += 1
+                result_dates_loaded += int(len(dates))
         except Exception as exc:  # noqa: BLE001
             out[symbol] = pd.DatetimeIndex([])
             errors[symbol] = str(exc)
@@ -196,6 +201,9 @@ def build_earnings_map(symbols, start, end, client, progress_cb=None) -> dict:
         "symbols_requested": int(len(symbols)),
         "symbols_loaded": int(loaded),
         "symbol_coverage": float(loaded / len(symbols)) if symbols else 0.0,
+        "symbols_with_dates": int(symbols_with_dates),
+        "result_dates_loaded": int(result_dates_loaded),
+        "symbol_date_coverage": float(symbols_with_dates / len(symbols)) if symbols else 0.0,
         "loaded_symbols": sorted(loaded_symbols),
         "errors": errors,
         "source": "NSE_CORPORATES_FINANCIAL_RESULTS",

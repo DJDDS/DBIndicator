@@ -151,7 +151,7 @@ def _future_movement(price: pd.DataFrame, atr: pd.Series) -> tuple[pd.Series, pd
 
 
 def build_symbol_daily_frame(price_df: pd.DataFrame, oi_series, *, expiry_dates=None,
-                             ban_series=None, mwpl_series=None) -> pd.DataFrame:
+                             ban_series=None, mwpl_series=None, futures_volume_series=None) -> pd.DataFrame:
     """Build point-in-time daily features and future movement outcomes for one symbol."""
     if price_df is None or len(price_df) == 0:
         return pd.DataFrame()
@@ -190,6 +190,45 @@ def build_symbol_daily_frame(price_df: pd.DataFrame, oi_series, *, expiry_dates=
     # the event date.  Shift one full session so the signal day's close never
     # enters the matching covariate.
     out["realized_vol5_prev"] = (logret.rolling(5, min_periods=4).std(ddof=1) * math.sqrt(252.0)).shift(1)
+
+    # V9.8 incremental-volatility benchmark.  The event is known after the
+    # current session closes, so today's close-to-close variance and its HAR
+    # weekly/monthly aggregates are valid predictors of next-session variance.
+    daily_var = logret.pow(2)
+    out["har_daily_var"] = daily_var
+    out["har_weekly_var"] = daily_var.rolling(5, min_periods=5).mean()
+    out["har_monthly_var"] = daily_var.rolling(22, min_periods=15).mean()
+
+    # Daily OHLC variance proxies for the *realised next session*.  The
+    # Yang-Zhang-style daily component includes the overnight jump plus the
+    # Rogers-Satchell intraday component; Garman-Klass is retained as a
+    # high/low robustness target.  Both are shifted backward one row so the
+    # outcome at t is information from t+1 only.
+    safe_open = price["open"].where(price["open"] > 0)
+    safe_high = price["high"].where(price["high"] > 0)
+    safe_low = price["low"].where(price["low"] > 0)
+    safe_close = price["close"].where(price["close"] > 0)
+    overnight = np.log(safe_open / safe_close.shift(1))
+    open_close = np.log(safe_close / safe_open)
+    high_low = np.log(safe_high / safe_low)
+    gk_daily = (0.5 * high_low.pow(2) - (2.0 * math.log(2.0) - 1.0) * open_close.pow(2)).clip(lower=0.0)
+    rs_daily = (np.log(safe_high / safe_open) * np.log(safe_high / safe_close)
+                + np.log(safe_low / safe_open) * np.log(safe_low / safe_close)).clip(lower=0.0)
+    yz_k = 0.34 / (1.34 + (21.0 / 19.0))
+    yz_daily = (overnight.pow(2) + yz_k * open_close.pow(2) + (1.0 - yz_k) * rs_daily).clip(lower=0.0)
+    out["next_yz_var"] = yz_daily.shift(-1)
+    out["next_gk_var"] = gk_daily.shift(-1)
+
+    if futures_volume_series is None:
+        out["futures_volume"] = np.nan
+        out["futures_volume_z"] = np.nan
+    else:
+        fv = pd.Series(futures_volume_series).copy()
+        fv.index = _to_naive_daily_index(fv.index)
+        fv = pd.to_numeric(fv, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        fv = fv.where(fv >= 0).reindex(out.index)
+        out["futures_volume"] = fv
+        out["futures_volume_z"] = _rolling_z(np.log1p(fv), window=60, min_obs=20)
 
     if expiry_dates is None:
         dte, derived, regime = derived_days_to_expiry(out.index)
