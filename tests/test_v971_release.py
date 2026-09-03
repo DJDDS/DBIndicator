@@ -2,7 +2,7 @@ from pathlib import Path
 from app import v97_trial19
 ROOT=Path(__file__).resolve().parents[1]
 BUILD='2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE'
-CURRENT='2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE'
+CURRENT='2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
 
 def test_v971_release_marker_and_trial19_remain_frozen():
     assert v97_trial19.BUILD_ID == BUILD

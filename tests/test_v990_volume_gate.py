@@ -65,8 +65,11 @@ def test_v990_oos_gate_passes_when_volume_has_stable_incremental_forecast_value(
     monkeypatch.setattr(v99, 'INDEPENDENT_START', pd.Timestamp('2015-06-01'))
     monkeypatch.setattr(v99, 'INDEPENDENT_END', pd.Timestamp('2016-08-31'))
     out = v99.evaluate_trial20(frames, earnings_map=None, min_train_obs=160, refit_every=20, require_earnings=False)
-    assert out['status'] == 'PASS_TRIAL20_VOLUME_OOS_GATE'
-    assert out['pass'] is True
+    assert out['gate_status'] == 'PASS_TRIAL20_VOLUME_OOS_GATE'
+    assert out['statistical_pass'] is True
+    assert out['status'] == 'SPECIFICATION_SENSITIVE_NOT_PROMOTED'
+    assert out['pass'] is False
+    assert out['promotion_allowed'] is False
     assert out['primary_oos']['mse']['augmented'] < out['primary_oos']['mse']['har']
     assert out['primary_oos']['qlike']['augmented'] < out['primary_oos']['qlike']['har']
     assert out['primary_oos']['clark_west']['t'] > v99.CLARK_WEST_HURDLE
@@ -81,7 +84,9 @@ def test_v990_oos_gate_fails_without_incremental_volume_information(monkeypatch)
     monkeypatch.setattr(v99, 'INDEPENDENT_END', pd.Timestamp('2016-08-31'))
     out = v99.evaluate_trial20(frames, earnings_map=None, min_train_obs=160, refit_every=20, require_earnings=False)
     assert out['pass'] is False
-    assert out['status'].startswith('FAIL_')
+    assert out['statistical_pass'] is False
+    assert out['gate_status'].startswith('FAIL_')
+    assert out['status'] == 'CLOSED_REJECTED_LOG_RV_CONFIRMED'
     assert out['trial18_state'] == 'LOCKED'
 
 

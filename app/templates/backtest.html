@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE</div>
     <p>
-      <strong>V9.9 / Trial 20 is the primary research architecture.</strong> Trial 19 is closed as a replicated association that is not incremental after HAR + volume; Trial 18 remains locked. V9.9 asks one preregistered question: does abnormal total FUTSTK participation add genuine out-of-sample next-session magnitude information beyond HAR?
+      <strong>V9.9.2 / Trial 20 log-RV integrity closure is the primary research architecture.</strong> Trial 19 is closed as a replicated association that is not incremental after HAR + volume; Trial 18 remains locked. V9.9.2 asks only whether the already-frozen Trial-20 conclusion survives a positivity-safe log-RV forecast specification; it cannot rescue or promote the observed outcome window.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -119,24 +119,25 @@
   </div>
 
   <div class="card" style="border-color:#1e7b34;">
-    <h2>V9.9 / Trial 20 · Abnormal FUTSTK Volume OOS Gate</h2>
-    <p style="margin-top:-4px;"><strong>Preregistered magnitude-feature validation only.</strong> Compare <strong>HAR alone</strong> against <strong>HAR + abnormal FUTSTK volume</strong> on an older independent window. This run cannot create TRADE/WATCH signals and cannot unlock direction.</p>
+    <h2>V9.9.2 / Trial 20 · Log-RV Integrity Closure</h2>
+    <p style="margin-top:-4px;"><strong>One-time integrity closure only.</strong> Re-run the frozen Trial-20 comparison with HAR fitted in <strong>log realised-variance space</strong>, then back-transform with a <strong>training-only smearing correction</strong>. No feature, threshold, window or promotion rule is searched.</p>
     <p class="hint"><strong>Frozen feature:</strong> total FUTSTK <strong>notional turnover</strong> → <code>log(turnover)</code> → point-in-time detrending against prior 20/60-session turnover history plus weekday and deterministic trend → standardisation by the <strong>prior trailing 60-session residual SD</strong>. <strong>No volume threshold is optimized or searched.</strong></p>
-    <p class="hint"><strong>Frozen outcomes:</strong> next-session <strong>Yang–Zhang variance</strong> is primary; <strong>Garman–Klass</strong> is robustness. Forecast evaluation is rolling OOS on <strong>MSE + QLIKE</strong> only. The nested-model hurdle is one-sided <strong>Clark–West &gt; 1.645</strong>.</p>
+    <p class="hint"><strong>Frozen outcomes:</strong> next-session <strong>Yang–Zhang variance</strong> is primary; <strong>Garman–Klass</strong> is robustness. HAR and HAR+Volume are estimated on <strong>log(RV)</strong>; forecasts are returned to variance units with training-only lognormal smearing. Evaluation remains <strong>MSE + QLIKE</strong> with one-sided <strong>Clark–West &gt; 1.645</strong>.</p>
     <p class="hint"><strong>Frozen robustness:</strong> same-day / same-DTE diagnostic control, two-way date + symbol clustering, earnings ±5-session split, four chronological blocks and top-3-day sensitivity. Independent outcome window: <strong>1 Sep 2015 through 31 Aug 2018</strong>; earlier data are warm-up/training only.</p>
     <p class="hint"><strong>OI remains diagnostic</strong>: buildup, acceleration, long/short state and relative positioning stay visible elsewhere, but OI is not a Trial-20 magnitude eligibility gate. <strong>Trial 19 CLOSED · association, not incremental. Trial 18 LOCKED.</strong> Live Opportunity Radar scoring is unchanged in this research build.</p>
-    <button type="button" class="btn" id="v99-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.9 Trial 20 OOS Volume Gate</button>
-    <span class="hint" id="v99-form-hint" style="margin-left:10px;">Official NSE FUTSTK turnover + cash OHLC · research only · no retuning.</span>
+    <button type="button" class="btn" id="v99-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.9.2 Trial 20 Log-RV Closure</button>
+    <span class="hint" id="v99-form-hint" style="margin-left:10px;">Official NSE FUTSTK turnover + cash OHLC · one-time integrity closure · no retuning.</span>
     <div class="progress-wrap" id="v99-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v99-progress-fill"></div></div>
       <div class="progress-label" id="v99-progress-label">Starting…</div>
     </div>
     <div class="msg-err" id="v99-error" style="display:none; margin-top:16px;"></div>
     <div id="v99-results" style="display:none; margin-top:18px;">
-      <h3 class="bt-group-title">Trial 20 OOS Verdict</h3>
+      <h3 class="bt-group-title">Trial 20 Closure Verdict</h3>
       <div id="v99-verdict"></div>
       <div id="v99-integrity" class="hint" style="margin:10px 0 14px;"></div>
       <div id="v99-primary"></div>
+      <div id="v99-forecast-integrity" class="hint" style="margin-top:10px;"></div>
       <div id="v99-robustness" class="hint" style="margin-top:12px;"></div>
       <h3 class="bt-group-title" style="margin-top:18px;">Controls &amp; Diagnostics</h3>
       <div id="v99-controls" class="hint"></div>
@@ -382,7 +383,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V99_BUILD_ID = "2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE";
+const V99_BUILD_ID = "2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE";
 function v99Fmt(v,d=5){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
 function v99Pct(v,d=1){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':(Number(v)*100).toFixed(d)+'%';}
 function v99Loss(x){x=x||{};return `HAR ${v99Fmt(x.har)} · HAR+Volume ${v99Fmt(x.augmented)} · ${x.improves?'IMPROVES':'NO IMPROVEMENT'}`;}
@@ -398,17 +399,18 @@ function updateV99UI(state){
   btn.disabled=false; prog.style.display='none';
   if(state.status==='error'){err.style.display='block';err.textContent=state.error||'V9.9 Trial 20 failed.';results.style.display='none';return;}
   err.style.display='none'; if(state.status!=='done'||!state.result){results.style.display='none';return;}
-  const out=state.result||{}, v=out.trial20_validation||{}, integ=out.integrity||{}, st=String(v.status||'INCONCLUSIVE'), pass=!!v.pass;
-  const yz=v.primary_oos||{}, gk=v.gk_oos||{}, cw=yz.clark_west||{}, diag=v.same_day_same_dte_regression||{}, stability=v.chronological_stability||{}, top=v.top3_day_sensitivity||{}, conc=v.concentration||{}, earn=v.earnings||{}, ea=earn.audit||{}, outside=earn.outside_oos||{}, gates=v.gates||{};
+  const out=state.result||{}, v=out.trial20_validation||{}, integ=out.integrity||{}, st=String(v.status||'INCONCLUSIVE'), pass=!!v.pass, statisticalPass=!!v.statistical_pass;
+  const yz=v.primary_oos||{}, gk=v.gk_oos||{}, cw=yz.clark_west||{}, diag=v.same_day_same_dte_regression||{}, stability=v.chronological_stability||{}, top=v.top3_day_sensitivity||{}, conc=v.concentration||{}, earn=v.earnings||{}, ea=earn.audit||{}, outside=earn.outside_oos||{}, gates=v.gates||{}, fi=v.forecast_integrity||{}, fy=fi.yang_zhang||{}, fg=fi.garman_klass||{};
   const blocks=(stability.blocks||[]).map(b=>`B${b.block}: MSE ${b.mse_improves?'✓':'✗'} / QLIKE ${b.qlike_improves?'✓':'✗'} / R² ${v99Fmt(b.oos_r2,5)}`).join(' · ')||'—';
-  document.getElementById('v99-verdict').innerHTML=`<div class="${pass?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:6px;">${st.replaceAll('_',' ')}</div><div class="hint">Build ${v.build||out.build||V99_BUILD_ID} · ${out.symbols_completed||0}/${out.symbols_scanned||0} symbols · OOS dates ${yz.dates||0} · observations ${yz.n||0}</div>`;
+  document.getElementById('v99-verdict').innerHTML=`<div class="${pass?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:6px;">${st.replaceAll('_',' ')}</div><div class="hint">Build ${v.build||out.build||V99_BUILD_ID} · ${out.symbols_completed||0}/${out.symbols_scanned||0} symbols · OOS dates ${yz.dates||0} · observations ${yz.n||0} · frozen statistical gate ${statisticalPass?'PASS':'FAIL'}</div>`;
   document.getElementById('v99-integrity').innerHTML=`<strong>Independent outcome:</strong> ${(integ.independent_window||{}).start||'2015-09-01'} → ${(integ.independent_window||{}).end||'2018-08-31'} · <strong>FUTSTK archive:</strong> ${v99Pct(integ.futures_archive_date_coverage)} · <strong>cash OHLC:</strong> ${v99Pct(integ.cash_archive_date_coverage)} · turnover carrier <strong>${String(integ.turnover_primary||'NSE_TOTAL_FUTSTK_NOTIONAL_TURNOVER').replaceAll('_',' ')}</strong> · prior locked finals read <strong>${integ.prior_locked_finals_read?'YES':'NO'}</strong>`;
   document.getElementById('v99-primary').innerHTML=`<table><thead><tr><th>Outcome</th><th>MSE</th><th>QLIKE</th><th>Clark–West</th><th>OOS R²</th></tr></thead><tbody><tr><td><strong>Yang–Zhang PRIMARY</strong></td><td>${v99Loss(yz.mse)}</td><td>${v99Loss(yz.qlike)}</td><td>t ${v99Fmt(cw.t,3)} · hurdle &gt; ${v99Fmt(cw.hurdle||1.645,3)} · ${cw.pass?'PASS':'FAIL'}</td><td>${v99Fmt(yz.oos_r2,6)}</td></tr><tr><td>Garman–Klass robustness</td><td>${v99Loss(gk.mse)}</td><td>${v99Loss(gk.qlike)}</td><td>nested robustness</td><td>${v99Fmt(gk.oos_r2,6)}</td></tr></tbody></table>`;
+  document.getElementById('v99-forecast-integrity').innerHTML=`<strong>Forecast integrity:</strong> log-RV + training-only smearing · YZ HAR min ${v99Fmt(fy.har_min,8)} / floor hits ${fy.har_floor_hits||0} · YZ HAR+Volume min ${v99Fmt(fy.augmented_min,8)} / floor hits ${fy.augmented_floor_hits||0} · GK HAR min ${v99Fmt(fg.har_min,8)} / floor hits ${fg.har_floor_hits||0} · GK HAR+Volume min ${v99Fmt(fg.augmented_min,8)} / floor hits ${fg.augmented_floor_hits||0}.`;
   const td=top.metrics||{};
-  document.getElementById('v99-robustness').innerHTML=`<strong>Chronological stability:</strong> ${stability.positive_blocks||0}/${stability.required||3} positive blocks · ${blocks}<br><strong>Top-3 favourable CW dates removed:</strong> ${(top.removed_dates||[]).join(', ')||'—'} · MSE ${(td.mse||{}).improves?'✓':'✗'} · QLIKE ${(td.qlike||{}).improves?'✓':'✗'}<br><strong>Concentration:</strong> ${conc.symbols||0} symbols · top-5 positive Clark–West contribution share ${v99Pct(conc.top5_positive_cw_share)}.`;
+  document.getElementById('v99-robustness').innerHTML=`<strong>Chronological stability:</strong> ${stability.positive_blocks||0}/${(stability.blocks||[]).length||0} positive blocks (need ≥ ${stability.required||3}) · ${blocks}<br><strong>Top-3 favourable CW dates removed:</strong> ${(top.removed_dates||[]).join(', ')||'—'} · MSE ${(td.mse||{}).improves?'✓':'✗'} · QLIKE ${(td.qlike||{}).improves?'✓':'✗'}<br><strong>Concentration:</strong> ${conc.symbols||0} symbols · top-5 positive Clark–West contribution share ${v99Pct(conc.top5_positive_cw_share)}.`;
   const dt=((diag.t||{}).abnormal_futstk_volume), dc=((diag.coef||{}).abnormal_futstk_volume);
-  document.getElementById('v99-controls').innerHTML=`<strong>Same-day / same-DTE, two-way date+symbol clustered diagnostic:</strong> abnormal-volume coef ${v99Fmt(dc,5)} · t ${v99Fmt(dt,3)} · N ${diag.n||0}<br><strong>Earnings ±5 sessions:</strong> audit ${ea.audit_valid?'PASS':'INCONCLUSIVE'} · symbol coverage ${v99Pct(ea.symbol_date_coverage)} · outside-window MSE ${v99Loss(outside.mse)} · QLIKE ${v99Loss(outside.qlike)}<br><strong>Frozen gates:</strong> OOS sample ${gates.oos_sample_ok?'✓':'✗'} · MSE/QLIKE/CW ${gates.mse_qlike_cw_ok?'✓':'✗'} · GK ${gates.gk_robustness_ok?'✓':'✗'} · chronological ${gates.chronological_stability_ok?'✓':'✗'} · top-day ${gates.top3_day_sensitivity_ok?'✓':'✗'} · earnings ${gates.earnings_ok?'✓':'✗'}.`;
-  document.getElementById('v99-locks').innerHTML=`<strong>Trial 19:</strong> CLOSED — association, not incremental · <strong>Trial 18 LOCKED.</strong> <strong>OI remains diagnostic</strong> and does not qualify the Trial-20 magnitude opportunity set. <strong>RESEARCH / SHADOW ONLY.</strong> No TRADE/WATCH activation; live Opportunity Radar unchanged.`;
+  document.getElementById('v99-controls').innerHTML=`<strong>Same-day / same-DTE, two-way date+symbol clustered diagnostic:</strong> abnormal-volume coef ${v99Fmt(dc,5)} (variance×1e6 units) · t ${v99Fmt(dt,3)} · N ${diag.n||0}<br><strong>Earnings ±5 sessions:</strong> audit ${ea.audit_valid?'PASS':'INCONCLUSIVE'} · symbol coverage ${v99Pct(ea.symbol_date_coverage)} · outside-window MSE ${v99Loss(outside.mse)} · QLIKE ${v99Loss(outside.qlike)}<br><strong>Frozen gates:</strong> OOS sample ${gates.oos_sample_ok?'✓':'✗'} · MSE/QLIKE/CW ${gates.mse_qlike_cw_ok?'✓':'✗'} · GK ${gates.gk_robustness_ok?'✓':'✗'} · chronological ${gates.chronological_stability_ok?'✓':'✗'} · top-day ${gates.top3_day_sensitivity_ok?'✓':'✗'} · earnings ${gates.earnings_ok?'✓':'✗'}.`;
+  document.getElementById('v99-locks').innerHTML=`<strong>Trial 19:</strong> CLOSED — association, not incremental · <strong>Trial 18 LOCKED.</strong> <strong>OI remains diagnostic</strong> and does not qualify the Trial-20 magnitude opportunity set. <strong>RESEARCH / SHADOW ONLY.</strong> A corrected PASS is <strong>SPECIFICATION SENSITIVE NOT PROMOTED</strong>; no TRADE/WATCH activation; live Opportunity Radar unchanged.`;
   results.style.display='block';
 }
 function pollV99(){fetch('/api/v99/status').then(r=>r.json()).then(st=>{updateV99UI(st);if(st.status==='running')setTimeout(pollV99,2500);}).catch(()=>setTimeout(pollV99,5000));}

@@ -19,7 +19,7 @@ import pandas as pd
 from . import v96_trial17 as v96
 from . import v98_incremental_oi as v98
 
-BUILD_ID = "2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE"
+BUILD_ID = "2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE"
 TRIAL_NUMBER = 20
 INDEPENDENT_START = pd.Timestamp("2015-09-01")
 INDEPENDENT_END = pd.Timestamp("2018-08-31")
@@ -46,8 +46,13 @@ def trial20_spec() -> dict:
         "challenger": "HAR daily + weekly + monthly + abnormal FUTSTK volume",
         "oos_losses": ["MSE", "QLIKE"],
         "nested_test": "Clark-West MSPE-adjusted, one-sided",
+        "forecast_space": "log_realized_variance",
+        "back_transform": "training_only_lognormal_smearing",
+        "closure_rerun": True,
+        "promotion_on_corrected_pass": False,
         "clark_west_hurdle": CLARK_WEST_HURDLE,
         "same_day_same_dte_control": True,
+        "diagnostic_variance_scale": VAR_SCALE,
         "two_way_cluster": ["date", "symbol"],
         "chronological_blocks": 4,
         "top_day_sensitivity": 3,
@@ -162,17 +167,41 @@ def _stack(symbol_frames: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
-def _fit_forecast(train: pd.DataFrame, row: pd.Series, target: str, columns: list[str]) -> float | None:
-    use = train[[target] + columns].apply(pd.to_numeric, errors="coerce").dropna()
-    if len(use) <= len(columns) + 3:
+def _log_variance_design(X: np.ndarray, *, log_columns: int | None = None) -> np.ndarray:
+    arr = np.asarray(X, dtype=float).copy()
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    nlog = arr.shape[1] if log_columns is None else int(log_columns)
+    if nlog < 0 or nlog > arr.shape[1]:
+        raise ValueError("log_columns must be between 0 and the number of regressors")
+    if nlog:
+        arr[:, :nlog] = np.log(np.maximum(arr[:, :nlog], VAR_FLOOR))
+    return arr
+
+
+def _fit_log_variance_model(y: np.ndarray, X: np.ndarray, *, log_columns: int | None = None) -> tuple[np.ndarray, float]:
+    yy = np.asarray(y, dtype=float)
+    design = _log_variance_design(X, log_columns=log_columns)
+    log_y = np.log(np.maximum(yy, VAR_FLOOR))
+    beta = _ols_fit(log_y, design)
+    A = np.column_stack([np.ones(len(design)), design])
+    resid = log_y - A @ beta
+    smear = float(np.mean(np.exp(resid)))
+    if not np.isfinite(smear) or smear <= 0:
+        smear = 1.0
+    return beta, smear
+
+
+def _predict_log_variance(model: tuple[np.ndarray, float], row: np.ndarray, *, log_columns: int | None = None) -> float | None:
+    beta, smear = model
+    raw = np.asarray(row, dtype=float).reshape(1, -1)
+    if not np.isfinite(raw).all():
         return None
-    y = use[target].to_numpy(dtype=float)
-    X = use[columns].to_numpy(dtype=float)
-    beta = _ols_fit(y, X)
-    xr = pd.to_numeric(row[columns], errors="coerce").to_numpy(dtype=float)
-    if not np.isfinite(xr).all():
+    design = _log_variance_design(raw, log_columns=log_columns)[0]
+    log_pred = float(beta[0] + design @ beta[1:])
+    pred = float(np.exp(log_pred) * smear)
+    if not np.isfinite(pred):
         return None
-    pred = float(beta[0] + xr @ beta[1:])
     return max(VAR_FLOOR, pred)
 
 
@@ -202,11 +231,13 @@ def _oos_prediction_rows(frame: pd.DataFrame, target: str, *, min_train_obs: int
             if int(vb.sum()) < int(min_train_obs) or int(va.sum()) < int(min_train_obs):
                 continue
             if fit_base is None or fit_aug is None or oos_count - last_refit_oos >= int(refit_every):
-                fit_base = _ols_fit(y[:i][vb], xb_all[:i][vb])
-                fit_aug = _ols_fit(y[:i][va], xa_all[:i][va])
+                fit_base = _fit_log_variance_model(y[:i][vb], xb_all[:i][vb], log_columns=3)
+                fit_aug = _fit_log_variance_model(y[:i][va], xa_all[:i][va], log_columns=3)
                 last_refit_oos = oos_count
-            pred_b = max(VAR_FLOOR, float(fit_base[0] + xb_all[i] @ fit_base[1:]))
-            pred_a = max(VAR_FLOOR, float(fit_aug[0] + xa_all[i] @ fit_aug[1:]))
+            pred_b = _predict_log_variance(fit_base, xb_all[i], log_columns=3)
+            pred_a = _predict_log_variance(fit_aug, xa_all[i], log_columns=3)
+            if pred_b is None or pred_a is None:
+                continue
             out.append({
                 "date": d, "symbol": str(symbol), "target": float(y[i]),
                 "har_forecast": pred_b, "augmented_forecast": pred_a,
@@ -222,6 +253,42 @@ def _qlike(y: pd.Series, forecast: pd.Series) -> pd.Series:
     ff = pd.to_numeric(forecast, errors="coerce").clip(lower=VAR_FLOOR)
     ratio = yy / ff
     return ratio - np.log(ratio) - 1.0
+
+
+
+
+def _forecast_integrity(pred: pd.DataFrame) -> dict:
+    if pred is None or pred.empty:
+        return {
+            "n": 0, "har_min": None, "har_max": None, "augmented_min": None, "augmented_max": None,
+            "har_floor_hits": 0, "augmented_floor_hits": 0,
+        }
+    fb = pd.to_numeric(pred.get("har_forecast"), errors="coerce").dropna()
+    fa = pd.to_numeric(pred.get("augmented_forecast"), errors="coerce").dropna()
+    tol = VAR_FLOOR * (1.0 + 1e-9)
+    return {
+        "n": int(len(pred)),
+        "har_min": float(fb.min()) if len(fb) else None,
+        "har_max": float(fb.max()) if len(fb) else None,
+        "augmented_min": float(fa.min()) if len(fa) else None,
+        "augmented_max": float(fa.max()) if len(fa) else None,
+        "har_floor_hits": int((fb <= tol).sum()) if len(fb) else 0,
+        "augmented_floor_hits": int((fa <= tol).sum()) if len(fa) else 0,
+    }
+
+
+def _closure_interpretation(statistical_pass: bool) -> dict:
+    if bool(statistical_pass):
+        return {
+            "status": "SPECIFICATION_SENSITIVE_NOT_PROMOTED",
+            "promotion_allowed": False,
+            "reason": "Corrected log-RV specification passed only after the Trial-20 outcome window had already been observed.",
+        }
+    return {
+        "status": "CLOSED_REJECTED_LOG_RV_CONFIRMED",
+        "promotion_allowed": False,
+        "reason": "The frozen abnormal-volume hypothesis still failed after the one-time log-RV integrity repair.",
+    }
 
 
 def _newey_west_t(values: pd.Series, lag: int = 5) -> float | None:
@@ -273,7 +340,7 @@ def _forecast_metrics(pred: pd.DataFrame) -> dict:
 
 def _chronological_stability(pred: pd.DataFrame) -> dict:
     if pred is None or pred.empty:
-        return {"positive_blocks": 0, "required": 3, "blocks": []}
+        return {"positive_blocks": 0, "total_blocks": 0, "required": 3, "blocks": []}
     dates = np.array(sorted(pd.to_datetime(pred["date"]).dt.normalize().unique()))
     blocks = []
     positive = 0
@@ -283,7 +350,7 @@ def _chronological_stability(pred: pd.DataFrame) -> dict:
         ok = bool((m.get("mse") or {}).get("improves") and (m.get("qlike") or {}).get("improves"))
         positive += int(ok)
         blocks.append({"block": i, "start": str(pd.Timestamp(ds[0]).date()) if len(ds) else None, "end": str(pd.Timestamp(ds[-1]).date()) if len(ds) else None, "mse_improves": bool((m.get("mse") or {}).get("improves")), "qlike_improves": bool((m.get("qlike") or {}).get("improves")), "oos_r2": m.get("oos_r2")})
-    return {"positive_blocks": int(positive), "required": 3, "pass": bool(positive >= 3), "blocks": blocks}
+    return {"positive_blocks": int(positive), "total_blocks": int(len(blocks)), "required": 3, "pass": bool(positive >= 3), "blocks": blocks}
 
 
 def _top_day_sensitivity(pred: pd.DataFrame) -> dict:
@@ -298,6 +365,70 @@ def _top_day_sensitivity(pred: pd.DataFrame) -> dict:
     m = _forecast_metrics(sub)
     ok = bool((m.get("mse") or {}).get("improves") and (m.get("qlike") or {}).get("improves"))
     return {"removed_dates": [str(d.date()) for d in removed], "pass": ok, "metrics": m}
+
+
+def _two_way_cluster_robust_ols_fast(y, x: pd.DataFrame, date_clusters, symbol_clusters) -> dict:
+    """Cameron-Gelbach-Miller two-way clustered OLS without O(N^2) masks.
+
+    This is algebraically equivalent to the frozen V9.6 implementation, but
+    cluster score vectors are aggregated once with factorized labels.  Trial 20
+    has nearly one unique date-symbol intersection per row, so the old
+    per-cluster boolean-mask loop becomes quadratic on the full OOS panel.
+    """
+    y = pd.Series(y).reset_index(drop=True)
+    X = pd.DataFrame(x).reset_index(drop=True)
+    dc = pd.Series(date_clusters).reset_index(drop=True)
+    sc = pd.Series(symbol_clusters).reset_index(drop=True)
+    valid = y.notna() & dc.notna() & sc.notna() & X.notna().all(axis=1)
+    yv = y.loc[valid].astype(float).to_numpy()
+    Xv = X.loc[valid].astype(float)
+    dv = dc.loc[valid].astype(str).to_numpy()
+    sv = sc.loc[valid].astype(str).to_numpy()
+    names = list(Xv.columns)
+    if len(yv) <= len(names) + 2:
+        return {
+            "n": int(len(yv)),
+            "date_clusters": int(pd.Series(dv).nunique()),
+            "symbol_clusters": int(pd.Series(sv).nunique()),
+            "coef": {}, "se": {}, "t": {},
+        }
+
+    A = np.column_stack([np.ones(len(Xv)), Xv.to_numpy()])
+    N, k = A.shape
+    bread = np.linalg.pinv(A.T @ A)
+    beta = bread @ A.T @ yv
+    resid = yv - A @ beta
+    scores = A * resid[:, None]
+
+    def _cluster_cov_from_codes(codes: np.ndarray, groups: int) -> np.ndarray:
+        meat_scores = np.zeros((int(groups), k), dtype=float)
+        np.add.at(meat_scores, codes, scores)
+        meat = meat_scores.T @ meat_scores
+        G = int(groups)
+        corr = (G / (G - 1)) * ((N - 1) / (N - k)) if G > 1 and N > k else 1.0
+        return bread @ meat @ bread * corr
+
+    date_codes, date_uniques = pd.factorize(dv, sort=False)
+    symbol_codes, symbol_uniques = pd.factorize(sv, sort=False)
+    pair_index = pd.MultiIndex.from_arrays([dv, sv])
+    pair_codes, pair_uniques = pd.factorize(pair_index, sort=False)
+
+    cov = (
+        _cluster_cov_from_codes(date_codes, len(date_uniques))
+        + _cluster_cov_from_codes(symbol_codes, len(symbol_uniques))
+        - _cluster_cov_from_codes(pair_codes, len(pair_uniques))
+    )
+    se = np.sqrt(np.maximum(0.0, np.diag(cov)))
+    tvals = np.divide(beta, se, out=np.full_like(beta, np.nan), where=se > 0)
+    all_names = ["intercept"] + names
+    return {
+        "n": int(N),
+        "date_clusters": int(len(date_uniques)),
+        "symbol_clusters": int(len(symbol_uniques)),
+        "coef": {n: float(v) for n, v in zip(all_names, beta)},
+        "se": {n: float(v) for n, v in zip(all_names, se)},
+        "t": {n: float(v) for n, v in zip(all_names, tvals)},
+    }
 
 
 def _same_day_dte_regression(frame: pd.DataFrame, target: str) -> dict:
@@ -319,7 +450,7 @@ def _same_day_dte_regression(frame: pd.DataFrame, target: str) -> dict:
     X = pd.DataFrame(index=use.index)
     for c in cols:
         X[c] = use[c] - g[c].transform("mean")
-    return v96.two_way_cluster_robust_ols(y, X, use["date"], use["symbol"])
+    return _two_way_cluster_robust_ols_fast(y, X, use["date"], use["symbol"])
 
 
 def _earnings_flags(frame: pd.DataFrame, earnings_map: dict | None) -> tuple[pd.Series, dict]:
@@ -390,23 +521,31 @@ def evaluate_trial20(symbol_frames: Mapping[str, pd.DataFrame], *, earnings_map=
     robust = bool(stability.get("pass") and topday.get("pass"))
 
     if not enough:
-        status = "INCONCLUSIVE_OOS_SAMPLE"
+        gate_status = "INCONCLUSIVE_OOS_SAMPLE"
     elif require_earnings and not earn_audit.get("audit_valid"):
-        status = "INCONCLUSIVE_EARNINGS_JOIN"
+        gate_status = "INCONCLUSIVE_EARNINGS_JOIN"
     elif not primary:
-        status = "FAIL_VOLUME_NO_OOS_INCREMENTAL_VALUE"
+        gate_status = "FAIL_VOLUME_NO_OOS_INCREMENTAL_VALUE"
     elif not gk_ok:
-        status = "FAIL_GK_ROBUSTNESS"
+        gate_status = "FAIL_GK_ROBUSTNESS"
     elif not robust:
-        status = "FAIL_OOS_CONCENTRATION_OR_INSTABILITY"
+        gate_status = "FAIL_OOS_CONCENTRATION_OR_INSTABILITY"
     elif not earnings_pass:
-        status = "FAIL_EARNINGS_CONFOUND"
+        gate_status = "FAIL_EARNINGS_CONFOUND"
     else:
-        status = "PASS_TRIAL20_VOLUME_OOS_GATE"
+        gate_status = "PASS_TRIAL20_VOLUME_OOS_GATE"
+
+    statistical_pass = gate_status == "PASS_TRIAL20_VOLUME_OOS_GATE"
+    if gate_status.startswith("INCONCLUSIVE"):
+        closure = {"status": gate_status, "promotion_allowed": False, "reason": "Integrity/data gate incomplete; Trial 20 cannot be closed from this run."}
+    else:
+        closure = _closure_interpretation(statistical_pass)
 
     return {
-        **base, "status": status, "pass": status == "PASS_TRIAL20_VOLUME_OOS_GATE",
+        **base, "status": closure["status"], "gate_status": gate_status, "statistical_pass": statistical_pass,
+        "pass": False, "promotion_allowed": False, "closure": closure,
         "primary_oos": yz, "gk_oos": gk,
+        "forecast_integrity": {"yang_zhang": _forecast_integrity(yz_pred), "garman_klass": _forecast_integrity(gk_pred)},
         "same_day_same_dte_regression": diagnostic,
         "chronological_stability": stability,
         "top3_day_sensitivity": topday,

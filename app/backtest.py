@@ -4248,7 +4248,7 @@ def run_v99_trial20(kite, symbols=None, progress_cb=None, integrity_data=None, r
     archive_days = pd.bdate_range(v99_volume_gate.WARMUP_START, v99_volume_gate.INDEPENDENT_END)
     cash_end = v99_volume_gate.INDEPENDENT_END + pd.Timedelta(days=7)
     cash_days = pd.bdate_range(v99_volume_gate.WARMUP_START, cash_end)
-    if stage_cb: stage_cb(1, 4, "V9.9 · loading official NSE FUTSTK turnover archive", 4)
+    if stage_cb: stage_cb(1, 4, "V9.9.2 · loading official NSE FUTSTK turnover archive", 4)
 
     supplied_histories = integrity_data.get("nse_history_by_symbol")
     if supplied_histories is not None:
@@ -4272,7 +4272,7 @@ def run_v99_trial20(kite, symbols=None, progress_cb=None, integrity_data=None, r
     if supplied_cash is not None:
         cash_histories = supplied_cash
     else:
-        if stage_cb: stage_cb(2, 4, "V9.9 · loading official NSE cash OHLC", 31)
+        if stage_cb: stage_cb(2, 4, "V9.9.2 · loading official NSE cash OHLC", 31)
         cash_client = nse_cash_history.NSECashArchiveClient(cache_dir=_RESEARCH_STATE_DIR / "nse-cm-bhavcopy")
         last = {"done": -1}
         def _cash_progress(done, total, label):
@@ -4287,7 +4287,7 @@ def run_v99_trial20(kite, symbols=None, progress_cb=None, integrity_data=None, r
     frames = {}; notes = {}; coverage = []; total = len(research_symbols); resumed = 0
     run_dir = Path(resume_run_dir) if resume_run_dir is not None else None
     if run_dir is not None: run_dir.mkdir(parents=True, exist_ok=True)
-    if stage_cb: stage_cb(2, 4, "V9.9 · building HAR + abnormal-turnover frames", 53)
+    if stage_cb: stage_cb(2, 4, "V9.9.2 · building frozen HAR + abnormal-turnover frames", 53)
     for i, symbol in enumerate(research_symbols, start=1):
         if progress_cb: progress_cb(i - 1, total, symbol)
         shard = _v95_symbol_shard_path(run_dir, i - 1, symbol) if run_dir is not None else None
@@ -4340,13 +4340,13 @@ def run_v99_trial20(kite, symbols=None, progress_cb=None, integrity_data=None, r
     if supplied_earnings is not None:
         earnings_map = supplied_earnings
     elif frames:
-        if stage_cb: stage_cb(3, 4, "V9.9 · loading earnings calendar for independent window", 84)
+        if stage_cb: stage_cb(3, 4, "V9.9.2 · loading frozen earnings calendar", 84)
         earnings_client = nse_earnings_history.NSEEarningsHistoryClient(cache_dir=_RESEARCH_STATE_DIR / "nse-earnings")
         earnings_map = nse_earnings_history.build_earnings_map(list(frames), v99_volume_gate.INDEPENDENT_START - pd.tseries.offsets.BDay(7), v99_volume_gate.INDEPENDENT_END + pd.tseries.offsets.BDay(7), earnings_client)
     else:
         earnings_map = None
 
-    if stage_cb: stage_cb(4, 4, "V9.9 · rolling OOS HAR vs HAR + abnormal FUTSTK volume", 95)
+    if stage_cb: stage_cb(4, 4, "V9.9.2 · log-RV OOS HAR vs HAR + abnormal FUTSTK volume", 95)
     validation = v99_volume_gate.evaluate_trial20(frames, earnings_map=earnings_map, require_earnings=True) if frames else {"status": "INCONCLUSIVE_NO_DATA", "pass": False, "trial18_state": "LOCKED", "production_activation": False}
     if (not archive_ok or not cash_ok) and not str(validation.get("status") or "").startswith("FAIL_"):
         validation = dict(validation); validation["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"; validation["pass"] = False
@@ -4764,7 +4764,7 @@ def start_v97_trial19(kite,symbols=None,integrity_data=None):
 
 
 def _default_v99_state():
-    return {"status":"idle","mode":"v99_trial20","research_only":True,"progress":{"done":0,"total":0,"symbol":None,"stage":None,"stage_index":0,"stage_total":4,"overall_pct":0},"result":None,"error":None,"started_at":None,"finished_at":None,"params":{"resume_run_dir":None},"worker":{}}
+    return {"status":"idle","mode":"v99_trial20","build":v99_volume_gate.BUILD_ID,"research_only":True,"progress":{"done":0,"total":0,"symbol":None,"stage":None,"stage_index":0,"stage_total":4,"overall_pct":0},"result":None,"error":None,"started_at":None,"finished_at":None,"params":{"resume_run_dir":None},"worker":{}}
 
 
 def _atomic_write_v99_state(state):
@@ -4782,7 +4782,11 @@ def _load_v99_state():
     except Exception: return _default_v99_state()
     base = _default_v99_state()
     if isinstance(state, dict):
+        persisted_build = state.get("build") or ((state.get("result") or {}).get("build") if isinstance(state.get("result"), dict) else None)
+        if persisted_build != v99_volume_gate.BUILD_ID:
+            return base
         base.update(state)
+        base["build"] = v99_volume_gate.BUILD_ID
         if isinstance(state.get("progress"), dict): base["progress"].update(state["progress"])
         if isinstance(state.get("params"), dict): base["params"].update(state["params"])
     if base.get("status") == "running":
@@ -4812,13 +4816,13 @@ def get_v99_trial20_state():
 def start_v99_trial20(kite, symbols=None, integrity_data=None):
     symbols = [str(s).strip().upper() for s in (symbols or settings.WATCHLIST)]
     with _v99_lock:
-        if _v99_state.get("status") == "running": return {"started": False, "reason": "V9.9 Trial 20 is already running."}
+        if _v99_state.get("status") == "running": return {"started": False, "reason": "V9.9.2 Trial 20 integrity closure is already running."}
         if research_runtime.is_research_active(): return {"started": False, "reason": "Another historical research job is already running."}
         run_dir = _v99_run_dir(symbols=symbols); resumed = sum(1 for _ in run_dir.glob("*.pkl"))
         _v99_state.update({"status":"running","mode":"v99_trial20","research_only":True,"progress":{"done":resumed,"total":len(symbols),"symbol":None,"stage":"Loading official NSE Trial-20 archive","stage_index":1,"stage_total":4,"overall_pct":max(1,min(70,round(resumed/max(len(symbols),1)*70)))},"result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None,"params":{"resume_run_dir":str(run_dir)}})
     _persist_v99_state()
     def _progress(done,total,symbol):
-        research_runtime.heartbeat(stage="Building V9.9 abnormal-turnover frames", symbol=symbol, done=done, total=total)
+        research_runtime.heartbeat(stage="Building V9.9.2 frozen abnormal-turnover frames", symbol=symbol, done=done, total=total)
         with _v99_lock: _v99_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building HAR + abnormal FUTSTK turnover frames","stage_index":2,"stage_total":4,"overall_pct":max(53,min(82,53+round(done/max(total,1)*29)))}
         if done == 0 or done == total or (done > 0 and done % 5 == 0): _persist_v99_state()
     def _stage(stage_index,stage_total,stage,overall_pct):

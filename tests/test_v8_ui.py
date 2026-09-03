@@ -57,7 +57,7 @@ def test_v9_has_dedicated_one_click_15m_backtest_runner():
 
 
 def test_v9_build_marker_is_current_research_build():
-    current = '2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE'
+    current = '2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
     legacy_v94 = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
     assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == current
     assert legacy_v94 in (ROOT / 'app' / 'early_research.py').read_text(encoding='utf-8')

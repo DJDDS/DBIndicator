@@ -55,8 +55,8 @@ def test_v950_state_is_separate_from_v94_and_research_only():
 
 def test_v950_page_preserves_v95_below_v96_primary_architecture():
     text = _html()
-    assert '<strong>Research build:</strong> 2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE' in text
-    assert '<strong>V9.9 / Trial 20 is the primary research architecture.</strong>' in text
+    assert '<strong>Research build:</strong> 2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE' in text
+    assert '<strong>V9.9.2 / Trial 20 log-RV integrity closure is the primary research architecture.</strong>' in text
     assert 'V9.5.3 Daily OI Evidence + Contract Structure Lab' in text
 
 

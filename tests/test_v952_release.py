@@ -8,8 +8,8 @@ BUILD = '2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE'
 
 def test_v952_release_markers_and_checkpoint_schemas_are_nse_specific():
     assert v95_daily_evidence.BUILD_ID == BUILD
-    assert (ROOT / 'RESEARCH_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE'
-    assert (ROOT / 'PRODUCTION_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V9.9.0-TRIAL20-OOS-VOLUME-GATE'
+    assert (ROOT / 'RESEARCH_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
+    assert (ROOT / 'PRODUCTION_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
     assert backtest._V95_RESUME_SCHEMA.startswith('v952-nse-')
     assert backtest._V95_RUN_SCHEMA.startswith('v952-nse-')
 
