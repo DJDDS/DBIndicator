@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2744,10 +2744,17 @@ _V97_STATE_PATH = Path(
 _V97_WORK_ROOT = Path(
     os.environ.get("V97_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v97-trial19-work"))
 )
+_V99_STATE_PATH = Path(
+    os.environ.get("V99_STATE_PATH", str(_RESEARCH_STATE_DIR / "v99-trial20-state.json"))
+)
+_V99_WORK_ROOT = Path(
+    os.environ.get("V99_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v99-trial20-work"))
+)
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 _V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
 _V96_RUN_SCHEMA = "v960-trial17-independent-total-oi-run-1"
 _V97_RUN_SCHEMA = "v980-incremental-oi-run-1"
+_V99_RUN_SCHEMA = "v990-trial20-oos-volume-gate-run-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -2827,6 +2834,25 @@ def _v97_run_dir(*, symbols):
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
     run_dir = Path(_V97_WORK_ROOT) / digest
+    run_dir.mkdir(parents=True, exist_ok=True)
+    meta = run_dir / "meta.json"
+    if not meta.exists():
+        tmp = run_dir / "meta.json.tmp"
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, meta)
+    return run_dir
+
+
+def _v99_run_dir(*, symbols):
+    payload = {
+        "schema": _V99_RUN_SCHEMA,
+        "symbols": list(symbols or []),
+        "build": v99_volume_gate.BUILD_ID,
+        "window": [str(v99_volume_gate.INDEPENDENT_START.date()), str(v99_volume_gate.INDEPENDENT_END.date())],
+        "warmup_start": str(v99_volume_gate.WARMUP_START.date()),
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    run_dir = Path(_V99_WORK_ROOT) / digest
     run_dir.mkdir(parents=True, exist_ok=True)
     meta = run_dir / "meta.json"
     if not meta.exists():
@@ -4211,6 +4237,131 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
     }
 
 
+def run_v99_trial20(kite, symbols=None, progress_cb=None, integrity_data=None, resume_run_dir=None, stage_cb=None) -> dict:
+    """Run preregistered Trial 20 on an older untouched window.
+
+    V9.9 is volume-only for magnitude qualification.  OI is retained in any
+    source frame as diagnostic context but is never an eligibility gate.
+    """
+    symbols = [str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
+    integrity_data = dict(integrity_data or {})
+    archive_days = pd.bdate_range(v99_volume_gate.WARMUP_START, v99_volume_gate.INDEPENDENT_END)
+    cash_end = v99_volume_gate.INDEPENDENT_END + pd.Timedelta(days=7)
+    cash_days = pd.bdate_range(v99_volume_gate.WARMUP_START, cash_end)
+    if stage_cb: stage_cb(1, 4, "V9.9 · loading official NSE FUTSTK turnover archive", 4)
+
+    supplied_histories = integrity_data.get("nse_history_by_symbol")
+    if supplied_histories is not None:
+        histories = supplied_histories
+    else:
+        client = nse_futures_history.NSEFuturesArchiveClient(cache_dir=_RESEARCH_STATE_DIR / "nse-fo-bhavcopy")
+        last = {"done": -1}
+        def _archive_progress(done, total, label):
+            if stage_cb and (done == 0 or done == total or done - last["done"] >= 20):
+                stage_cb(1, 4, f"NSE Trial20 futures archive {done}/{total} · {label}", min(30, 4 + round((done / max(total, 1)) * 26)))
+                last["done"] = done
+        histories = nse_futures_history.build_symbol_histories(archive_days, symbols, client, progress_cb=_archive_progress, discover_historical=True)
+
+    meta = dict((histories or {}).get("_meta") or {})
+    archive_coverage = float(meta.get("date_coverage") or 0.0)
+    archive_ok = bool(archive_coverage >= 0.95)
+    discovered = sorted(k for k in (histories or {}) if k != "_meta")
+    research_symbols = discovered or symbols
+
+    supplied_cash = integrity_data.get("nse_cash_by_symbol")
+    if supplied_cash is not None:
+        cash_histories = supplied_cash
+    else:
+        if stage_cb: stage_cb(2, 4, "V9.9 · loading official NSE cash OHLC", 31)
+        cash_client = nse_cash_history.NSECashArchiveClient(cache_dir=_RESEARCH_STATE_DIR / "nse-cm-bhavcopy")
+        last = {"done": -1}
+        def _cash_progress(done, total, label):
+            if stage_cb and (done == 0 or done == total or done - last["done"] >= 20):
+                stage_cb(2, 4, f"NSE Trial20 cash archive {done}/{total} · {label}", min(52, 31 + round((done / max(total, 1)) * 21)))
+                last["done"] = done
+        cash_histories = nse_cash_history.build_symbol_price_histories(cash_days, research_symbols, cash_client, progress_cb=_cash_progress)
+    cash_meta = dict((cash_histories or {}).get("_meta") or {})
+    cash_coverage = float(cash_meta.get("date_coverage") or 0.0)
+    cash_ok = bool(cash_coverage >= 0.95)
+
+    frames = {}; notes = {}; coverage = []; total = len(research_symbols); resumed = 0
+    run_dir = Path(resume_run_dir) if resume_run_dir is not None else None
+    if run_dir is not None: run_dir.mkdir(parents=True, exist_ok=True)
+    if stage_cb: stage_cb(2, 4, "V9.9 · building HAR + abnormal-turnover frames", 53)
+    for i, symbol in enumerate(research_symbols, start=1):
+        if progress_cb: progress_cb(i - 1, total, symbol)
+        shard = _v95_symbol_shard_path(run_dir, i - 1, symbol) if run_dir is not None else None
+        cached = _load_v95_symbol_shard(shard, symbol) if shard is not None else None
+        if cached is not None and "abnormal_futstk_volume" in cached.columns:
+            frames[symbol] = cached; resumed += 1
+            if progress_cb: progress_cb(i, total, symbol)
+            continue
+        hist = (histories or {}).get(symbol) or {}
+        price = (cash_histories or {}).get(symbol)
+        turnover = hist.get("total_turnover_notional")
+        if not isinstance(price, pd.DataFrame) or price.empty:
+            notes[symbol] = "Official NSE historical cash OHLC unavailable."
+            if progress_cb: progress_cb(i, total, symbol)
+            continue
+        if not isinstance(turnover, pd.Series) or turnover.dropna().empty:
+            notes[symbol] = "Official NSE total FUTSTK notional turnover unavailable."
+            if progress_cb: progress_cb(i, total, symbol)
+            continue
+        try:
+            px = price.copy(); px.index = pd.to_datetime(px.index).tz_localize(None).normalize(); px = px[~px.index.duplicated(keep="last")].sort_index(); px = px.dropna(subset=["open", "high", "low", "close"])
+            near_oi = hist.get("near_oi")
+            if not isinstance(near_oi, pd.Series):
+                near_oi = pd.Series(1.0, index=px.index)
+            frame = v95_daily_evidence.build_symbol_daily_frame(px, near_oi, expiry_dates=hist.get("near_expiry"))
+            turn = pd.to_numeric(turnover.copy(), errors="coerce"); turn.index = pd.to_datetime(turn.index).normalize()
+            frame["futures_turnover_notional"] = turn.reindex(frame.index)
+            frame = v99_volume_gate.build_abnormal_turnover(frame)
+            membership = hist.get("membership")
+            if isinstance(membership, pd.Series):
+                m = membership.copy(); m.index = pd.to_datetime(m.index).normalize(); m = m.reindex(frame.index).astype("boolean").fillna(False).astype(bool)
+            else:
+                m = pd.Series(False, index=frame.index, dtype=bool)
+            frame["fno_member_pti"] = m
+            frame["trial20_eligible"] = m & frame[["har_daily_var", "har_weekly_var", "har_monthly_var", "next_yz_var", "next_gk_var", "abnormal_futstk_volume"]].notna().all(axis=1)
+            for col, key in (("nse_total_oi", "total_oi"), ("nse_near_oi", "near_oi"), ("nse_near_dte", "near_dte")):
+                src = hist.get(key)
+                if isinstance(src, pd.Series):
+                    ser = pd.to_numeric(src.copy(), errors="coerce"); ser.index = pd.to_datetime(ser.index).normalize(); frame[col] = ser.reindex(frame.index)
+            frames[symbol] = frame
+            coverage.append({"symbol": symbol, "rows": int(len(frame)), "trial20_eligible_rows": int(frame["trial20_eligible"].sum()), "turnover_rows": int(frame["futures_turnover_notional"].notna().sum())})
+            if shard is not None: _save_v95_symbol_shard(shard, symbol, frame)
+        except Exception as exc:
+            log.exception("V9.9 Trial20 frame failed for %s", symbol); notes[symbol] = str(exc)
+        finally:
+            research_runtime.release_memory_pressure()
+            if progress_cb: progress_cb(i, total, symbol)
+
+    supplied_earnings = integrity_data.get("earnings_map")
+    if supplied_earnings is not None:
+        earnings_map = supplied_earnings
+    elif frames:
+        if stage_cb: stage_cb(3, 4, "V9.9 · loading earnings calendar for independent window", 84)
+        earnings_client = nse_earnings_history.NSEEarningsHistoryClient(cache_dir=_RESEARCH_STATE_DIR / "nse-earnings")
+        earnings_map = nse_earnings_history.build_earnings_map(list(frames), v99_volume_gate.INDEPENDENT_START - pd.tseries.offsets.BDay(7), v99_volume_gate.INDEPENDENT_END + pd.tseries.offsets.BDay(7), earnings_client)
+    else:
+        earnings_map = None
+
+    if stage_cb: stage_cb(4, 4, "V9.9 · rolling OOS HAR vs HAR + abnormal FUTSTK volume", 95)
+    validation = v99_volume_gate.evaluate_trial20(frames, earnings_map=earnings_map, require_earnings=True) if frames else {"status": "INCONCLUSIVE_NO_DATA", "pass": False, "trial18_state": "LOCKED", "production_activation": False}
+    if (not archive_ok or not cash_ok) and not str(validation.get("status") or "").startswith("FAIL_"):
+        validation = dict(validation); validation["status"] = "INCONCLUSIVE_NSE_HISTORY_COVERAGE"; validation["pass"] = False
+
+    return {
+        "build": v99_volume_gate.BUILD_ID,
+        "symbols_scanned": int(len(research_symbols)), "symbols_completed": int(len(frames)), "symbols_skipped": notes, "coverage": coverage,
+        "integrity": {"futures_archive_date_coverage": archive_coverage, "cash_archive_date_coverage": cash_coverage, "futures_archive_ok": archive_ok, "cash_archive_ok": cash_ok, "historical_symbols_discovered": int(len(discovered)), "turnover_primary": "NSE_TOTAL_FUTSTK_NOTIONAL_TURNOVER", "independent_window": {"start": str(v99_volume_gate.INDEPENDENT_START.date()), "end": str(v99_volume_gate.INDEPENDENT_END.date())}, "resumed_symbol_shards": int(resumed), "prior_locked_finals_read": False},
+        "trial20_validation": validation,
+        "trial19_state": "CLOSED_ASSOCIATION_NOT_INCREMENTAL", "trial18_eligible": False, "trial18_state": "LOCKED",
+        "oi_role": "DIAGNOSTIC_ONLY", "research_only": True, "production_activation": False,
+    }
+
+
+
 def _default_v95_daily_state():
     return {
         "status": "idle",
@@ -4610,6 +4761,84 @@ def start_v97_trial19(kite,symbols=None,integrity_data=None):
             _persist_v97_state()
         finally: research_runtime.end_research(); research_runtime.release_memory_pressure()
     research_runtime.begin_research("v97_trial19"); threading.Thread(target=_job,daemon=True).start(); return {"started":True,"mode":"v97_trial19","resumed_symbol_shards":resumed}
+
+
+def _default_v99_state():
+    return {"status":"idle","mode":"v99_trial20","research_only":True,"progress":{"done":0,"total":0,"symbol":None,"stage":None,"stage_index":0,"stage_total":4,"overall_pct":0},"result":None,"error":None,"started_at":None,"finished_at":None,"params":{"resume_run_dir":None},"worker":{}}
+
+
+def _atomic_write_v99_state(state):
+    path = Path(_V99_STATE_PATH); path.parent.mkdir(parents=True, exist_ok=True); tmp = path.with_name(path.name + ".tmp")
+    safe_state = _research_state_json_safe(state)
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(safe_state, fh, allow_nan=True, separators=(",", ":")); fh.flush(); os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _load_v99_state():
+    path = Path(_V99_STATE_PATH)
+    if not path.exists(): return _default_v99_state()
+    try: state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception: return _default_v99_state()
+    base = _default_v99_state()
+    if isinstance(state, dict):
+        base.update(state)
+        if isinstance(state.get("progress"), dict): base["progress"].update(state["progress"])
+        if isinstance(state.get("params"), dict): base["params"].update(state["params"])
+    if base.get("status") == "running":
+        run_dir_raw = (base.get("params") or {}).get("resume_run_dir"); run_dir = Path(run_dir_raw) if run_dir_raw else None
+        durable = bool(run_dir and run_dir.exists() and any(run_dir.glob("*.pkl")))
+        base["status"] = "error"
+        base["error"] = "V9.9 Trial 20 worker restarted before completion. " + ("Durable checkpoints were found; run again to resume." if durable else "No durable checkpoint was found.")
+    return base
+
+
+_v99_lock = threading.Lock(); _v99_state = _load_v99_state()
+
+
+def _persist_v99_state():
+    with _v99_lock:
+        snap = dict(_v99_state); snap["progress"] = dict(_v99_state.get("progress") or {}); snap["params"] = dict(_v99_state.get("params") or {})
+    snap["worker"] = research_runtime.snapshot(); _atomic_write_v99_state(snap)
+
+
+def get_v99_trial20_state():
+    with _v99_lock:
+        out = dict(_v99_state); out["progress"] = dict(_v99_state.get("progress") or {}); out["params"] = dict(_v99_state.get("params") or {})
+    out["worker"] = research_runtime.snapshot()
+    return _research_state_json_safe(out)
+
+
+def start_v99_trial20(kite, symbols=None, integrity_data=None):
+    symbols = [str(s).strip().upper() for s in (symbols or settings.WATCHLIST)]
+    with _v99_lock:
+        if _v99_state.get("status") == "running": return {"started": False, "reason": "V9.9 Trial 20 is already running."}
+        if research_runtime.is_research_active(): return {"started": False, "reason": "Another historical research job is already running."}
+        run_dir = _v99_run_dir(symbols=symbols); resumed = sum(1 for _ in run_dir.glob("*.pkl"))
+        _v99_state.update({"status":"running","mode":"v99_trial20","research_only":True,"progress":{"done":resumed,"total":len(symbols),"symbol":None,"stage":"Loading official NSE Trial-20 archive","stage_index":1,"stage_total":4,"overall_pct":max(1,min(70,round(resumed/max(len(symbols),1)*70)))},"result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None,"params":{"resume_run_dir":str(run_dir)}})
+    _persist_v99_state()
+    def _progress(done,total,symbol):
+        research_runtime.heartbeat(stage="Building V9.9 abnormal-turnover frames", symbol=symbol, done=done, total=total)
+        with _v99_lock: _v99_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building HAR + abnormal FUTSTK turnover frames","stage_index":2,"stage_total":4,"overall_pct":max(53,min(82,53+round(done/max(total,1)*29)))}
+        if done == 0 or done == total or (done > 0 and done % 5 == 0): _persist_v99_state()
+    def _stage(stage_index,stage_total,stage,overall_pct):
+        research_runtime.heartbeat(stage=stage)
+        with _v99_lock:
+            cur=_v99_state.get("progress") or {}; _v99_state["progress"]={"done":cur.get("done",0),"total":cur.get("total",len(symbols)),"symbol":None,"stage":stage,"stage_index":int(stage_index),"stage_total":int(stage_total),"overall_pct":int(overall_pct)}
+        _persist_v99_state()
+    def _job():
+        try:
+            with research_runtime.research_slot(): result = run_v99_trial20(kite, symbols=symbols, progress_cb=_progress, integrity_data=integrity_data, resume_run_dir=run_dir, stage_cb=_stage)
+            with _v99_lock:
+                _v99_state["progress"]={"done":result.get("symbols_scanned",len(symbols)),"total":result.get("symbols_scanned",len(symbols)),"symbol":None,"stage":"Complete","stage_index":4,"stage_total":4,"overall_pct":100}; _v99_state["result"]=result; _v99_state["status"]="done"; _v99_state["error"]=None; _v99_state["finished_at"]=now_ist().isoformat(timespec="seconds")
+            _persist_v99_state(); shutil.rmtree(run_dir, ignore_errors=True)
+        except Exception as exc:
+            log.exception("V9.9 Trial20 run failed")
+            with _v99_lock: _v99_state["status"]="error"; _v99_state["error"]=str(exc); _v99_state["finished_at"]=now_ist().isoformat(timespec="seconds")
+            _persist_v99_state()
+        finally: research_runtime.end_research(); research_runtime.release_memory_pressure()
+    research_runtime.begin_research("v99_trial20"); threading.Thread(target=_job, daemon=True).start(); return {"started":True,"mode":"v99_trial20","resumed_symbol_shards":resumed}
+
 
 
 def _default_early_research_state():

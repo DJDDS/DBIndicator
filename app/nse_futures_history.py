@@ -37,7 +37,7 @@ DEFAULT_TIMEOUT = 25
 
 _NORMAL_COLUMNS = [
     "date", "symbol", "expiry", "open", "high", "low", "close", "settle",
-    "open_interest", "oi_contracts", "oi_share_equivalent", "change_oi", "volume", "lot_size", "source_format",
+    "open_interest", "oi_contracts", "oi_share_equivalent", "change_oi", "volume", "turnover_notional", "lot_size", "source_format",
 ]
 
 
@@ -109,6 +109,7 @@ def parse_legacy_fo_bhavcopy(content: bytes | str, trade_date) -> pd.DataFrame:
         "oi_share_equivalent": reported_oi,
         "change_oi": _num(col("CHG_IN_OI")),
         "volume": contracts,
+        "turnover_notional": turnover_lakh * 100000.0,
         "lot_size": inferred_lot,
         "source_format": "LEGACY_FO_BHAVCOPY",
     })
@@ -170,6 +171,11 @@ def parse_udiff_fo_bhavcopy(content: bytes | str, trade_date) -> pd.DataFrame:
     # apply the lot-size conversion and manufacture huge OI shocks.
     share_equiv = reported_oi
     oi_contracts = reported_oi / lot_size
+    traded_lots = _num(values("TtlTradgVol", "CONTRACTS"))
+    reference_price = _num(values("SttlmPric", "SETTLE_PR")).where(lambda x: x > 0, _num(values("ClsPric", "CLOSE")))
+    computed_turnover = traded_lots * lot_size * reference_price
+    reported_turnover = _num(values("TtlTrfVal", "Traded Value"))
+    turnover_notional = computed_turnover.where(computed_turnover.notna() & (computed_turnover >= 0), reported_turnover)
     out = pd.DataFrame({
         "date": pd.to_datetime(date_parsed).dt.normalize(),
         "symbol": raw[symbol].astype(str).str.strip().str.upper(),
@@ -183,7 +189,8 @@ def parse_udiff_fo_bhavcopy(content: bytes | str, trade_date) -> pd.DataFrame:
         "oi_contracts": oi_contracts,
         "oi_share_equivalent": share_equiv,
         "change_oi": _num(values("ChngInOpnIntrst", "CHG_IN_OI")),
-        "volume": _num(values("TtlTradgVol", "CONTRACTS")),
+        "volume": traded_lots,
+        "turnover_notional": turnover_notional,
         "lot_size": lot_size,
         "source_format": "UDIFF_FO_BHAVCOPY",
     })
@@ -242,6 +249,10 @@ def parse_market_activity_futures_csv(content: bytes | str, trade_date) -> pd.Da
     lot_size = lot_size.round().where(lot_size.round() >= 1)
     reported_oi = _num(raw[oi])
     oi_contracts = reported_oi / lot_size
+    reference_price = _num(values("Close Price", "Close"))
+    computed_turnover = traded_qty * reference_price
+    reported_turnover = _num(values("Traded Value"))
+    turnover_notional = computed_turnover.where(computed_turnover.notna() & (computed_turnover >= 0), reported_turnover)
     out = pd.DataFrame({
         "date": pd.Series(pd.Timestamp(trade_date).normalize(), index=raw.index),
         "symbol": raw[symbol].astype(str).str.strip().str.upper(),
@@ -256,6 +267,7 @@ def parse_market_activity_futures_csv(content: bytes | str, trade_date) -> pd.Da
         "oi_share_equivalent": reported_oi,
         "change_oi": pd.Series(np.nan, index=raw.index, dtype=float),
         "volume": contracts,
+        "turnover_notional": turnover_notional,
         "lot_size": lot_size,
         "source_format": "NSE_MARKET_ACTIVITY_FOD",
     })
@@ -458,6 +470,8 @@ def _empty_history(index: pd.DatetimeIndex) -> dict:
         "lot_size": pd.Series(np.nan, index=index, dtype=float),
         "total_volume": pd.Series(np.nan, index=index, dtype=float),
         "near_volume": pd.Series(np.nan, index=index, dtype=float),
+        "total_turnover_notional": pd.Series(np.nan, index=index, dtype=float),
+        "near_turnover_notional": pd.Series(np.nan, index=index, dtype=float),
         "source_format": pd.Series(None, index=index, dtype=object),
     }
 
@@ -526,6 +540,11 @@ def build_symbol_histories(days: Iterable, symbols: Iterable[str], client, progr
                     if share_vol.notna().any():
                         payload["total_volume"].loc[d] = float(share_vol.sum(min_count=1))
                         payload["near_volume"].loc[d] = float(share_vol.iloc[0]) if pd.notna(share_vol.iloc[0]) else np.nan
+                if "turnover_notional" in grp.columns:
+                    turns = pd.to_numeric(grp["turnover_notional"], errors="coerce")
+                    if turns.notna().any():
+                        payload["total_turnover_notional"].loc[d] = float(turns.sum(min_count=1))
+                        payload["near_turnover_notional"].loc[d] = float(turns.iloc[0]) if pd.notna(turns.iloc[0]) else np.nan
                 payload["source_format"].loc[d] = "+".join(sorted(set(str(x) for x in grp["source_format"].dropna())))
         except FileNotFoundError as exc:
             # Business-day calendars include exchange holidays.  A genuine
