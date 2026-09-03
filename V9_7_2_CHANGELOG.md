@@ -9,3 +9,8 @@
 - Carries ~1.13x replicated planning effect; retires 1.22x discovery estimate for projections.
 - Trial 18 remains locked unless all promotion controls pass; no auto-run or production activation.
 - `ACTIVE_PLAYBOOKS = ()`.
+
+### Runtime hotfix — earnings DatetimeIndex iteration
+- Fixed `evaluate_earnings_promotion()` rejecting non-empty `pd.DatetimeIndex` earnings calendars via ambiguous boolean coercion (`dates or []`).
+- Iteration now uses an explicit `None` check; Trial 19 research math, thresholds, evidence window, MWPL/volatility/earnings controls, and Trial 18 lock are unchanged.
+- Added an exact regression test using a non-empty earnings `DatetimeIndex`.

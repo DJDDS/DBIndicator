@@ -159,3 +159,21 @@ def test_v974_trial18_eligibility_stays_locked_if_vol_or_earnings_fail():
     out = t19.evaluate_trial18_eligibility(frozen_result=frozen, volatility_control={'pass': False}, earnings_control={'confound_pass': True}, integrity_controls=core, recent_mwpl_bound=None)
     assert out['trial18_eligible'] is False
     assert 'VOLATILITY_CONFOUND' in out['reasons']
+
+
+def test_v974_earnings_confound_accepts_nonempty_datetimeindex_without_boolean_coercion(monkeypatch):
+    df = _confound_frame().copy()
+    df['trial19_eligible'] = True
+    monkeypatch.setattr(t19, '_stack', lambda frames: df.copy())
+    emap = {
+        'S16': pd.DatetimeIndex([pd.Timestamp('2020-01-03')]),
+        '_meta': {'symbol_coverage': 1.0, 'loaded_symbols': ['S16']},
+    }
+    out = t19.evaluate_earnings_promotion(
+        {'ignored': pd.DataFrame()},
+        frozen_result=_efficacy_pass_integrity_fail(),
+        earnings_map=emap,
+        bootstrap_reps=20,
+    )
+    assert out['earnings_symbol_coverage'] == 1.0
+    assert out['status'] in {'PASS_EARNINGS_PROMOTION', 'FAIL_EARNINGS_PROMOTION'}

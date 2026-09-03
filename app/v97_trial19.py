@@ -460,7 +460,7 @@ def evaluate_earnings_promotion(symbol_frames: Mapping[str,pd.DataFrame], *, fro
     excluded=set()
     for sym, dates in emap.items():
         if sym=="_meta": continue
-        for d in list(dates or []):
+        for d in ([] if dates is None else list(dates)):
             d=pd.Timestamp(d).normalize()
             # +/-5 trading sessions approximated on the observed eligible symbol calendar below.
             sym_dates=sorted(pd.to_datetime(baseline.loc[baseline["symbol"].eq(str(sym).upper()),"date"]).dt.normalize().unique())
