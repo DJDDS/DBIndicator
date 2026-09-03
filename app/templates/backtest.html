@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE</div>
     <p>
-      <strong>V9.7.1 Trial 19 MWPL/ban Integrity Closure is the primary research architecture.</strong> Trial 17 is closed under its frozen continuous-z inference rule; Trial 19 tests the already-frozen extreme tail as a binary event on a third, older, untouched window.
+      <strong>V9.7.2 Trial 19 Confound &amp; Integrity Closure is the primary research architecture.</strong> Trial 17 is closed under its frozen continuous-z inference rule; Trial 19 tests the already-frozen extreme tail as a binary event on a third, older, untouched window.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -119,13 +119,13 @@
   </div>
 
   <div class="card" style="border-color:#2e74b5;">
-    <h2>V9.7.1 Trial 19 · MWPL/ban Integrity Closure</h2>
+    <h2>V9.7.2 Trial 19 · Confound &amp; Integrity Closure</h2>
     <p style="margin-top:-4px;"><strong>Third independent test: the extreme tail is the hypothesis, not a linear total-z slope.</strong></p>
     <p class="hint"><strong>Trial 19:</strong> <code>extreme_oi_event = total FUTSTK OI z &ge; 1.5</code>. Evidence window is fixed to <strong>1 Sep 2018 through 31 Aug 2021</strong>, ending before Trial 17 begins. No threshold optimization and no reuse of V9.5/V9.6 evidence.</p>
     <p class="hint"><strong>Primary baseline:</strong> eligible <strong>non-event F&amp;O stocks on the same trading day and same DTE bucket</strong>. Primary inference is the binary <code>extreme_oi_event</code> coefficient with two-way date + symbol clustered errors. Required: &ge;250 events, &ge;250 event days, matched lift &ge;1.10&times;, 95% CI lower bound &gt;1.00&times;, event t-stat &ge;3.0, top-3-day robustness and &ge;3/4 positive time blocks.</p>
-    <p class="hint"><strong>Trial 18 LOCKED.</strong> Historical membership, official NSE cash prices, OI normalization and MWPL/ban must all be applied. Earnings &plusmn;5 trading sessions is a promotion control after a Trial-19 pass. Passing can only make Trial 18 <strong>ELIGIBLE FOR PREREGISTRATION</strong>; it never auto-runs and never creates TRADE/WATCH.</p>
-    <button type="button" class="btn" id="v97-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.7.1 Trial 19</button>
-    <span class="hint" id="v97-form-hint" style="margin-left:10px;">Official NSE 2018-2021 FUTSTK + cash + MWPL · historical membership · same-day/same-DTE matching · nonlinear binary inference.</span>
+    <p class="hint"><strong>Trial 18 LOCKED.</strong> Frozen Trial-19 efficacy is preserved. Promotion now tests <strong>prior 5-day realised-volatility</strong> matching, <strong>t-1 / t-2</strong> pre-signal movement, <strong>Earnings ±5 sessions</strong>, and MWPL/ban integrity or the pre-registered recent-window bound. Passing can only make Trial 18 <strong>ELIGIBLE FOR PREREGISTRATION</strong>; it never auto-runs and never creates TRADE/WATCH.</p><p class="hint"><strong>Effect size for planning:</strong> replicated planning effect ~1.13×. The 1.22× discovery estimate is retired for economic projection.</p>
+    <button type="button" class="btn" id="v97-run-btn" {{ 'disabled' if not logged_in else '' }}>Run V9.7.2 Trial 19</button>
+    <span class="hint" id="v97-form-hint" style="margin-left:10px;">Official NSE 2018-2021 FUTSTK + cash + monthly MWPL/ban · frozen same-day/same-DTE result · prior-volatility + earnings confound controls.</span>
     <div class="progress-wrap" id="v97-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v97-progress-fill"></div></div>
       <div class="progress-label" id="v97-progress-label">Starting…</div>
@@ -137,6 +137,8 @@
       <div id="v97-controls" class="hint" style="margin:10px 0 14px;"></div>
       <div id="v97-stats"></div>
       <div id="v97-robustness" class="hint" style="margin-top:12px;"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Confound &amp; Integrity Controls</h3>
+      <div id="v97-confounds" class="hint"></div>
       <h3 class="bt-group-title" style="margin-top:18px;">Trial 18 Eligibility Gate</h3>
       <div id="v97-promotion"></div>
     </div>
@@ -350,7 +352,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V97_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE";
+const V97_BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE";
 function v97Fmt(v,d=2){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
 function v97Lift(v){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(2)+'×';}
 function updateV97UI(state){
@@ -363,15 +365,17 @@ function updateV97UI(state){
     label.textContent=`${p.stage||'Running Trial 19'} · ${p.done||0}/${p.total||0}${sym}${mem}${pid}`; return;
   }
   btn.disabled=false; prog.style.display='none';
-  if(state.status==='error'){err.style.display='block';err.textContent=state.error||'V9.7.1 Trial 19 failed.';results.style.display='none';return;}
+  if(state.status==='error'){err.style.display='block';err.textContent=state.error||'V9.7.2 Trial 19 failed.';results.style.display='none';return;}
   err.style.display='none'; if(state.status!=='done'||!state.result){results.style.display='none';return;}
   const out=state.result||{}, integ=out.integrity||{}, r=out.research||{}, st=String(r.status||'INCONCLUSIVE'), pass=st==='PASS_TRIAL19_INDEPENDENT', v1=((r.validation||{})['1D'])||{}, v2=((r.validation||{})['2D'])||{}, tw=r.binary_event_regression_1D||{}, t=((tw.t||{}).extreme_oi_event), coef=((tw.coef||{}).extreme_oi_event), tail=r.top3_day_removed||{}, blocks=(r.chronological_blocks||[]).map(b=>`B${b.block}: ${v97Lift(b.lift)}`).join(' · ')||'—', c=r.controls||{}, win=r.evidence_window||{}, conc=r.concentration||{};
   document.getElementById('v97-verdict').innerHTML=`<div class="${pass?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:6px;">${st.replaceAll('_',' ')}</div><div class="hint">Build ${r.build||out.build||V97_BUILD_ID} · ${out.symbols_completed||0}/${out.symbols_scanned||0} symbols · fixed evidence ${win.start||'2018-09-01'} → ${win.end||'2021-08-31'} · Trial 18 LOCKED</div>`;
-  document.getElementById('v97-controls').innerHTML=`<strong>Controls:</strong> historical membership <strong>${c.historical_membership||'UNAVAILABLE'}</strong> · historical cash <strong>${c.historical_cash_price||'UNAVAILABLE'}</strong> · OI normalization <strong>${c.lot_size_normalization||'UNAVAILABLE'}</strong> · MWPL/ban <strong>${c.mwpl_control||'UNAVAILABLE'}</strong> · MWPL date coverage <strong>${v97Fmt(Number(integ.mwpl_date_coverage||0)*100,1)}%</strong> · ${String(integ.mwpl_reason||'').replaceAll('_',' ')} · prior locked finals <strong>UNTOUCHED</strong>`;
+  document.getElementById('v97-controls').innerHTML=`<strong>Controls:</strong> historical membership <strong>${c.historical_membership||'UNAVAILABLE'}</strong> · historical cash <strong>${c.historical_cash_price||'UNAVAILABLE'}</strong> · OI normalization <strong>${c.lot_size_normalization||'UNAVAILABLE'}</strong> · MWPL/ban <strong>${c.mwpl_control||'UNAVAILABLE'}</strong> · MWPL months <strong>${v97Fmt(Number(integ.mwpl_month_coverage||0)*100,1)}%</strong> · dates <strong>${v97Fmt(Number(integ.mwpl_date_coverage||0)*100,1)}%</strong> · observations <strong>${v97Fmt(Number(integ.mwpl_observation_coverage||0)*100,1)}%</strong> · ${String(integ.mwpl_reason||'').replaceAll('_',' ')} · prior locked finals <strong>UNTOUCHED</strong>`;
   document.getElementById('v97-stats').innerHTML=`<table><thead><tr><th>Horizon</th><th>Events</th><th>Days</th><th>Event move</th><th>Matched baseline</th><th>Lift</th><th>95% CI</th></tr></thead><tbody><tr><td><strong>1D PRIMARY</strong></td><td>${v1.event_count??0}</td><td>${v1.event_days??0}</td><td>${v97Fmt(v1.event_mean)} ATR</td><td>${v97Fmt(v1.matched_baseline_mean)} ATR</td><td>${v97Lift(v1.lift)}</td><td>${v97Lift(v1.ci95_low)} → ${v97Lift(v1.ci95_high)}</td></tr><tr><td>2D secondary</td><td>${v2.event_count??0}</td><td>${v2.event_days??0}</td><td>${v97Fmt(v2.event_mean)} ATR</td><td>${v97Fmt(v2.matched_baseline_mean)} ATR</td><td>${v97Lift(v2.lift)}</td><td>${v97Lift(v2.ci95_low)} → ${v97Lift(v2.ci95_high)}</td></tr></tbody></table>`;
   document.getElementById('v97-robustness').innerHTML=`<strong>Binary extreme_oi_event two-way t-stat:</strong> ${v97Fmt(t)} (required ≥3.0) · coefficient ${v97Fmt(coef,4)} · <strong>Top-3-day removed matched lift:</strong> ${v97Lift(tail.lift)} · <strong>Chronological matched blocks:</strong> ${blocks}<br><strong>Concentration:</strong> ${conc.symbols||0} symbols · top-5 event share ${conc.top5_symbol_event_share===null||conc.top5_symbol_event_share===undefined?'—':(Number(conc.top5_symbol_event_share)*100).toFixed(1)+'%'}.`;
-  const promo=out.promotion_controls||{}, ps=String(promo.status||'LOCKED'), pe=!!promo.trial18_eligible, er=promo.earnings_excluded_1D||{}, ec=Number(promo.earnings_symbol_coverage||0)*100;
-  document.getElementById('v97-promotion').innerHTML=`<div class="${pe?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:8px;">${ps.replaceAll('_',' ')} · Trial 18 ${pe?'ELIGIBLE FOR PREREGISTRATION':'LOCKED'}</div><div class="hint"><strong>Earnings ±5 sessions:</strong> coverage ${v97Fmt(ec,1)}% · matched lift ${v97Lift(er.lift)} · CI ${v97Lift(er.ci95_low)} → ${v97Lift(er.ci95_high)}. Promotion cannot create TRADE/WATCH signals.</div>`;
+  const conf=out.confound_controls||{}, vol=conf.volatility||{}, vr=vol.matched_1D||{}, pre=vol.pre_signal_persistence||{}, p1=pre.t_minus_1||{}, p2=pre.t_minus_2||{}, earn=conf.earnings||{}, er=earn.earnings_excluded_1D||{}, ec=Number(earn.earnings_symbol_coverage||0)*100, bound=conf.recent_mwpl_bound||{}, overlap=Number(bound.event_overlap_fraction), delta=Number(bound.absolute_lift_delta);
+  document.getElementById('v97-confounds').innerHTML=`<strong>Prior 5-day realised-volatility matched:</strong> ${String(vol.status||'INCONCLUSIVE').replaceAll('_',' ')} · lift ${v97Lift(vr.lift)} · CI ${v97Lift(vr.ci95_low)} → ${v97Lift(vr.ci95_high)}<br><strong>t-1 / t-2 pre-signal movement:</strong> ${v97Lift(p1.lift)} / ${v97Lift(p2.lift)}${pre.warning?' · PERSISTENCE WARNING':''}<br><strong>Earnings ±5 sessions:</strong> coverage ${v97Fmt(ec,1)}% · removed ${earn.events_removed??0} events · lift ${v97Lift(er.lift)} · CI ${v97Lift(er.ci95_low)} → ${v97Lift(er.ci95_high)}<br><strong>Recent MWPL/ban bound:</strong> ${String(bound.status||'NOT RUN').replaceAll('_',' ')} · event overlap ${Number.isFinite(overlap)?(overlap*100).toFixed(1)+'%':'—'} · |lift Δ| ${Number.isFinite(delta)?delta.toFixed(3)+'×':'—'} · non-load-bearing <strong>${bound.non_load_bearing?'YES':'NO/UNRESOLVED'}</strong><br><strong>Planning effect:</strong> ~1.13× replicated; 1.22× discovery estimate retired for economic projection.`;
+  const promo=out.promotion_controls||{}, ps=String(promo.status||'LOCKED'), pe=!!promo.trial18_eligible, reasons=(promo.reasons||[]).join(', ')||'—';
+  document.getElementById('v97-promotion').innerHTML=`<div class="${pe?'win-good':'win-bad'}" style="font-size:16px;margin-bottom:8px;">${ps.replaceAll('_',' ')} · Trial 18 ${pe?'ELIGIBLE FOR PREREGISTRATION':'LOCKED'}</div><div class="hint"><strong>MWPL resolution:</strong> ${String(promo.mwpl_resolution||'UNRESOLVED').replaceAll('_',' ')} · <strong>Blocking reasons:</strong> ${reasons.replaceAll('_',' ')}. Eligibility never auto-runs a strategy and cannot create TRADE/WATCH signals.</div>`;
   results.style.display='block';
 }
 function pollV97(){fetch('/api/v97/status').then(r=>r.json()).then(st=>{updateV97UI(st);if(st.status==='running')setTimeout(pollV97,2500);}).catch(()=>setTimeout(pollV97,5000));}

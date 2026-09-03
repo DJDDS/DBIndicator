@@ -186,6 +186,10 @@ def build_symbol_daily_frame(price_df: pd.DataFrame, oi_series, *, expiry_dates=
     out["atr_pct_prev"] = (atr.shift(1) / price["close"].shift(1)).replace([np.inf, -np.inf], np.nan)
     logret = np.log(price["close"] / price["close"].shift(1))
     out["realized_vol20_prev"] = (logret.rolling(20, min_periods=15).std(ddof=1) * math.sqrt(252.0)).shift(1)
+    # V9.7.2 confound control: five-session realised volatility known before
+    # the event date.  Shift one full session so the signal day's close never
+    # enters the matching covariate.
+    out["realized_vol5_prev"] = (logret.rolling(5, min_periods=4).std(ddof=1) * math.sqrt(252.0)).shift(1)
 
     if expiry_dates is None:
         dte, derived, regime = derived_days_to_expiry(out.index)
@@ -208,6 +212,11 @@ def build_symbol_daily_frame(price_df: pd.DataFrame, oi_series, *, expiry_dates=
     m1, m2 = _future_movement(price, atr)
     out["movement_1d_atr"] = m1
     out["movement_2d_atr"] = m2
+    # For an event formed after session t closes, the two *complete* sessions
+    # before it are the next-session movements originating at t-2 and t-3.
+    # These are diagnostics only; they do not enter Trial-19 event formation.
+    out["movement_prev1_atr"] = m1.shift(2)
+    out["movement_prev2_atr"] = m1.shift(3)
     out["eligible"] = (
         out[["oi_chg_pct", "atr14_prev", "realized_vol20_prev", "days_to_expiry"]].notna().all(axis=1)
         & out["movement_1d_atr"].notna()

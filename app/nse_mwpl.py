@@ -152,6 +152,50 @@ def parse_combined_oi_payload(content: bytes | str) -> dict[str, dict]:
             return rows
     return parse_combined_oi_csv(text)
 
+
+
+def parse_monthly_mwpl_csv(content: bytes | str) -> dict[str, float]:
+    """Parse legacy NSE monthly ``mpl_monyyyy.csv`` MWPL master.
+
+    NSE's historical F&O post-trade specification defines two stable fields:
+    ``UNDERLYING_NAME`` and ``MWPL (MonthYYYY)``.  Newer exports have also
+    used Symbol/MWPL-like headings, so matching is normalization based.
+    Values are share-equivalent market-wide position limits.
+    """
+    if isinstance(content, bytes):
+        payload = content
+        if payload[:2] == b"PK":
+            try:
+                with zipfile.ZipFile(io.BytesIO(payload), "r") as zf:
+                    names=[n for n in zf.namelist() if n.lower().endswith((".csv",".txt"))]
+                    if not names: return {}
+                    payload=zf.read(max(names,key=lambda n: zf.getinfo(n).file_size))
+            except Exception:
+                return {}
+        text=payload.decode("utf-8-sig",errors="replace")
+    else:
+        text=str(content)
+    if not text.strip(): return {}
+    try:
+        df=pd.read_csv(io.StringIO(text))
+    except Exception:
+        return {}
+    if df.empty or len(df.columns)<2: return {}
+    cols={_norm_col(c):c for c in df.columns}
+    sym_col=(cols.get("underlyingname") or cols.get("nsesymbol") or cols.get("symbol") or cols.get("underlying"))
+    mwpl_col=None
+    for norm,raw in cols.items():
+        if norm=="mwpl" or norm.startswith("mwpl") or "marketwidepositionlimit" in norm:
+            mwpl_col=raw; break
+    if sym_col is None or mwpl_col is None: return {}
+    out={}
+    for _,row in df.iterrows():
+        symbol=str(row.get(sym_col,"")).strip().upper()
+        mwpl=_numeric(row.get(mwpl_col))
+        if symbol and symbol not in {"NAN","UNDERLYING_NAME"} and np.isfinite(mwpl) and mwpl>0:
+            out[symbol]=float(mwpl)
+    return out
+
 def parse_secban_csv(content: bytes | str) -> set[str]:
     """Return symbols listed by NSE as being in the F&O ban period."""
     if isinstance(content, bytes):
@@ -344,6 +388,66 @@ class NSEHistoricalReportClient:
                 errors.append(f"{url}:{exc}")
         raise FileNotFoundError(" | ".join(errors))
 
+    def _monthly_cache_path(self, month) -> Path | None:
+        if self.cache_dir is None:
+            return None
+        p=pd.Timestamp(month).to_period("M")
+        return self.cache_dir / f"mpl_{p.year:04d}{p.month:02d}.csv"
+
+    def fetch_monthly_mwpl(self, month) -> dict[str, float]:
+        """Fetch one official NSE monthly MWPL master, not daily OI.
+
+        Historical specifications name the file ``mpl_monyyyy.csv``.  The
+        direct archive family is preferred for 2018-2021; report-API probing
+        is retained as a compatibility fallback.  A successful route shape is
+        remembered for the remaining months.
+        """
+        period=pd.Timestamp(month).to_period("M")
+        path=self._monthly_cache_path(period.start_time)
+        if path is not None and path.exists() and path.stat().st_size>0:
+            rows=parse_monthly_mwpl_csv(path.read_bytes())
+            if rows: return rows
+        token=pd.Timestamp(period.start_time).strftime("%b%Y").lower()
+        filenames=[f"mpl_{token}.csv",f"mpl_{token}.zip"]
+        bases=[
+            "https://nsearchives.nseindia.com/content/nsccl",
+            "https://nsearchives.nseindia.com/archives/nsccl",
+            "https://nsearchives.nseindia.com/archives/nsccl/mwpl",
+            "https://nsearchives.nseindia.com/archives/fo",
+            "https://archives.nseindia.com/content/nsccl",
+            "https://archives.nseindia.com/archives/nsccl",
+        ]
+        candidates=[f"{b}/{f}" for b in bases for f in filenames]
+        hint=self._legacy_route_hints.get("mpl_monthly")
+        if hint:
+            h=hint.format(token=token); candidates=[h]+[u for u in candidates if u!=h]
+        errors=[]
+        for url in candidates:
+            try:
+                resp=self.session.get(url,timeout=min(self.timeout,5))
+                status=int(getattr(resp,"status_code",200) or 200)
+                if status==404: continue
+                if hasattr(resp,"raise_for_status"): resp.raise_for_status()
+                content=bytes(getattr(resp,"content",b"") or b"")
+                rows=parse_monthly_mwpl_csv(content)
+                if rows:
+                    self._legacy_route_hints["mpl_monthly"]=url.replace(token,"{token}")
+                    if path is not None:
+                        tmp=path.with_suffix(path.suffix+".tmp"); tmp.write_bytes(content); tmp.replace(path)
+                    return rows
+                errors.append(f"{url}:unparseable")
+            except Exception as exc:
+                errors.append(f"{url}:{exc}")
+        # Modern historical-reports API fallback; one request per month only.
+        for report_name in ("F&O - Market wide Position Limits","Market wide Position Limits"):
+            try:
+                content=self._fetch_report(report_name,period.start_time,report_key=f"mpl_{period.year:04d}{period.month:02d}")
+                rows=parse_monthly_mwpl_csv(content)
+                if rows: return rows
+            except Exception as exc:
+                errors.append(f"api:{report_name}:{exc}")
+        raise FileNotFoundError(" | ".join(errors))
+
     def fetch_combined_oi(self, day) -> dict[str, dict]:
         errors = []
         d = self._day(day)
@@ -407,6 +511,90 @@ class NSEHistoricalReportClient:
             # The 95/80 MWPL state machine remains the primary historical ban
             # derivation. Missing first-day secban is disclosed, never invented.
             return set()
+
+
+def build_monthly_mwpl_controls(*, validation_dates: Iterable, symbols: Iterable[str], total_oi_by_symbol: dict, client,
+                                min_date_coverage: float = 0.95, progress_cb=None) -> dict:
+    """Reconstruct daily MWPL utilisation from monthly limits + daily FUTSTK OI.
+
+    This is the historical 2018-2021 path.  It intentionally avoids fetching
+    one MWPL/OI file per trading date.  The monthly master supplies the limit;
+    Trial-19's already-normalized total FUTSTK OI supplies the numerator.
+    Daily secban files are queried only for dates that can plausibly be in a
+    ban state (>=80% utilisation or a derived 95/80 state), and override the
+    state-machine flag when they explicitly list a symbol.
+    """
+    dates=pd.DatetimeIndex(sorted(set(pd.to_datetime(list(validation_dates)).normalize())))
+    symbols=[str(s).upper() for s in symbols]
+    if not len(dates):
+        return {"available":False,"reason":"NO_VALIDATION_DATES","date_coverage":0.0,"month_coverage":0.0,"mwpl_by_symbol":{},"ban_by_symbol":{},"source":"NSE_MONTHLY_MWPL_PLUS_RECONSTRUCTED_TOTAL_FUTSTK_OI"}
+    periods=sorted(set(dates.to_period("M")))
+    monthly={}; errors={}
+    if progress_cb: progress_cb(0,len(periods),str(periods[0]))
+    for i,p in enumerate(periods,start=1):
+        try:
+            rows=client.fetch_monthly_mwpl(p.start_time)
+            if rows: monthly[p]=rows
+        except Exception as exc:
+            errors[f"mpl:{p}"]=str(exc)
+        finally:
+            if progress_cb: progress_cb(i,len(periods),str(p))
+    month_coverage=float(len(monthly)/len(periods)) if periods else 0.0
+    mwpl_by_symbol={}; ban_by_symbol={}
+    valid_obs=0; total_obs=0
+    for symbol in symbols:
+        raw=total_oi_by_symbol.get(symbol)
+        if isinstance(raw,pd.Series):
+            oi=pd.to_numeric(raw.copy(),errors="coerce"); oi.index=pd.to_datetime(oi.index).normalize(); oi=oi.reindex(dates)
+        else:
+            oi=pd.Series(np.nan,index=dates,dtype=float)
+        vals=[]
+        for d,v in oi.items():
+            if np.isfinite(v): total_obs+=1
+            limit=(monthly.get(pd.Timestamp(d).to_period("M")) or {}).get(symbol)
+            if np.isfinite(v) and limit is not None and np.isfinite(limit) and float(limit)>0:
+                vals.append(float(v)/float(limit)*100.0); valid_obs+=1
+            else:
+                vals.append(np.nan)
+        mw=pd.Series(vals,index=dates,dtype=float,name="mwpl_pct")
+        mwpl_by_symbol[symbol]=mw
+        ban_by_symbol[symbol]=derive_ban_flags(mw,initially_banned=False)
+    date_valid=[]
+    for d in dates:
+        date_valid.append(any(np.isfinite(mwpl_by_symbol[s].get(d,np.nan)) for s in symbols))
+    date_coverage=float(sum(date_valid)/len(dates))
+    observation_coverage=float(valid_obs/total_obs) if total_obs else 0.0
+
+    # Authoritative ban-list cross-check only where a ban can plausibly exist.
+    risk_dates=[]
+    for d in dates:
+        risky=False
+        for s in symbols:
+            pct=mwpl_by_symbol[s].get(d,np.nan)
+            if (np.isfinite(pct) and pct>=80.0) or bool(ban_by_symbol[s].get(d,False)):
+                risky=True; break
+        if risky: risk_dates.append(d)
+    secban_loaded=0
+    for d in risk_dates:
+        try:
+            listed=set(client.fetch_secban(d.date())) if hasattr(client,"fetch_secban") else set()
+            secban_loaded+=1
+            if listed:
+                for s in listed:
+                    if s in ban_by_symbol: ban_by_symbol[s].loc[d]=True
+        except Exception as exc:
+            errors[f"secban:{d.date()}"]=str(exc)
+    available=bool(month_coverage>=0.95 and date_coverage>=float(min_date_coverage) and observation_coverage>=float(min_date_coverage))
+    reason="APPLIED" if available else f"INSUFFICIENT_MONTHLY_MWPL_COVERAGE:months={month_coverage:.1%},dates={date_coverage:.1%},observations={observation_coverage:.1%}"
+    return {
+        "available":available,"reason":reason,"date_coverage":date_coverage,"month_coverage":month_coverage,"observation_coverage":observation_coverage,
+        "months_requested":len(periods),"months_loaded":len(monthly),"dates_requested":len(dates),
+        "mwpl_by_symbol":mwpl_by_symbol,"ban_by_symbol":ban_by_symbol,"errors":errors,
+        "source":"NSE_MONTHLY_MWPL_PLUS_RECONSTRUCTED_TOTAL_FUTSTK_OI",
+        "ban_source":"95_80_RECONSTRUCTED_PLUS_TARGETED_NSE_SECBAN",
+        "secban_dates_requested":len(risk_dates),"secban_dates_loaded":secban_loaded,
+        "secban_risk_date_coverage":float(secban_loaded/len(risk_dates)) if risk_dates else 1.0,
+    }
 
 
 def build_validation_mwpl_controls(*, validation_dates: Iterable, symbols: Iterable[str], client,

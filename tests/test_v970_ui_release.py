@@ -2,7 +2,7 @@ from pathlib import Path
 from app import backtest, v97_trial19, v9_playbooks
 
 ROOT=Path(__file__).resolve().parents[1]
-BUILD='2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE'
+BUILD='2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE'
 
 
 def test_v970_build_and_safety_markers():
@@ -16,7 +16,7 @@ def test_v970_build_and_safety_markers():
 
 def test_v970_backtest_ui_is_primary_and_keeps_v962_visible():
     text=(ROOT/'app/templates/backtest.html').read_text()
-    assert 'V9.7.1 Trial 19' in text
+    assert 'V9.7.2 Trial 19' in text
     assert '2018-09-01' in text or '1 Sep 2018' in text
     assert 'same trading day' in text.lower()
     assert 'same DTE' in text or 'same-DTE' in text

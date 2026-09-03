@@ -2747,7 +2747,7 @@ _V97_WORK_ROOT = Path(
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 _V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
 _V96_RUN_SCHEMA = "v960-trial17-independent-total-oi-run-1"
-_V97_RUN_SCHEMA = "v970-trial19-nonlinear-extreme-oi-run-1"
+_V97_RUN_SCHEMA = "v972-trial19-confound-integrity-run-1"
 
 
 def _early_research_run_dir(*, symbols, timeframe, days, holdout_pct, cost_pct, slippage_pct, research_mode):
@@ -3925,6 +3925,81 @@ def run_v96_trial17(kite, symbols=None, progress_cb=None, integrity_data=None,
         "research_only": True,
     }
 
+def _build_v97_recent_mwpl_bound(*, symbols, stage_cb=None):
+    """Bound ban/MWPL sensitivity on the 2021-2023 independent window.
+
+    This never invokes the closed Trial-17 evaluator. It rebuilds only the
+    already-frozen extreme-OI event rows from official cached NSE daily data.
+    """
+    start = v96_trial17.INDEPENDENT_START
+    end = v96_trial17.INDEPENDENT_END
+    warmup = start - pd.Timedelta(days=180)
+    days = pd.bdate_range(warmup, end)
+    try:
+        if stage_cb: stage_cb(4,4,"Bounding MWPL/ban impact on 2021-2023 window",96)
+        fo_client = nse_futures_history.NSEFuturesArchiveClient(cache_dir=_RESEARCH_STATE_DIR/"nse-fo-bhavcopy")
+        histories = nse_futures_history.build_symbol_histories(days, symbols, fo_client, discover_historical=True)
+        discovered = sorted(k for k in histories if k != "_meta")
+        if not discovered:
+            return {"status":"INCONCLUSIVE_RECENT_HISTORY","non_load_bearing":False,"reason":"NO_HISTORICAL_SYMBOLS"}
+        cash_client = nse_cash_history.NSECashArchiveClient(cache_dir=_RESEARCH_STATE_DIR/"nse-cm-bhavcopy")
+        cash = nse_cash_history.build_symbol_price_histories(days, discovered, cash_client)
+        prepared = []; total_oi_by_symbol = {}; raw_frames = {}
+        for symbol in discovered:
+            hist = histories.get(symbol) or {}; price = cash.get(symbol)
+            total_oi = hist.get("total_oi"); near_oi = hist.get("near_oi")
+            if not isinstance(price,pd.DataFrame) or price.empty or not isinstance(total_oi,pd.Series) or not isinstance(near_oi,pd.Series):
+                continue
+            price = price.copy(); price.index = pd.to_datetime(price.index).tz_localize(None).normalize(); price = price[~price.index.duplicated(keep="last")].sort_index()
+            try:
+                frame = v95_daily_evidence.build_symbol_daily_frame(price, near_oi, expiry_dates=hist.get("near_expiry"))
+            except Exception:
+                continue
+            membership = hist.get("membership")
+            if isinstance(membership,pd.Series):
+                m=membership.copy(); m.index=pd.to_datetime(m.index).normalize(); m=m.reindex(frame.index).astype("boolean").fillna(False).astype(bool); frame["fno_member_pti"]=m; frame["eligible"]=frame["eligible"]&m
+            else:
+                frame["fno_member_pti"]=False; frame["eligible"]=False
+            for col,key in (("nse_total_oi","total_oi"),("nse_near_oi","near_oi"),("nse_next_oi","next_oi"),("nse_far_oi","far_oi"),("nse_near_dte","near_dte")):
+                source=hist.get(key)
+                if isinstance(source,pd.Series):
+                    ser=pd.to_numeric(source.copy(),errors="coerce"); ser.index=pd.to_datetime(ser.index).normalize(); frame[col]=ser.reindex(frame.index)
+            raw_frames[symbol]=frame
+            ser=pd.to_numeric(total_oi.copy(),errors="coerce"); ser.index=pd.to_datetime(ser.index).normalize(); total_oi_by_symbol[symbol]=ser
+        if not raw_frames:
+            return {"status":"INCONCLUSIVE_RECENT_HISTORY","non_load_bearing":False,"reason":"NO_USABLE_FRAMES"}
+        trial_dates = pd.bdate_range(start, end)
+        mwpl_client = nse_mwpl.NSEHistoricalReportClient(cache_dir=_RESEARCH_STATE_DIR/"nse-mwpl")
+        mw = nse_mwpl.build_monthly_mwpl_controls(validation_dates=trial_dates, symbols=list(raw_frames), total_oi_by_symbol=total_oi_by_symbol, client=mwpl_client, min_date_coverage=0.95)
+        if not mw.get("available"):
+            return {"status":"INCONCLUSIVE_RECENT_MWPL","non_load_bearing":False,"reason":mw.get("reason"),"mwpl":mw}
+        for symbol,frame in raw_frames.items():
+            x=v953_contract_structure.build_contract_structure_frame(frame).copy()
+            x["date"]=pd.DatetimeIndex(x.index).tz_localize(None).normalize(); x=x[(x["date"]>=start)&(x["date"]<=end)].copy()
+            if x.empty: continue
+            x["symbol"]=symbol
+            eligible=x.get("eligible",True)
+            if not isinstance(eligible,pd.Series): eligible=pd.Series(bool(eligible),index=x.index)
+            if "fno_member_pti" in x: eligible=eligible.fillna(False).astype(bool)&x["fno_member_pti"].fillna(False).astype(bool)
+            x["trial19_eligible"]=eligible.fillna(False).astype(bool)
+            x["extreme_oi_event"]=(pd.to_numeric(x.get("total_z"),errors="coerce")>=v97_trial19.TOTAL_OI_Z_MIN).fillna(False).astype(bool)
+            x["dte_bucket"]=v97_trial19._dte_bucket(x)
+            mws=(mw.get("mwpl_by_symbol") or {}).get(symbol); bans=(mw.get("ban_by_symbol") or {}).get(symbol)
+            if isinstance(mws,pd.Series):
+                q=pd.to_numeric(mws.copy(),errors="coerce"); q.index=pd.to_datetime(q.index).normalize(); x["mwpl_pct"]=q.reindex(pd.to_datetime(x["date"]).dt.normalize()).to_numpy()
+            if isinstance(bans,pd.Series):
+                q=bans.copy(); q.index=pd.to_datetime(q.index).normalize(); x["ban_flag"]=q.reindex(pd.to_datetime(x["date"]).dt.normalize()).fillna(False).to_numpy(dtype=bool)
+            prepared.append(x.reset_index(drop=True))
+        if not prepared:
+            return {"status":"INCONCLUSIVE_RECENT_HISTORY","non_load_bearing":False,"reason":"NO_PREPARED_ROWS"}
+        result=v97_trial19.evaluate_mwpl_bound(pd.concat(prepared,ignore_index=True),bootstrap_reps=300)
+        result["window"]={"start":str(start.date()),"end":str(end.date())}; result["mwpl_source"]=mw.get("source"); result["mwpl_date_coverage"]=mw.get("date_coverage")
+        return result
+    except Exception as exc:
+        log.exception("V9.7.2 recent MWPL bound failed")
+        return {"status":"INCONCLUSIVE_RECENT_MWPL_BOUND_ERROR","non_load_bearing":False,"reason":str(exc)}
+
+
 def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
                      resume_run_dir=None, stage_cb=None) -> dict:
     """Run frozen nonlinear Trial 19 on official NSE 2018-2021 evidence."""
@@ -4008,29 +4083,35 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
             frames[symbol]=frame; coverage.append({"symbol":symbol,"rows":int(len(frame)),"membership_days":int(frame["fno_member_pti"].sum())})
             if shard is not None: _save_v95_symbol_shard(shard,symbol,frame)
         except Exception as exc:
-            log.exception("V9.7 Trial19 frame failed for %s",symbol); notes[symbol]=str(exc)
+            log.exception("V9.7.2 Trial19 frame failed for %s",symbol); notes[symbol]=str(exc)
         finally:
             research_runtime.release_memory_pressure()
             if progress_cb: progress_cb(i,total,symbol)
 
     mwpl_result=None
     if frames:
-        if stage_cb: stage_cb(3,4,"Loading Trial-19 NSE MWPL / ban controls",82)
+        if stage_cb: stage_cb(3,4,"Loading Trial-19 NSE monthly MWPL + targeted ban controls",82)
         trial_dates=sorted({pd.Timestamp(d).normalize() for f in frames.values() for d in f.index if v97_trial19.INDEPENDENT_START<=pd.Timestamp(d).tz_localize(None).normalize()<=v97_trial19.INDEPENDENT_END})
         try:
             mwpl_client=nse_mwpl.NSEHistoricalReportClient(cache_dir=_RESEARCH_STATE_DIR/"nse-mwpl")
+            total_oi_by_symbol={}
+            for symbol, frame in frames.items():
+                if "nse_total_oi" in frame:
+                    ser=pd.to_numeric(frame["nse_total_oi"],errors="coerce").copy()
+                    ser.index=pd.to_datetime(ser.index).normalize()
+                    total_oi_by_symbol[str(symbol).upper()]=ser
             last_mwpl={"done":-1}
             def _mwpl_progress(done,total,label):
-                # Keep the UI alive during the long historical integrity pass.
-                # Update at start/end and every five dates to avoid excessive
-                # state writes while still proving forward progress.
-                if stage_cb and (done==0 or done==total or done-last_mwpl["done"]>=5):
+                if stage_cb and (done==0 or done==total or done-last_mwpl["done"]>=1):
                     pct=min(93,82+round((done/max(total,1))*11))
-                    stage_cb(3,4,f"Trial-19 MWPL {done}/{total} · {label}",pct)
+                    stage_cb(3,4,f"Trial-19 MWPL months {done}/{total} · {label}",pct)
                     last_mwpl["done"]=done
-            mwpl_result=nse_mwpl.build_validation_mwpl_controls(validation_dates=trial_dates,symbols=list(frames),client=mwpl_client,min_date_coverage=0.95,progress_cb=_mwpl_progress)
+            mwpl_result=nse_mwpl.build_monthly_mwpl_controls(
+                validation_dates=trial_dates,symbols=list(frames),total_oi_by_symbol=total_oi_by_symbol,
+                client=mwpl_client,min_date_coverage=0.95,progress_cb=_mwpl_progress,
+            )
         except Exception as exc:
-            mwpl_result={"available":False,"reason":f"MWPL_LOAD_ERROR:{exc}","date_coverage":0.0,"mwpl_by_symbol":{},"ban_by_symbol":{},"source":"NSE_F&O_COMBINED_OPEN_INTEREST","errors":{"load":str(exc)}}
+            mwpl_result={"available":False,"reason":f"MWPL_LOAD_ERROR:{exc}","date_coverage":0.0,"month_coverage":0.0,"observation_coverage":0.0,"mwpl_by_symbol":{},"ban_by_symbol":{},"source":"NSE_MONTHLY_MWPL_PLUS_RECONSTRUCTED_TOTAL_FUTSTK_OI","errors":{"load":str(exc)}}
         controls["mwpl_available"]=bool(mwpl_result.get("available"))
         if controls["mwpl_available"]:
             for symbol,frame in frames.items():
@@ -4045,20 +4126,36 @@ def run_v97_trial19(kite, symbols=None, progress_cb=None, integrity_data=None,
     if frames and not archive_ok and not str(research.get("status") or "").startswith("FAIL_"):
         research["status"]="INCONCLUSIVE_NSE_HISTORY_COVERAGE"; research["primary_pass"]=False
 
+    # V9.7.2 confound controls run after frozen efficacy, not after MWPL.
+    volatility_control=v97_trial19.evaluate_volatility_confound(frames,frozen_result=research) if frames else {"status":"INCONCLUSIVE_NO_DATA","pass":False,"research_only":True}
     supplied_earnings=integrity_data.get("earnings_map"); event_symbols=list(research.get("event_symbols") or [])
     if supplied_earnings is not None:
         earnings_map=dict(supplied_earnings)
-    elif event_symbols and str(research.get("status") or "")=="PASS_TRIAL19_INDEPENDENT":
-        if stage_cb: stage_cb(4,4,"Loading NSE earnings calendar for Trial-19 promotion",97)
+    elif event_symbols and v97_trial19.trial19_efficacy_passed(research):
+        if stage_cb: stage_cb(4,4,"Loading NSE board/result calendar for Trial-19 confound",97)
         earnings_client=nse_earnings_history.NSEEarningsHistoryClient(cache_dir=_RESEARCH_STATE_DIR/"nse-earnings")
         earnings_map=nse_earnings_history.build_earnings_map(event_symbols,v97_trial19.INDEPENDENT_START-pd.tseries.offsets.BDay(7),v97_trial19.INDEPENDENT_END+pd.tseries.offsets.BDay(7),earnings_client)
     else:
-        earnings_map={"_meta":{"loaded_symbols":[],"symbol_coverage":0.0,"source":"NOT_LOADED_TRIAL19_NOT_PASSED"}}
-    promotion=v97_trial19.evaluate_earnings_promotion(frames,frozen_result=research,earnings_map=earnings_map) if frames else {"status":"INCONCLUSIVE_NO_DATA","trial18_eligible":False,"research_only":True}
+        earnings_map={"_meta":{"loaded_symbols":[],"symbol_coverage":0.0,"source":"NOT_LOADED_EFFICACY_FAILED"}}
+    earnings_control=v97_trial19.evaluate_earnings_promotion(frames,frozen_result=research,earnings_map=earnings_map) if frames else {"status":"INCONCLUSIVE_NO_DATA","trial18_eligible":False,"confound_pass":False,"research_only":True}
+    supplied_bound=integrity_data.get("recent_mwpl_bound")
+    if controls.get("mwpl_available"):
+        recent_bound={"status":"NOT_NEEDED_HISTORICAL_MWPL_APPLIED","non_load_bearing":False}
+    elif supplied_bound is not None:
+        recent_bound=dict(supplied_bound)
+    elif v97_trial19.trial19_efficacy_passed(research):
+        recent_bound=_build_v97_recent_mwpl_bound(symbols=symbols,stage_cb=stage_cb)
+    else:
+        recent_bound={"status":"LOCKED_EFFICACY_FAILED","non_load_bearing":False}
+    eligibility=v97_trial19.evaluate_trial18_eligibility(frozen_result=research,volatility_control=volatility_control,earnings_control=earnings_control,integrity_controls=controls,recent_mwpl_bound=recent_bound)
     return {
         "build":v97_trial19.BUILD_ID,"symbols_scanned":len(research_symbols),"symbols_completed":len(frames),"symbols_skipped":notes,"coverage":coverage,
-        "integrity":{**controls,"historical_oi_primary":"NSE_TOTAL_FUTSTK_OI_SHARE_EQUIVALENT","nse_oi_date_coverage":date_coverage,"nse_oi_coverage_ok":archive_ok,"historical_symbols_discovered":len(discovered),"historical_membership_available":membership_ok,"historical_cash_price_available":historical_cash_ok,"historical_membership_price_coverage":membership_price_coverage,"historical_cash_date_coverage":cash_date_coverage,"historical_cash_source":cash_meta.get("source") or "NSE_OFFICIAL_CM_LEGACY_BHAVCOPY","independent_window":{"start":str(v97_trial19.INDEPENDENT_START.date()),"end":str(v97_trial19.INDEPENDENT_END.date())},"mwpl_date_coverage":float((mwpl_result or {}).get("date_coverage") or 0.0),"mwpl_reason":(mwpl_result or {}).get("reason") or "UNAVAILABLE","resumed_symbol_shards":resumed,"prior_locked_finals_read":False},
-        "research":research,"promotion_controls":promotion,"trial18_eligible":bool(promotion.get("trial18_eligible")),"research_only":True,
+        "integrity":{**controls,"historical_oi_primary":"NSE_TOTAL_FUTSTK_OI_SHARE_EQUIVALENT","nse_oi_date_coverage":date_coverage,"nse_oi_coverage_ok":archive_ok,"historical_symbols_discovered":len(discovered),"historical_membership_available":membership_ok,"historical_cash_price_available":historical_cash_ok,"historical_membership_price_coverage":membership_price_coverage,"historical_cash_date_coverage":cash_date_coverage,"historical_cash_source":cash_meta.get("source") or "NSE_OFFICIAL_CM_LEGACY_BHAVCOPY","independent_window":{"start":str(v97_trial19.INDEPENDENT_START.date()),"end":str(v97_trial19.INDEPENDENT_END.date())},"mwpl_date_coverage":float((mwpl_result or {}).get("date_coverage") or 0.0),"mwpl_month_coverage":float((mwpl_result or {}).get("month_coverage") or 0.0),"mwpl_observation_coverage":float((mwpl_result or {}).get("observation_coverage") or 0.0),"mwpl_source":(mwpl_result or {}).get("source") or "UNAVAILABLE","secban_risk_date_coverage":float((mwpl_result or {}).get("secban_risk_date_coverage") or 0.0),"mwpl_reason":(mwpl_result or {}).get("reason") or "UNAVAILABLE","resumed_symbol_shards":resumed,"prior_locked_finals_read":False},
+        "research":research,
+        "confound_controls":{"volatility":volatility_control,"earnings":earnings_control,"recent_mwpl_bound":recent_bound},
+        "promotion_controls":eligibility,
+        "trial18_eligible":bool(eligibility.get("trial18_eligible")),
+        "research_only":True,
     }
 
 
@@ -4376,7 +4473,7 @@ def _load_v97_state():
         if isinstance(state.get("params"),dict): base["params"].update(state["params"])
     if base.get("status")=="running":
         run_dir_raw=(base.get("params") or {}).get("resume_run_dir"); run_dir=Path(run_dir_raw) if run_dir_raw else None; durable=bool(run_dir and run_dir.exists() and any(run_dir.glob("*.pkl")))
-        base["status"]="error"; base["error"]=("V9.7 Trial 19 worker restarted before completion. Durable checkpoints were found; run again to resume." if durable else "V9.7 Trial 19 worker restarted before completion; no durable checkpoint was found.")
+        base["status"]="error"; base["error"]=("V9.7.2 Trial 19 worker restarted before completion. Durable checkpoints were found; run again to resume." if durable else "V9.7 Trial 19 worker restarted before completion; no durable checkpoint was found.")
     return base
 
 
@@ -4398,13 +4495,13 @@ def get_v97_trial19_state():
 def start_v97_trial19(kite,symbols=None,integrity_data=None):
     symbols=[str(s).strip().upper() for s in (symbols or settings.WATCHLIST)]
     with _v97_lock:
-        if _v97_state.get("status")=="running": return {"started":False,"reason":"V9.7 Trial 19 is already running."}
+        if _v97_state.get("status")=="running": return {"started":False,"reason":"V9.7.2 Trial 19 is already running."}
         if research_runtime.is_research_active(): return {"started":False,"reason":"Another historical research job is already running."}
         run_dir=_v97_run_dir(symbols=symbols); resumed=sum(1 for _ in run_dir.glob("*.pkl"))
         _v97_state.update({"status":"running","mode":"v97_trial19","research_only":True,"progress":{"done":resumed,"total":len(symbols),"symbol":None,"stage":"Loading official NSE Trial-19 third-window archive","stage_index":1,"stage_total":4,"overall_pct":max(1,min(80,round(resumed/max(len(symbols),1)*80)))},"result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None,"params":{"resume_run_dir":str(run_dir)}})
     _persist_v97_state()
     def _progress(done,total,symbol):
-        research_runtime.heartbeat(stage="Building V9.7 Trial-19 frames",symbol=symbol,done=done,total=total)
+        research_runtime.heartbeat(stage="Building V9.7.2 Trial-19 frames",symbol=symbol,done=done,total=total)
         with _v97_lock: _v97_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building Trial-19 cash + total-OI frames","stage_index":2,"stage_total":4,"overall_pct":max(30,min(80,30+round(done/max(total,1)*50)))}
         if done==0 or done==total or (done>0 and done%5==0): _persist_v97_state()
     def _stage(stage_index,stage_total,stage,overall_pct):
@@ -4419,7 +4516,7 @@ def start_v97_trial19(kite,symbols=None,integrity_data=None):
                 _v97_state["progress"]={"done":result.get("symbols_scanned",len(symbols)),"total":result.get("symbols_scanned",len(symbols)),"symbol":None,"stage":"Complete","stage_index":4,"stage_total":4,"overall_pct":100}; _v97_state["result"]=result; _v97_state["status"]="done"; _v97_state["error"]=None; _v97_state["finished_at"]=now_ist().isoformat(timespec="seconds")
             _persist_v97_state(); shutil.rmtree(run_dir,ignore_errors=True)
         except Exception as exc:
-            log.exception("V9.7 Trial19 run failed")
+            log.exception("V9.7.2 Trial19 run failed")
             with _v97_lock: _v97_state["status"]="error"; _v97_state["error"]=str(exc); _v97_state["finished_at"]=now_ist().isoformat(timespec="seconds")
             _persist_v97_state()
         finally: research_runtime.end_research(); research_runtime.release_memory_pressure()

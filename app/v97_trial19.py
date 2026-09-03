@@ -14,7 +14,7 @@ from . import v95_daily_evidence as v95
 from . import v953_contract_structure as cs
 from . import v96_trial17 as v96
 
-BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE"
+BUILD_ID = "2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE"
 TRIAL19_NUMBER = 19
 TRIAL18_NUMBER = 18
 TOTAL_OI_Z_MIN = 1.5
@@ -24,6 +24,8 @@ MIN_EVENTS = 250
 MIN_EVENT_DAYS = 250
 MIN_MATCHED_LIFT = 1.10
 T_STAT_HURDLE = 3.0
+MWPL_BOUND_MAX_EVENT_OVERLAP = 0.05
+MWPL_BOUND_MAX_LIFT_DELTA = 0.02
 
 
 def trial19_spec() -> dict:
@@ -54,7 +56,7 @@ def trial18_spec() -> dict:
         "name": "Direction conditional on independently validated extreme OI event",
         "locked": True,
         "auto_run": False,
-        "eligibility": "Only after Trial 19 and its earnings promotion control pass",
+        "eligibility": "Only after frozen Trial-19 efficacy plus volatility, earnings and MWPL applied/bounded controls pass",
         "research_only": True,
     }
 
@@ -130,6 +132,119 @@ def same_day_dte_matched_report(events: pd.DataFrame, baseline: pd.DataFrame, fi
         "event_mean":float(pd.to_numeric(ev[field],errors="coerce").mean()) if len(ev) else None,
         "matched_baseline_mean":float(pd.to_numeric(controls[field],errors="coerce").mean()) if len(controls) else None,
         **boot,
+    }
+
+
+def _with_rv5_bucket(frame: pd.DataFrame) -> pd.DataFrame:
+    """Attach pre-signal cross-sectional realised-volatility quintiles.
+
+    Buckets are recomputed independently on each trading date using only the
+    already-shifted ``realized_vol5_prev`` field.  This is a confound-control
+    view and never changes the frozen Trial-19 event or baseline.
+    """
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame.copy()
+    x = frame.copy()
+    x["date"] = pd.to_datetime(x["date"]).dt.normalize()
+    rv = pd.to_numeric(x.get("realized_vol5_prev"), errors="coerce")
+    x["realized_vol5_prev"] = rv
+    pct = x.groupby("date", observed=True)["realized_vol5_prev"].rank(method="average", pct=True)
+    bucket = np.ceil(pct * 5.0).clip(1, 5)
+    x["rv5_bucket"] = pd.Series(bucket, index=x.index).astype("Float64")
+    return x
+
+
+def _matched_controls_with_vol(events: pd.DataFrame, baseline: pd.DataFrame) -> pd.DataFrame:
+    if events is None or baseline is None or events.empty or baseline.empty:
+        return baseline.iloc[0:0].copy() if baseline is not None else pd.DataFrame()
+    ev = _with_rv5_bucket(events)
+    ba = _with_rv5_bucket(baseline)
+    if "dte_bucket" not in ev:
+        ev["dte_bucket"] = _dte_bucket(ev)
+    if "dte_bucket" not in ba:
+        ba["dte_bucket"] = _dte_bucket(ba)
+    cols = ["date", "dte_bucket", "rv5_bucket"]
+    groups = ev[cols].dropna().drop_duplicates()
+    if groups.empty:
+        return ba.iloc[0:0].copy()
+    ev_keys = pd.MultiIndex.from_frame(groups.astype({"dte_bucket": str, "rv5_bucket": float}))
+    ba_keys = pd.MultiIndex.from_frame(ba[cols].astype({"dte_bucket": str, "rv5_bucket": float}))
+    out = ba.loc[ba_keys.isin(ev_keys)].copy()
+    flag = out.get("extreme_oi_event", False)
+    if not isinstance(flag, pd.Series):
+        flag = pd.Series(bool(flag), index=out.index)
+    return out.loc[~flag.fillna(False).astype(bool)].copy()
+
+
+def same_day_dte_vol_matched_report(events: pd.DataFrame, baseline: pd.DataFrame, field: str, *, reps=1000, seed=974) -> dict:
+    if events is None or baseline is None or events.empty or baseline.empty:
+        return {"event_count": 0, "baseline_count": 0, "event_days": 0, "matched_groups": 0, "lift": None, "ci95_low": None, "ci95_high": None, "matched_group_columns": ["date", "dte_bucket", "rv5_bucket"]}
+    ev = _with_rv5_bucket(events)
+    ba = _with_rv5_bucket(baseline)
+    if "dte_bucket" not in ev:
+        ev["dte_bucket"] = _dte_bucket(ev)
+    if "dte_bucket" not in ba:
+        ba["dte_bucket"] = _dte_bucket(ba)
+    controls = _matched_controls_with_vol(ev, ba)
+    cols = ["date", "dte_bucket", "rv5_bucket"]
+    if len(controls):
+        valid_groups = controls[cols].dropna().drop_duplicates()
+        valid_keys = pd.MultiIndex.from_frame(valid_groups.astype({"dte_bucket": str, "rv5_bucket": float}))
+        event_keys = pd.MultiIndex.from_frame(ev[cols].astype({"dte_bucket": str, "rv5_bucket": float}))
+        ev = ev.loc[event_keys.isin(valid_keys)].copy()
+    else:
+        ev = ev.iloc[0:0].copy()
+    boot = v95.day_cluster_bootstrap_lift(ev, controls, field, reps=reps, seed=seed) if len(ev) and len(controls) else {"lift": None, "ci95_low": None, "ci95_high": None, "clusters": 0, "reps": int(reps)}
+    return {
+        "event_count": int(len(ev)),
+        "baseline_count": int(len(controls)),
+        "event_days": int(pd.to_datetime(ev["date"]).dt.normalize().nunique()) if len(ev) else 0,
+        "matched_groups": int(ev[cols].dropna().drop_duplicates().shape[0]) if len(ev) else 0,
+        "event_mean": float(pd.to_numeric(ev[field], errors="coerce").mean()) if len(ev) else None,
+        "matched_baseline_mean": float(pd.to_numeric(controls[field], errors="coerce").mean()) if len(controls) else None,
+        "matched_group_columns": cols,
+        **boot,
+    }
+
+
+def pre_signal_persistence_report(events: pd.DataFrame, baseline: pd.DataFrame, *, reps=500) -> dict:
+    reports = {}
+    for key, field, seed in (("t_minus_1", "movement_prev1_atr", 9751), ("t_minus_2", "movement_prev2_atr", 9752)):
+        if field not in baseline.columns or field not in events.columns:
+            reports[key] = {"lift": None, "ci95_low": None, "ci95_high": None, "event_count": 0}
+            continue
+        ev = events[pd.to_numeric(events[field], errors="coerce").notna()].copy()
+        ba = baseline[pd.to_numeric(baseline[field], errors="coerce").notna()].copy()
+        reports[key] = same_day_dte_matched_report(ev, ba, field, reps=reps, seed=seed)
+    reports["warning"] = any(
+        (r.get("lift") or 0) >= 1.10 and (r.get("ci95_low") or 0) > 1.0
+        for r in (reports["t_minus_1"], reports["t_minus_2"])
+    )
+    return reports
+
+
+def evaluate_volatility_confound(symbol_frames: Mapping[str, pd.DataFrame], *, frozen_result: dict, bootstrap_reps=1000) -> dict:
+    """Promotion-only prior-volatility control; never rewrites Trial 19."""
+    gates = dict(frozen_result.get("gates") or {})
+    efficacy_ok = all(bool(gates.get(k)) for k in ("sample_ok", "matched_lift_ok", "binary_event_t_ok", "tail_ok", "stability_ok"))
+    if not efficacy_ok:
+        return {"status": "LOCKED_TRIAL19_EFFICACY_NOT_PASSED", "pass": False, "research_only": True}
+    stacked = _stack(symbol_frames)
+    if stacked.empty or "realized_vol5_prev" not in stacked:
+        return {"status": "INCONCLUSIVE_VOLATILITY_DATA", "pass": False, "research_only": True}
+    baseline = stacked[stacked["trial19_eligible"].fillna(False).astype(bool)].copy()
+    baseline = baseline[baseline["movement_1d_atr"].notna() & pd.to_numeric(baseline["realized_vol5_prev"], errors="coerce").notna()].copy()
+    events = baseline[baseline["extreme_oi_event"].fillna(False).astype(bool)].copy()
+    rep = same_day_dte_vol_matched_report(events, baseline, "movement_1d_atr", reps=bootstrap_reps, seed=9741)
+    persistence = pre_signal_persistence_report(events, baseline, reps=max(100, min(int(bootstrap_reps), 500)))
+    passed = bool((rep.get("lift") or 0) >= MIN_MATCHED_LIFT and (rep.get("ci95_low") or 0) > 1.0)
+    return {
+        "status": "PASS_VOLATILITY_CONFOUND" if passed else "FAIL_VOLATILITY_CONFOUND",
+        "pass": passed,
+        "matched_1D": rep,
+        "pre_signal_persistence": persistence,
+        "research_only": True,
+        "production_activation": False,
     }
 
 
@@ -236,9 +351,104 @@ def evaluate_trial19(symbol_frames: Mapping[str,pd.DataFrame], *, controls=None,
     }
 
 
+def mwpl_bound_non_load_bearing(event_overlap_fraction, absolute_lift_delta) -> bool:
+    if event_overlap_fraction is None or absolute_lift_delta is None:
+        return False
+    try:
+        overlap = float(event_overlap_fraction); delta = float(absolute_lift_delta)
+    except Exception:
+        return False
+    return bool(np.isfinite(overlap) and np.isfinite(delta) and overlap <= MWPL_BOUND_MAX_EVENT_OVERLAP and delta <= MWPL_BOUND_MAX_LIFT_DELTA)
+
+
+def evaluate_mwpl_bound(frame: pd.DataFrame, *, bootstrap_reps=500) -> dict:
+    """Empirically bound ban/>=95% MWPL sensitivity on a recent window.
+
+    This diagnostic never changes the frozen Trial-19 efficacy result.  It is
+    used only when the older historical MWPL control cannot be completed.
+    """
+    if frame is None or frame.empty:
+        return {"status": "INCONCLUSIVE_NO_DATA", "non_load_bearing": False, "event_count": 0, "risk_event_count": 0, "event_overlap_fraction": None, "absolute_lift_delta": None}
+    x = frame.copy()
+    x["date"] = pd.to_datetime(x["date"]).dt.normalize()
+    if "dte_bucket" not in x:
+        x["dte_bucket"] = _dte_bucket(x)
+    eligible = x.get("trial19_eligible", True)
+    if not isinstance(eligible, pd.Series):
+        eligible = pd.Series(bool(eligible), index=x.index)
+    baseline = x.loc[eligible.fillna(False).astype(bool) & pd.to_numeric(x.get("movement_1d_atr"), errors="coerce").notna()].copy()
+    if baseline.empty:
+        return {"status": "INCONCLUSIVE_NO_DATA", "non_load_bearing": False, "event_count": 0, "risk_event_count": 0, "event_overlap_fraction": None, "absolute_lift_delta": None}
+    events = baseline[baseline.get("extreme_oi_event", False).fillna(False).astype(bool)].copy()
+    ban = baseline.get("ban_flag", False)
+    if not isinstance(ban, pd.Series):
+        ban = pd.Series(bool(ban), index=baseline.index)
+    mw = pd.to_numeric(baseline.get("mwpl_pct"), errors="coerce")
+    risk = ban.fillna(False).astype(bool) | (mw >= 95.0).fillna(False)
+    baseline["mwpl_risk"] = risk
+    event_risk = baseline.loc[events.index, "mwpl_risk"] if len(events) else pd.Series(dtype=bool)
+    overlap = float(event_risk.mean()) if len(event_risk) else None
+    all_rep = same_day_dte_matched_report(events, baseline, "movement_1d_atr", reps=bootstrap_reps, seed=9761)
+    clean = baseline.loc[~baseline["mwpl_risk"]].copy()
+    clean_events = clean[clean.get("extreme_oi_event", False).fillna(False).astype(bool)].copy()
+    clean_rep = same_day_dte_matched_report(clean_events, clean, "movement_1d_atr", reps=bootstrap_reps, seed=9762)
+    a = all_rep.get("lift"); b = clean_rep.get("lift")
+    delta = abs(float(a) - float(b)) if a is not None and b is not None and np.isfinite(a) and np.isfinite(b) else None
+    non_load = mwpl_bound_non_load_bearing(overlap, delta)
+    return {
+        "status": "NON_LOAD_BEARING" if non_load else "LOAD_BEARING_OR_UNRESOLVED",
+        "non_load_bearing": non_load,
+        "event_count": int(len(events)),
+        "risk_event_count": int(event_risk.sum()) if len(event_risk) else 0,
+        "event_overlap_fraction": overlap,
+        "all_1D": all_rep,
+        "clean_1D": clean_rep,
+        "absolute_lift_delta": delta,
+        "bars": {"max_event_overlap": MWPL_BOUND_MAX_EVENT_OVERLAP, "max_lift_delta": MWPL_BOUND_MAX_LIFT_DELTA},
+        "research_only": True,
+    }
+
+
+def trial19_efficacy_passed(frozen_result: dict) -> bool:
+    gates = dict((frozen_result or {}).get("gates") or {})
+    return all(bool(gates.get(k)) for k in ("sample_ok", "matched_lift_ok", "binary_event_t_ok", "tail_ok", "stability_ok"))
+
+
+def evaluate_trial18_eligibility(*, frozen_result: dict, volatility_control: dict, earnings_control: dict, integrity_controls: dict, recent_mwpl_bound=None) -> dict:
+    """Combine pre-registered promotion controls without altering Trial 19."""
+    reasons = []
+    if not trial19_efficacy_passed(frozen_result):
+        reasons.append("TRIAL19_EFFICACY")
+    for key, label in (("historical_membership_available", "HISTORICAL_MEMBERSHIP"), ("historical_cash_price_available", "HISTORICAL_CASH"), ("lot_size_normalization_available", "OI_NORMALIZATION")):
+        if not bool((integrity_controls or {}).get(key)):
+            reasons.append(label)
+    if not bool((volatility_control or {}).get("pass")):
+        reasons.append("VOLATILITY_CONFOUND")
+    if not bool((earnings_control or {}).get("confound_pass")):
+        reasons.append("EARNINGS_CONFOUND")
+    mwpl_applied = bool((integrity_controls or {}).get("mwpl_available"))
+    mwpl_bounded = bool((recent_mwpl_bound or {}).get("non_load_bearing"))
+    if not (mwpl_applied or mwpl_bounded):
+        reasons.append("MWPL_INTEGRITY_OR_BOUND")
+    eligible = not reasons
+    return {
+        "status": "ELIGIBLE_FOR_PREREGISTRATION" if eligible else "LOCKED",
+        "trial18_eligible": eligible,
+        "trial18_state": "ELIGIBLE_FOR_PREREGISTRATION" if eligible else "LOCKED",
+        "reasons": reasons,
+        "mwpl_resolution": "APPLIED" if mwpl_applied else ("EMPIRICALLY_NON_LOAD_BEARING" if mwpl_bounded else "UNRESOLVED"),
+        "research_only": True,
+        "auto_run": False,
+        "production_activation": False,
+    }
+
+
 def evaluate_earnings_promotion(symbol_frames: Mapping[str,pd.DataFrame], *, frozen_result:dict, earnings_map=None, bootstrap_reps=1000) -> dict:
-    if str(frozen_result.get("status") or "")!="PASS_TRIAL19_INDEPENDENT":
-        return {"status":"LOCKED_TRIAL19_NOT_PASSED","trial18_eligible":False,"research_only":True}
+    # V9.7.2: earnings is a competing-hypothesis diagnostic and therefore
+    # runs once the frozen efficacy gates pass even if MWPL integrity remains
+    # unresolved.  It can never by itself unlock Trial 18.
+    if not trial19_efficacy_passed(frozen_result):
+        return {"status":"LOCKED_TRIAL19_EFFICACY_NOT_PASSED","trial18_eligible":False,"confound_pass":False,"research_only":True}
     stacked=_stack(symbol_frames)
     if stacked.empty: return {"status":"INCONCLUSIVE_NO_DATA","trial18_eligible":False,"research_only":True}
     baseline=stacked[stacked["trial19_eligible"].fillna(False).astype(bool)].copy()
@@ -267,4 +477,15 @@ def evaluate_earnings_promotion(symbol_frames: Mapping[str,pd.DataFrame], *, fro
     cevents=clean[clean["extreme_oi_event"].fillna(False).astype(bool)].copy()
     rep=same_day_dte_matched_report(cevents,clean,"movement_1d_atr",reps=bootstrap_reps,seed=9718)
     pass_control=bool(coverage>=0.90 and (rep.get("lift") or 0)>=MIN_MATCHED_LIFT and (rep.get("ci95_low") or 0)>1.0)
-    return {"status":"PASS_EARNINGS_PROMOTION" if pass_control else ("INCONCLUSIVE_EARNINGS_COVERAGE" if coverage<0.90 else "FAIL_EARNINGS_PROMOTION"),"trial18_eligible":pass_control,"trial18_state":"ELIGIBLE_FOR_PREREGISTRATION" if pass_control else "LOCKED","earnings_symbol_coverage":coverage,"earnings_excluded_1D":rep,"research_only":True,"production_activation":False}
+    removed_events = max(0, int(len(events) - len(cevents)))
+    return {
+        "status":"PASS_EARNINGS_PROMOTION" if pass_control else ("INCONCLUSIVE_EARNINGS_COVERAGE" if coverage<0.90 else "FAIL_EARNINGS_PROMOTION"),
+        "trial18_eligible":False,
+        "trial18_state":"LOCKED",
+        "confound_pass":pass_control,
+        "earnings_symbol_coverage":coverage,
+        "events_removed":removed_events,
+        "earnings_excluded_1D":rep,
+        "research_only":True,
+        "production_activation":False,
+    }

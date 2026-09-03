@@ -71,7 +71,7 @@ def test_v972_build_controls_emits_date_progress():
     assert '2018-' in seen[-1][2]
 
 
-def test_v972_trial19_surfaces_mwpl_date_progress(monkeypatch, tmp_path):
+def test_v972_trial19_surfaces_monthly_mwpl_progress(monkeypatch, tmp_path):
     from app import backtest
     from tests.test_v950_daily_runner import FakeKite, _clear_scanner_caches
     from tests.test_v952_nse_runner import _history_for
@@ -96,14 +96,13 @@ def test_v972_trial19_surfaces_mwpl_date_progress(monkeypatch, tmp_path):
         class NSEHistoricalReportClient:
             def __init__(self, **kwargs): pass
         @staticmethod
-        def build_validation_mwpl_controls(*, validation_dates, symbols, client, min_date_coverage=0.95, progress_cb=None):
+        def build_monthly_mwpl_controls(*, validation_dates, symbols, total_oi_by_symbol, client, min_date_coverage=0.95, progress_cb=None):
             assert progress_cb is not None
-            dates = pd.DatetimeIndex(validation_dates)
-            progress_cb(0, len(dates), str(dates[0].date()))
-            progress_cb(len(dates), len(dates), str(dates[-1].date()))
-            return {'available': False, 'reason': 'TEST', 'date_coverage': 0.0,
-                    'dates_requested': len(dates), 'dates_loaded': 0,
-                    'mwpl_by_symbol': {}, 'ban_by_symbol': {}, 'source': 'TEST', 'errors': {}}
+            assert 'AAA' in total_oi_by_symbol
+            progress_cb(0, 36, '2018-09')
+            progress_cb(36, 36, '2021-08')
+            return {'available': False, 'reason': 'TEST', 'date_coverage': 0.0, 'month_coverage': 1.0,
+                    'observation_coverage': 0.0, 'mwpl_by_symbol': {}, 'ban_by_symbol': {}, 'source': 'TEST', 'errors': {}}
 
     monkeypatch.setattr(backtest, 'nse_futures_history', StubHistory, raising=False)
     monkeypatch.setattr(backtest, 'nse_cash_history', StubCash, raising=False)
@@ -115,5 +114,6 @@ def test_v972_trial19_surfaces_mwpl_date_progress(monkeypatch, tmp_path):
         integrity_data={'earnings_map': {'_meta': {'symbol_coverage': 0.0}}},
         stage_cb=lambda i, total, label, pct: stages.append((i, total, label, pct)),
     )
-    assert any('MWPL 0/' in label for _, _, label, _ in stages)
-    assert any('MWPL ' in label and label.split('MWPL ')[1].split('/')[0].isdigit() for _, _, label, _ in stages)
+    assert any('MWPL months 0/36' in label for _, _, label, _ in stages)
+    assert any('MWPL months 36/36' in label for _, _, label, _ in stages)
+

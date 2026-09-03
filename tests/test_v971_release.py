@@ -1,7 +1,7 @@
 from pathlib import Path
 from app import v97_trial19
 ROOT=Path(__file__).resolve().parents[1]
-BUILD='2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE'
+BUILD='2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE'
 
 def test_v971_release_marker_and_trial19_remain_frozen():
     assert v97_trial19.BUILD_ID == BUILD
@@ -15,6 +15,6 @@ def test_v971_release_marker_and_trial19_remain_frozen():
 
 def test_v971_ui_discloses_mwpl_coverage_and_keeps_trial18_locked():
     text=(ROOT/'app/templates/backtest.html').read_text()
-    assert 'V9.7.1 Trial 19 · MWPL/ban Integrity Closure' in text
-    assert 'MWPL date coverage' in text
+    assert 'V9.7.2 Trial 19 · Confound &amp; Integrity Closure' in text
+    assert 'MWPL months' in text and 'dates' in text
     assert 'Trial 18 LOCKED' in text

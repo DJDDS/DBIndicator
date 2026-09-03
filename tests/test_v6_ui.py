@@ -8,7 +8,7 @@ def test_backtest_ui_exposes_v9_build_and_keeps_legacy_v6_audit_locked():
     build_id = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
     assert build_id in html
     assert build_id in (ROOT / 'app/early_research.py').read_text()
-    assert '2026-09-02-INSTITUTIONAL-V9.7.1-TRIAL19-MWPL-INTEGRITY-CLOSURE' in (ROOT / 'RESEARCH_BUILD.txt').read_text()
+    assert '2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE' in (ROOT / 'RESEARCH_BUILD.txt').read_text()
     assert 'V6 Institutional Edge Lab' in html
     assert 'Final 20% locked' in html
     assert 'Path-aware Exit Lab' in html
