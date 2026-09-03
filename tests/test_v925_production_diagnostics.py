@@ -89,7 +89,7 @@ def test_settings_and_dashboard_expose_valid_counts_failures_and_live_market_sta
 def test_backtest_copy_matches_current_research_architecture_and_build_is_bumped():
     text = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V9.1 focuses" not in text
-    assert "V9.9.2 / Trial 20 log-RV integrity closure is the primary research architecture" in text
+    assert "V10.0 Directional Edge Laboratory is the primary research architecture" in text
     assert "V9.4 remains visible as the completed measurement/audit path" in text
     assert "V9.2 remains a manual diagnostic only" in text
     assert "V9.5.3" in text

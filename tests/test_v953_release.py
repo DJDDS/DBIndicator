@@ -7,8 +7,8 @@ BUILD = '2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE'
 
 def test_v953_release_markers_and_production_safety():
     assert v95_daily_evidence.BUILD_ID == BUILD
-    assert (ROOT / 'RESEARCH_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
-    assert (ROOT / 'PRODUCTION_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
+    assert (ROOT / 'RESEARCH_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB'
+    assert (ROOT / 'PRODUCTION_BUILD.txt').read_text().strip() == '2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB'
     assert v9_playbooks.ACTIVE_PLAYBOOKS == ()
     assert v95_daily_evidence.trial16_spec()['locked'] is True
 

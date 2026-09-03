@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, v10_directional_edge, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2750,6 +2750,9 @@ _V99_STATE_PATH = Path(
 _V99_WORK_ROOT = Path(
     os.environ.get("V99_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v99-trial20-work"))
 )
+_V10_STATE_PATH = Path(
+    os.environ.get("V10_STATE_PATH", str(_RESEARCH_STATE_DIR / "v10-directional-edge-state.json"))
+)
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 _V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
 _V96_RUN_SCHEMA = "v960-trial17-independent-total-oi-run-1"
@@ -4362,6 +4365,95 @@ def run_v99_trial20(kite, symbols=None, progress_cb=None, integrity_data=None, r
 
 
 
+def _v10_fetch_index_daily(kite, tradingsymbol, start, end):
+    token = _load_index_token(kite, tradingsymbol)
+    if not token:
+        return pd.DataFrame()
+    data = scanner_mod._fetch_historical_chunked(kite, token, pd.Timestamp(start).to_pydatetime(), pd.Timestamp(end).to_pydatetime(), "day", oi=False, continuous=False)
+    df = pd.DataFrame(data)
+    if df.empty:
+        return df
+    if "date" in df.columns:
+        df = df.rename(columns={"date":"timestamp"}).set_index("timestamp")
+    idx = pd.DatetimeIndex(pd.to_datetime(df.index))
+    if idx.tz is not None:
+        idx = idx.tz_convert("Asia/Kolkata").tz_localize(None)
+    df.index = idx.normalize()
+    return df[~df.index.duplicated(keep="last")].sort_index()
+
+
+def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data=None, stage_cb=None) -> dict:
+    """Run V10 Trials 21 and 22 independently; Trial 23 remains locked."""
+    symbols = [str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
+    integrity_data = dict(integrity_data or {})
+    days = pd.bdate_range(v10_directional_edge.WARMUP_START, v10_directional_edge.RESEARCH_END)
+    if stage_cb: stage_cb(1,4,"V10 · loading official NSE FUTSTK contract history",5)
+    histories = integrity_data.get("nse_history_by_symbol")
+    if histories is None:
+        client=nse_futures_history.NSEFuturesArchiveClient(cache_dir=_RESEARCH_STATE_DIR/"nse-fo-bhavcopy")
+        histories=nse_futures_history.build_symbol_histories(days,symbols,client,discover_historical=True)
+    meta=dict((histories or {}).get("_meta") or {})
+    discovered=sorted(k for k in (histories or {}) if k!="_meta")
+    research_symbols=discovered or symbols
+    if stage_cb: stage_cb(2,4,"V10 · loading official NSE cash OHLC",30)
+    cash=integrity_data.get("nse_cash_by_symbol")
+    if cash is None:
+        client=nse_cash_history.NSECashArchiveClient(cache_dir=_RESEARCH_STATE_DIR/"nse-cm-bhavcopy")
+        cash=nse_cash_history.build_symbol_price_histories(days,research_symbols,client)
+    cash_meta=dict((cash or {}).get("_meta") or {})
+    market=integrity_data.get("market_history")
+    if market is None:
+        if kite is None: market=pd.DataFrame()
+        else: market=_v10_fetch_index_daily(kite,"NIFTY 50",v10_directional_edge.WARMUP_START,v10_directional_edge.RESEARCH_END)
+    sector_map=dict(integrity_data.get("sector_map") or scanner_mod.SYMBOL_SECTOR_MAP)
+    sectors=sorted({sector_map.get(s) for s in research_symbols if sector_map.get(s)})
+    sector_hist=dict(integrity_data.get("sector_history_by_symbol") or {})
+    if not sector_hist and kite is not None:
+        for sec in sectors:
+            try: sector_hist[sec]=_v10_fetch_index_daily(kite,sec,v10_directional_edge.WARMUP_START,v10_directional_edge.RESEARCH_END)
+            except Exception as exc:
+                log.warning("V10 sector history unavailable for %s: %s",sec,exc); sector_hist[sec]=pd.DataFrame()
+    if stage_cb: stage_cb(3,4,"V10 · building Trial 21 residual strength + Trial 22 basis",60)
+    t21={}; t22={}; skipped={}; total=len(research_symbols)
+    for i,symbol in enumerate(research_symbols,1):
+        if progress_cb: progress_cb(i-1,total,symbol)
+        px=(cash or {}).get(symbol); hist=(histories or {}).get(symbol) or {}
+        if not isinstance(px,pd.DataFrame) or px.empty:
+            skipped[symbol]="cash OHLC unavailable"; continue
+        p=px.copy(); p.index=pd.to_datetime(p.index).tz_localize(None).normalize(); p=p[~p.index.duplicated(keep="last")].sort_index()
+        # Trial 21 requires both NIFTY and a mapped sector; missing context fails closed.
+        sec_name=sector_map.get(symbol); sec=sector_hist.get(sec_name) if sec_name else None
+        if isinstance(market,pd.DataFrame) and not market.empty and isinstance(sec,pd.DataFrame) and not sec.empty:
+            f21=v10_directional_edge.trial21_features(p,market,sec)
+            f21=v10_directional_edge.build_directional_outcomes(f21); f21["sector"]=sec_name
+            membership=hist.get("membership")
+            if isinstance(membership,pd.Series):
+                m=membership.copy(); m.index=pd.to_datetime(m.index).normalize(); f21=f21[m.reindex(f21.index).fillna(False).astype(bool)]
+            keep21=["resid_5d","sector_5d","abs_ret_20d","long_1d_net","short_1d_net","long_2d_net","short_2d_net","sector"]
+            t21[symbol]=f21[[c for c in keep21 if c in f21.columns]].copy()
+        # Trial 22 requires official near/next settlement and expiry only; OI/volume never gates it.
+        fields=("near_settle","next_settle","near_expiry","next_expiry")
+        if all(isinstance(hist.get(k),pd.Series) for k in fields):
+            f22=p.copy()
+            for k in fields:
+                ser=hist[k].copy(); ser.index=pd.to_datetime(ser.index).normalize(); f22[k]=ser.reindex(f22.index)
+            f22=v10_directional_edge.trial22_features(f22); f22=v10_directional_edge.build_directional_outcomes(f22); f22["sector"]=sec_name
+            membership=hist.get("membership")
+            if isinstance(membership,pd.Series):
+                m=membership.copy(); m.index=pd.to_datetime(m.index).normalize(); f22=f22[m.reindex(f22.index).fillna(False).astype(bool)]
+            keep22=["basis_innovation_z","curve_slope_ann","near_basis_ann","long_1d_net","short_1d_net","long_2d_net","short_2d_net","sector"]
+            t22[symbol]=f22[[c for c in keep22 if c in f22.columns]].copy()
+        research_runtime.release_memory_pressure()
+        if progress_cb: progress_cb(i,total,symbol)
+    if stage_cb: stage_cb(4,4,"V10 · frozen validation; final 20% remains unread",92)
+    ev=v10_directional_edge.evaluate_v10(t21,t22)
+    return {"build":v10_directional_edge.BUILD_ID,"symbols_scanned":len(research_symbols),"symbols_trial21":len(t21),"symbols_trial22":len(t22),
+            "symbols_skipped":skipped,"integrity":{"futures_archive_date_coverage":float(meta.get("date_coverage") or 0.0),"cash_archive_date_coverage":float(cash_meta.get("date_coverage") or 0.0),"market_history_available":bool(isinstance(market,pd.DataFrame) and not market.empty),"sector_histories_available":sum(isinstance(x,pd.DataFrame) and not x.empty for x in sector_hist.values()),"prior_locked_finals_read":False},
+            "trial21":ev["trial21"],"trial22":ev["trial22"],"trial23_state":ev["trial23_state"],"final_read":False,
+            "research_only":True,"production_activation":False,"active_playbooks_unchanged":True,
+            "trial18_state":"LOCKED","trial19_state":"CLOSED_ASSOCIATION_NOT_INCREMENTAL","trial20_state":"CLOSED_REJECTED_LOG_RV_CONFIRMED"}
+
+
 def _default_v95_daily_state():
     return {
         "status": "idle",
@@ -5611,3 +5703,74 @@ def _run_ablation_job(kite, symbols, timeframe, days, ref_horizon):
     finally:
         with _ab_lock:
             _ab_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+
+
+# --------------------------------------------------------------------------
+# V10.0 Directional Edge Laboratory durable background state
+# --------------------------------------------------------------------------
+def _default_v10_state():
+    return {"status":"idle","mode":"v10_directional","build":v10_directional_edge.BUILD_ID,"research_only":True,
+            "progress":{"done":0,"total":0,"symbol":None,"stage":None,"stage_index":0,"stage_total":4,"overall_pct":0},
+            "result":None,"error":None,"started_at":None,"finished_at":None,"worker":{}}
+
+def _atomic_write_v10_state(state):
+    _V10_STATE_PATH.parent.mkdir(parents=True,exist_ok=True)
+    tmp=_V10_STATE_PATH.with_suffix(_V10_STATE_PATH.suffix+".tmp")
+    tmp.write_text(json.dumps(state,default=str,sort_keys=True),encoding="utf-8"); tmp.replace(_V10_STATE_PATH)
+
+def _load_v10_state():
+    if not _V10_STATE_PATH.exists(): return _default_v10_state()
+    try: raw=json.loads(_V10_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception: return _default_v10_state()
+    if str(raw.get("build") or "") != v10_directional_edge.BUILD_ID: return _default_v10_state()
+    out=_default_v10_state(); out.update(raw); out["build"]=v10_directional_edge.BUILD_ID
+    if out.get("status")=="running":
+        out["status"]="error"; out["error"]="V10 research worker restarted before completion; run again."
+    return out
+
+_v10_lock=threading.Lock(); _v10_state=_load_v10_state()
+
+def _persist_v10_state():
+    with _v10_lock:
+        snap=dict(_v10_state); snap["progress"]=dict(_v10_state.get("progress") or {})
+    snap["worker"]=research_runtime.snapshot(); _atomic_write_v10_state(snap)
+
+def get_v10_directional_state():
+    with _v10_lock:
+        out=dict(_v10_state); out["progress"]=dict(_v10_state.get("progress") or {})
+    out["worker"]=research_runtime.snapshot(); return out
+
+def start_v10_directional_lab(kite, symbols=None, integrity_data=None):
+    symbols=[str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
+    with _v10_lock:
+        if _v10_state.get("status")=="running": return {"started":False,"reason":"V10 Directional Edge Laboratory is already running."}
+        _v10_state.update({"status":"running","mode":"v10_directional","build":v10_directional_edge.BUILD_ID,"research_only":True,
+                           "progress":{"done":0,"total":len(symbols),"symbol":None,"stage":"Loading V10 research inputs","stage_index":1,"stage_total":4,"overall_pct":1},
+                           "result":None,"error":None,"started_at":now_ist().isoformat(timespec="seconds"),"finished_at":None})
+    _persist_v10_state()
+    def _progress(done,total,symbol):
+        research_runtime.heartbeat(stage="Building V10 directional feature frames",symbol=symbol,done=done,total=total)
+        with _v10_lock:
+            _v10_state["progress"]={"done":int(done),"total":int(total),"symbol":symbol,"stage":"Building Trial 21 residual strength + Trial 22 basis","stage_index":3,"stage_total":4,"overall_pct":max(60,min(90,60+round(done/max(total,1)*30)))}
+        if done==0 or done==total or (done>0 and done%5==0): _persist_v10_state()
+    def _stage(stage_index,stage_total,stage,overall_pct):
+        research_runtime.heartbeat(stage=stage)
+        with _v10_lock:
+            cur=_v10_state.get("progress") or {}; _v10_state["progress"]={"done":cur.get("done",0),"total":cur.get("total",len(symbols)),"symbol":None,"stage":stage,"stage_index":int(stage_index),"stage_total":int(stage_total),"overall_pct":int(overall_pct)}
+        _persist_v10_state()
+    def _job():
+        try:
+            with research_runtime.research_slot(): result=run_v10_directional_lab(kite,symbols=symbols,progress_cb=_progress,integrity_data=integrity_data,stage_cb=_stage)
+            with _v10_lock:
+                _v10_state["progress"]={"done":result.get("symbols_scanned",len(symbols)),"total":result.get("symbols_scanned",len(symbols)),"symbol":None,"stage":"Complete","stage_index":4,"stage_total":4,"overall_pct":100}
+                _v10_state["result"]=result; _v10_state["status"]="done"; _v10_state["error"]=None; _v10_state["finished_at"]=now_ist().isoformat(timespec="seconds")
+            _persist_v10_state()
+        except Exception as exc:
+            log.exception("V10 directional research run failed")
+            with _v10_lock:
+                _v10_state["status"]="error"; _v10_state["error"]=str(exc); _v10_state["finished_at"]=now_ist().isoformat(timespec="seconds")
+            _persist_v10_state()
+        finally:
+            research_runtime.end_research(); research_runtime.release_memory_pressure()
+    research_runtime.begin_research("v10_directional"); threading.Thread(target=_job,daemon=True).start()
+    return {"started":True,"mode":"v10_directional","build":v10_directional_edge.BUILD_ID}

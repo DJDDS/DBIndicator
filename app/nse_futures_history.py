@@ -466,7 +466,11 @@ def _empty_history(index: pd.DatetimeIndex) -> dict:
         "far_oi": pd.Series(np.nan, index=index, dtype=float),
         "membership": pd.Series(False, index=index, dtype=bool),
         "near_expiry": pd.Series(pd.NaT, index=index, dtype="datetime64[ns]"),
+        "next_expiry": pd.Series(pd.NaT, index=index, dtype="datetime64[ns]"),
         "near_dte": pd.Series(np.nan, index=index, dtype=float),
+        "next_dte": pd.Series(np.nan, index=index, dtype=float),
+        "near_settle": pd.Series(np.nan, index=index, dtype=float),
+        "next_settle": pd.Series(np.nan, index=index, dtype=float),
         "lot_size": pd.Series(np.nan, index=index, dtype=float),
         "total_volume": pd.Series(np.nan, index=index, dtype=float),
         "near_volume": pd.Series(np.nan, index=index, dtype=float),
@@ -522,12 +526,22 @@ def build_symbol_histories(days: Iterable, symbols: Iterable[str], client, progr
                 payload["total_oi"].loc[d] = float(oi.sum(min_count=1)) if oi.notna().any() else np.nan
                 expiries = list(grp["expiry"])
                 oivals = list(oi)
+                price_source = pd.to_numeric(grp.get("settle"), errors="coerce") if "settle" in grp.columns else pd.Series(np.nan, index=grp.index)
+                if price_source.isna().all() and "close" in grp.columns:
+                    price_source = pd.to_numeric(grp.get("close"), errors="coerce")
+                prices = list(price_source)
                 if len(oivals) >= 1:
                     payload["near_oi"].loc[d] = oivals[0]
                     payload["near_expiry"].loc[d] = pd.Timestamp(expiries[0]).normalize()
                     payload["near_dte"].loc[d] = int((pd.Timestamp(expiries[0]).normalize() - d).days)
+                    if len(prices) >= 1 and pd.notna(prices[0]):
+                        payload["near_settle"].loc[d] = float(prices[0])
                 if len(oivals) >= 2:
                     payload["next_oi"].loc[d] = oivals[1]
+                    payload["next_expiry"].loc[d] = pd.Timestamp(expiries[1]).normalize()
+                    payload["next_dte"].loc[d] = int((pd.Timestamp(expiries[1]).normalize() - d).days)
+                    if len(prices) >= 2 and pd.notna(prices[1]):
+                        payload["next_settle"].loc[d] = float(prices[1])
                 if len(oivals) >= 3:
                     payload["far_oi"].loc[d] = float(pd.Series(oivals[2:]).sum(min_count=1))
                 lots = pd.to_numeric(grp.get("lot_size"), errors="coerce") if "lot_size" in grp else pd.Series(dtype=float)

@@ -89,8 +89,9 @@ def test_v992_release_and_ui_expose_log_rv_integrity_closure():
     assert spec["volume_threshold"] is None
     assert spec["window"] == ["2015-09-01", "2018-08-31"]
 
-    assert (ROOT / "RESEARCH_BUILD.txt").read_text().strip() == BUILD
-    assert (ROOT / "PRODUCTION_BUILD.txt").read_text().strip() == BUILD
+    current = "2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB"
+    assert (ROOT / "RESEARCH_BUILD.txt").read_text().strip() == current
+    assert (ROOT / "PRODUCTION_BUILD.txt").read_text().strip() == current
     html = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V9.9.2 / Trial 20 · Log-RV Integrity Closure" in html
     assert "Forecast integrity" in html

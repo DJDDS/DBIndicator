@@ -2,12 +2,13 @@ from pathlib import Path
 from app import v99_volume_gate
 
 BUILD='2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
+CURRENT='2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB'
 
 
 def test_v990_build_marker_and_spec_are_frozen():
     assert v99_volume_gate.BUILD_ID == BUILD
-    assert Path('RESEARCH_BUILD.txt').read_text().strip() == BUILD
-    assert Path('PRODUCTION_BUILD.txt').read_text().strip() == BUILD
+    assert Path('RESEARCH_BUILD.txt').read_text().strip() == CURRENT
+    assert Path('PRODUCTION_BUILD.txt').read_text().strip() == CURRENT
     assert v99_volume_gate.trial20_spec()['volume_threshold'] is None
 
 

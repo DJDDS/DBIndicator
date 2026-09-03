@@ -527,6 +527,7 @@ def backtest_page():
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         backtest_day_bounds={tf: backtest.backtest_day_bounds(tf) for tf in config.VALID_TIMEFRAMES},
         early_research_state=backtest.get_early_research_state(),
+        v10_state=backtest.get_v10_directional_state(),
         v99_state=backtest.get_v99_trial20_state(),
         v97_state=backtest.get_v97_trial19_state(),
         v96_state=backtest.get_v96_trial17_state(),
@@ -557,6 +558,26 @@ def _resolve_backtest_symbols(form):
     symbols = _BACKTEST_UNIVERSES.get(universe, _BACKTEST_UNIVERSES["watchlist"])
     return list(symbols) if symbols is not None else list(settings.WATCHLIST)
 
+
+
+@app.route("/api/v10/start", methods=["POST"])
+@require_dashboard_password
+def api_v10_start():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"started": False, "reason": "Not logged in to Kite today."}), 400
+    try:
+        symbols = scanner.get_fno_stock_list(kite)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"started": False, "reason": f"Could not load live F&O universe: {exc}"}), 400
+    if not symbols:
+        return jsonify({"started": False, "reason": "No NSE stock-F&O symbols returned by Kite."}), 400
+    return jsonify(backtest.start_v10_directional_lab(kite, symbols=symbols))
+
+@app.route("/api/v10/status")
+@require_dashboard_password
+def api_v10_status():
+    return jsonify(backtest.get_v10_directional_state())
 
 
 @app.route("/api/v99/start", methods=["POST"])

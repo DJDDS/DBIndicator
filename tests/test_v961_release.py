@@ -3,7 +3,7 @@ from app import v96_trial17, v9_playbooks
 
 ROOT=Path(__file__).resolve().parents[1]
 BUILD='2026-09-02-INSTITUTIONAL-V9.6.2-TRIAL17-PROMOTION-CONTROLS'
-CURRENT='2026-09-03-INSTITUTIONAL-V9.9.2-TRIAL20-LOG-RV-INTEGRITY-CLOSURE'
+CURRENT='2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB'
 
 def test_v961_release_markers_and_safety():
     assert v96_trial17.BUILD_ID == BUILD

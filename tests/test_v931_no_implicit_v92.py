@@ -45,7 +45,7 @@ def test_v92_manual_mode_still_runs_v92_goal_report(monkeypatch):
 def test_v93_backtest_copy_marks_v92_as_manual_diagnostic_only():
     from pathlib import Path
     text = Path('app/templates/backtest.html').read_text(encoding='utf-8')
-    assert 'V9.9.2 / Trial 20 log-RV integrity closure is the primary research architecture' in text
+    assert 'V10.0 Directional Edge Laboratory is the primary research architecture' in text
     assert 'V9.4 remains visible as the completed measurement/audit path' in text
     assert 'V9.2 remains a manual diagnostic only' in text
 
