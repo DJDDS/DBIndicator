@@ -13,7 +13,12 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-BUILD_ID = "2026-09-03-INSTITUTIONAL-V10.2-RESEARCH-INTEGRITY-FEASIBILITY"
+from . import research_integrity
+
+BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK"
+PREVIOUS_BUILD_ID = "2026-09-03-INSTITUTIONAL-V10.2-RESEARCH-INTEGRITY-FEASIBILITY"
+LEGACY_GATE_BATTERY_VERSION = "V10.0-TRIAL21-22-FROZEN-1"
+FUTURE_GATE_BATTERY_VERSION = "V10.2.1-FUTURE-DAY-WEIGHTED-1"
 RESEARCH_START = pd.Timestamp("2018-09-01")
 WARMUP_START = pd.Timestamp("2018-05-01")
 RESEARCH_END = pd.Timestamp("2026-08-31")
@@ -38,6 +43,8 @@ def spec() -> dict:
         "trial22": "carry-normalized futures basis innovation",
         "trial23": "CLOSED_COMPONENT_TRIALS_FAILED_NOT_EVALUATED",
         "production_activation": False,
+        "legacy_gate_battery_version": LEGACY_GATE_BATTERY_VERSION,
+        "future_primary_estimand": "DAY_WEIGHTED_FIXED_CAPITAL_NET",
     }
 
 
@@ -235,7 +242,10 @@ def _empty_direction_report():
             "event_weighted_net":None,"event_weighted_gross":None,"day_weighted_net":None,"day_weighted_gross":None,
             "events_per_day":{"mean":None,"median":None,"p90":None,"max":None},
             "effective_sample_unit":"DAYS","effective_sample_size":0,"naive_event_t":None,"day_cluster_t":None,
-            "cluster_to_naive_t_ratio":None,"implied_within_day_corr_approx":None,"day_weighted_sd":None,
+            "cluster_to_naive_t_ratio":None,"implied_within_day_corr_approx":None,"rho_status":"NOT_IDENTIFIED","day_weighted_sd":None,
+            "event_cluster_t":None,"event_cluster_se":None,"cluster_design_effect":None,"unequal_cluster_size":None,"cluster_effective_n":None,
+            "registered_estimand":"EVENT_WEIGHTED_NET_LEGACY_FROZEN","legacy_gate_inference":"DAY_WEIGHTED_T_LEGACY_FROZEN",
+            "future_primary_estimand":"DAY_WEIGHTED_FIXED_CAPITAL_NET","gate_battery_version":LEGACY_GATE_BATTERY_VERSION,
             "win_rate":None,"avg_winner":None,"avg_loser":None,
             "profit_factor":None,"profit_factor_infinite":False,"ci95":[None,None],
             "positive_blocks":0,"blocks":[],"top3_removed_days":[],"top3_removed_mean":None,
@@ -270,28 +280,21 @@ def _direction_report(events: pd.DataFrame, field: str, *, bootstrap_reps: int =
         "p90": float(counts.quantile(0.90)) if len(counts) else None,
         "max": int(counts.max()) if len(counts) else None,
     }
-    if n >= 2:
-        event_sd = float(vals.std(ddof=1)); event_se = event_sd / math.sqrt(n)
-        naive_t = float(mean / event_se) if event_se > 0 else None
-    else:
-        naive_t = None
+    cluster_inf = research_integrity.clustered_mean_inference(vals, x["date"])
+    naive_t = cluster_inf.get("naive_t")
+    event_cluster_t = cluster_inf.get("event_cluster_t")
+    event_cluster_se = cluster_inf.get("cluster_se")
+    design_effect = cluster_inf.get("design_effect")
+    unequal_cluster_size = cluster_inf.get("unequal_cluster_size")
+    cluster_effective_n = cluster_inf.get("effective_n")
+    implied_corr = cluster_inf.get("rho")
+    rho_status = cluster_inf.get("rho_status")
+    t_ratio = (abs(event_cluster_t) / abs(naive_t)) if naive_t not in (None, 0) and event_cluster_t is not None else None
     if len(day_mean) >= 2:
         sd = float(day_mean.std(ddof=1)); se = sd / math.sqrt(len(day_mean))
         t = float(day_mean.mean() / se) if se > 0 else None
     else:
         sd = None; t = None
-    if naive_t not in (None, 0) and t is not None:
-        t_ratio = float(abs(t) / abs(naive_t))
-        mean_cluster = float(n / days) if days else 1.0
-        if mean_cluster > 1.0 and t != 0:
-            design_effect = float((abs(naive_t) / abs(t)) ** 2)
-            rho = (design_effect - 1.0) / (mean_cluster - 1.0)
-            lower = -1.0 / max(mean_cluster - 1.0, 1.0)
-            implied_corr = float(max(lower, min(1.0, rho)))
-        else:
-            implied_corr = None
-    else:
-        t_ratio = None; implied_corr = None
     rng = np.random.default_rng(1000)
     boots=[]
     arr=day_mean.to_numpy(dtype=float)
@@ -333,7 +336,11 @@ def _direction_report(events: pd.DataFrame, field: str, *, bootstrap_reps: int =
             "day_weighted_net":day_weighted_net,"day_weighted_gross":day_weighted_gross,
             "events_per_day":events_per_day,"effective_sample_unit":"DAYS","effective_sample_size":days,
             "naive_event_t":naive_t,"day_cluster_t":t,"cluster_to_naive_t_ratio":t_ratio,
-            "implied_within_day_corr_approx":implied_corr,"day_weighted_sd":sd,
+            "event_cluster_t":event_cluster_t,"event_cluster_se":event_cluster_se,"cluster_design_effect":design_effect,
+            "unequal_cluster_size":unequal_cluster_size,"cluster_effective_n":cluster_effective_n,
+            "implied_within_day_corr_approx":implied_corr,"rho_status":rho_status,"day_weighted_sd":sd,
+            "registered_estimand":"EVENT_WEIGHTED_NET_LEGACY_FROZEN","legacy_gate_inference":"DAY_WEIGHTED_T_LEGACY_FROZEN",
+            "future_primary_estimand":"DAY_WEIGHTED_FIXED_CAPITAL_NET","gate_battery_version":LEGACY_GATE_BATTERY_VERSION,
             "win_rate":float((vals>0).mean()),
             "avg_winner":float(vals[vals>0].mean()) if (vals>0).any() else None,
             "avg_loser":float(vals[vals<0].mean()) if (vals<0).any() else None,
@@ -362,7 +369,7 @@ def _stack_feature_frames(frames: Mapping[str,pd.DataFrame]) -> pd.DataFrame:
     return out[(out["date"]>=RESEARCH_START)&(out["date"]<=RESEARCH_END)].copy()
 
 
-def evaluate_trial21(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300) -> dict:
+def evaluate_trial21(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300, event_artifact_dir=None) -> dict:
     rows=_stack_feature_frames(frames)
     if rows.empty: return {"trial":21,"status":"NO_DATA","pass":False,"final_locked":True}
     rows=apply_trial21_cross_sectional_rules(rows)
@@ -377,13 +384,14 @@ def evaluate_trial21(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int =
     devrows=rows[rows["date"].isin(dev)].copy()
     dev_summary={"bull_mean_net":_finite_or_none(devrows.loc[devrows["trial21_bull"],"long_1d_net"].mean()) if devrows["trial21_bull"].any() else None,
                  "bear_mean_net":_finite_or_none(devrows.loc[devrows["trial21_bear"],"short_1d_net"].mean()) if devrows["trial21_bear"].any() else None}
+    event_artifact = freeze_validation_event_artifacts(21, bull_events, bear_events, event_artifact_dir) if event_artifact_dir is not None else None
     status=_trial_status(bull,bear)
     return {"trial":21,"name":"Hierarchical Residual Strength","status":status,"pass":status.startswith("PASS"),
             "bull":bull,"bear":bear,"bull_2d":bull_2d,"bear_2d":bear_2d,"secondary_2d_can_rescue":False,"development_descriptive":dev_summary,"validation_dates":len(val),
-            "final_locked":True,"final_read":False,"final_fraction":0.20,"production_activation":False}
+            "final_locked":True,"final_read":False,"final_fraction":0.20,"production_activation":False,"event_artifact":event_artifact}
 
 
-def evaluate_trial22(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300) -> dict:
+def evaluate_trial22(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300, event_artifact_dir=None) -> dict:
     rows=_stack_feature_frames(frames)
     if rows.empty: return {"trial":22,"status":"NO_DATA","pass":False,"final_locked":True}
     rows=apply_trial22_rules(rows)
@@ -398,10 +406,11 @@ def evaluate_trial22(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int =
     devrows=rows[rows["date"].isin(dev)].copy()
     dev_summary={"bull_mean_net":_finite_or_none(devrows.loc[devrows["trial22_bull"],"long_1d_net"].mean()) if devrows["trial22_bull"].any() else None,
                  "bear_mean_net":_finite_or_none(devrows.loc[devrows["trial22_bear"],"short_1d_net"].mean()) if devrows["trial22_bear"].any() else None}
+    event_artifact = freeze_validation_event_artifacts(22, bull_events, bear_events, event_artifact_dir) if event_artifact_dir is not None else None
     status=_trial_status(bull,bear)
     return {"trial":22,"name":"Carry-Normalized Futures Basis Innovation","status":status,"pass":status.startswith("PASS"),
             "bull":bull,"bear":bear,"bull_2d":bull_2d,"bear_2d":bear_2d,"secondary_2d_can_rescue":False,"development_descriptive":dev_summary,"validation_dates":len(val),
-            "final_locked":True,"final_read":False,"final_fraction":0.20,"production_activation":False}
+            "final_locked":True,"final_read":False,"final_fraction":0.20,"production_activation":False,"event_artifact":event_artifact}
 
 
 def retro_feasibility_diagnostics() -> dict:
@@ -429,13 +438,70 @@ def retro_feasibility_diagnostics() -> dict:
     }
 
 
-def evaluate_v10(trial21_frames: Mapping[str,pd.DataFrame], trial22_frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300) -> dict:
+def freeze_validation_event_artifacts(trial: int, bull_events: pd.DataFrame, bear_events: pd.DataFrame, artifact_dir) -> dict:
+    """Persist the exact validation event rows and canonical content hashes.
+
+    This is intended for future trial executions. V10.2.1 does not recreate
+    missing historical event rows for already-observed V10.0/V10.2 reads.
+    """
+    from pathlib import Path
+    root = Path(artifact_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    return {
+        "trial": int(trial),
+        "bull": research_integrity.persist_event_artifact(root / f"trial{int(trial)}-bull-validation-events.csv.gz", bull_events),
+        "bear": research_integrity.persist_event_artifact(root / f"trial{int(trial)}-bear-validation-events.csv.gz", bear_events),
+    }
+
+
+def trial21_read_history() -> list[dict]:
+    """Permanent audit record of both already-observed Trial-21 reads.
+
+    The source-code dependency is confirmed: sector histories are fetched at
+    runtime and missing sector frames suppress Trial-21 construction, while
+    Trial 22 does not consume those frames. The historical numeric summaries
+    are retained rather than overwritten.
+    """
+    return [
+        {"build_label":"V10.0","sector_histories_loaded":15,
+         "bull":{"events":586,"days":145,"event_net":-0.00345,"pf":0.67,"day_t":-1.86,"positive_blocks":0},
+         "bear":{"events":284,"days":119,"event_net":-0.00101,"pf":0.85,"day_t":-0.36,"positive_blocks":2},
+         "cause_status":"ORIGINAL_VALIDATION_READ"},
+        {"build_label":"V10.2","sector_histories_loaded":10,
+         "bull":{"events":564,"days":142,"event_net":-0.00338,"pf":0.68,"day_t":-1.39,"positive_blocks":0},
+         "bear":{"events":252,"days":118,"event_net":-0.00267,"pf":0.66,"day_t":-1.61,"positive_blocks":1},
+         "cause_status":"CONFIRMED_RUNTIME_SECTOR_PANEL_DEPENDENCY",
+         "sector_concentration_gate_new_in_v102":False},
+    ]
+
+
+def migrate_previous_result_state(raw: dict) -> dict:
+    """Migrate a completed V10.2 summary into V10.2.1 without rereading alpha data."""
+    result = dict((raw or {}).get("result") or {})
+    result["source_build"] = str((raw or {}).get("build") or PREVIOUS_BUILD_ID)
+    result["build"] = BUILD_ID
+    result["alpha_rerun_performed"] = False
+    result["provenance_lock_status"] = "LEGACY_SUMMARY_LOCKED_RAW_EVENT_ROWS_UNAVAILABLE"
+    result["trial21_read_history"] = trial21_read_history()
+    result["final_read"] = False
+    return {
+        "status":"done", "mode":"v10_integrity_lock", "build":BUILD_ID, "research_only":True,
+        "progress":{"done":1,"total":1,"symbol":None,"stage":"V10.2.1 provenance lock applied; no alpha rerun","stage_index":1,"stage_total":1,"overall_pct":100},
+        "result":result,"error":None,"started_at":(raw or {}).get("started_at"),"finished_at":(raw or {}).get("finished_at"),
+        "worker":{},"migrated_from_build":result["source_build"],
+    }
+
+
+def evaluate_v10(trial21_frames: Mapping[str,pd.DataFrame], trial22_frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300, event_artifact_dir=None) -> dict:
     return {"build":BUILD_ID,"research_only":True,
-            "trial21":evaluate_trial21(trial21_frames,bootstrap_reps=bootstrap_reps),
-            "trial22":evaluate_trial22(trial22_frames,bootstrap_reps=bootstrap_reps),
+            "trial21":evaluate_trial21(trial21_frames,bootstrap_reps=bootstrap_reps,event_artifact_dir=event_artifact_dir),
+            "trial22":evaluate_trial22(trial22_frames,bootstrap_reps=bootstrap_reps,event_artifact_dir=event_artifact_dir),
             "trial21_family_state":"DAILY_SPECIFICATION_REJECTED_FAMILY_NOT_GLOBALLY_REJECTED",
             "trial22_family_state":"ABSOLUTE_BASIS_EVENT_SPEC_REJECTED_CROSS_SECTIONAL_HYPOTHESIS_UNTESTED",
             "trial23_state":"CLOSED_COMPONENT_TRIALS_FAILED_NOT_EVALUATED","trial23_evaluated":False,
             "retro_feasibility":retro_feasibility_diagnostics(),
+            "trial21_read_history":trial21_read_history(),
+            "gate_battery_version":LEGACY_GATE_BATTERY_VERSION,
+            "future_primary_estimand":"DAY_WEIGHTED_FIXED_CAPITAL_NET",
             "trial18_state":"LOCKED","trial19_state":"CLOSED_ASSOCIATION_NOT_INCREMENTAL","trial20_state":"CLOSED_REJECTED_LOG_RV_CONFIRMED",
             "production_activation":False,"active_playbooks_unchanged":True}

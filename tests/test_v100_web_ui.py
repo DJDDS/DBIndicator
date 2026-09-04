@@ -6,11 +6,12 @@ def test_v10_routes_and_ui_are_present_and_trial23_locked():
     html=Path('app/templates/backtest.html').read_text()
     assert '/api/v10/start' in web
     assert '/api/v10/status' in web
-    assert 'V10.2 Research Integrity &amp; Feasibility Repair' in html
+    assert 'V10.2.1 Provenance &amp; Statistical Integrity Lock' in html
     assert 'Trial 21' in html and 'Trial 22' in html
     assert 'Trial 23 CLOSED' in html
     assert 'v10-run-btn' in html
-    assert "'/api/v10/start'" in html
+    assert "'/api/v10/start'" not in html
+    assert 'Alpha reread disabled' in html
 
 
 def test_backtest_page_injects_v10_state():

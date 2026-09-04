@@ -9,6 +9,11 @@ import math
 from statistics import NormalDist
 
 
+class TrialRegistrationRefused(RuntimeError):
+    """Raised when a proposed research trial fails the pre-trial feasibility gate."""
+
+
+
 def minimum_detectable_effect(*, sigma_day: float | None, effective_days: int | None, t_bar: float) -> float | None:
     try:
         sigma = float(sigma_day)
@@ -49,6 +54,7 @@ def assess_pretrial_feasibility(
     t_bar: float,
     source: str | None,
     horizon: str | None,
+    t_bar_name: str | None = None,
 ) -> dict:
     """Fail-closed feasibility decision made before a trial is registered.
 
@@ -61,6 +67,7 @@ def assess_pretrial_feasibility(
         "horizon": horizon,
         "round_trip_cost": float(round_trip_cost),
         "t_bar": float(t_bar),
+        "t_bar_name": t_bar_name or "UNNAMED_T_BAR",
         "effective_days": int(effective_days) if effective_days is not None else None,
         "sigma_day": float(sigma_day) if sigma_day is not None else None,
         "prior_gross_effect": None,
@@ -90,3 +97,11 @@ def assess_pretrial_feasibility(
     base["feasible"] = True
     base["decision"] = "GO_REGISTER_PREREGISTERED_TRIAL"
     return base
+
+
+def require_feasible_registration(assessment: dict) -> dict:
+    """Return a feasible assessment or refuse registration explicitly."""
+    if not bool((assessment or {}).get("feasible")):
+        decision = str((assessment or {}).get("decision") or "DO_NOT_RUN")
+        raise TrialRegistrationRefused(f"Trial registration refused: {decision}")
+    return assessment

@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, v10_directional_edge, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, v10_directional_edge, research_integrity, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -4424,6 +4424,15 @@ def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data
             try: sector_hist[sec]=_v10_fetch_index_daily(kite,sec,v10_directional_edge.WARMUP_START,v10_directional_edge.RESEARCH_END)
             except Exception as exc:
                 log.warning("V10 sector history unavailable for %s: %s",sec,exc); sector_hist[sec]=pd.DataFrame()
+    input_manifest = research_integrity.build_v10_input_manifest(
+        research_symbols=research_symbols, sector_map=sector_map, sector_history_by_symbol=sector_hist, histories=histories,
+        market_history=market, cash_by_symbol=cash,
+        gate_battery_version=v10_directional_edge.LEGACY_GATE_BATTERY_VERSION,
+        cost_model={"round_trip":v10_directional_edge.ROUND_TRIP_COST,"model":"V10_FROZEN_TOTAL_DRAG"},
+    )
+    sector_panel_complete = bool(input_manifest.get("sector_panel_complete"))
+    if not sector_panel_complete:
+        log.error("V10 Trial 21 integrity failure: missing sector histories: %s", input_manifest.get("missing_sector_histories"))
     if stage_cb: stage_cb(3,4,"V10 · building Trial 21 residual strength + Trial 22 basis",60)
     t21={}; t22={}; skipped={}; total=len(research_symbols)
     for i,symbol in enumerate(research_symbols,1):
@@ -4434,7 +4443,7 @@ def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data
         p=px.copy(); p.index=pd.to_datetime(p.index).tz_localize(None).normalize(); p=p[~p.index.duplicated(keep="last")].sort_index()
         # Trial 21 requires both NIFTY and a mapped sector; missing context fails closed.
         sec_name=sector_map.get(symbol); sec=sector_hist.get(sec_name) if sec_name else None
-        if isinstance(market,pd.DataFrame) and not market.empty and isinstance(sec,pd.DataFrame) and not sec.empty:
+        if sector_panel_complete and isinstance(market,pd.DataFrame) and not market.empty and isinstance(sec,pd.DataFrame) and not sec.empty:
             f21=v10_directional_edge.trial21_features(p,market,sec)
             f21=v10_directional_edge.build_directional_outcomes(f21); f21["sector"]=sec_name
             membership=hist.get("membership")
@@ -4457,9 +4466,15 @@ def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data
         research_runtime.release_memory_pressure()
         if progress_cb: progress_cb(i,total,symbol)
     if stage_cb: stage_cb(4,4,"V10 · frozen validation; final 20% remains unread",92)
-    ev=v10_directional_edge.evaluate_v10(t21,t22)
+    event_artifact_dir = (_RESEARCH_STATE_DIR / "v10-event-artifacts" / v10_directional_edge.BUILD_ID) if integrity_data.get("_explicit_internal_replay") else None
+    ev=v10_directional_edge.evaluate_v10(t21,t22,event_artifact_dir=event_artifact_dir)
+    if not sector_panel_complete:
+        ev["trial21"]={"trial":21,"name":"Hierarchical Residual Strength","status":"INTEGRITY_FAILURE_SECTOR_PANEL_INCOMPLETE",
+                       "pass":False,"final_locked":True,"final_read":False,"production_activation":False,
+                       "integrity_failure":"SECTOR_PANEL_INCOMPLETE","missing_sector_histories":input_manifest.get("missing_sector_histories") or []}
     return {"build":v10_directional_edge.BUILD_ID,"symbols_scanned":len(research_symbols),"symbols_trial21":len(t21),"symbols_trial22":len(t22),
-            "symbols_skipped":skipped,"integrity":{"futures_archive_date_coverage":float(meta.get("date_coverage") or 0.0),"cash_archive_date_coverage":float(cash_meta.get("date_coverage") or 0.0),"market_history_available":bool(isinstance(market,pd.DataFrame) and not market.empty),"sector_histories_available":sum(isinstance(x,pd.DataFrame) and not x.empty for x in sector_hist.values()),"prior_locked_finals_read":False},
+            "symbols_skipped":skipped,"input_manifest":input_manifest,"integrity":{"futures_archive_date_coverage":float(meta.get("date_coverage") or 0.0),"cash_archive_date_coverage":float(cash_meta.get("date_coverage") or 0.0),"market_history_available":bool(isinstance(market,pd.DataFrame) and not market.empty),"sector_histories_available":sum(isinstance(x,pd.DataFrame) and not x.empty for x in sector_hist.values()),
+            "sector_histories_expected":input_manifest.get("sector_histories_expected"),"sector_panel_complete":sector_panel_complete,"missing_sector_histories":input_manifest.get("missing_sector_histories") or [],"input_manifest_sha256":input_manifest.get("manifest_sha256"),"prior_locked_finals_read":False},
             "trial21":ev["trial21"],"trial22":ev["trial22"],"trial23_state":ev["trial23_state"],"trial23_evaluated":False,
             "trial21_family_state":ev.get("trial21_family_state"),"trial22_family_state":ev.get("trial22_family_state"),
             "retro_feasibility":ev.get("retro_feasibility"),"final_read":False,
@@ -5735,10 +5750,13 @@ def _load_v10_state():
     if not _V10_STATE_PATH.exists(): return _default_v10_state()
     try: raw=json.loads(_V10_STATE_PATH.read_text(encoding="utf-8"))
     except Exception: return _default_v10_state()
-    if str(raw.get("build") or "") != v10_directional_edge.BUILD_ID: return _default_v10_state()
+    raw_build=str(raw.get("build") or "")
+    if raw_build == v10_directional_edge.PREVIOUS_BUILD_ID and raw.get("status")=="done" and raw.get("result"):
+        return v10_directional_edge.migrate_previous_result_state(raw)
+    if raw_build != v10_directional_edge.BUILD_ID: return _default_v10_state()
     out=_default_v10_state(); out.update(raw); out["build"]=v10_directional_edge.BUILD_ID
     if out.get("status")=="running":
-        out["status"]="error"; out["error"]="V10 research worker restarted before completion; run again."
+        out["status"]="error"; out["error"]="V10 research worker restarted before completion; V10.2.1 will not reread alpha data."
     return out
 
 _v10_lock=threading.Lock(); _v10_state=_load_v10_state()
@@ -5754,6 +5772,9 @@ def get_v10_directional_state():
     out["worker"]=research_runtime.snapshot(); return out
 
 def start_v10_directional_lab(kite, symbols=None, integrity_data=None):
+    integrity_data=dict(integrity_data or {})
+    if not bool(integrity_data.get("_explicit_internal_replay")):
+        return {"started":False,"reason":"V10.2.1 is a provenance lock and refuses new alpha rereads.","build":v10_directional_edge.BUILD_ID}
     symbols=[str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
     with _v10_lock:
         if _v10_state.get("status")=="running": return {"started":False,"reason":"V10 Directional Edge Laboratory is already running."}

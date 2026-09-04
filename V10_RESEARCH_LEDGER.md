@@ -1,33 +1,47 @@
 # V10 Research Ledger
 
-This ledger is permanent. A closed specification is never silently retuned into a pass.
+## Permanent locks
 
-## Trial 21 — Hierarchical Residual Strength, 1D
-- **Record:** CLOSED — DAILY SPECIFICATION REJECTED.
-- **Meaning:** the registered 5-day residual-strength / next-open-to-next-close implementation failed. This does **not** claim that canonical residual momentum is globally absent.
-- **Final 20%:** unread.
-- **Reopening:** prohibited. A published-specification residual-momentum replication requires a new trial number.
+- Trial 18: LOCKED.
+- Trial 19: CLOSED — association, not incremental.
+- Trial 20: CLOSED — log-RV integrity closure confirmed rejection.
+- Trial 23: CLOSED — component trials failed; Trial 23 itself was NEVER EVALUATED. Any redesigned combination requires a new trial number.
+- Final 20% of the V10 directional window remains UNREAD.
+- Live Opportunity Radar remains unchanged.
 
-## Trial 22 — Carry-Normalized Futures Basis Innovation, absolute event rule, 1D
-- **Record:** CLOSED — ABSOLUTE BASIS-EVENT SPECIFICATION REJECTED.
-- **Meaning:** the absolute time-series z-score rule frequently fired many names together and did not establish a tradable one-day edge. A true fixed-count same-day cross-sectional basis test remains **UNTESTED**.
-- **Final 20%:** unread.
-- **Reopening:** prohibited. Any cross-sectional redesign is a new trial.
+## Trial 21 — Hierarchical Residual Strength
 
-## Trial 23 — Combined V10 score
-- **Record:** CLOSED — COMPONENT TRIALS FAILED; TRIAL 23 ITSELF WAS NEVER EVALUATED.
-- No combined score was run and no final data were read.
-- A future combination of redesigned components requires a new trial number.
+Status: `DAILY_SPECIFICATION_REJECTED_FAMILY_NOT_GLOBALLY_REJECTED`.
 
-## Permanent pre-trial rule introduced in V10.2
-Before any new trial number is issued, registration must state:
-1. cited prior/source and prior effect magnitude;
-2. source horizon and target horizon;
-3. frozen executable round-trip cost;
-4. expected net effect after cost;
-5. effective independent sample size / clustering unit;
-6. multiplicity-appropriate t hurdle;
-7. minimum detectable effect (MDE);
-8. normal-approximation power.
+Both observed validation reads are retained:
 
-If the prior net effect is non-positive, the prior magnitude is absent, or the MDE exceeds the prior net effect, the design is **DO NOT RUN** and consumes no trial number.
+| Read | Sector histories loaded | Bull events/days | Bull net | Bear events/days | Bear net |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| V10.0 | 15 | 586 / 145 | -0.345% | 284 / 119 | -0.101% |
+| V10.2 | 10 | 564 / 142 | -0.338% | 252 / 118 | -0.267% |
+
+Cause status: `CONFIRMED_RUNTIME_SECTOR_PANEL_DEPENDENCY`. Trial 21 constructs residuals only when both the market and mapped sector history are non-empty. A thinner runtime sector panel therefore changed residuals and the event set. Trial 22 does not consume sector history and remained bit-identical.
+
+The V10.2 read is a second read and is not allowed to overwrite the V10.0 read. Neither read is promoted; both reject the registered one-day specification. The residual-momentum family remains untested at its published longer horizon.
+
+Audit note: `SECTOR_CONCENTRATION` was already present in V10.0 source; its appearance in V10.2 reflects the changed event set, not a new gate.
+
+## Trial 22 — Carry-Normalized Futures Basis Innovation
+
+Status: `ABSOLUTE_BASIS_EVENT_SPEC_REJECTED_CROSS_SECTIONAL_HYPOTHESIS_UNTESTED`.
+
+V10.2 reconciliation is bit-identical to V10.0 for the registered event set. The event/day weighting split is retained as hypothesis-generating evidence only; it cannot be used as a prior effect magnitude for a new trial.
+
+A redesigned fixed-count cross-sectional basis trial requires an independent external prior effect magnitude and must pass the feasibility gate before registration.
+
+## V10.2.1 integrity rules
+
+- New alpha rereads of Trials 21/22 are disabled.
+- Completed V10.2 summaries migrate read-only.
+- Legacy raw event rows are not reconstructed. Future trials must persist exact validation event artifacts and hashes at first execution.
+- Sector panels, membership, lot-size inputs, universe, cost model and gate battery are versioned/hashed.
+- Incomplete required sector panels fail closed.
+- Legacy registered estimand: event-weighted net, with historical gate verdicts frozen.
+- Matching diagnostic added: date-clustered t on the same event-weighted mean.
+- Future primary estimand: day-weighted fixed-capital net return with matching inference.
+- Feasibility t-bar must be named; `DO_NOT_RUN` is binding and refuses registration.
