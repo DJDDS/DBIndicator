@@ -19,4 +19,4 @@ def test_v11_template_has_new_trial_button_and_locked_final_copy():
 
 def test_v11_release_marker_is_current_research_build():
     marker = Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip()
-    assert marker == "2026-09-04-INSTITUTIONAL-V11.0.1-IIMA-FACTOR-SCHEMA-HOTFIX"
+    assert marker == "2026-09-04-INSTITUTIONAL-V11.0.2-IIMA-MF-SCHEMA-HOTFIX"

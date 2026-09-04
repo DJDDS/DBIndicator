@@ -50,7 +50,7 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
 
     aliases = {
         "date": {"date", "month", "yyyymm"},
-        "rm_rf": {"rmrf", "mktrf", "marketpremium", "marketriskpremium", "marketminusrf"},
+        "rm_rf": {"rmrf", "mktrf", "mf", "marketpremium", "marketriskpremium", "marketminusrf"},
         "smb": {"smb"},
         "hml": {"hml"},
         "wml": {"wml", "mom", "momentum"},

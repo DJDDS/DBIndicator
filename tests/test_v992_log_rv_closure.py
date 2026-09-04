@@ -89,7 +89,7 @@ def test_v992_release_and_ui_expose_log_rv_integrity_closure():
     assert spec["volume_threshold"] is None
     assert spec["window"] == ["2015-09-01", "2018-08-31"]
 
-    current = "2026-09-04-INSTITUTIONAL-V11.0.1-IIMA-FACTOR-SCHEMA-HOTFIX"
+    current = "2026-09-04-INSTITUTIONAL-V11.0.2-IIMA-MF-SCHEMA-HOTFIX"
     assert (ROOT / "RESEARCH_BUILD.txt").read_text().strip() == current
     assert (ROOT / "PRODUCTION_BUILD.txt").read_text().strip() == '2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'
     html = (ROOT / "app/templates/backtest.html").read_text(encoding="utf-8")
