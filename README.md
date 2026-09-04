@@ -1,3 +1,7 @@
+# DBIndicator V10.2 — Research Integrity & Feasibility Repair
+
+Current research build repairs V10 reporting/feasibility only. No new alpha trial is run; Trial 21/22 specifications remain closed, Trial 23 is closed-but-never-evaluated, and the final 20% remains unread.
+
 # DBIndicator — V9.8 Incremental OI Validation
 
 **Build:** `2026-09-03-INSTITUTIONAL-V9.8.0-INCREMENTAL-OI-VALIDATION`

@@ -34,7 +34,7 @@ def test_direction_report_fails_negative_expectancy_even_with_many_events():
 
 def test_evaluate_v10_keeps_trial23_locked():
     out=v10.evaluate_v10({}, {})
-    assert out["trial23_state"] == "LOCKED_PENDING_TRIAL21_AND_22"
+    assert out["trial23_state"] == "CLOSED_COMPONENT_TRIALS_FAILED_NOT_EVALUATED"
     assert out["production_activation"] is False
     assert out["active_playbooks_unchanged"] is True
 

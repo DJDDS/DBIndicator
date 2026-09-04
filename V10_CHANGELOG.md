@@ -1,6 +1,6 @@
 # V10.0 Directional Edge Laboratory
 
-Build: `2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB`
+Build: `2026-09-03-INSTITUTIONAL-V10.0.1-DIRECTIONAL-EDGE-LAB-PROGRESS-HOTFIX`
 
 ## Why V10 exists
 V9.9.2 cleanly closed Trial 20: abnormal FUTSTK volume did not provide stable, broad incremental OOS magnitude forecasting value beyond the HAR benchmark. V10 therefore stops searching the OI/volume magnitude family and begins a new directional research programme.
@@ -36,3 +36,10 @@ V9.9.2 cleanly closed Trial 20: abnormal FUTSTK volume did not provide stable, b
 - Trial 20 remains CLOSED — rejected after log-RV integrity closure.
 - `ACTIVE_PLAYBOOKS = ()` unchanged.
 - Live Opportunity Radar scoring unchanged; V10 is research/shadow only.
+
+
+## V10.0.1 progress hotfix
+- No research feature, threshold, cost, evidence window, split, gate, or Trial-23 lock changed.
+- Wired the existing NSE futures/cash archive date-level callbacks into V10 state.
+- Stage 1 now reports `FUTSTK archive done/total · YYYY-MM-DD`; Stage 2 reports cash archive progress.
+- Stage 3 remains symbol-level Trial-21/22 feature construction.

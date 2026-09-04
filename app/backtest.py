@@ -4382,16 +4382,24 @@ def _v10_fetch_index_daily(kite, tradingsymbol, start, end):
     return df[~df.index.duplicated(keep="last")].sort_index()
 
 
-def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data=None, stage_cb=None) -> dict:
+def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data=None, stage_cb=None, input_progress_cb=None) -> dict:
     """Run V10 Trials 21 and 22 independently; Trial 23 remains locked."""
     symbols = [str(x).strip().upper() for x in (symbols or settings.WATCHLIST)]
     integrity_data = dict(integrity_data or {})
     days = pd.bdate_range(v10_directional_edge.WARMUP_START, v10_directional_edge.RESEARCH_END)
     if stage_cb: stage_cb(1,4,"V10 · loading official NSE FUTSTK contract history",5)
+    def _archive_progress(stage_index, stage, pct_start, pct_end, done, total, item):
+        if input_progress_cb:
+            frac = float(done) / max(int(total), 1)
+            overall = int(round(float(pct_start) + frac * (float(pct_end) - float(pct_start))))
+            input_progress_cb(int(stage_index), 4, stage, overall, int(done), int(total), item)
     histories = integrity_data.get("nse_history_by_symbol")
     if histories is None:
         client=nse_futures_history.NSEFuturesArchiveClient(cache_dir=_RESEARCH_STATE_DIR/"nse-fo-bhavcopy")
-        histories=nse_futures_history.build_symbol_histories(days,symbols,client,discover_historical=True)
+        histories=nse_futures_history.build_symbol_histories(
+            days, symbols, client, discover_historical=True,
+            progress_cb=lambda done,total,item: _archive_progress(1,"V10 · FUTSTK archive",5,29,done,total,item),
+        )
     meta=dict((histories or {}).get("_meta") or {})
     discovered=sorted(k for k in (histories or {}) if k!="_meta")
     research_symbols=discovered or symbols
@@ -4399,7 +4407,10 @@ def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data
     cash=integrity_data.get("nse_cash_by_symbol")
     if cash is None:
         client=nse_cash_history.NSECashArchiveClient(cache_dir=_RESEARCH_STATE_DIR/"nse-cm-bhavcopy")
-        cash=nse_cash_history.build_symbol_price_histories(days,research_symbols,client)
+        cash=nse_cash_history.build_symbol_price_histories(
+            days, research_symbols, client,
+            progress_cb=lambda done,total,item: _archive_progress(2,"V10 · cash archive",30,59,done,total,item),
+        )
     cash_meta=dict((cash or {}).get("_meta") or {})
     market=integrity_data.get("market_history")
     if market is None:
@@ -4449,7 +4460,9 @@ def run_v10_directional_lab(kite, symbols=None, progress_cb=None, integrity_data
     ev=v10_directional_edge.evaluate_v10(t21,t22)
     return {"build":v10_directional_edge.BUILD_ID,"symbols_scanned":len(research_symbols),"symbols_trial21":len(t21),"symbols_trial22":len(t22),
             "symbols_skipped":skipped,"integrity":{"futures_archive_date_coverage":float(meta.get("date_coverage") or 0.0),"cash_archive_date_coverage":float(cash_meta.get("date_coverage") or 0.0),"market_history_available":bool(isinstance(market,pd.DataFrame) and not market.empty),"sector_histories_available":sum(isinstance(x,pd.DataFrame) and not x.empty for x in sector_hist.values()),"prior_locked_finals_read":False},
-            "trial21":ev["trial21"],"trial22":ev["trial22"],"trial23_state":ev["trial23_state"],"final_read":False,
+            "trial21":ev["trial21"],"trial22":ev["trial22"],"trial23_state":ev["trial23_state"],"trial23_evaluated":False,
+            "trial21_family_state":ev.get("trial21_family_state"),"trial22_family_state":ev.get("trial22_family_state"),
+            "retro_feasibility":ev.get("retro_feasibility"),"final_read":False,
             "research_only":True,"production_activation":False,"active_playbooks_unchanged":True,
             "trial18_state":"LOCKED","trial19_state":"CLOSED_ASSOCIATION_NOT_INCREMENTAL","trial20_state":"CLOSED_REJECTED_LOG_RV_CONFIRMED"}
 
@@ -5758,9 +5771,14 @@ def start_v10_directional_lab(kite, symbols=None, integrity_data=None):
         with _v10_lock:
             cur=_v10_state.get("progress") or {}; _v10_state["progress"]={"done":cur.get("done",0),"total":cur.get("total",len(symbols)),"symbol":None,"stage":stage,"stage_index":int(stage_index),"stage_total":int(stage_total),"overall_pct":int(overall_pct)}
         _persist_v10_state()
+    def _input_progress(stage_index,stage_total,stage,overall_pct,done,total,item):
+        research_runtime.heartbeat(stage=stage,symbol=item,done=done,total=total)
+        with _v10_lock:
+            _v10_state["progress"]={"done":int(done),"total":int(total),"symbol":item,"stage":stage,"stage_index":int(stage_index),"stage_total":int(stage_total),"overall_pct":int(overall_pct)}
+        if done==0 or done==total or (done>0 and done%25==0): _persist_v10_state()
     def _job():
         try:
-            with research_runtime.research_slot(): result=run_v10_directional_lab(kite,symbols=symbols,progress_cb=_progress,integrity_data=integrity_data,stage_cb=_stage)
+            with research_runtime.research_slot(): result=run_v10_directional_lab(kite,symbols=symbols,progress_cb=_progress,integrity_data=integrity_data,stage_cb=_stage,input_progress_cb=_input_progress)
             with _v10_lock:
                 _v10_state["progress"]={"done":result.get("symbols_scanned",len(symbols)),"total":result.get("symbols_scanned",len(symbols)),"symbol":None,"stage":"Complete","stage_index":4,"stage_total":4,"overall_pct":100}
                 _v10_state["result"]=result; _v10_state["status"]="done"; _v10_state["error"]=None; _v10_state["finished_at"]=now_ist().isoformat(timespec="seconds")

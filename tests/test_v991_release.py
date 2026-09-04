@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = '2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB'
+BUILD = '2026-09-03-INSTITUTIONAL-V10.2-RESEARCH-INTEGRITY-FEASIBILITY'
 
 
 def test_v991_release_markers_and_changelog():

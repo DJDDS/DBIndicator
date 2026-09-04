@@ -1,8 +1,9 @@
-"""V10.0 directional edge laboratory.
+"""V10.2 research integrity and feasibility repair for the V10 directional lab.
 
-Research-only Trials 21/22.  Trial 23 is locked unless both independent
-families later pass their preregistered validation gates.  This module has no
-production activation path and does not modify the live Opportunity Radar.
+Trials 21/22 remain frozen exactly as registered.  V10.2 repairs reporting
+basis, records Trial 23 as closed-but-never-evaluated, and adds pre-trial
+feasibility infrastructure.  It has no production activation path and does
+not modify the live Opportunity Radar.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-BUILD_ID = "2026-09-03-INSTITUTIONAL-V10.0.0-DIRECTIONAL-EDGE-LAB"
+BUILD_ID = "2026-09-03-INSTITUTIONAL-V10.2-RESEARCH-INTEGRITY-FEASIBILITY"
 RESEARCH_START = pd.Timestamp("2018-09-01")
 WARMUP_START = pd.Timestamp("2018-05-01")
 RESEARCH_END = pd.Timestamp("2026-08-31")
@@ -35,7 +36,7 @@ def spec() -> dict:
         "cost_round_trip": ROUND_TRIP_COST,
         "trial21": "hierarchical residual strength",
         "trial22": "carry-normalized futures basis innovation",
-        "trial23": "LOCKED_PENDING_TRIAL21_AND_22",
+        "trial23": "CLOSED_COMPONENT_TRIALS_FAILED_NOT_EVALUATED",
         "production_activation": False,
     }
 
@@ -230,8 +231,13 @@ def _finite_or_none(value):
 
 
 def _empty_direction_report():
-    return {"event_count":0,"event_days":0,"mean_net":None,"win_rate":None,"avg_winner":None,"avg_loser":None,
-            "profit_factor":None,"profit_factor_infinite":False,"day_cluster_t":None,"ci95":[None,None],
+    return {"event_count":0,"event_days":0,"mean_net":None,
+            "event_weighted_net":None,"event_weighted_gross":None,"day_weighted_net":None,"day_weighted_gross":None,
+            "events_per_day":{"mean":None,"median":None,"p90":None,"max":None},
+            "effective_sample_unit":"DAYS","effective_sample_size":0,"naive_event_t":None,"day_cluster_t":None,
+            "cluster_to_naive_t_ratio":None,"implied_within_day_corr_approx":None,"day_weighted_sd":None,
+            "win_rate":None,"avg_winner":None,"avg_loser":None,
+            "profit_factor":None,"profit_factor_infinite":False,"ci95":[None,None],
             "positive_blocks":0,"blocks":[],"top3_removed_days":[],"top3_removed_mean":None,
             "top5_symbol_positive_share":None,"top3_sector_positive_share":None,
             "failed_gates":["EVENTS","DAYS","EXPECTANCY","T","PF","BLOCKS","TOP3","CONCENTRATION"],"pass":False}
@@ -253,11 +259,39 @@ def _direction_report(events: pd.DataFrame, field: str, *, bootstrap_reps: int =
     pf_infinite = bool(neg <= 0 and pos > 0)
     pf = float(pos / neg) if neg > 0 else None
     day_mean = x.groupby("date")[field].mean().sort_index()
+    event_weighted_net = mean
+    day_weighted_net = float(day_mean.mean()) if len(day_mean) else None
+    event_weighted_gross = event_weighted_net + ROUND_TRIP_COST if event_weighted_net is not None else None
+    day_weighted_gross = day_weighted_net + ROUND_TRIP_COST if day_weighted_net is not None else None
+    counts = x.groupby("date").size().astype(float)
+    events_per_day = {
+        "mean": float(counts.mean()) if len(counts) else None,
+        "median": float(counts.median()) if len(counts) else None,
+        "p90": float(counts.quantile(0.90)) if len(counts) else None,
+        "max": int(counts.max()) if len(counts) else None,
+    }
+    if n >= 2:
+        event_sd = float(vals.std(ddof=1)); event_se = event_sd / math.sqrt(n)
+        naive_t = float(mean / event_se) if event_se > 0 else None
+    else:
+        naive_t = None
     if len(day_mean) >= 2:
         sd = float(day_mean.std(ddof=1)); se = sd / math.sqrt(len(day_mean))
         t = float(day_mean.mean() / se) if se > 0 else None
     else:
-        t = None
+        sd = None; t = None
+    if naive_t not in (None, 0) and t is not None:
+        t_ratio = float(abs(t) / abs(naive_t))
+        mean_cluster = float(n / days) if days else 1.0
+        if mean_cluster > 1.0 and t != 0:
+            design_effect = float((abs(naive_t) / abs(t)) ** 2)
+            rho = (design_effect - 1.0) / (mean_cluster - 1.0)
+            lower = -1.0 / max(mean_cluster - 1.0, 1.0)
+            implied_corr = float(max(lower, min(1.0, rho)))
+        else:
+            implied_corr = None
+    else:
+        t_ratio = None; implied_corr = None
     rng = np.random.default_rng(1000)
     boots=[]
     arr=day_mean.to_numpy(dtype=float)
@@ -294,10 +328,16 @@ def _direction_report(events: pd.DataFrame, field: str, *, bootstrap_reps: int =
     if top3_mean is None or top3_mean <= 0: failed.append("TOP3")
     if top5_share is not None and top5_share > MAX_TOP5_SYMBOL_POS_SHARE: failed.append("CONCENTRATION")
     if top3_sec is not None and top3_sec > MAX_TOP3_SECTOR_POS_SHARE: failed.append("SECTOR_CONCENTRATION")
-    return {"event_count":n,"event_days":days,"mean_net":mean,"win_rate":float((vals>0).mean()),
+    return {"event_count":n,"event_days":days,"mean_net":mean,
+            "event_weighted_net":event_weighted_net,"event_weighted_gross":event_weighted_gross,
+            "day_weighted_net":day_weighted_net,"day_weighted_gross":day_weighted_gross,
+            "events_per_day":events_per_day,"effective_sample_unit":"DAYS","effective_sample_size":days,
+            "naive_event_t":naive_t,"day_cluster_t":t,"cluster_to_naive_t_ratio":t_ratio,
+            "implied_within_day_corr_approx":implied_corr,"day_weighted_sd":sd,
+            "win_rate":float((vals>0).mean()),
             "avg_winner":float(vals[vals>0].mean()) if (vals>0).any() else None,
             "avg_loser":float(vals[vals<0].mean()) if (vals<0).any() else None,
-            "profit_factor":pf,"profit_factor_infinite":pf_infinite,"day_cluster_t":t,"ci95":ci,"positive_blocks":int(positive_blocks),"blocks":blocks,
+            "profit_factor":pf,"profit_factor_infinite":pf_infinite,"ci95":ci,"positive_blocks":int(positive_blocks),"blocks":blocks,
             "top3_removed_days":[str(pd.Timestamp(d).date()) for d in top_days],"top3_removed_mean":top3_mean,
             "top5_symbol_positive_share":top5_share,"top3_sector_positive_share":top3_sec,
             "failed_gates":failed,"pass":not failed}
@@ -364,10 +404,38 @@ def evaluate_trial22(frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int =
             "final_locked":True,"final_read":False,"final_fraction":0.20,"production_activation":False}
 
 
+def retro_feasibility_diagnostics() -> dict:
+    """Audit-only feasibility reconstruction; spends no new outcome data.
+
+    The Trial-21 range is taken from the supplied V10 audit addendum's
+    one-day pro-ration of published residual-momentum evidence.  Trial 22 did
+    not register a published effect magnitude, so it fails closed.
+    """
+    low=0.00033; high=0.00070
+    return {
+        "trial21_one_day_prior": {
+            "source": "V10 audit addendum reconstruction of published residual momentum",
+            "prior_gross_low": low, "prior_gross_high": high,
+            "round_trip_cost": ROUND_TRIP_COST,
+            "expected_net_low": low-ROUND_TRIP_COST, "expected_net_high": high-ROUND_TRIP_COST,
+            "decision": "DO_NOT_RUN_COST_WALL",
+        },
+        "trial22_prior": {
+            "source": None, "prior_gross_effect": None,
+            "round_trip_cost": ROUND_TRIP_COST,
+            "decision": "DO_NOT_RUN_PRIOR_EFFECT_REQUIRED",
+        },
+        "new_alpha_data_spent": False, "final_read": False,
+    }
+
+
 def evaluate_v10(trial21_frames: Mapping[str,pd.DataFrame], trial22_frames: Mapping[str,pd.DataFrame], *, bootstrap_reps: int = 300) -> dict:
     return {"build":BUILD_ID,"research_only":True,
             "trial21":evaluate_trial21(trial21_frames,bootstrap_reps=bootstrap_reps),
             "trial22":evaluate_trial22(trial22_frames,bootstrap_reps=bootstrap_reps),
-            "trial23_state":"LOCKED_PENDING_TRIAL21_AND_22","trial23_evaluated":False,
+            "trial21_family_state":"DAILY_SPECIFICATION_REJECTED_FAMILY_NOT_GLOBALLY_REJECTED",
+            "trial22_family_state":"ABSOLUTE_BASIS_EVENT_SPEC_REJECTED_CROSS_SECTIONAL_HYPOTHESIS_UNTESTED",
+            "trial23_state":"CLOSED_COMPONENT_TRIALS_FAILED_NOT_EVALUATED","trial23_evaluated":False,
+            "retro_feasibility":retro_feasibility_diagnostics(),
             "trial18_state":"LOCKED","trial19_state":"CLOSED_ASSOCIATION_NOT_INCREMENTAL","trial20_state":"CLOSED_REJECTED_LOG_RV_CONFIRMED",
             "production_activation":False,"active_playbooks_unchanged":True}
