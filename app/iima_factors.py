@@ -27,21 +27,39 @@ def _norm_col(value: str) -> str:
 
 
 def _parse_month(values: pd.Series) -> pd.DatetimeIndex:
-    s = values.astype(str).str.strip()
-    parsed = pd.to_datetime(s, errors="coerce")
-    # pandas treats YYYYMM integers poorly in generic mode; recover explicitly.
-    bad = parsed.isna()
-    if bad.any():
-        compact = s[bad].str.replace(r"\.0$", "", regex=True)
-        recovered = pd.to_datetime(compact, format="%Y%m", errors="coerce")
-        parsed.loc[bad] = recovered
+    s = values.astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    parsed = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
+    compact_mask = s.str.fullmatch(r"\d{6}", na=False)
+    if compact_mask.any():
+        parsed.loc[compact_mask] = pd.to_datetime(
+            s.loc[compact_mask], format="%Y%m", errors="coerce"
+        )
+    other = ~compact_mask
+    if other.any():
+        parsed.loc[other] = pd.to_datetime(s.loc[other], errors="coerce")
     if parsed.isna().any():
-        raise ValueError("IIMA factor file contains unparseable month values")
+        bad_pos = int(parsed.isna().to_numpy().nonzero()[0][0])
+        raise ValueError(f"IIMA factor file contains unparseable month value: {s.iloc[bad_pos]!r}")
     return pd.DatetimeIndex(parsed).to_period("M").to_timestamp("M")
 
 
-def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
-    """Parse the pinned IIMA monthly factor CSV into decimal monthly returns."""
+def parse_iima_monthly_factors(
+    content: str | bytes,
+    *,
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    required_factors: tuple[str, ...] = _REQUIRED,
+    require_complete_window: bool = False,
+) -> pd.DataFrame:
+    """Parse the pinned IIMA monthly factor CSV into decimal monthly returns.
+
+    When ``start``/``end`` are supplied, only that preregistered consumer
+    window is validated. Rows outside the requested window remain part of the
+    pinned source hash but cannot block an experiment that never consumes them.
+    ``required_factors`` lets FF3 consumers avoid requiring WML, which is not
+    an input to the Trial-24 residualisation. ``require_complete_window`` makes
+    a fully bounded monthly consumer fail closed if any month is absent.
+    """
     if isinstance(content, bytes):
         content = content.decode("utf-8-sig", errors="replace")
     frame = pd.read_csv(io.StringIO(str(content)), keep_default_na=False)
@@ -63,7 +81,11 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
             if name in normalized:
                 chosen[target] = normalized[name]
                 break
-    missing = [x for x in ("date",) + _REQUIRED if x not in chosen]
+    requested = tuple(str(x) for x in required_factors)
+    unknown = [x for x in requested if x not in _REQUIRED]
+    if unknown:
+        raise ValueError(f"unknown IIMA factor requirement(s): {', '.join(unknown)}")
+    missing = [x for x in ("date",) + requested if x not in chosen]
     if missing:
         raise ValueError(
             f"IIMA factor file missing required columns: {', '.join(missing)}; "
@@ -71,8 +93,31 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
         )
 
     months = _parse_month(frame[chosen["date"]])
+    mask = pd.Series(True, index=frame.index)
+    if start is not None:
+        start_month = pd.Timestamp(start).to_period("M").to_timestamp("M")
+        mask &= months >= start_month
+    if end is not None:
+        end_month = pd.Timestamp(end).to_period("M").to_timestamp("M")
+        mask &= months <= end_month
+    frame = frame.loc[mask].reset_index(drop=True)
+    months = pd.DatetimeIndex(months[mask.to_numpy()])
+    if frame.empty:
+        raise ValueError("IIMA factor file has no rows in the requested window")
+
+    if require_complete_window:
+        if start is None or end is None:
+            raise ValueError("complete IIMA factor window requires both start and end")
+        expected_months = pd.period_range(start_month, end_month, freq="M").to_timestamp("M")
+        missing_months = expected_months.difference(months)
+        if len(missing_months):
+            rendered = ", ".join(pd.Timestamp(x).strftime("%Y-%m") for x in missing_months)
+            raise ValueError(
+                f"IIMA factor file missing required month(s) in requested window: {rendered}"
+            )
+
     out = pd.DataFrame(index=months)
-    for col in _REQUIRED:
+    for col in requested:
         raw = frame[chosen[col]].astype(str)
         cleaned = (
             raw.str.replace("\u00a0", " ", regex=False)
@@ -111,7 +156,7 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
     out = out.sort_index()
     if out.index.has_duplicates:
         raise ValueError("IIMA factor file has duplicate months")
-    return out[list(_REQUIRED)]
+    return out[list(requested)]
 
 
 class IIMAFactorClient:
@@ -123,7 +168,14 @@ class IIMAFactorClient:
     def cache_path(self) -> Path:
         return self.cache_dir / f"iima_four_factors_monthly_{PINNED_RELEASE}.csv"
 
-    def load_monthly(self) -> tuple[pd.DataFrame, dict]:
+    def load_monthly(
+        self,
+        *,
+        start: str | pd.Timestamp | None = None,
+        end: str | pd.Timestamp | None = None,
+        required_factors: tuple[str, ...] = _REQUIRED,
+        require_complete_window: bool = False,
+    ) -> tuple[pd.DataFrame, dict]:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         path = self.cache_path
         source = "cache"
@@ -137,7 +189,13 @@ class IIMAFactorClient:
             tmp.write_bytes(raw)
             tmp.replace(path)
             source = "network"
-        frame = parse_iima_monthly_factors(raw)
+        frame = parse_iima_monthly_factors(
+            raw,
+            start=start,
+            end=end,
+            required_factors=required_factors,
+            require_complete_window=require_complete_window,
+        )
         return frame, {
             "release": PINNED_RELEASE,
             "url": PINNED_MONTHLY_URL,

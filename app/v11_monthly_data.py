@@ -125,7 +125,12 @@ def build_trial24_inputs(cache_dir: str | Path, progress_cb=None) -> dict:
     fo_client = NSEFuturesArchiveClient(cache_dir=root / "fo", prefer_market_activity=False)
     cash_client = NSECashArchiveClient(cache_dir=root / "cm")
     factor_client = IIMAFactorClient(root / "factors")
-    factors, factor_meta = factor_client.load_monthly()
+    factors, factor_meta = factor_client.load_monthly(
+        start=WARMUP_START,
+        end=TRIAL24_PREFINAL_OUTCOME_END,
+        required_factors=("rm_rf", "smb", "hml", "rf"),
+        require_complete_window=True,
+    )
 
     months = pd.period_range(WARMUP_START, TRIAL24_PREFINAL_OUTCOME_END, freq="M")
     snapshots = []

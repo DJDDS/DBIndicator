@@ -29,7 +29,7 @@ def test_iima_missing_column_error_reports_received_headers():
 def test_v1101_release_marker_and_ui_identify_schema_hotfix():
     from pathlib import Path
     marker = Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip()
-    assert marker == "2026-09-04-INSTITUTIONAL-V11.0.3-IIMA-NUMERIC-FORMAT-INTEGRITY-HOTFIX"
+    assert marker == "2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT"
     text = Path("app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V11.0.1" in text
     assert "IIMA factor schema hotfix" in text

@@ -1,4 +1,4 @@
-# DBIndicator V11.0.3 — IIMA Numeric-Format Integrity Hotfix
+# DBIndicator V11.0.5 — Strict Required-Window Factor Contract
 
 Bounded Trial-24 input repair: the pinned IIM Ahmedabad factor parser accepts the production `MF` header as the already-excess market factor (`rm_rf`) while retaining `RF` separately. RF is not subtracted from MF again. No Trial-24 research rule, cost, holdout boundary, or live scanner behavior changes.
 
@@ -29,6 +29,23 @@ V9.7.2 preserves the frozen Trial-19 event (`total FUTSTK OI z >= 1.5`), evidenc
 The replicated planning effect is ~1.13x; the 1.22x discovery estimate is retired for economic projection. Trial 18 remains locked unless the combined promotion gate passes and even then becomes only eligible for preregistration. `ACTIVE_PLAYBOOKS = ()`.
 
 Open **Backtest → Run V9.7.2 Trial 19**.
+
+## V11.0.5 strict required-window factor contract
+
+- Trial 24 still consumes only IIMA `2010-01` through `2023-05`; the 1993-10 `MF=NA` row is provably outside that window and is ignored for Trial-24 numeric validation.
+- The consumer now explicitly requires a **complete** monthly factor window. Any missing calendar month inside `2010-01` through `2023-05` fails closed before `alpha_read_started`.
+- Required factors remain exactly `rm_rf`/MF, SMB, HML and RF. WML remains non-load-bearing for the frozen FF3 residualisation.
+- No imputation, forward-fill, row deletion inside the window, threshold search, Trial-24 rule change, cost change, or holdout read is permitted.
+- The raw IIMA bytes remain hashed for provenance even though irrelevant out-of-window factor values cannot abort the experiment.
+
+## V11.0.4 required-window factor contract
+
+- Trial 24 requests and validates only IIMA factor rows from `2010-01` through the pre-final `2023-05` boundary.
+- Rows outside that consumer window remain part of the pinned raw-file SHA/provenance but cannot block a trial that never consumes them.
+- Trial 24 requires only `rm_rf`/MF, SMB, HML and RF. WML remains available in the source but is not an FF3 residualisation input and is not a readiness gate.
+- Missing or non-numeric required values *inside* the requested window still fail closed with exact month/raw-value diagnostics.
+- Compact `YYYYMM` month keys are parsed explicitly, avoiding ambiguous generic date parsing.
+- Trial-24 scoring, 0.36% stress cost, feasibility gate, alpha-read boundary, final 20% lock, and V10.2.2 live scanner are unchanged.
 
 ## V11.0.3 IIMA numeric-format integrity hotfix
 

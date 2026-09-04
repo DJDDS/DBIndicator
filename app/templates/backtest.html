@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0.3-IIMA-NUMERIC-FORMAT-INTEGRITY-HOTFIX</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT</div>
     <p>
       <strong>V11.0 Feasibility Competition + Trial 24 Preregistration is the primary research architecture.</strong> Candidate selection uses external prior magnitude, cost and power <strong>before outcome data are read</strong>. The winner is the exact published-style residual-momentum replication; the redesigned basis candidate remains blocked because no horizon-matched prior magnitude is registered.
     </p>
@@ -121,6 +121,8 @@
 
   <div class="card" style="border-color:#0f7b61;">
     <h2>V11.0 Feasibility Competition · Trial 24</h2>
+    <p class="hint"><strong>V11.0.5 strict required-window factor contract:</strong> Trial 24 still validates only <strong>2010-01 through 2023-05</strong>, so the historical 1993-10 <code>MF=NA</code> row cannot block it. The bounded factor request is now also <strong>complete-month fail-closed</strong>: every month inside the required window must exist, and any missing/non-numeric required value aborts before <code>alpha_read_started</code>. No factor imputation, Trial-24 rule change, cost change, or holdout read is introduced.</p>
+    <p class="hint"><strong>V11.0.4 required-window factor contract:</strong> Trial 24 validates only the pinned IIMA factor months it can actually consume (<strong>2010-01 through 2023-05</strong>) and only <code>MF/rm_rf</code>, <code>SMB</code>, <code>HML</code> and <code>RF</code>. Historical rows outside the preregistered window remain covered by the pinned source SHA but cannot block Trial 24; any bad required value inside the window still fails closed. WML is not required because the frozen FF3 residualisation does not use it. Trial 24 specification, feasibility gate, costs, alpha-read boundary and final-holdout lock are unchanged.</p>
     <p class="hint"><strong>V11.0.3 IIMA numeric-format integrity hotfix:</strong> normalizes legitimate factor-value formatting (whitespace/NBSP, percent suffixes, comma grouping and Unicode minus signs) without imputing or deleting factor months. Any value that still cannot be parsed fails closed with the <strong>exact month + raw value</strong>. Trial 24 specification, feasibility gate, costs, alpha-read boundary and final-holdout lock are unchanged.</p>
     <p class="hint"><strong>V11.0.2 exact IIMA MF schema hotfix:</strong> accepts the production IIMA header <code>MF</code> as <code>rm_rf</code>; <strong>MF is already the market excess return</strong>, so RF is not subtracted again. This extends the V11.0.1 IIMA factor schema hotfix. Trial 24 specification, feasibility gate, costs and final-holdout lock are unchanged.</p>
     <p style="margin-top:-4px;"><strong>No outcome data are used to choose the next trial.</strong> Candidate A is a pinned replication of published residual momentum at its own monthly horizon. Candidate B is the redesigned fixed-count cross-sectional futures-basis idea, but it is <strong>DO NOT RUN</strong> until an independent 10–21 day prior magnitude exists.</p>
@@ -429,7 +431,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V11_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.0.3-IIMA-NUMERIC-FORMAT-INTEGRITY-HOTFIX";
+const V11_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT";
 function v11Pct(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':(Number(v)*100).toFixed(d)+'%';}
 function v11Num(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
 function renderV11Feasibility(f){

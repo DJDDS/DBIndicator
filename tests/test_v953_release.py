@@ -7,7 +7,7 @@ BUILD = '2026-09-02-INSTITUTIONAL-V9.5.3-TRIAL15-CLOSED-CONTRACT-STRUCTURE'
 
 def test_v953_release_markers_and_production_safety():
     assert v95_daily_evidence.BUILD_ID == BUILD
-    assert (ROOT / 'RESEARCH_BUILD.txt').read_text().strip() == '2026-09-04-INSTITUTIONAL-V11.0.3-IIMA-NUMERIC-FORMAT-INTEGRITY-HOTFIX'
+    assert (ROOT / 'RESEARCH_BUILD.txt').read_text().strip() == '2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT'
     assert (ROOT / 'PRODUCTION_BUILD.txt').read_text().strip() == '2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'
     assert v9_playbooks.ACTIVE_PLAYBOOKS == ()
     assert v95_daily_evidence.trial16_spec()['locked'] is True
