@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = '2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION'
+BUILD = '2026-09-04-INSTITUTIONAL-V11.0.1-IIMA-FACTOR-SCHEMA-HOTFIX'
 
 
 def test_v991_release_markers_and_changelog():

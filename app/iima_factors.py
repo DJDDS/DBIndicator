@@ -50,7 +50,7 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
 
     aliases = {
         "date": {"date", "month", "yyyymm"},
-        "rm_rf": {"rmrf", "mktrf", "marketriskpremium", "marketminusrf"},
+        "rm_rf": {"rmrf", "mktrf", "marketpremium", "marketriskpremium", "marketminusrf"},
         "smb": {"smb"},
         "hml": {"hml"},
         "wml": {"wml", "mom", "momentum"},
@@ -65,7 +65,10 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
                 break
     missing = [x for x in ("date",) + _REQUIRED if x not in chosen]
     if missing:
-        raise ValueError(f"IIMA factor file missing required columns: {', '.join(missing)}")
+        raise ValueError(
+            f"IIMA factor file missing required columns: {', '.join(missing)}; "
+            f"received columns: {', '.join(str(c) for c in frame.columns)}"
+        )
 
     out = pd.DataFrame(index=_parse_month(frame[chosen["date"]]))
     for col in _REQUIRED:

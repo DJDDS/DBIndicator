@@ -1,3 +1,7 @@
+# DBIndicator V11.0.1 — IIMA Factor Schema Hotfix
+
+Bounded Trial-24 input repair: the pinned IIM Ahmedabad factor parser accepts the current `Market Premium` header as the market-minus-risk-free factor. No Trial-24 research rule, cost, holdout boundary, or live scanner behavior changes.
+
 # DBIndicator V10.2 — Research Integrity & Feasibility Repair
 
 Current research build repairs V10 reporting/feasibility only. No new alpha trial is run; Trial 21/22 specifications remain closed, Trial 23 is closed-but-never-evaluated, and the final 20% remains unread.

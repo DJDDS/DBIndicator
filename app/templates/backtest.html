@@ -67,7 +67,7 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0.1-IIMA-FACTOR-SCHEMA-HOTFIX</div>
     <p>
       <strong>V11.0 Feasibility Competition + Trial 24 Preregistration is the primary research architecture.</strong> Candidate selection uses external prior magnitude, cost and power <strong>before outcome data are read</strong>. The winner is the exact published-style residual-momentum replication; the redesigned basis candidate remains blocked because no horizon-matched prior magnitude is registered.
     </p>
@@ -121,6 +121,7 @@
 
   <div class="card" style="border-color:#0f7b61;">
     <h2>V11.0 Feasibility Competition · Trial 24</h2>
+    <p class="hint"><strong>V11.0.1 IIMA factor schema hotfix:</strong> accepts the pinned IIMA release's <strong>Market Premium</strong> market-factor header as <code>rm_rf</code>. Trial 24 specification, feasibility gate, costs and final-holdout lock are unchanged.</p>
     <p style="margin-top:-4px;"><strong>No outcome data are used to choose the next trial.</strong> Candidate A is a pinned replication of published residual momentum at its own monthly horizon. Candidate B is the redesigned fixed-count cross-sectional futures-basis idea, but it is <strong>DO NOT RUN</strong> until an independent 10–21 day prior magnitude exists.</p>
     <div id="v11-feasibility" class="hint" style="margin-bottom:14px;"></div>
     <p class="hint"><strong>Trial 24 frozen specification:</strong> 36-month India FF3 regression · residual momentum formed over <strong>12-1M</strong> · monthly rebalance · long top decile / short bottom decile · one-month hold · equal weights · <strong>0.36% spread round-trip stress cost</strong>. No RSI/EMA/OI/volume/basis rescue is permitted.</p>
@@ -427,7 +428,7 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
-const V11_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION";
+const V11_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.0.1-IIMA-FACTOR-SCHEMA-HOTFIX";
 function v11Pct(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':(Number(v)*100).toFixed(d)+'%';}
 function v11Num(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
 function renderV11Feasibility(f){

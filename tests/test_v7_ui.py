@@ -14,7 +14,7 @@ def test_v7_final_is_retired_from_primary_backtest_ui():
 def test_current_build_marker_is_v9():
     build_id = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
     assert build_id in (ROOT / 'app' / 'templates' / 'backtest.html').read_text()
-    assert '2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION' in (ROOT / 'RESEARCH_BUILD.txt').read_text()
+    assert '2026-09-04-INSTITUTIONAL-V11.0.1-IIMA-FACTOR-SCHEMA-HOTFIX' in (ROOT / 'RESEARCH_BUILD.txt').read_text()
 
 
 def _function_body(text: str, name: str) -> str:
