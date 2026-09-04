@@ -63,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, v10_directional_edge, research_integrity, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
+from . import costs, early_signal, early_research, v6_edge, v8_dual, research_runtime, v94_magnitude, v95_daily_evidence, v953_contract_structure, v96_trial17, v97_trial19, v98_incremental_oi, v99_volume_gate, v10_directional_edge, v11_research, v11_monthly_data, research_feasibility, research_integrity, nse_futures_history, nse_cash_history, nse_mwpl, nse_earnings_history, nse_market_regime
 from .config import settings, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME
 from .indicators import (
     compute_series, compute_avwap_series, session_vwap_series, BIG_CANDLE_LOOKBACK,
@@ -2752,6 +2752,12 @@ _V99_WORK_ROOT = Path(
 )
 _V10_STATE_PATH = Path(
     os.environ.get("V10_STATE_PATH", str(_RESEARCH_STATE_DIR / "v10-directional-edge-state.json"))
+)
+_V11_STATE_PATH = Path(
+    os.environ.get("V11_STATE_PATH", str(_RESEARCH_STATE_DIR / "v11-trial24-state.json"))
+)
+_V11_WORK_ROOT = Path(
+    os.environ.get("V11_WORK_ROOT", str(_RESEARCH_STATE_DIR / "v11-trial24-work"))
 )
 _RESEARCH_RESUME_SCHEMA = "v934-resume-shards-1"
 _V95_RUN_SCHEMA = "v952-nse-daily-evidence-run-1"
@@ -5813,3 +5819,194 @@ def start_v10_directional_lab(kite, symbols=None, integrity_data=None):
             research_runtime.end_research(); research_runtime.release_memory_pressure()
     research_runtime.begin_research("v10_directional"); threading.Thread(target=_job,daemon=True).start()
     return {"started":True,"mode":"v10_directional","build":v10_directional_edge.BUILD_ID}
+
+# --------------------------------------------------------------------------
+# V11.0 Feasibility Competition + Trial 24 exact published replication
+# --------------------------------------------------------------------------
+def get_v11_feasibility():
+    """Static pre-trial competition.  This function reads no alpha outcomes."""
+    return v11_research.feasibility_competition()
+
+
+def _default_v11_state():
+    return {
+        "status": "idle",
+        "mode": "v11_trial24",
+        "build": v11_research.BUILD_ID,
+        "research_only": True,
+        "feasibility": get_v11_feasibility(),
+        "progress": {"done": 0, "total": 0, "item": None, "stage": "Ready", "overall_pct": 0},
+        "result": None,
+        "error": None,
+        "started_at": None,
+        "finished_at": None,
+        "alpha_read_started": False,
+        "final_read": False,
+        "worker": {},
+    }
+
+
+def _atomic_write_v11_state(state):
+    _V11_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _V11_STATE_PATH.with_suffix(_V11_STATE_PATH.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, default=str, sort_keys=True), encoding="utf-8")
+    tmp.replace(_V11_STATE_PATH)
+
+
+def _load_v11_state():
+    if not _V11_STATE_PATH.exists():
+        return _default_v11_state()
+    try:
+        raw = json.loads(_V11_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_v11_state()
+    if str(raw.get("build") or "") != v11_research.BUILD_ID:
+        return _default_v11_state()
+    out = _default_v11_state()
+    out.update(raw)
+    out["build"] = v11_research.BUILD_ID
+    out["feasibility"] = get_v11_feasibility()
+    out["final_read"] = False
+    if out.get("status") == "running":
+        out["status"] = "error"
+        out["error"] = "V11 worker restarted before completion. Frozen specification/cache may be retried; final holdout remains unread."
+    return out
+
+
+_v11_lock = threading.Lock()
+_v11_state = _load_v11_state()
+
+
+def _persist_v11_state():
+    with _v11_lock:
+        snap = dict(_v11_state)
+        snap["progress"] = dict(_v11_state.get("progress") or {})
+    snap["worker"] = research_runtime.snapshot()
+    _atomic_write_v11_state(snap)
+
+
+def get_v11_trial24_state():
+    with _v11_lock:
+        out = dict(_v11_state)
+        out["progress"] = dict(_v11_state.get("progress") or {})
+    out["worker"] = research_runtime.snapshot()
+    out["feasibility"] = get_v11_feasibility()
+    out["final_read"] = False
+    return out
+
+
+def start_v11_trial24():
+    feasibility = get_v11_feasibility()
+    if not feasibility.get("trial24_registered") or feasibility.get("winner") != "TRIAL24_RESIDUAL_MOMENTUM_REPLICATION":
+        return {"started": False, "reason": "V11 feasibility gate did not register Trial 24.", "build": v11_research.BUILD_ID}
+    # Binding refusal: if Candidate A ever ceases to be feasible, the endpoint
+    # cannot spend data merely because a button still exists in an old browser.
+    try:
+        research_feasibility.require_feasible_registration(feasibility["candidate_a"]["assessment"])
+    except Exception as exc:
+        return {"started": False, "reason": str(exc), "build": v11_research.BUILD_ID}
+
+    with _v11_lock:
+        if _v11_state.get("status") == "running":
+            return {"started": False, "reason": "Trial 24 is already running.", "build": v11_research.BUILD_ID}
+        if _v11_state.get("status") == "done" and _v11_state.get("result"):
+            return {"started": False, "reason": "Trial 24 has already been read once; rerun refused.", "build": v11_research.BUILD_ID}
+        if _v11_state.get("status") == "error" and bool(_v11_state.get("alpha_read_started")):
+            return {"started": False, "reason": "Trial 24 reached the alpha-read stage before error; automatic reread refused. Audit the failure before any new trial number.", "build": v11_research.BUILD_ID}
+        _v11_state.update({
+            "status": "running", "mode": "v11_trial24", "build": v11_research.BUILD_ID,
+            "research_only": True, "feasibility": feasibility,
+            "progress": {"done": 0, "total": 0, "item": None, "stage": "Loading pinned V11 inputs", "overall_pct": 1},
+            "result": None, "error": None, "started_at": now_ist().isoformat(timespec="seconds"),
+            "finished_at": None, "alpha_read_started": False, "final_read": False,
+        })
+    _persist_v11_state()
+
+    def _input_progress(stage, done, total, item):
+        research_runtime.heartbeat(stage=stage, symbol=item, done=done, total=total)
+        pct = 5 + int(65 * (float(done) / max(int(total), 1))) if stage == "MONTH_END_ARCHIVES" else 5
+        with _v11_lock:
+            _v11_state["progress"] = {
+                "done": int(done), "total": int(total), "item": str(item),
+                "stage": "Official NSE month-end archives", "overall_pct": max(1, min(70, pct)),
+            }
+        if done == 0 or done == total or (done > 0 and done % 6 == 0):
+            _persist_v11_state()
+
+    def _job():
+        try:
+            with research_runtime.research_slot():
+                work = Path(_V11_WORK_ROOT)
+                inputs = v11_monthly_data.build_trial24_inputs(work / "inputs", progress_cb=_input_progress)
+                if not bool(inputs.get("data_readiness")):
+                    result = {
+                        "build": v11_research.BUILD_ID,
+                        "trial": 24,
+                        "status": "INCONCLUSIVE_DATA_READINESS",
+                        "data_readiness": False,
+                        "data_meta": inputs.get("meta") or {},
+                        "final_read": False,
+                        "production_activation": False,
+                        "feasibility": feasibility,
+                    }
+                else:
+                    with _v11_lock:
+                        _v11_state["alpha_read_started"] = True
+                        _v11_state["progress"] = {"done": 0, "total": 1, "item": None, "stage": "Computing 12-1 residual momentum", "overall_pct": 78}
+                    _persist_v11_state()
+                    scores = v11_research.compute_trial24_scores(
+                        inputs["monthly_returns"], inputs["factors"], inputs["membership"]
+                    )
+                    artifact = research_integrity.persist_event_artifact(work / "trial24_scores.csv.gz", scores)
+                    input_hashes = {
+                        "monthly_returns_sha256": research_integrity.dataframe_sha256(inputs["monthly_returns"]),
+                        "membership_sha256": research_integrity.dataframe_sha256(inputs["membership"]),
+                        "factors_sha256": research_integrity.dataframe_sha256(inputs["factors"]),
+                    }
+                    with _v11_lock:
+                        _v11_state["progress"] = {"done": 1, "total": 1, "item": None, "stage": "Confirmatory pre-final evaluation", "overall_pct": 92}
+                    _persist_v11_state()
+                    evaluation = v11_research.evaluate_trial24_confirmatory_only(
+                        scores,
+                        inputs["monthly_returns"],
+                        planned_final_months=v11_monthly_data.PLANNED_FINAL_SIGNAL_MONTHS,
+                    )
+                    result = {
+                        "build": v11_research.BUILD_ID,
+                        "trial": 24,
+                        "name": "Published Residual Momentum Replication",
+                        "status": evaluation.get("status"),
+                        "spec": v11_research.trial24_spec(),
+                        "feasibility": feasibility,
+                        "data_readiness": True,
+                        "data_meta": inputs.get("meta") or {},
+                        "score_artifact": artifact,
+                        "input_hashes": input_hashes,
+                        "score_rows": int(len(scores)),
+                        "evaluation": evaluation,
+                        "final_read": False,
+                        "production_activation": False,
+                    }
+            with _v11_lock:
+                _v11_state["result"] = result
+                _v11_state["status"] = "done"
+                _v11_state["error"] = None
+                _v11_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+                _v11_state["final_read"] = False
+                _v11_state["progress"] = {"done": 1, "total": 1, "item": None, "stage": "Complete", "overall_pct": 100}
+            _persist_v11_state()
+        except Exception as exc:
+            log.exception("V11 Trial 24 run failed")
+            with _v11_lock:
+                _v11_state["status"] = "error"
+                _v11_state["error"] = str(exc)
+                _v11_state["finished_at"] = now_ist().isoformat(timespec="seconds")
+                _v11_state["final_read"] = False
+            _persist_v11_state()
+        finally:
+            research_runtime.end_research()
+            research_runtime.release_memory_pressure()
+
+    research_runtime.begin_research("v11_trial24")
+    threading.Thread(target=_job, daemon=True).start()
+    return {"started": True, "mode": "v11_trial24", "build": v11_research.BUILD_ID, "final_read": False}

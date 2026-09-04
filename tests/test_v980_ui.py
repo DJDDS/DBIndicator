@@ -4,7 +4,7 @@ from app import v97_trial19
 from app.v9_playbooks import ACTIVE_PLAYBOOKS
 
 BUILD='2026-09-03-INSTITUTIONAL-V9.8.0-INCREMENTAL-OI-VALIDATION'
-CURRENT='2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'
+CURRENT='2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION'
 
 
 def test_v980_release_marker_preserves_frozen_trial19():
@@ -29,4 +29,4 @@ def test_v980_backtest_ui_surfaces_four_high_risk_tests_and_trial18_lock():
 
 def test_v980_build_markers_are_current():
     assert Path('RESEARCH_BUILD.txt').read_text().strip()==CURRENT
-    assert Path('PRODUCTION_BUILD.txt').read_text().strip()==CURRENT
+    assert Path('PRODUCTION_BUILD.txt').read_text().strip()=='2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'

@@ -3,13 +3,13 @@ from app import backtest, v97_trial19, v9_playbooks
 
 ROOT=Path(__file__).resolve().parents[1]
 BUILD='2026-09-02-INSTITUTIONAL-V9.7.2-TRIAL19-CONFOUND-INTEGRITY-CLOSURE'
-CURRENT='2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'
+CURRENT='2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION'
 
 
 def test_v970_build_and_safety_markers():
     assert v97_trial19.BUILD_ID==BUILD
     assert (ROOT/'RESEARCH_BUILD.txt').read_text().strip()==CURRENT
-    assert (ROOT/'PRODUCTION_BUILD.txt').read_text().strip()==CURRENT
+    assert (ROOT/'PRODUCTION_BUILD.txt').read_text().strip()=='2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'
     assert v9_playbooks.ACTIVE_PLAYBOOKS==()
     assert v97_trial19.trial19_spec()['total_oi_z_min']==1.5
     assert v97_trial19.trial18_spec()['locked'] is True

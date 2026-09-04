@@ -55,8 +55,8 @@ def test_v950_state_is_separate_from_v94_and_research_only():
 
 def test_v950_page_preserves_v95_below_v96_primary_architecture():
     text = _html()
-    assert '<strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK' in text
-    assert '<strong>V10.2.1 Provenance &amp; Statistical Integrity Lock is the primary research architecture.</strong>' in text
+    assert '<strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION' in text
+    assert '<strong>V11.0 Feasibility Competition + Trial 24 Preregistration is the primary research architecture.</strong>' in text
     assert 'V9.5.3 Daily OI Evidence + Contract Structure Lab' in text
 
 

@@ -536,6 +536,8 @@ def backtest_page():
         bt_days_min=_bt_bounds[0], bt_days_max=_bt_bounds[1], bt_days_default=_bt_bounds[2],
         backtest_day_bounds={tf: backtest.backtest_day_bounds(tf) for tf in config.VALID_TIMEFRAMES},
         early_research_state=backtest.get_early_research_state(),
+        v11_feasibility=backtest.get_v11_feasibility(),
+        v11_state=backtest.get_v11_trial24_state(),
         v10_state=backtest.get_v10_directional_state(),
         v99_state=backtest.get_v99_trial20_state(),
         v97_state=backtest.get_v97_trial19_state(),
@@ -567,6 +569,24 @@ def _resolve_backtest_symbols(form):
     symbols = _BACKTEST_UNIVERSES.get(universe, _BACKTEST_UNIVERSES["watchlist"])
     return list(symbols) if symbols is not None else list(settings.WATCHLIST)
 
+
+
+@app.route("/api/v11/feasibility")
+@require_dashboard_password
+def api_v11_feasibility():
+    return jsonify(backtest.get_v11_feasibility())
+
+
+@app.route("/api/v11/trial24/start", methods=["POST"])
+@require_dashboard_password
+def api_v11_trial24_start():
+    return jsonify(backtest.start_v11_trial24())
+
+
+@app.route("/api/v11/trial24/status")
+@require_dashboard_password
+def api_v11_trial24_status():
+    return jsonify(backtest.get_v11_trial24_state())
 
 
 @app.route("/api/v10/start", methods=["POST"])

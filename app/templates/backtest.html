@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION</div>
     <p>
-      <strong>V10.2.1 Provenance &amp; Statistical Integrity Lock is the primary research architecture.</strong> It preserves the already-observed V10.0/V10.2 evidence, records Trial 21's sector-panel-dependent second read explicitly, repairs clustered inference, and makes the pre-trial feasibility gate binding. <strong>New alpha rereads are disabled.</strong>
+      <strong>V11.0 Feasibility Competition + Trial 24 Preregistration is the primary research architecture.</strong> Candidate selection uses external prior magnitude, cost and power <strong>before outcome data are read</strong>. The winner is the exact published-style residual-momentum replication; the redesigned basis candidate remains blocked because no horizon-matched prior magnitude is registered.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -119,9 +119,30 @@
   </div>
 
 
+  <div class="card" style="border-color:#0f7b61;">
+    <h2>V11.0 Feasibility Competition · Trial 24</h2>
+    <p style="margin-top:-4px;"><strong>No outcome data are used to choose the next trial.</strong> Candidate A is a pinned replication of published residual momentum at its own monthly horizon. Candidate B is the redesigned fixed-count cross-sectional futures-basis idea, but it is <strong>DO NOT RUN</strong> until an independent 10–21 day prior magnitude exists.</p>
+    <div id="v11-feasibility" class="hint" style="margin-bottom:14px;"></div>
+    <p class="hint"><strong>Trial 24 frozen specification:</strong> 36-month India FF3 regression · residual momentum formed over <strong>12-1M</strong> · monthly rebalance · long top decile / short bottom decile · one-month hold · equal weights · <strong>0.36% spread round-trip stress cost</strong>. No RSI/EMA/OI/volume/basis rescue is permitted.</p>
+    <p class="hint"><strong>Integrity:</strong> official NSE point-in-time FUTSTK membership + cash month-end prices, pinned survivorship-adjusted IIM Ahmedabad factors, corporate-action adjustment with ambiguous actions failing closed. The <strong>final 20% stays unread</strong>; the production loader physically stops before that final outcome period. A PASS is research evidence only and cannot activate TRADE/WATCH.</p>
+    <button type="button" class="btn" id="v11-run-btn">Run Trial 24 Residual Momentum Replication</button>
+    <span class="hint" id="v11-form-hint" style="margin-left:10px;">Runnable only because the pre-trial feasibility gate passes before outcomes.</span>
+    <div class="progress-wrap" id="v11-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v11-progress-fill"></div></div>
+      <div class="progress-label" id="v11-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="v11-error" style="display:none; margin-top:16px;"></div>
+    <div id="v11-results" style="display:none; margin-top:18px;">
+      <h3 class="bt-group-title">Trial 24 · Published Residual Momentum Replication</h3>
+      <div id="v11-verdict"></div>
+      <div id="v11-metrics" class="hint" style="margin-top:10px;"></div>
+      <div id="v11-integrity" class="hint" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
   <div class="card" style="border-color:#7b4fc9;">
     <h2>V10.2.1 Provenance &amp; Statistical Integrity Lock</h2>
-    <p style="margin-top:-4px;"><strong>No new alpha trial, no Trial-21/22 rerun and no final-holdout read.</strong> A completed V10.2 state is migrated read-only. Trial 21 remains a rejected daily residual-strength specification, not a global rejection of residual momentum. Trial 22 remains a rejected absolute basis-event specification; a true cross-sectional basis test remains untested.</p>
+    <p style="margin-top:-4px;"><strong>No new alpha trial, no Trial-21/22 rerun and no final-holdout read. New alpha rereads are disabled.</strong> A completed V10.2 state is migrated read-only. Trial 21 remains a rejected daily residual-strength specification, not a global rejection of residual momentum. Trial 22 remains a rejected absolute basis-event specification; a true cross-sectional basis test remains untested.</p>
     <p class="hint"><strong>Execution:</strong> signal after close t → entry next-session open → primary exit next-session close. Net expectancy includes <strong>0.18% round-trip cost</strong>. 2D is secondary and cannot rescue a failed 1D result.</p>
     <p class="hint"><strong>Frozen validation:</strong> 2018-09-01 → 2026-08-31, chronological 60/20/20. Development is descriptive; validation decides the result; the <strong>final 20% stays unread</strong>. Bull and Bear are judged independently.</p>
     <p class="hint"><strong>Trial 23 CLOSED — component trials failed; Trial 23 itself was never evaluated.</strong> Any future redesigned combination requires a new trial number. Trial 18 LOCKED · Trial 19 CLOSED · Trial 20 CLOSED. Live Opportunity Radar unchanged.</p>
@@ -405,6 +426,25 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
+
+const V11_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.0-FEASIBILITY-TRIAL24-PREREGISTRATION";
+function v11Pct(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':(Number(v)*100).toFixed(d)+'%';}
+function v11Num(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
+function renderV11Feasibility(f){
+  f=f||{};const a=f.candidate_a||{},b=f.candidate_b||{},aa=a.assessment||{},ba=b.assessment||{};const el=document.getElementById('v11-feasibility');if(!el)return;
+  el.innerHTML=`<strong>Candidate A · Residual momentum:</strong> prior gross ${v11Pct(a.prior_monthly_gross)} / month · stress spread cost ${v11Pct(a.spread_cost)} · expected net ${v11Pct(aa.prior_net_effect)} · MDE ${v11Pct(aa.mde_net_effect)} at t-bar ${v11Num(a.t_bar,3)} · <strong>${String(aa.decision||'').replaceAll('_',' ')}</strong>.<br><strong>Candidate B · Fixed-count cross-sectional basis:</strong> <strong>${String(ba.decision||'DO_NOT_RUN').replaceAll('_',' ')}</strong> · no outcome data read in this competition.`;
+}
+function updateV11UI(state){
+  state=state||{};renderV11Feasibility(state.feasibility||initialV11Feasibility||{});const btn=document.getElementById('v11-run-btn'),prog=document.getElementById('v11-progress'),fill=document.getElementById('v11-progress-fill'),label=document.getElementById('v11-progress-label'),err=document.getElementById('v11-error'),results=document.getElementById('v11-results');if(!btn)return;
+  const p=state.progress||{};
+  if(state.status==='running'){btn.disabled=true;prog.style.display='block';err.style.display='none';results.style.display='none';fill.style.width=Math.max(1,Math.min(100,Number(p.overall_pct)||0))+'%';const w=state.worker||{},mem=(w.rss_mb===null||w.rss_mb===undefined)?'':` · RSS ${w.rss_mb} MB`,pid=w.pid?` · PID ${w.pid}`:'',item=p.item?` · ${p.item}`:'';label.textContent=`${p.stage||'Running Trial 24'} · ${p.done||0}/${p.total||0}${item}${mem}${pid}`;return;}
+  prog.style.display='none';
+  if(state.status==='done'&&state.result){btn.disabled=true;err.style.display='none';const r=state.result||{},e=r.evaluation||{},m=r.data_meta||{};document.getElementById('v11-verdict').innerHTML=`<div class="${String(r.status||'').startsWith('PASS')?'win-good':'win-bad'}" style="font-size:16px;"><strong>${String(r.status||'INCONCLUSIVE').replaceAll('_',' ')}</strong></div>`;document.getElementById('v11-metrics').innerHTML=`Confirmatory months ${e.confirmatory_months??'—'} · mean net ${v11Pct(e.mean_net)} · t ${v11Num(e.t_stat,3)} vs ${v11Num(e.t_bar,3)} · positive blocks ${e.positive_blocks??'—'}/4 · top-3 removed ${v11Pct(e.top3_removed_mean_net)}.`;document.getElementById('v11-integrity').innerHTML=`Member-return coverage ${v11Pct(m.member_return_coverage,1)} · factor coverage ${v11Pct(m.factor_coverage,1)} · score rows ${r.score_rows??0} · input manifest ${m.manifest_sha256||'—'} · final months ${e.final_months??'—'} <strong>UNREAD</strong> · production activation <strong>NO</strong>.`;results.style.display='block';return;}
+  results.style.display='none';
+  if(state.status==='error'){err.style.display='block';err.textContent=state.error||'V11 Trial 24 failed.';btn.disabled=!!state.alpha_read_started;return;}
+  err.style.display='none';btn.disabled=!(state.feasibility||initialV11Feasibility||{}).trial24_registered;
+}
+function pollV11(){fetch('/api/v11/trial24/status').then(r=>r.json()).then(st=>{updateV11UI(st);if(st.status==='running')setTimeout(pollV11,2500);}).catch(()=>setTimeout(pollV11,5000));}
 
 const V10_BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK";
 function v10Fmt(v,d=4){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
@@ -1086,6 +1126,14 @@ document.getElementById('er-run-btn').addEventListener('click', function () {
   document.getElementById('scope-days').value = '180';
   startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'v4h-form-hint', pollEarlyResearch);
 });
+document.getElementById('v11-run-btn').addEventListener('click', function () {
+  startJob('/api/v11/trial24/start', {universe:'watchlist', timeframe:'day', days:'0', horizons:[]}, {}, 'v11-form-hint', pollV11);
+});
+const initialV11Feasibility = {{ v11_feasibility | default(none) | tojson }};
+const initialV11State = {{ v11_state | default(none) | tojson }};
+renderV11Feasibility(initialV11Feasibility);
+if (initialV11State) { updateV11UI(initialV11State); if (initialV11State.status === 'running') pollV11(); }
+
 document.getElementById('v10-run-btn').addEventListener('click', function () {
   document.getElementById('v10-form-hint').textContent='V10.2.1 refuses new alpha rereads by design.';
 });
