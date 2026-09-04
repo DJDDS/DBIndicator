@@ -44,7 +44,7 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
     """Parse the pinned IIMA monthly factor CSV into decimal monthly returns."""
     if isinstance(content, bytes):
         content = content.decode("utf-8-sig", errors="replace")
-    frame = pd.read_csv(io.StringIO(str(content)))
+    frame = pd.read_csv(io.StringIO(str(content)), keep_default_na=False)
     if frame.empty:
         raise ValueError("IIMA factor file is empty")
 
@@ -70,15 +70,44 @@ def parse_iima_monthly_factors(content: str | bytes) -> pd.DataFrame:
             f"received columns: {', '.join(str(c) for c in frame.columns)}"
         )
 
-    out = pd.DataFrame(index=_parse_month(frame[chosen["date"]]))
+    months = _parse_month(frame[chosen["date"]])
+    out = pd.DataFrame(index=months)
     for col in _REQUIRED:
-        vals = pd.to_numeric(frame[chosen[col]], errors="coerce")
-        if vals.isna().any():
-            raise ValueError(f"IIMA factor column {col} contains non-numeric values")
-        # Official factor files are published in percentage points.  Permit
-        # already-decimal fixtures only when the scale is unmistakably small.
-        scale = 100.0 if float(vals.abs().quantile(0.90)) > 0.20 else 1.0
-        out[col] = vals.to_numpy(dtype=float) / scale
+        raw = frame[chosen[col]].astype(str)
+        cleaned = (
+            raw.str.replace("\u00a0", " ", regex=False)
+            .str.strip()
+            .str.replace("−", "-", regex=False)
+            .str.replace("–", "-", regex=False)
+            .str.replace("—", "-", regex=False)
+            .str.replace(",", "", regex=False)
+        )
+        explicit_pct = cleaned.str.endswith("%")
+        cleaned_numeric = cleaned.str.replace(r"%$", "", regex=True).str.strip()
+        vals = pd.to_numeric(cleaned_numeric, errors="coerce")
+        bad = vals.isna()
+        if bad.any():
+            pos = int(bad.to_numpy().nonzero()[0][0])
+            month = pd.Timestamp(months[pos]).strftime("%Y-%m")
+            raw_value = raw.iloc[pos]
+            raise ValueError(
+                f"IIMA factor column {col} contains non-numeric value at {month}: {raw_value!r}"
+            )
+
+        numeric = vals.to_numpy(dtype=float)
+        pct_mask = explicit_pct.to_numpy(dtype=bool)
+        converted = numeric.copy()
+        converted[pct_mask] = converted[pct_mask] / 100.0
+
+        plain = vals[~explicit_pct]
+        if not plain.empty:
+            # Official IIMA factor files are published in percentage points.
+            # Preserve support for unmistakably-decimal synthetic fixtures while
+            # treating ordinary published values as percentage points.
+            plain_scale = 100.0 if float(plain.abs().quantile(0.90)) > 0.20 else 1.0
+            converted[~pct_mask] = converted[~pct_mask] / plain_scale
+
+        out[col] = converted
     out = out.sort_index()
     if out.index.has_duplicates:
         raise ValueError("IIMA factor file has duplicate months")

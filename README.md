@@ -1,4 +1,4 @@
-# DBIndicator V11.0.2 — Exact IIMA MF Schema Hotfix
+# DBIndicator V11.0.3 — IIMA Numeric-Format Integrity Hotfix
 
 Bounded Trial-24 input repair: the pinned IIM Ahmedabad factor parser accepts the production `MF` header as the already-excess market factor (`rm_rf`) while retaining `RF` separately. RF is not subtracted from MF again. No Trial-24 research rule, cost, holdout boundary, or live scanner behavior changes.
 
@@ -29,3 +29,11 @@ V9.7.2 preserves the frozen Trial-19 event (`total FUTSTK OI z >= 1.5`), evidenc
 The replicated planning effect is ~1.13x; the 1.22x discovery estimate is retired for economic projection. Trial 18 remains locked unless the combined promotion gate passes and even then becomes only eligible for preregistration. `ACTIVE_PLAYBOOKS = ()`.
 
 Open **Backtest → Run V9.7.2 Trial 19**.
+
+## V11.0.3 IIMA numeric-format integrity hotfix
+
+- Bounded Trial-24 input-parser repair only; the preregistered Trial 24 specification is unchanged.
+- Production `MF` remains mapped directly to `rm_rf`; `RF` is never subtracted from `MF`.
+- Legitimate numeric formatting is normalized: whitespace/NBSP, `%` suffix, comma grouping, and Unicode minus signs.
+- Missing/sentinel/non-numeric factor values are never imputed or silently dropped; parsing fails closed with the exact factor column, month, and raw value.
+- The pinned IIMA release/source hash, FF3 regression, 12-1M formation, monthly rebalance, decile construction, 0.36% stress cost, feasibility gate, alpha-read boundary, final 20% lock, and live V10.2.2 scanner are unchanged.

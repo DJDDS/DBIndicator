@@ -55,7 +55,7 @@ def test_v950_state_is_separate_from_v94_and_research_only():
 
 def test_v950_page_preserves_v95_below_v96_primary_architecture():
     text = _html()
-    assert '<strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0.2-IIMA-MF-SCHEMA-HOTFIX' in text
+    assert '<strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0.3-IIMA-NUMERIC-FORMAT-INTEGRITY-HOTFIX' in text
     assert '<strong>V11.0 Feasibility Competition + Trial 24 Preregistration is the primary research architecture.</strong>' in text
     assert 'V9.5.3 Daily OI Evidence + Contract Structure Lab' in text
 
