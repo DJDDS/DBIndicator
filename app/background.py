@@ -22,6 +22,8 @@ from .scanner import (
 
 log = logging.getLogger(__name__)
 
+LIVE_RELIABILITY_BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.2-LIVE-RELIABILITY-HOTFIX"
+
 # How far back (in minutes) to keep OI samples per symbol.
 # compute_oi_acceleration needs up to 120 minutes of history (its
 # "prior 60-minute" window looks 60-120 minutes back), so this keeps a
@@ -1319,6 +1321,15 @@ _state_lock = threading.Lock()
 _state = {
     "results": [],
     "last_scan": None,
+    "last_scan_attempt": None,
+    "last_scan_attempt_status": None,
+    "last_scan_attempt_error": None,
+    "scan_status": "WAITING",
+    "next_scan_due": None,
+    "consecutive_scan_failures": 0,
+    "last_fno_symbols": [],
+    "last_fno_cash_tokens": {},
+    "fno_universe_source": None,
     "last_error": None,
     "oi_history": {},
     "basis_history": {},
@@ -1498,6 +1509,17 @@ def _load_persisted_state():
             with _state_lock:
                 _state["results"] = saved.get("results", [])
                 _state["last_scan"] = saved.get("last_scan")
+                _state["last_scan_attempt"] = saved.get("last_scan_attempt")
+                _state["last_scan_attempt_status"] = saved.get("last_scan_attempt_status")
+                _state["last_scan_attempt_error"] = saved.get("last_scan_attempt_error")
+                _state["scan_status"] = saved.get("scan_status") or "WAITING"
+                _state["next_scan_due"] = saved.get("next_scan_due")
+                _state["consecutive_scan_failures"] = int(saved.get("consecutive_scan_failures") or 0)
+                restored_results = saved.get("results", []) or []
+                restored_symbols = [r.get("symbol") for r in restored_results if isinstance(r, dict) and r.get("symbol")]
+                _state["last_fno_symbols"] = list(saved.get("last_fno_symbols") or restored_symbols)
+                _state["last_fno_cash_tokens"] = dict(saved.get("last_fno_cash_tokens") or {})
+                _state["fno_universe_source"] = saved.get("fno_universe_source")
                 _state["oi_history"] = saved.get("oi_history", {})
                 _state["basis_history"] = saved.get("basis_history", {})
                 _state["oi_day_baseline"] = saved.get("oi_day_baseline", {})
@@ -1505,6 +1527,10 @@ def _load_persisted_state():
                 _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
                 _state["opportunity_forward"] = saved.get("opportunity_forward") or opportunity_forward.empty_state()
                 _state["last_error"] = None
+        # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
+        # master is temporarily unavailable after restart, the price scan can
+        # still resolve the last-known-good universe rather than going dark.
+        scanner.seed_nse_instrument_cache(saved.get("last_fno_cash_tokens") or {})
     except (json.JSONDecodeError, OSError):
         pass
 
@@ -1514,6 +1540,15 @@ def _save_persisted_state():
         snapshot = {
             "results": _state["results"],
             "last_scan": _state["last_scan"],
+            "last_scan_attempt": _state.get("last_scan_attempt"),
+            "last_scan_attempt_status": _state.get("last_scan_attempt_status"),
+            "last_scan_attempt_error": _state.get("last_scan_attempt_error"),
+            "scan_status": _state.get("scan_status"),
+            "next_scan_due": _state.get("next_scan_due"),
+            "consecutive_scan_failures": _state.get("consecutive_scan_failures", 0),
+            "last_fno_symbols": _state.get("last_fno_symbols") or [],
+            "last_fno_cash_tokens": _state.get("last_fno_cash_tokens") or {},
+            "fno_universe_source": _state.get("fno_universe_source"),
             "oi_history": _state["oi_history"],
             "basis_history": _state["basis_history"],
             "oi_day_baseline": _state["oi_day_baseline"],
@@ -1541,6 +1576,102 @@ def get_state():
         return dict(_state)
 
 
+_SCAN_RETRY_MIN_SECONDS = 10
+_SCAN_RETRY_MAX_SECONDS = 60
+
+
+def _retry_delay_seconds(consecutive_failures: int) -> int:
+    failures = max(1, int(consecutive_failures or 1))
+    return min(_SCAN_RETRY_MAX_SECONDS, _SCAN_RETRY_MIN_SECONDS * (2 ** min(failures - 1, 3)))
+
+
+def _iso_after(seconds: int) -> str:
+    return (now_ist() + dt.timedelta(seconds=max(0, int(seconds)))).isoformat(timespec="seconds")
+
+
+def _record_scan_attempt_start() -> str:
+    ts = now_ist().isoformat(timespec="seconds")
+    with _state_lock:
+        _state["last_scan_attempt"] = ts
+        _state["last_scan_attempt_status"] = "RUNNING"
+        _state["last_scan_attempt_error"] = None
+        _state["scan_status"] = "RUNNING"
+        _state["next_scan_due"] = None
+    return ts
+
+
+def _record_scan_attempt_failure(error) -> int:
+    message = str(error)
+    with _state_lock:
+        failures = int(_state.get("consecutive_scan_failures") or 0) + 1
+        _state["consecutive_scan_failures"] = failures
+        _state["last_scan_attempt_status"] = "FAILED"
+        _state["last_scan_attempt_error"] = message
+        _state["last_error"] = message
+        _state["scan_status"] = "RETRYING"
+    delay = _retry_delay_seconds(failures)
+    with _state_lock:
+        _state["next_scan_due"] = _iso_after(delay)
+    return delay
+
+
+def _record_scan_attempt_success(scan_ts: str) -> int:
+    delay = max(1, int(settings.SCAN_INTERVAL_SECONDS))
+    with _state_lock:
+        _state["last_scan"] = scan_ts
+        _state["last_scan_attempt_status"] = "SUCCESS"
+        _state["last_scan_attempt_error"] = None
+        _state["last_error"] = None
+        _state["scan_status"] = "RUNNING"
+        _state["consecutive_scan_failures"] = 0
+        _state["next_scan_due"] = _iso_after(delay)
+    return delay
+
+
+def _set_scan_status(status: str, *, next_scan_due=None) -> None:
+    with _state_lock:
+        _state["scan_status"] = status
+        _state["next_scan_due"] = next_scan_due
+
+
+def _resolve_live_fno_symbols(kite):
+    """Resolve today's F&O universe with a persisted last-known-good fallback.
+
+    One immediate retry covers a transient instrument-master timeout. If both
+    attempts fail, use the last successful live universe (and seed its cached
+    NSE cash tokens) so scanning can continue without silently switching the
+    research watchlist into the live universe.
+    """
+    last_exc = None
+    for attempt in range(2):
+        try:
+            symbols = list(scanner.get_fno_stock_list(kite) or [])
+            if symbols:
+                tokens = scanner.cached_nse_instrument_tokens(symbols)
+                with _state_lock:
+                    _state["last_fno_symbols"] = symbols
+                    if tokens:
+                        _state["last_fno_cash_tokens"] = tokens
+                    _state["fno_universe_source"] = "LIVE_KITE"
+                return symbols, "LIVE_KITE"
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt == 0:
+                time.sleep(1)
+    with _state_lock:
+        fallback = list(_state.get("last_fno_symbols") or [])
+        tokens = dict(_state.get("last_fno_cash_tokens") or {})
+    if fallback:
+        scanner.seed_nse_instrument_cache(tokens)
+        log.warning("Using last-known-good F&O universe after Kite master failure: %s", last_exc)
+        with _state_lock:
+            _state["fno_universe_source"] = "LAST_KNOWN_GOOD"
+        return fallback, "LAST_KNOWN_GOOD"
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Kite returned an empty F&O universe and no last-known-good universe is available")
+
+
 def _run_loop():
     while True:
         # The entire iteration body is wrapped in this try/except as a
@@ -1557,12 +1688,15 @@ def _run_loop():
                 # Full historical research has priority over the expensive live scan.
                 # Dashboard/API serving remains available; only Kite-heavy scanning yields.
                 if research_runtime.is_research_active() or not research_runtime.live_scan_slot():
+                    _set_scan_status("RESEARCH-PAUSED", next_scan_due=_iso_after(5))
                     _rescan_event.wait(timeout=5)
                     _rescan_event.clear()
                     continue
+                wait_seconds = max(1, int(settings.SCAN_INTERVAL_SECONDS))
+                _record_scan_attempt_start()
                 try:
                     try:
-                        fno_symbols = scanner.get_fno_stock_list(kite)
+                        fno_symbols, _universe_source = _resolve_live_fno_symbols(kite)
                         results = scan_watchlist(kite, timeframe=WATCHLIST_TIMEFRAME, symbols=fno_symbols)
                         # One extra Kite call per cycle for the Index/Market-
                         # trend filter - fetch_index_direction swallows its
@@ -1653,16 +1787,14 @@ def _run_loop():
                                 _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
                                 swing_research=swing_snapshot,
                             )
-                            _state["last_scan"] = scan_ts
-                            _state["last_error"] = None
+                        wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
                             alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
                         except Exception:  # noqa: BLE001 - alerting must never break scanning
                             log.exception("Alert processing failed")
                     except Exception as exc:  # noqa: BLE001
                         log.exception("Background scan failed")
-                        with _state_lock:
-                            _state["last_error"] = str(exc)
+                        wait_seconds = _record_scan_attempt_failure(exc)
 
                     _save_persisted_state()
                 finally:
@@ -1673,7 +1805,7 @@ def _run_loop():
                 # wait() instead of a plain sleep() so a Quick Settings / Settings
                 # change can wake the loop immediately. This wait deliberately happens
                 # outside the heavy-work slot so historical research can start now.
-                _rescan_event.wait(timeout=settings.SCAN_INTERVAL_SECONDS)
+                _rescan_event.wait(timeout=wait_seconds)
                 _rescan_event.clear()
             else:
                 # Not logged in yet today, or outside market hours - the
@@ -1681,13 +1813,16 @@ def _run_loop():
                 # in memory from earlier today) are left untouched so
                 # there's always something on screen to analyse. Check back
                 # periodically without hammering anything.
+                status = "MARKET-CLOSED" if kite is not None else "WAITING-LOGIN"
+                _set_scan_status(status, next_scan_due=_iso_after(30))
                 _rescan_event.wait(timeout=30)
                 _rescan_event.clear()
-        except Exception:  # noqa: BLE001 - never let this thread die
+        except Exception as exc:  # noqa: BLE001 - never let this thread die
             log.exception("Background scan loop hit an unexpected error - retrying")
-            with _state_lock:
-                _state["last_error"] = "Background loop hit an unexpected error - see server logs."
-            time.sleep(30)
+            delay = _record_scan_attempt_failure(
+                "Background loop hit an unexpected error - see server logs: %s" % exc
+            )
+            time.sleep(delay)
 
 
 def start_background_scanner():

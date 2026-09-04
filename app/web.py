@@ -111,6 +111,11 @@ def dashboard():
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
         ),
         last_scan=state["last_scan"],
+        last_scan_attempt=state.get("last_scan_attempt"),
+        last_scan_attempt_status=state.get("last_scan_attempt_status"),
+        scan_status=state.get("scan_status") or "WAITING",
+        next_scan_due=state.get("next_scan_due"),
+        live_build_id=background.LIVE_RELIABILITY_BUILD_ID,
         last_error=state["last_error"],
         timeframe=config.WATCHLIST_TIMEFRAME,
         min_required=settings.MIN_REQUIRED,
@@ -166,6 +171,13 @@ def api_dashboard_state():
     research_state = backtest.get_early_research_state()
     return jsonify({
         "last_scan": state.get("last_scan"),
+        "last_scan_attempt": state.get("last_scan_attempt"),
+        "last_scan_attempt_status": state.get("last_scan_attempt_status"),
+        "last_scan_attempt_error": state.get("last_scan_attempt_error"),
+        "scan_status": state.get("scan_status") or "WAITING",
+        "next_scan_due": state.get("next_scan_due"),
+        "fno_universe_source": state.get("fno_universe_source"),
+        "live_build_id": background.LIVE_RELIABILITY_BUILD_ID,
         "research_active": research_state.get("status") == "running",
         "research_worker": research_state.get("worker") or {},
         "last_error": state.get("last_error"),
@@ -319,14 +331,11 @@ def settings_page():
     scan_error_count = live_scan_health["errors"]
     scan_failures = v9_playbooks.scan_failure_details(live_rows, scan_state.get("scan_symbol_health") or {})
     research_watchlist_count = len(settings.WATCHLIST)
-    live_fno_count = None
-    if kite_auth.is_logged_in_today():
-        try:
-            kite = kite_auth.get_kite_client()
-            if kite is not None:
-                live_fno_count = len(scanner.get_fno_stock_list(kite))
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Could not count live F&O universe on settings page: %s", exc)
+    # Settings GET must never block on Kite. Use the last universe resolved
+    # by the background scanner; the explicit Load-current-F&O button remains
+    # the only Settings action that performs a live master refresh.
+    last_fno_symbols = list(scan_state.get("last_fno_symbols") or [])
+    live_fno_count = len(last_fno_symbols) if last_fno_symbols else None
     return render_template(
         "settings.html",
         s=settings.as_dict(),

@@ -378,7 +378,10 @@
   <div class="hdr-right">
     {% if logged_in %}
     <span class="hdr-pill"><span class="status-dot on"></span>Kite connected</span>
-    <span class="hdr-pill" id="last-scan-text">{{ last_scan or "waiting for first scan..." }}</span>
+    <span class="hdr-pill" id="scan-status-text">Scanner {{ scan_status or "WAITING" }}</span>
+    <span class="hdr-pill" id="live-build-text" title="Live reliability runtime">V10.2.2 live</span>
+    <span class="hdr-pill" id="last-attempt-text">Attempt {{ last_scan_attempt or "—" }}</span>
+    <span class="hdr-pill" id="last-scan-text">Success {{ last_scan or "waiting for first scan..." }}</span>
     <span class="hdr-pill"><span class="status-dot {{ 'on' if telegram_enabled else 'off' }}"></span>Telegram {{ 'on' if telegram_enabled else 'off' }}</span>
     <div class="alert-toggle-wrap">
       <span class="alert-toggle-label" id="desktop-alert-label">Desktop</span>
@@ -1179,6 +1182,8 @@
       var intradayCount = document.getElementById('intraday-count');
       var swingCount = document.getElementById('swing-count');
       var lastScan = document.getElementById('last-scan-text');
+      var lastAttempt = document.getElementById('last-attempt-text');
+      var scanStatus = document.getElementById('scan-status-text');
       if (scanCount) scanCount.textContent = state.total_scanned ?? 0;
       if (validCount) validCount.textContent = state.valid_scanned ?? 0;
       if (errorCount) errorCount.textContent = state.error_count ?? 0;
@@ -1186,7 +1191,9 @@
       if (radarCount) radarCount.textContent = counts.radar ?? 0;
       if (intradayCount) intradayCount.textContent = counts.intraday ?? 0;
       if (swingCount) swingCount.textContent = counts.swing ?? 0;
-      if (lastScan) lastScan.textContent = state.last_scan || 'waiting for first scan...';
+      if (lastScan) lastScan.textContent = 'Success ' + (state.last_scan || 'waiting for first scan...');
+      if (lastAttempt) lastAttempt.textContent = 'Attempt ' + (state.last_scan_attempt || '—');
+      if (scanStatus) scanStatus.textContent = 'Scanner ' + (state.scan_status || 'WAITING');
       renderScanFailures(state.scan_failures, state.valid_scanned, state.total_scanned);
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);

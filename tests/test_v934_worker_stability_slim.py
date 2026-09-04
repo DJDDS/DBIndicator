@@ -97,7 +97,7 @@ def test_v934_research_api_surface_is_single_and_slim():
 def test_v934_live_slot_is_released_before_scan_interval_wait():
     text = (ROOT / 'app/background.py').read_text(encoding='utf-8')
     release = text.index('research_runtime.exit_live_scan()')
-    wait = text.index('_rescan_event.wait(timeout=settings.SCAN_INTERVAL_SECONDS)', release)
+    wait = text.index('_rescan_event.wait(timeout=wait_seconds)', release)
     assert release < wait
 
 

@@ -33,6 +33,33 @@ def now_ist() -> dt.datetime:
 
 _instrument_cache = {}
 
+
+def seed_nse_instrument_cache(mapping: dict) -> None:
+    """Seed the NSE cash-token cache from a persisted last-known-good scan.
+
+    This is a reliability fallback only: a successful live instruments() call
+    remains authoritative. Keeping just the F&O cash tokens lets price scans
+    continue across a transient Kite instrument-master timeout after restart.
+    """
+    if not isinstance(mapping, dict):
+        return
+    clean = {}
+    for symbol, token in mapping.items():
+        try:
+            clean[str(symbol)] = int(token)
+        except (TypeError, ValueError):
+            continue
+    if clean:
+        _instrument_cache.update(clean)
+
+
+def cached_nse_instrument_tokens(symbols=None) -> dict:
+    """Return the currently cached NSE token map, optionally subset by symbol."""
+    if symbols is None:
+        return dict(_instrument_cache)
+    wanted = set(symbols or [])
+    return {s: t for s, t in _instrument_cache.items() if s in wanted}
+
 # Index/sector futures on NFO whose underlying isn't a tradeable stock -
 # excluded when deriving the F&O stock universe from Kite's instrument
 # list (see get_fno_stock_list below).
@@ -688,6 +715,12 @@ def fetch_candles(kite, instrument_token, timeframe: str) -> pd.DataFrame:
     else:
         interval = timeframe
     data = _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interval)
+    # Kite can occasionally return HTTP-success with an empty payload for a
+    # perfectly valid symbol. One bounded retry prevents a transient empty
+    # response from turning into a persistent scan-health failure.
+    if not data:
+        time.sleep(0.5)
+        data = _fetch_historical_chunked(kite, instrument_token, from_date, to_date, interval)
     df = pd.DataFrame(data)
     if df.empty:
         log.warning(
@@ -750,7 +783,14 @@ def scan_watchlist(kite, timeframe: str = None, with_oi: bool = True, symbols=No
     timeframe = timeframe or WATCHLIST_TIMEFRAME
     instruments = _load_instrument_map(kite)
     universe = list(symbols) if symbols is not None else list(settings.WATCHLIST)
-    oi_map = fetch_oi_map(kite, universe) if with_oi else {}
+    if with_oi:
+        try:
+            oi_map = fetch_oi_map(kite, universe)
+        except Exception as exc:  # noqa: BLE001 - OI is enrichment; price scan must survive
+            log.warning("OI master/fetch unavailable; continuing price scan without OI: %s", exc)
+            oi_map = {}
+    else:
+        oi_map = {}
     results = []
     for symbol in universe:
         token = instruments.get(symbol)
