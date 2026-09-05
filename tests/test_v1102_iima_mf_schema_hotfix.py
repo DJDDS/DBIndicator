@@ -20,7 +20,7 @@ def test_v1102_release_identifies_exact_mf_schema_hotfix():
     from pathlib import Path
 
     marker = Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip()
-    assert marker == "2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT"
+    assert marker == "2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB"
     text = Path("app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V11.0.2 exact IIMA MF schema hotfix" in text
     assert "<code>MF</code>" in text

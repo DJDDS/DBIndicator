@@ -35,6 +35,45 @@ def _actions_between(actions, start_day, end_day):
     return out
 
 
+def selected_futstk_contract_metadata(fo: pd.DataFrame, trade_date) -> dict[str, dict]:
+    """Coverage-only metadata for the frozen V11.1 FUTSTK execution rule.
+
+    The selected contract is the nearest expiry that is not expired on the
+    signal month-end trading date.  We retain only availability/provenance
+    metadata; V11.1 does not compute futures P&L from these values.
+    """
+    if fo is None or fo.empty:
+        return {}
+    required = {"symbol", "expiry"}
+    if not required.issubset(set(fo.columns)):
+        return {}
+    day = pd.Timestamp(trade_date).normalize()
+    x = fo.copy()
+    x["symbol"] = x["symbol"].astype(str).str.strip().str.upper()
+    x["expiry"] = pd.to_datetime(x["expiry"], errors="coerce").dt.normalize()
+    x = x[x["symbol"].ne("") & x["expiry"].notna() & x["expiry"].ge(day)].copy()
+    if x.empty:
+        return {}
+    x = x.sort_values(["symbol", "expiry"], kind="mergesort")
+    out: dict[str, dict] = {}
+    for symbol, sub in x.groupby("symbol", sort=True):
+        row = sub.iloc[0]
+        settle = pd.to_numeric(pd.Series([row.get("settle")]), errors="coerce").iloc[0]
+        close = pd.to_numeric(pd.Series([row.get("close")]), errors="coerce").iloc[0]
+        lot = pd.to_numeric(pd.Series([row.get("lot_size")]), errors="coerce").iloc[0]
+        settle_ok = bool(pd.notna(settle) and float(settle) > 0)
+        close_ok = bool(pd.notna(close) and float(close) > 0)
+        price_field = "settle" if settle_ok else ("close" if close_ok else None)
+        out[str(symbol)] = {
+            "expiry": pd.Timestamp(row["expiry"]).date().isoformat(),
+            "lot_size_available": bool(pd.notna(lot) and float(lot) > 0),
+            "price_available": bool(price_field is not None),
+            "price_field": price_field,
+            "source_format": str(row.get("source_format") or "UNKNOWN"),
+        }
+    return out
+
+
 def build_monthly_inputs_from_snapshots(snapshots: list[dict], actions_by_symbol: dict[str, list[dict]]):
     """Convert month-end cash/F&O snapshots into adjusted monthly returns.
 
@@ -114,7 +153,12 @@ def _resolve_snapshot(month, fo_client, cash_client):
         cash_eq["symbol"] = cash_eq["symbol"].astype(str).str.strip().str.upper()
         cash_eq["close"] = pd.to_numeric(cash_eq["close"], errors="coerce")
         cash_close = dict(cash_eq.dropna(subset=["close"]).drop_duplicates("symbol", keep="last")[["symbol", "close"]].itertuples(index=False, name=None))
-        return {"date": d.date().isoformat(), "fno_symbols": fno, "cash_close": cash_close}
+        return {
+            "date": d.date().isoformat(),
+            "fno_symbols": fno,
+            "cash_close": cash_close,
+            "futures_contracts": selected_futstk_contract_metadata(fo, d),
+        }
     raise FileNotFoundError(f"no common NSE FO/CM month-end archive for {month_end:%Y-%m}: {last_missing}")
 
 
@@ -167,6 +211,9 @@ def build_trial24_inputs(cache_dir: str | Path, progress_cb=None) -> dict:
         "monthly_returns": returns,
         "membership": membership,
         "factors": factors,
+        "futures_contracts_by_month": {
+            _month_key(x["date"]): dict(x.get("futures_contracts") or {}) for x in snapshots
+        },
         "data_readiness": readiness,
         "meta": {**data_meta, "factor_coverage": factor_coverage, "factor_source": factor_meta, "corporate_actions": ca_meta, "manifest_sha256": manifest_sha},
     }

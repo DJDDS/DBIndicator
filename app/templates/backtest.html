@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB</div>
     <p>
-      <strong>V11.0 Feasibility Competition + Trial 24 Preregistration is the primary research architecture.</strong> Candidate selection uses external prior magnitude, cost and power <strong>before outcome data are read</strong>. The winner is the exact published-style residual-momentum replication; the redesigned basis candidate remains blocked because no horizon-matched prior magnitude is registered.
+      <strong>V11.1 Development &amp; Feasibility Lab is the primary research architecture.</strong> It compares exactly two frozen momentum families on <strong>development-only</strong> data, measures target-market volatility and actual portfolio turnover, audits FUTSTK execution coverage, and refuses Trial 25 unless a candidate can support at least <strong>80% prospective joint power</strong>. The final 31 Trial-24 months remain unread.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -119,8 +119,32 @@
   </div>
 
 
+  <div class="card" style="border-color:#0a6f8f;">
+    <h2>V11.1 Development &amp; Feasibility Lab</h2>
+    <p style="margin-top:-4px;"><strong>DEVELOPMENT ONLY &mdash; NO TRIAL 25 YET.</strong> The already-read <strong>2010-01 through 2023-05</strong> Trial-24 pre-final period is development data only. <strong>FINAL 31 MONTHS UNREAD.</strong> V11.1 cannot activate TRADE/WATCH; production activation <strong>NO</strong>.</p>
+    <p class="hint"><strong>Exactly two fixed candidates:</strong> (A) Residual momentum + volatility de-risking at the externally anchored <strong>12.49%</strong> annual target and (B) Liquid price momentum + the identical de-risk-only rule at the externally anchored <strong>19%</strong> annual target. Both use point-in-time FUTSTK membership, 12-1 formation, monthly deciles, equal-weight long/short portfolios and the same cost convention. No lookback/decile/volatility-target sweep is allowed.</p>
+    <p class="hint"><strong>Feasibility Gate V2:</strong> development-measured target-market volatility overrides transported source-market volatility; a candidate must have positive measured-cost economics and at least <strong>80% prospective joint power</strong>. Hard gates are simulated jointly, never by multiplying marginal powers.</p>
+    <p class="hint"><strong>Economics:</strong> Measured-cost net uses actual portfolio weight-change turnover. Stress-cost net remains a separate robustness scenario. FUTSTK execution coverage uses the frozen nearest-nonexpired-contract / settle-else-close / monthly-reselect contract; missing contracts fail closed and cash P&amp;L is never relabelled futures P&amp;L.</p>
+    <button type="button" class="btn" id="v111-run-btn">Run V11.1 Development &amp; Feasibility Lab</button>
+    <span class="hint" id="v111-form-hint" style="margin-left:10px;">Uses development data only; does not run Trial 25 or read the final 31 months.</span>
+    <div class="progress-wrap" id="v111-progress" style="display:none;">
+      <div class="progress-bar"><div class="progress-bar-fill" id="v111-progress-fill"></div></div>
+      <div class="progress-label" id="v111-progress-label">Starting…</div>
+    </div>
+    <div class="msg-err" id="v111-error" style="display:none; margin-top:16px;"></div>
+    <div id="v111-results" style="display:none; margin-top:18px;">
+      <h3 class="bt-group-title">Two-candidate development comparison</h3>
+      <div id="v111-candidates"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Trial-25 eligibility</h3>
+      <div id="v111-selection" class="hint"></div>
+      <h3 class="bt-group-title" style="margin-top:18px;">Integrity &amp; locks</h3>
+      <div id="v111-integrity" class="hint"></div>
+    </div>
+  </div>
+
+
   <div class="card" style="border-color:#0f7b61;">
-    <h2>V11.0 Feasibility Competition · Trial 24</h2>
+    <h2>V11.0.5 Trial 24 Historical Record · READ-ONLY</h2>
     <p class="hint"><strong>V11.0.5 strict required-window factor contract:</strong> Trial 24 still validates only <strong>2010-01 through 2023-05</strong>, so the historical 1993-10 <code>MF=NA</code> row cannot block it. The bounded factor request is now also <strong>complete-month fail-closed</strong>: every month inside the required window must exist, and any missing/non-numeric required value aborts before <code>alpha_read_started</code>. No factor imputation, Trial-24 rule change, cost change, or holdout read is introduced.</p>
     <p class="hint"><strong>V11.0.4 required-window factor contract:</strong> Trial 24 validates only the pinned IIMA factor months it can actually consume (<strong>2010-01 through 2023-05</strong>) and only <code>MF/rm_rf</code>, <code>SMB</code>, <code>HML</code> and <code>RF</code>. Historical rows outside the preregistered window remain covered by the pinned source SHA but cannot block Trial 24; any bad required value inside the window still fails closed. WML is not required because the frozen FF3 residualisation does not use it. Trial 24 specification, feasibility gate, costs, alpha-read boundary and final-holdout lock are unchanged.</p>
     <p class="hint"><strong>V11.0.3 IIMA numeric-format integrity hotfix:</strong> normalizes legitimate factor-value formatting (whitespace/NBSP, percent suffixes, comma grouping and Unicode minus signs) without imputing or deleting factor months. Any value that still cannot be parsed fails closed with the <strong>exact month + raw value</strong>. Trial 24 specification, feasibility gate, costs, alpha-read boundary and final-holdout lock are unchanged.</p>
@@ -129,8 +153,8 @@
     <div id="v11-feasibility" class="hint" style="margin-bottom:14px;"></div>
     <p class="hint"><strong>Trial 24 frozen specification:</strong> 36-month India FF3 regression · residual momentum formed over <strong>12-1M</strong> · monthly rebalance · long top decile / short bottom decile · one-month hold · equal weights · <strong>0.36% spread round-trip stress cost</strong>. No RSI/EMA/OI/volume/basis rescue is permitted.</p>
     <p class="hint"><strong>Integrity:</strong> official NSE point-in-time FUTSTK membership + cash month-end prices, pinned survivorship-adjusted IIM Ahmedabad factors, corporate-action adjustment with ambiguous actions failing closed. The <strong>final 20% stays unread</strong>; the production loader physically stops before that final outcome period. A PASS is research evidence only and cannot activate TRADE/WATCH.</p>
-    <button type="button" class="btn" id="v11-run-btn">Run Trial 24 Residual Momentum Replication</button>
-    <span class="hint" id="v11-form-hint" style="margin-left:10px;">Runnable only because the pre-trial feasibility gate passes before outcomes.</span>
+    <button type="button" class="btn" id="v11-run-btn" disabled>Trial 24 Historical Record · read-only</button>
+    <span class="hint" id="v11-form-hint" style="margin-left:10px;">Trial 24 has already been read pre-final and cannot be rerun from V11.1.</span>
     <div class="progress-wrap" id="v11-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v11-progress-fill"></div></div>
       <div class="progress-label" id="v11-progress-label">Starting…</div>
@@ -431,6 +455,28 @@ function startJob(url, scope, extra, hintId, onStarted) {
 
 
 
+const V111_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB";
+function v111Pct(v,d=2){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':(Number(v)*100).toFixed(d)+'%';}
+function v111Num(v,d=2){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
+function v111Candidate(c,label){
+  c=c||{};const m=c.metrics||{},p=c.power||{},x=c.execution_coverage||{};
+  return `<div style="margin-bottom:14px;"><strong>${label}</strong><br>`+
+    `Measured-cost net ${v111Pct(m.net_monthly_mean,3)} / month · annualised ${v111Pct(m.net_annualized_mean,2)} · vol ${v111Pct(m.annualized_volatility,2)} · Sharpe ${v111Num(m.sharpe,2)} · Sortino ${v111Num(m.sortino,2)}.<br>`+
+    `Stress-cost net ${v111Pct(m.stress_net_monthly_mean,3)} / month · max drawdown ${v111Pct(m.max_drawdown,2)} · worst month ${v111Pct(m.worst_month,2)} · CVaR 5% ${v111Pct(m.cvar_5,2)} · turnover mean/median ${v111Pct(m.average_turnover,1)} / ${v111Pct(m.median_turnover,1)}.<br>`+
+    `Joint power ${v111Pct(p.joint_power,1)} vs required ${v111Pct(p.minimum_power,0)} · primary power ${v111Pct(p.primary_power,1)} · required net effect ${v111Pct(p.required_net_effect,3)} / month · primary 80% power needs ${p.required_periods_for_minimum_primary_power??'—'} months (joint battery may need more) · <strong>${String(p.decision||'DO_NOT_RUN_UNDERPOWERED').replaceAll('_',' ')}</strong>.<br>`+
+    `FUTSTK execution coverage ${v111Pct(x.coverage,1)} · ${String(x.status||'FUTSTK_EXECUTION_COVERAGE_INSUFFICIENT').replaceAll('_',' ')}.</div>`;
+}
+function updateV111UI(state){
+  state=state||{};const p=state.progress||{},btn=document.getElementById('v111-run-btn'),prog=document.getElementById('v111-progress'),fill=document.getElementById('v111-progress-fill'),label=document.getElementById('v111-progress-label'),err=document.getElementById('v111-error'),results=document.getElementById('v111-results');if(!btn)return;
+  if(state.status==='running'){btn.disabled=true;prog.style.display='block';err.style.display='none';results.style.display='none';fill.style.width=Math.max(1,Math.min(100,Number(p.overall_pct)||0))+'%';const item=p.item?` · ${p.item}`:'';label.textContent=`${p.stage||'Running V11.1'} · ${p.done||0}/${p.total||0}${item}`;return;}
+  prog.style.display='none';
+  if(state.status==='error'){btn.disabled=false;err.style.display='block';err.textContent=state.error||'V11.1 development lab failed.';results.style.display='none';return;}
+  err.style.display='none';
+  if(state.status==='done'&&state.result){btn.disabled=true;const r=state.result||{},cs=r.candidates||[],sel=r.selection||{},meta=r.data_meta||{};document.getElementById('v111-candidates').innerHTML=v111Candidate(cs[0],'Candidate A · Residual momentum + volatility de-risking')+v111Candidate(cs[1],'Candidate B · Liquid price momentum + identical volatility de-risking');document.getElementById('v111-selection').innerHTML=`<strong>${String(sel.status||'NO_DEVELOPMENT_WINNER').replaceAll('_',' ')}</strong> · winner ${sel.winner||'NONE'} · tie-break ${String(sel.tie_break||'—').replaceAll('_',' ')} · Trial 25 run <strong>NO</strong> · production activation <strong>NO</strong>.`;document.getElementById('v111-integrity').innerHTML=`Development ${r.development_window||'2010-01_TO_2023-05'} · comparison signal months ${r.comparison_signal_months??'—'} · member-return coverage ${v111Pct(meta.member_return_coverage,1)} · factor coverage ${v111Pct(meta.factor_coverage,1)} · final months <strong>${r.final_months_unread??31} UNREAD</strong> · final read <strong>NO</strong>.`;results.style.display='block';return;}
+  btn.disabled=false;results.style.display='none';
+}
+function pollV111(){fetch('/api/v111/development/status').then(r=>r.json()).then(st=>{updateV111UI(st);if(st.status==='running')setTimeout(pollV111,2500);}).catch(()=>setTimeout(pollV111,5000));}
+
 const V11_BUILD_ID = "2026-09-04-INSTITUTIONAL-V11.0.5-STRICT-REQUIRED-WINDOW-FACTOR-CONTRACT";
 function v11Pct(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':(Number(v)*100).toFixed(d)+'%';}
 function v11Num(v,d=3){return (v===null||v===undefined||!Number.isFinite(Number(v)))?'—':Number(v).toFixed(d);}
@@ -445,8 +491,8 @@ function updateV11UI(state){
   prog.style.display='none';
   if(state.status==='done'&&state.result){btn.disabled=true;err.style.display='none';const r=state.result||{},e=r.evaluation||{},m=r.data_meta||{};document.getElementById('v11-verdict').innerHTML=`<div class="${String(r.status||'').startsWith('PASS')?'win-good':'win-bad'}" style="font-size:16px;"><strong>${String(r.status||'INCONCLUSIVE').replaceAll('_',' ')}</strong></div>`;document.getElementById('v11-metrics').innerHTML=`Confirmatory months ${e.confirmatory_months??'—'} · mean net ${v11Pct(e.mean_net)} · t ${v11Num(e.t_stat,3)} vs ${v11Num(e.t_bar,3)} · positive blocks ${e.positive_blocks??'—'}/4 · top-3 removed ${v11Pct(e.top3_removed_mean_net)}.`;document.getElementById('v11-integrity').innerHTML=`Member-return coverage ${v11Pct(m.member_return_coverage,1)} · factor coverage ${v11Pct(m.factor_coverage,1)} · score rows ${r.score_rows??0} · input manifest ${m.manifest_sha256||'—'} · final months ${e.final_months??'—'} <strong>UNREAD</strong> · production activation <strong>NO</strong>.`;results.style.display='block';return;}
   results.style.display='none';
-  if(state.status==='error'){err.style.display='block';err.textContent=state.error||'V11 Trial 24 failed.';btn.disabled=!!state.alpha_read_started;return;}
-  err.style.display='none';btn.disabled=!(state.feasibility||initialV11Feasibility||{}).trial24_registered;
+  if(state.status==='error'){err.style.display='block';err.textContent=state.error||'Historical Trial 24 state unavailable.';btn.disabled=true;return;}
+  err.style.display='none';btn.disabled=true;
 }
 function pollV11(){fetch('/api/v11/trial24/status').then(r=>r.json()).then(st=>{updateV11UI(st);if(st.status==='running')setTimeout(pollV11,2500);}).catch(()=>setTimeout(pollV11,5000));}
 
@@ -1130,9 +1176,12 @@ document.getElementById('er-run-btn').addEventListener('click', function () {
   document.getElementById('scope-days').value = '180';
   startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'v4h-form-hint', pollEarlyResearch);
 });
-document.getElementById('v11-run-btn').addEventListener('click', function () {
-  startJob('/api/v11/trial24/start', {universe:'watchlist', timeframe:'day', days:'0', horizons:[]}, {}, 'v11-form-hint', pollV11);
+document.getElementById('v111-run-btn').addEventListener('click', function () {
+  startJob('/api/v111/development/start', {universe:'watchlist', timeframe:'day', days:'0', horizons:[]}, {}, 'v111-form-hint', pollV111);
 });
+const initialV111State = {{ v111_state | default(none) | tojson }};
+if (initialV111State) { updateV111UI(initialV111State); if (initialV111State.status === 'running') pollV111(); }
+document.getElementById('v11-run-btn').disabled = true;
 const initialV11Feasibility = {{ v11_feasibility | default(none) | tojson }};
 const initialV11State = {{ v11_state | default(none) | tojson }};
 renderV11Feasibility(initialV11Feasibility);
