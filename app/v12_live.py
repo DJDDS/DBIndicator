@@ -13,7 +13,7 @@ from typing import Callable
 
 import requests
 
-from . import v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
+from . import config, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
 
 TRIAL25_LOCKED_STATUS = "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED."
 
@@ -125,6 +125,11 @@ def process_live_scan(
 
     option_state = v12_option_recorder.load_v12_state(option_state_file)
     feasibility = v12_feasibility.summarize_feasibility(option_state)
+    health = v12_option_recorder.recorder_health(
+        option_snapshot_file, option_state_file, now=now,
+        storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
+    )
+    recorder = {**recorder, "health": health}
     return {
         "trade_console": trade_console,
         "recorder": recorder,

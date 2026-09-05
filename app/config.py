@@ -130,11 +130,20 @@ OPTION_SHADOW_STATE_FILE = os.getenv("OPTION_SHADOW_STATE_FILE", "option_shadow_
 OPTION_RISK_FREE_RATE = float(os.getenv("OPTION_RISK_FREE_RATE", "0.06"))
 
 # V12.0 forward option-edge recorder runtime files and operational limits.
-# These are research-state files and must never be packaged into a release.
-V12_OPTION_SNAPSHOT_FILE = os.getenv("V12_OPTION_SNAPSHOT_FILE", "v12_option_snapshots.jsonl")
-V12_OPTION_STATE_FILE = os.getenv("V12_OPTION_STATE_FILE", "v12_option_state.json")
-V12_EARNINGS_LEDGER_FILE = os.getenv("V12_EARNINGS_LEDGER_FILE", "v12_earnings_ledger.jsonl")
-V12_EARNINGS_STATE_FILE = os.getenv("V12_EARNINGS_STATE_FILE", "v12_earnings_state.json")
+# Railway injects RAILWAY_VOLUME_MOUNT_PATH when a persistent Volume is
+# attached. V12 automatically writes under <mount>/v12 unless a per-file
+# override is explicitly supplied. Without a Volume the UI says EPHEMERAL
+# WARNING rather than silently implying persistence.
+from .v12_storage import resolve_v12_storage
+_V12_STORAGE = resolve_v12_storage(os.environ)
+V12_STORAGE_ROOT = _V12_STORAGE["root"]
+V12_STORAGE_MODE = _V12_STORAGE["mode"]
+V12_STORAGE_PERSISTENT = bool(_V12_STORAGE["persistent"])
+V12_STORAGE_STATUS = _V12_STORAGE["storage_status"]
+V12_OPTION_SNAPSHOT_FILE = _V12_STORAGE["option_snapshots"]
+V12_OPTION_STATE_FILE = _V12_STORAGE["option_state"]
+V12_EARNINGS_LEDGER_FILE = _V12_STORAGE["earnings_ledger"]
+V12_EARNINGS_STATE_FILE = _V12_STORAGE["earnings_state"]
 V12_SNAPSHOT_GRACE_MINUTES = int(os.getenv("V12_SNAPSHOT_GRACE_MINUTES", "7"))
 V12_DEEP_SYMBOL_LIMIT = int(os.getenv("V12_DEEP_SYMBOL_LIMIT", "40"))
 

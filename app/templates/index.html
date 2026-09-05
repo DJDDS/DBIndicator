@@ -529,7 +529,19 @@
       <div class="v12-metric"><span>Trading days</span><strong id="v12-days-recorded">{{ v12f.get('trading_days_recorded', 0) }}/10</strong></div>
       <div class="v12-metric"><span>Tradeable stock options</span><strong id="v12-tradeable-symbols">{{ v12f.get('tradeable_symbols', 0) }}</strong></div>
       <div class="v12-metric"><span>Median ATM straddle spread</span><strong id="v12-median-spread">{% if v12f.get('median_straddle_spread_pct') is not none %}{{ v12f.get('median_straddle_spread_pct') }}%{% else %}—{% endif %}</strong></div>
-      <div class="v12-metric"><span>Last recorder</span><strong id="v12-recorder-status">{{ v12o.get('status') or 'WAITING' }}</strong></div>
+      {% set v12h = v12o.get('health') or {} %}
+      <div class="v12-metric"><span>Recorder health</span><strong id="v12-recorder-status">{{ v12h.get('recorder_status') or v12o.get('status') or 'WAITING' }}</strong></div>
+      <div class="v12-metric"><span>Storage</span><strong id="v12-storage-status">{{ v12h.get('storage_status') or 'CHECKING' }}</strong></div>
+      <div class="v12-metric"><span>Last successful write</span><strong id="v12-last-write">{{ v12h.get('last_successful_write_at') or '—' }}</strong></div>
+      <div class="v12-metric"><span>Snapshot file size</span><strong id="v12-snapshot-size">{{ v12h.get('snapshot_file_bytes', 0) }} bytes</strong></div>
+      <div class="v12-metric"><span>Option contracts recorded</span><strong id="v12-contract-count">{{ v12h.get('option_contracts_recorded', 0) }}</strong></div>
+      <div class="v12-metric"><span>Two-sided ATM straddles</span><strong id="v12-two-sided-count">{{ v12h.get('two_sided_atm_straddles_recorded', 0) }}</strong></div>
+      <div class="v12-metric"><span>Quote errors</span><strong id="v12-quote-errors">{{ v12h.get('quote_error_count', 0) }}</strong></div>
+      <div class="v12-metric"><span>Last write error</span><strong id="v12-write-error">{{ v12h.get('last_write_error') or 'NONE' }}</strong></div>
+      <div class="v12-metric"><span>09:30</span><strong id="v12-slot-open">{{ (v12h.get('slots') or {}).get('OPEN_STABLE', 'WAITING') }}</strong></div>
+      <div class="v12-metric"><span>13:00</span><strong id="v12-slot-midday">{{ (v12h.get('slots') or {}).get('MIDDAY', 'WAITING') }}</strong></div>
+      <div class="v12-metric"><span>15:10 PRE-CAS</span><strong id="v12-slot-pre-cas">{{ (v12h.get('slots') or {}).get('PRE_CAS', 'WAITING') }}</strong></div>
+      <div class="v12-metric"><span>15:37 POST-CAS</span><strong id="v12-slot-post-cas">{{ (v12h.get('slots') or {}).get('POST_CAS', 'WAITING') }}</strong></div>
       <div class="v12-metric"><span>Earnings calendar</span><strong id="v12-earnings-status">{{ v12e.get('status') or 'EMPTY' }}</strong></div>
       <div class="v12-metric"><span>Upcoming earnings 7D</span><strong id="v12-earnings-count">{{ v12e.get('upcoming_7d', [])|length }}</strong></div>
       <div class="v12-metric"><span>Term structure coverage</span><strong id="v12-term-coverage">{% if v12f.get('term_structure_coverage_pct') is not none %}{{ v12f.get('term_structure_coverage_pct') }}%{% else %}—{% endif %}</strong></div>
@@ -1276,7 +1288,21 @@
     text('v12-days-recorded', String(feasibility.trading_days_recorded || 0) + '/10');
     text('v12-tradeable-symbols', feasibility.tradeable_symbols || 0);
     text('v12-median-spread', pct(feasibility.median_straddle_spread_pct));
-    text('v12-recorder-status', recorder.status || 'WAITING');
+    var health = recorder.health || {};
+    text('v12-recorder-status', health.recorder_status || recorder.status || 'WAITING');
+    text('v12-storage-status', health.storage_status || 'CHECKING');
+    text('v12-last-write', health.last_successful_write_at || '—');
+    var bytes = Number(health.snapshot_file_bytes || 0);
+    text('v12-snapshot-size', bytes >= 1048576 ? (bytes / 1048576).toFixed(2) + ' MB' : bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KB' : bytes + ' bytes');
+    text('v12-contract-count', health.option_contracts_recorded || 0);
+    text('v12-two-sided-count', health.two_sided_atm_straddles_recorded || 0);
+    text('v12-quote-errors', health.quote_error_count || 0);
+    text('v12-write-error', health.last_write_error || 'NONE');
+    var slots = health.slots || {};
+    text('v12-slot-open', slots.OPEN_STABLE || 'WAITING');
+    text('v12-slot-midday', slots.MIDDAY || 'WAITING');
+    text('v12-slot-pre-cas', slots.PRE_CAS || 'WAITING');
+    text('v12-slot-post-cas', slots.POST_CAS || 'WAITING');
     text('v12-earnings-status', earnings.refresh_status ? (earnings.status || 'EMPTY') + ' / refresh ' + earnings.refresh_status : (earnings.status || 'EMPTY'));
     text('v12-earnings-count', Array.isArray(earnings.upcoming_7d) ? earnings.upcoming_7d.length : 0);
     text('v12-term-coverage', pct(feasibility.term_structure_coverage_pct));

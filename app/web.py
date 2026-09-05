@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -91,6 +91,11 @@ def dashboard():
     )
     forward_validation = opportunity_forward.summarize(state.get("opportunity_forward"))
     research_state = backtest.get_early_research_state()
+    v12_recorder = dict(state.get("v12_option_recorder") or {})
+    v12_recorder["health"] = v12_option_recorder.recorder_health(
+        config.V12_OPTION_SNAPSHOT_FILE, config.V12_OPTION_STATE_FILE,
+        now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
+    )
 
     return render_template(
         "index.html",
@@ -105,7 +110,7 @@ def dashboard():
         opportunity_radar=opportunity_radar,
         forward_validation=forward_validation,
         v12_trade_console=state.get("v12_trade_console") or {},
-        v12_option_recorder=state.get("v12_option_recorder") or {},
+        v12_option_recorder=v12_recorder,
         v12_feasibility=state.get("v12_feasibility") or {},
         v12_earnings=state.get("v12_earnings") or {},
         v12_trial25_status=state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
@@ -172,6 +177,11 @@ def dashboard():
 def api_dashboard_state():
     state = get_state()
     rows = state.get("results") or []
+    v12_recorder = dict(state.get("v12_option_recorder") or {})
+    v12_recorder["health"] = v12_option_recorder.recorder_health(
+        config.V12_OPTION_SNAPSHOT_FILE, config.V12_OPTION_STATE_FILE,
+        now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
+    )
     health = v9_playbooks.scan_health_counts(rows)
     research_state = backtest.get_early_research_state()
     return jsonify({
@@ -205,7 +215,7 @@ def api_dashboard_state():
         )),
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
         "v12_trade_console": state.get("v12_trade_console") or {},
-        "v12_option_recorder": state.get("v12_option_recorder") or {},
+        "v12_option_recorder": v12_recorder,
         "v12_feasibility": state.get("v12_feasibility") or {},
         "v12_earnings": state.get("v12_earnings") or {},
         "v12_trial25_status": state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
@@ -267,6 +277,16 @@ def _v12_export(path, filename, mimetype):
     if not path or not os.path.exists(path):
         return jsonify({"status": "UNAVAILABLE", "error": "V12 recording file does not exist yet."}), 404
     return send_file(path, mimetype=mimetype, as_attachment=True, download_name=filename)
+
+
+@app.route("/api/v12-recorder-health")
+@require_dashboard_password
+def api_v12_recorder_health():
+    health = v12_option_recorder.recorder_health(
+        config.V12_OPTION_SNAPSHOT_FILE, config.V12_OPTION_STATE_FILE,
+        now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
+    )
+    return jsonify(health)
 
 
 @app.route("/api/v12-option-state/export")

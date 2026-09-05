@@ -299,6 +299,10 @@ def load_v12_state(path) -> dict:
         "final_week_samples": 0,
         "last_capture_at": None,
         "last_error": None,
+        "last_write_error": None,
+        "last_successful_write_at": None,
+        "total_slot_records": 0,
+        "quote_error_count": 0,
     }
 
 
@@ -439,6 +443,68 @@ def refresh_spot_map(kite, results: list[dict], *, sleep_fn=None) -> tuple[dict[
     return out, errors
 
 
+def recorder_health(snapshot_file, state_file, *, now: dt.datetime | None = None, storage_mode: str = "EPHEMERAL", storage_root: str = ".") -> dict:
+    """Return auditable proof of V12 recorder persistence and successful writes."""
+    from pathlib import Path
+    now = now or dt.datetime.now()
+    state = load_v12_state(state_file)
+    path = Path(snapshot_file)
+    exists = path.exists() and path.is_file()
+    try:
+        size = path.stat().st_size if exists else 0
+    except OSError:
+        size = 0
+    day = now.date().isoformat()
+    todays = [x for x in (state.get("slot_summaries") or []) if str(x.get("date")) == day]
+    summary_by_slot = {str(x.get("slot")): x for x in todays if x.get("slot")}
+    captured = set((state.get("captured_slots") or {}).get(day) or [])
+    slots = {}
+    market_weekend = now.weekday() >= 5
+    for name, clock in SNAPSHOT_SLOTS:
+        if market_weekend:
+            slots[name] = "MARKET_CLOSED"
+            continue
+        if name in captured:
+            slots[name] = str((summary_by_slot.get(name) or {}).get("status") or "CAPTURED")
+            continue
+        scheduled = dt.datetime.combine(now.date(), clock)
+        compare_now = now.replace(tzinfo=None) if now.tzinfo is not None else now
+        if compare_now < scheduled:
+            slots[name] = "WAITING"
+        elif compare_now <= scheduled + dt.timedelta(minutes=DEFAULT_GRACE_MINUTES):
+            slots[name] = "DUE"
+        else:
+            slots[name] = "MISSED"
+    last_write_error = state.get("last_write_error")
+    if last_write_error:
+        recorder_status = "ERROR"
+    elif captured:
+        recorder_status = "RECORDING"
+    else:
+        recorder_status = "WAITING"
+    persistent = str(storage_mode) == "PERSISTENT_VOLUME"
+    return {
+        "recorder_status": recorder_status,
+        "storage_mode": storage_mode,
+        "storage_status": "PERSISTENT VOLUME" if persistent else "EPHEMERAL WARNING",
+        "storage_persistent": persistent,
+        "storage_root": str(storage_root),
+        "snapshot_file": str(snapshot_file),
+        "snapshot_file_exists": bool(exists),
+        "snapshot_file_bytes": int(size),
+        "total_slot_records": int(state.get("total_slot_records") or 0),
+        "option_contracts_recorded": int(state.get("quote_contracts") or 0),
+        "two_sided_atm_straddles_recorded": sum(int(x.get("two_sided_symbols") or 0) for x in (state.get("slot_summaries") or [])),
+        "quote_error_count": int(state.get("quote_error_count") or 0),
+        "last_successful_write_at": state.get("last_successful_write_at"),
+        "last_capture_at": state.get("last_capture_at"),
+        "last_capture_status": state.get("last_capture_status"),
+        "last_quote_error": state.get("last_error"),
+        "last_write_error": last_write_error,
+        "slots": slots,
+    }
+
+
 def record_snapshot(
     kite,
     results: list[dict],
@@ -512,7 +578,7 @@ def record_snapshot(
     }
     record = {
         "record_type": "V12_OPTION_SLOT",
-        "build": "2026-09-05-INSTITUTIONAL-V12.0-OPTION-EDGE-RECORDER-TRADE-CONSOLE",
+        "build": "2026-09-05-INSTITUTIONAL-V12.0.1-PERSISTENT-OPTION-RECORDER-HEALTH",
         "ts": now.isoformat(timespec="seconds"),
         "date": now.date().isoformat(),
         "slot": slot,
@@ -529,6 +595,7 @@ def record_snapshot(
         _append_snapshot(snapshot_file, record)
     except OSError as exc:
         state["last_error"] = f"snapshot write failed: {exc}"
+        state["last_write_error"] = str(exc)
         _save_v12_state(state_file, state)
         return {"status": "WRITE_FAILED", "slot": slot, "quote_errors": len(quote_errors), "error": str(exc)}
 
@@ -555,7 +622,11 @@ def record_snapshot(
     )
     state["last_capture_at"] = now.isoformat(timespec="seconds")
     state["last_capture_status"] = capture_status
+    state["last_successful_write_at"] = now.isoformat(timespec="seconds")
+    state["total_slot_records"] = int(state.get("total_slot_records") or 0) + 1
+    state["quote_error_count"] = int(state.get("quote_error_count") or 0) + len(quote_errors)
     state["last_error"] = quote_errors[-1]["error"] if quote_errors else None
+    state["last_write_error"] = None
     _save_v12_state(state_file, state)
     return {
         "status": capture_status,
