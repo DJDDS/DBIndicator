@@ -1,15 +1,16 @@
 from pathlib import Path
 
 
-def test_v111_backtest_ui_is_primary_development_lab_and_trial24_is_read_only():
+def test_v111_backtest_ui_is_historical_development_record_and_trial24_is_read_only():
     text = Path("app/templates/backtest.html").read_text(encoding="utf-8")
-    assert "V11.1 Development &amp; Feasibility Lab" in text
+    assert "V11.1 Development Lab · CLOSED / READ-ONLY" in text
     assert "DEVELOPMENT ONLY &mdash; NO TRIAL 25 YET" in text
+    assert 'id="v111-run-btn" disabled' in text
     assert "2010-01 through 2023-05" in text
     assert "FINAL 31 MONTHS UNREAD" in text
     assert "Residual momentum + volatility de-risking" in text
     assert "Liquid price momentum + identical volatility de-risking" in text
-    assert "/api/v111/development/start" in text
+    assert "startJob('/api/v111/development/start'" not in text
     assert "/api/v111/development/status" in text
     assert "Trial 24 Historical Record" in text
     assert 'id="v11-run-btn" disabled' in text

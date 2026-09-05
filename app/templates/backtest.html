@@ -67,9 +67,9 @@
 
   <div class="card">
     <h2>What this does</h2>
-    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB</div>
+    <div class="hint" id="research-build-marker"><strong>Research build:</strong> 2026-09-05-INSTITUTIONAL-V12.0-OPTION-EDGE-RECORDER-TRADE-CONSOLE</div>
     <p>
-      <strong>V11.1 Development &amp; Feasibility Lab is the primary research architecture.</strong> It compares exactly two frozen momentum families on <strong>development-only</strong> data, measures target-market volatility and actual portfolio turnover, audits FUTSTK execution coverage, and refuses Trial 25 unless a candidate can support at least <strong>80% prospective joint power</strong>. The final 31 Trial-24 months remain unread.
+      <strong>V12.0 Option Edge Recorder &amp; Trade Console is the primary research architecture.</strong> V11.1 is closed/read-only. V12 keeps today's opportunity shortlist operational while recording executable OPTSTK bid/ask evidence for earnings and final-week option research. <strong>Trial 25 remains LOCKED</strong> and the final 31 Trial-24 months remain unread.
     </p>
     <p>
       <strong>V9.4 remains visible as the completed measurement/audit path and V9.2 remains a manual diagnostic only.</strong> V9.5 does not rerun either automatically. Trial 13's final 20% and the rejected Bear final remain locked.
@@ -120,13 +120,13 @@
 
 
   <div class="card" style="border-color:#0a6f8f;">
-    <h2>V11.1 Development &amp; Feasibility Lab</h2>
+    <h2>V11.1 Development Lab · CLOSED / READ-ONLY</h2>
     <p style="margin-top:-4px;"><strong>DEVELOPMENT ONLY &mdash; NO TRIAL 25 YET.</strong> The already-read <strong>2010-01 through 2023-05</strong> Trial-24 pre-final period is development data only. <strong>FINAL 31 MONTHS UNREAD.</strong> V11.1 cannot activate TRADE/WATCH; production activation <strong>NO</strong>.</p>
     <p class="hint"><strong>Exactly two fixed candidates:</strong> (A) Residual momentum + volatility de-risking at the externally anchored <strong>12.49%</strong> annual target and (B) Liquid price momentum + the identical de-risk-only rule at the externally anchored <strong>19%</strong> annual target. Both use point-in-time FUTSTK membership, 12-1 formation, monthly deciles, equal-weight long/short portfolios and the same cost convention. No lookback/decile/volatility-target sweep is allowed.</p>
     <p class="hint"><strong>Feasibility Gate V2:</strong> development-measured target-market volatility overrides transported source-market volatility; a candidate must have positive measured-cost economics and at least <strong>80% prospective joint power</strong>. Hard gates are simulated jointly, never by multiplying marginal powers.</p>
     <p class="hint"><strong>Economics:</strong> Measured-cost net uses actual portfolio weight-change turnover. Stress-cost net remains a separate robustness scenario. FUTSTK execution coverage uses the frozen nearest-nonexpired-contract / settle-else-close / monthly-reselect contract; missing contracts fail closed and cash P&amp;L is never relabelled futures P&amp;L.</p>
-    <button type="button" class="btn" id="v111-run-btn">Run V11.1 Development &amp; Feasibility Lab</button>
-    <span class="hint" id="v111-form-hint" style="margin-left:10px;">Uses development data only; does not run Trial 25 or read the final 31 months.</span>
+    <button type="button" class="btn" id="v111-run-btn" disabled>V11.1 Development Lab · CLOSED / READ-ONLY</button>
+    <span class="hint" id="v111-form-hint" style="margin-left:10px;">Monthly branch closed in V12. Historical V11.1 result remains visible; no rerun, Trial 25, production activation, or final-31-month read is permitted.</span>
     <div class="progress-wrap" id="v111-progress" style="display:none;">
       <div class="progress-bar"><div class="progress-bar-fill" id="v111-progress-fill"></div></div>
       <div class="progress-label" id="v111-progress-label">Starting…</div>
@@ -1176,9 +1176,7 @@ document.getElementById('er-run-btn').addEventListener('click', function () {
   document.getElementById('scope-days').value = '180';
   startJob('/api/early-research/start', {universe:'watchlist', timeframe:'4hour', days:'180', horizons:[]}, {mode:'legacy_4h'}, 'v4h-form-hint', pollEarlyResearch);
 });
-document.getElementById('v111-run-btn').addEventListener('click', function () {
-  startJob('/api/v111/development/start', {universe:'watchlist', timeframe:'day', days:'0', horizons:[]}, {}, 'v111-form-hint', pollV111);
-});
+document.getElementById('v111-run-btn').disabled = true;
 const initialV111State = {{ v111_state | default(none) | tojson }};
 if (initialV111State) { updateV111UI(initialV111State); if (initialV111State.status === 'running') pollV111(); }
 document.getElementById('v11-run-btn').disabled = true;

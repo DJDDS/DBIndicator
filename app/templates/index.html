@@ -365,6 +365,31 @@
     .v8-reasons { grid-column:2 / -1; }
     .lms-grid { grid-template-columns:1fr; }
   }
+
+  /* V12 operational opportunity + forward option recorder */
+  .v12-card { border-color:#1d4f4a; background:linear-gradient(180deg, rgba(22,199,132,0.035), transparent 45%); }
+  .v12-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+  .v12-kicker { font:700 10px var(--mono); letter-spacing:.08em; color:var(--green); text-transform:uppercase; }
+  .v12-lock { font:700 10px var(--mono); color:var(--amber); padding:4px 8px; border:1px solid #5a4515; border-radius:999px; }
+  .v12-grid { display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:10px; margin-top:12px; }
+  .v12-panel { border:1px solid var(--border); border-radius:8px; background:var(--panel2); padding:10px; min-width:0; }
+  .v12-panel h3 { margin:0 0 8px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .v12-list { display:flex; flex-direction:column; gap:7px; }
+  .v12-row { display:grid; grid-template-columns:minmax(70px,1fr) auto; gap:5px 10px; padding:8px; border:1px solid var(--border); border-radius:7px; }
+  .v12-row.exec { border-color:rgba(22,199,132,.5); }
+  .v12-row.setup { border-color:rgba(240,185,11,.35); }
+  .v12-row .sym { font-weight:800; font-size:13px; }
+  .v12-row .state { font:800 9px var(--mono); letter-spacing:.04em; text-align:right; }
+  .v12-row .state.exec { color:var(--green); } .v12-row .state.setup { color:var(--amber); } .v12-row .state.watch { color:var(--accent); }
+  .v12-row .detail { grid-column:1 / -1; color:var(--muted); font-size:10.5px; line-height:1.45; }
+  .v12-metrics { display:grid; grid-template-columns:repeat(4,minmax(90px,1fr)); gap:8px; margin-top:10px; }
+  .v12-metric { padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--panel2); }
+  .v12-metric span { display:block; color:var(--dim); font-size:9px; text-transform:uppercase; letter-spacing:.05em; }
+  .v12-metric strong { display:block; margin-top:3px; font:700 13px var(--mono); }
+  .v12-note { color:var(--muted); font-size:10.5px; line-height:1.5; margin-top:8px; }
+  .v12-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; font-size:10.5px; }
+  @media (max-width:900px) { .v12-grid { grid-template-columns:1fr; } .v12-metrics { grid-template-columns:repeat(2,1fr); } }
+
 </style>
 </head>
 <!-- Compatibility label: F&O Early Movement · 15-min execution · High-Quality Swing 1-2D -->
@@ -474,6 +499,44 @@
       </table>
     </div>
   </div>
+
+  <section id="v12-trade-console" class="card v12-card" aria-label="V12 live trade opportunity console">
+    <div class="v12-head">
+      <div><div class="v12-kicker">V12 · TODAY'S OPPORTUNITY ENGINE</div>
+      <h2>Trade Opportunity Console <span class="sub">2–5 ranked intraday / 1–2D candidates · operational shortlist, not proven alpha</span></h2></div>
+      <div class="v12-lock">EXECUTABLE CANDIDATE · NOT VALIDATED</div>
+    </div>
+    <div class="v12-grid">
+      <div class="v12-panel"><h3>Intraday · OBSERVE → WATCH → SETUP → EXECUTABLE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for V12 live candidates…</div></div></div>
+      <div class="v12-panel"><h3>1D swing attention</h3><div id="v12-swing-1d-list" class="v12-list"><div class="v8-empty">Waiting for 1D candidates…</div></div></div>
+      <div class="v12-panel"><h3>2D swing attention</h3><div id="v12-swing-2d-list" class="v12-list"><div class="v8-empty">Waiting for 2D candidates…</div></div></div>
+    </div>
+    <div class="v12-note"><strong>Use:</strong> this card helps you decide what deserves live attention now. EXECUTABLE means the setup has a defined structural reference and the current futures/option spread clears the operational liquidity gate. It does <strong>not</strong> mean independently validated profitability.</div>
+  </section>
+
+  {% set v12f = v12_feasibility|default({}) %}
+  {% set v12o = v12_option_recorder|default({}) %}
+  {% set v12e = v12_earnings|default({}) %}
+  {% set v12t25 = v12_trial25_status|default('LOCKED — FORWARD FEASIBILITY REQUIRED') %}
+  <section id="v12-option-recorder" class="card v12-card" aria-label="V12 option edge recorder">
+    <div class="v12-head">
+      <div><div class="v12-kicker">V12 · TOMORROW'S VALIDATED EDGE</div>
+      <h2>Forward Option Edge Recorder <span class="sub">09:30 · 13:00 · 15:10 PRE-CAS · 15:37 POST-CAS IST</span></h2></div>
+      <div id="v12-trial25-status" class="v12-lock">{{ v12t25 }}</div>
+    </div>
+    <div class="v12-metrics">
+      <div class="v12-metric"><span>Feasibility</span><strong id="v12-feasibility-status">{{ v12f.get('status') or 'RECORDING — NO FEASIBILITY VERDICT' }}</strong></div>
+      <div class="v12-metric"><span>Trading days</span><strong id="v12-days-recorded">{{ v12f.get('trading_days_recorded', 0) }}/10</strong></div>
+      <div class="v12-metric"><span>Tradeable stock options</span><strong id="v12-tradeable-symbols">{{ v12f.get('tradeable_symbols', 0) }}</strong></div>
+      <div class="v12-metric"><span>Median ATM straddle spread</span><strong id="v12-median-spread">{% if v12f.get('median_straddle_spread_pct') is not none %}{{ v12f.get('median_straddle_spread_pct') }}%{% else %}—{% endif %}</strong></div>
+      <div class="v12-metric"><span>Last recorder</span><strong id="v12-recorder-status">{{ v12o.get('status') or 'WAITING' }}</strong></div>
+      <div class="v12-metric"><span>Earnings calendar</span><strong id="v12-earnings-status">{{ v12e.get('status') or 'EMPTY' }}</strong></div>
+      <div class="v12-metric"><span>Upcoming earnings 7D</span><strong id="v12-earnings-count">{{ v12e.get('upcoming_7d', [])|length }}</strong></div>
+      <div class="v12-metric"><span>Term structure coverage</span><strong id="v12-term-coverage">{% if v12f.get('term_structure_coverage_pct') is not none %}{{ v12f.get('term_structure_coverage_pct') }}%{% else %}—{% endif %}</strong></div>
+    </div>
+    <div class="v12-note">First 10 distinct trading days are <strong>recording only</strong>. The stock-option route becomes practically testable only if at least 20 symbols maintain ≥70% two-sided ATM coverage and ≤4% median executable straddle spread. No efficacy conclusion and no Trial 25 can be generated here.</div>
+    <div class="v12-links"><a href="/api/v12-option-snapshots/export">Export option snapshots</a><a href="/api/v12-option-state/export">Export option state</a><a href="/api/v12-earnings-ledger/export">Export earnings ledger</a><a href="/api/v12-earnings-state/export">Export earnings state</a></div>
+  </section>
 
   <section id="v8-decision-console" class="card v8-console" aria-label="V9.2 evidence-gated live decision console">
     <div class="v8-console-head">
@@ -1168,6 +1231,58 @@
     if (button && panel) button.addEventListener('click', function () { panel.classList.toggle('open'); });
   })();
 
+
+  function v12Esc(value) {
+    return String(value == null ? '' : value)
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+  }
+
+  function renderV12TradeConsole(consoleData) {
+    consoleData = consoleData || {};
+    function num(value, digits, suffix) {
+      var n = Number(value); return Number.isFinite(n) ? n.toFixed(digits) + (suffix || '') : '—';
+    }
+    function rowCard(row) {
+      row = row || {};
+      var state = String(row.trade_state || 'OBSERVE').toUpperCase();
+      var cls = state === 'EXECUTABLE' ? 'exec' : (state === 'SETUP' ? 'setup' : 'watch');
+      var score = Number(row.horizon_score != null ? row.horizon_score : row.score);
+      var scoreText = Number.isFinite(score) ? Math.round(score) : '—';
+      var trigger = num(row.trigger_reference, 2, '');
+      var fut = num(row.fut_spread_bps, 1, 'bp');
+      var opt = num(row.option_spread_pct, 1, '%');
+      return '<div class="v12-row ' + cls + '">' +
+        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + ' · score ' + scoreText + '</div>' +
+        '<div class="state ' + cls + '">' + v12Esc(state + ' · NOT VALIDATED') + '</div>' +
+        '<div class="detail">Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong> · Trigger/invalidation ref ' + trigger + ' · FUT spread ' + fut + ' · Option spread ' + opt + '<br>' + v12Esc(row.operational_reason || '') + '</div></div>';
+    }
+    function fill(id, rows, empty) {
+      var el = document.getElementById(id); if (!el) return;
+      rows = Array.isArray(rows) ? rows : [];
+      el.innerHTML = rows.length ? rows.map(rowCard).join('') : '<div class="v8-empty">' + v12Esc(empty) + '</div>';
+    }
+    fill('v12-intraday-list', consoleData.intraday, 'No V12 intraday candidate currently clears OBSERVE quality.');
+    var swing = consoleData.swing || {};
+    fill('v12-swing-1d-list', swing['1D'], 'No 1D candidate currently.');
+    fill('v12-swing-2d-list', swing['2D'], 'No 2D candidate currently.');
+  }
+
+  function renderV12Recorder(recorder, feasibility, earnings, trial25Status) {
+    recorder = recorder || {}; feasibility = feasibility || {}; earnings = earnings || {};
+    function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
+    function pct(value) { var n = Number(value); return Number.isFinite(n) ? n.toFixed(2) + '%' : '—'; }
+    text('v12-feasibility-status', feasibility.status || 'RECORDING — NO FEASIBILITY VERDICT');
+    text('v12-days-recorded', String(feasibility.trading_days_recorded || 0) + '/10');
+    text('v12-tradeable-symbols', feasibility.tradeable_symbols || 0);
+    text('v12-median-spread', pct(feasibility.median_straddle_spread_pct));
+    text('v12-recorder-status', recorder.status || 'WAITING');
+    text('v12-earnings-status', earnings.refresh_status ? (earnings.status || 'EMPTY') + ' / refresh ' + earnings.refresh_status : (earnings.status || 'EMPTY'));
+    text('v12-earnings-count', Array.isArray(earnings.upcoming_7d) ? earnings.upcoming_7d.length : 0);
+    text('v12-term-coverage', pct(feasibility.term_structure_coverage_pct));
+    text('v12-trial25-status', trial25Status || 'TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.');
+  }
+
   function pollDashboardState() {
     fetch('/api/dashboard-state').then(function (r) {
       if (!r.ok) throw new Error('state failed: ' + r.status);
@@ -1198,6 +1313,8 @@
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
       renderOpportunityForward(state.opportunity_forward);
+      renderV12TradeConsole(state.v12_trade_console);
+      renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;

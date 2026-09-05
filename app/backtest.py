@@ -6031,7 +6031,8 @@ def _start_v11_trial24_legacy_unreachable():
     return {"started": True, "mode": "v11_trial24", "build": v11_research.BUILD_ID, "final_read": False}
 
 # --------------------------------------------------------------------------
-# V11.1 Development & Feasibility Lab -- development only, never Trial 25
+# V11.1 Development & Feasibility Lab -- historical development record only
+# V11.1 MONTHLY BRANCH CLOSED IN V12
 # --------------------------------------------------------------------------
 def _default_v111_state():
     return {
@@ -6103,75 +6104,17 @@ def get_v111_development_state():
 
 
 def start_v111_development_lab():
-    with _v111_lock:
-        if _v111_state.get("status") == "running":
-            return {"started": False, "reason": "V11.1 Development Lab is already running.", "build": v111_lab.BUILD_ID}
-        if _v111_state.get("status") == "done" and _v111_state.get("result"):
-            return {"started": False, "reason": "V11.1 Development Lab already completed for this build; result is read-only.", "build": v111_lab.BUILD_ID}
-        _v111_state.update({
-            "status": "running",
-            "mode": "v111_development",
-            "build": v111_lab.BUILD_ID,
-            "research_only": True,
-            "development_only": True,
-            "progress": {"done": 0, "total": 0, "item": None, "stage": "Loading development-only V11.1 inputs", "overall_pct": 1},
-            "result": None,
-            "error": None,
-            "started_at": now_ist().isoformat(timespec="seconds"),
-            "finished_at": None,
-            "final_read": False,
-            "production_activation": False,
-        })
-    _persist_v111_state()
+    """Refuse all V11.1 reruns once V12 is the active research architecture.
 
-    def _input_progress(stage, done, total, item):
-        research_runtime.heartbeat(stage=stage, symbol=item, done=done, total=total)
-        pct = 5 + int(60 * (float(done) / max(int(total), 1))) if stage == "MONTH_END_ARCHIVES" else 5
-        with _v111_lock:
-            _v111_state["progress"] = {
-                "done": int(done), "total": int(total), "item": str(item),
-                "stage": "Official NSE development month-end archives",
-                "overall_pct": max(1, min(65, pct)),
-            }
-        if done == 0 or done == total or (done > 0 and done % 6 == 0):
-            _persist_v111_state()
-
-    def _job():
-        try:
-            with research_runtime.research_slot():
-                work = Path(_V111_WORK_ROOT)
-                inputs = v11_monthly_data.build_trial24_inputs(work / "inputs", progress_cb=_input_progress)
-                with _v111_lock:
-                    _v111_state["progress"] = {"done": 0, "total": 2, "item": "Residual momentum", "stage": "V11.1 two-candidate development comparison", "overall_pct": 72}
-                _persist_v111_state()
-                result = v111_lab.run_development_lab(inputs)
-                # Defense in depth: a development build cannot promote or read final data even if a future helper regresses.
-                result["final_read"] = False
-                result["production_activation"] = False
-                result["trial25_run"] = False
-                with _v111_lock:
-                    _v111_state["result"] = result
-                    _v111_state["status"] = "done"
-                    _v111_state["error"] = None
-                    _v111_state["finished_at"] = now_ist().isoformat(timespec="seconds")
-                    _v111_state["final_read"] = False
-                    _v111_state["production_activation"] = False
-                    _v111_state["progress"] = {"done": 2, "total": 2, "item": None, "stage": "Development lab complete", "overall_pct": 100}
-                _persist_v111_state()
-        except Exception as exc:
-            log.exception("V11.1 development lab failed")
-            with _v111_lock:
-                _v111_state["status"] = "error"
-                _v111_state["error"] = str(exc)
-                _v111_state["finished_at"] = now_ist().isoformat(timespec="seconds")
-                _v111_state["final_read"] = False
-                _v111_state["production_activation"] = False
-            _persist_v111_state()
-        finally:
-            research_runtime.end_research()
-            research_runtime.release_memory_pressure()
-
-    research_runtime.begin_research("v111_development")
-    threading.Thread(target=_job, daemon=True).start()
-    return {"started": True, "mode": "v111_development", "build": v111_lab.BUILD_ID,
-            "final_read": False, "production_activation": False}
+    V11.1 already consumed its development window and reached a terminal
+    no-winner decision.  A clean deployment must not turn missing runtime
+    state into permission to reread that development sample.
+    """
+    return {
+        "started": False,
+        "mode": "v111_development",
+        "build": v111_lab.BUILD_ID,
+        "reason": "V11.1 monthly branch is CLOSED / READ-ONLY in V12; rerun refused.",
+        "final_read": False,
+        "production_activation": False,
+    }

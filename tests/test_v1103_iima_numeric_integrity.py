@@ -54,7 +54,7 @@ def test_v1103_release_identifies_numeric_format_integrity_hotfix():
     from pathlib import Path
 
     marker = Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip()
-    assert marker == "2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB"
+    assert marker == "2026-09-05-INSTITUTIONAL-V12.0-OPTION-EDGE-RECORDER-TRADE-CONSOLE"
     text = Path("app/templates/backtest.html").read_text(encoding="utf-8")
     assert "V11.0.3 IIMA numeric-format integrity hotfix" in text
     assert "exact month + raw value" in text

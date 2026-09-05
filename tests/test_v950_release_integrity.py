@@ -9,7 +9,7 @@ V94_BUILD = '2026-09-01-INSTITUTIONAL-V9.4.0-MEASUREMENT-TRIAL14'
 
 def test_v950_release_markers_are_current_but_v94_audit_id_is_preserved():
     assert v95_daily_evidence.BUILD_ID == V95_BUILD
-    assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB'
+    assert (ROOT / 'RESEARCH_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-05-INSTITUTIONAL-V12.0-OPTION-EDGE-RECORDER-TRADE-CONSOLE'
     assert (ROOT / 'PRODUCTION_BUILD.txt').read_text(encoding='utf-8').strip() == '2026-09-04-INSTITUTIONAL-V10.2.1-PROVENANCE-STATISTICAL-INTEGRITY-LOCK'
     html = (ROOT / 'app/templates/backtest.html').read_text(encoding='utf-8')
     assert V95_BUILD in html

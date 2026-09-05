@@ -3,7 +3,7 @@ import logging
 import json
 
 import pandas as pd
-from flask import Flask, jsonify, redirect, render_template, request, Response
+from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
 from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward
 from .background import get_state, start_background_scanner
@@ -104,6 +104,11 @@ def dashboard():
         market_state=market_state,
         opportunity_radar=opportunity_radar,
         forward_validation=forward_validation,
+        v12_trade_console=state.get("v12_trade_console") or {},
+        v12_option_recorder=state.get("v12_option_recorder") or {},
+        v12_feasibility=state.get("v12_feasibility") or {},
+        v12_earnings=state.get("v12_earnings") or {},
+        v12_trial25_status=state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
         research_active=(research_state.get("status") == "running"),
         research_worker=research_state.get("worker") or {},
         live_counts=_dashboard_counts(
@@ -199,6 +204,11 @@ def api_dashboard_state():
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
         )),
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
+        "v12_trade_console": state.get("v12_trade_console") or {},
+        "v12_option_recorder": state.get("v12_option_recorder") or {},
+        "v12_feasibility": state.get("v12_feasibility") or {},
+        "v12_earnings": state.get("v12_earnings") or {},
+        "v12_trial25_status": state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
         "counts": _dashboard_counts(
             rows, index_direction=state.get("index_direction"),
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
@@ -250,6 +260,37 @@ def api_option_shadow_export():
     body = json.dumps(state, indent=2, default=str)
     headers = {"Content-Disposition": "attachment; filename=v82_option_forward_validation.json"}
     return Response(body, mimetype="application/json", headers=headers)
+
+
+def _v12_export(path, filename, mimetype):
+    import os
+    if not path or not os.path.exists(path):
+        return jsonify({"status": "UNAVAILABLE", "error": "V12 recording file does not exist yet."}), 404
+    return send_file(path, mimetype=mimetype, as_attachment=True, download_name=filename)
+
+
+@app.route("/api/v12-option-state/export")
+@require_dashboard_password
+def api_v12_option_state_export():
+    return _v12_export(config.V12_OPTION_STATE_FILE, "v12_option_state.json", "application/json")
+
+
+@app.route("/api/v12-option-snapshots/export")
+@require_dashboard_password
+def api_v12_option_snapshots_export():
+    return _v12_export(config.V12_OPTION_SNAPSHOT_FILE, "v12_option_snapshots.jsonl", "application/x-ndjson")
+
+
+@app.route("/api/v12-earnings-state/export")
+@require_dashboard_password
+def api_v12_earnings_state_export():
+    return _v12_export(config.V12_EARNINGS_STATE_FILE, "v12_earnings_state.json", "application/json")
+
+
+@app.route("/api/v12-earnings-ledger/export")
+@require_dashboard_password
+def api_v12_earnings_ledger_export():
+    return _v12_export(config.V12_EARNINGS_LEDGER_FILE, "v12_earnings_ledger.jsonl", "application/x-ndjson")
 
 
 @app.route("/quick-settings", methods=["POST"])

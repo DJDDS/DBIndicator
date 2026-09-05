@@ -3,7 +3,7 @@ from app import v96_trial17, v95_daily_evidence, v9_playbooks
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = '2026-09-02-INSTITUTIONAL-V9.6.2-TRIAL17-PROMOTION-CONTROLS'
-CURRENT = '2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB'
+CURRENT = '2026-09-05-INSTITUTIONAL-V12.0-OPTION-EDGE-RECORDER-TRADE-CONSOLE'
 
 
 def test_v960_release_markers_and_production_safety():

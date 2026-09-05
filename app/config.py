@@ -129,6 +129,15 @@ OPTION_SHADOW_FILE = os.getenv("OPTION_SHADOW_FILE", "option_shadow.jsonl")
 OPTION_SHADOW_STATE_FILE = os.getenv("OPTION_SHADOW_STATE_FILE", "option_shadow_state.json")
 OPTION_RISK_FREE_RATE = float(os.getenv("OPTION_RISK_FREE_RATE", "0.06"))
 
+# V12.0 forward option-edge recorder runtime files and operational limits.
+# These are research-state files and must never be packaged into a release.
+V12_OPTION_SNAPSHOT_FILE = os.getenv("V12_OPTION_SNAPSHOT_FILE", "v12_option_snapshots.jsonl")
+V12_OPTION_STATE_FILE = os.getenv("V12_OPTION_STATE_FILE", "v12_option_state.json")
+V12_EARNINGS_LEDGER_FILE = os.getenv("V12_EARNINGS_LEDGER_FILE", "v12_earnings_ledger.jsonl")
+V12_EARNINGS_STATE_FILE = os.getenv("V12_EARNINGS_STATE_FILE", "v12_earnings_state.json")
+V12_SNAPSHOT_GRACE_MINUTES = int(os.getenv("V12_SNAPSHOT_GRACE_MINUTES", "7"))
+V12_DEEP_SYMBOL_LIMIT = int(os.getenv("V12_DEEP_SYMBOL_LIMIT", "40"))
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

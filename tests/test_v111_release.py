@@ -3,9 +3,9 @@ from pathlib import Path
 BUILD = "2026-09-04-INSTITUTIONAL-V11.1-DEVELOPMENT-FEASIBILITY-LAB"
 
 
-def test_v111_research_build_marker_and_module_match():
+def test_v111_historical_module_identity_remains_frozen_under_newer_release_marker():
     from app import v111_development, v111_lab
-    assert Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip() == BUILD
+    assert Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip().startswith("2026-09-05-INSTITUTIONAL-V12.0-")
     assert v111_development.BUILD_ID == BUILD
     assert v111_lab.BUILD_ID == BUILD
 

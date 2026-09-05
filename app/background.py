@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1342,6 +1342,11 @@ _state = {
     "market_regime": None,
     "scan_symbol_health": {},
     "opportunity_forward": opportunity_forward.empty_state(),
+    "v12_trade_console": {"label": "V12 LIVE TRADE OPPORTUNITY CONSOLE", "validation_label": "NOT VALIDATED", "intraday": [], "swing": {"1D": [], "2D": []}, "counts": {}},
+    "v12_option_recorder": {"status": "WAITING"},
+    "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
+    "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
+    "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1495,6 +1500,50 @@ def _apply_oi_screener_fields(results):
 
 
 
+def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *, now):
+    """Run V12 downstream evidence collection without risking scan uptime."""
+    refresh = None
+    try:
+        refresh = v12_live.refresh_earnings_calendar(
+            set(fno_symbols or []),
+            now=now,
+            state_file=config.V12_EARNINGS_STATE_FILE,
+            ledger_file=config.V12_EARNINGS_LEDGER_FILE,
+        )
+    except Exception as exc:  # noqa: BLE001 - auxiliary calendar cannot stop live scanning
+        log.exception("V12 earnings calendar refresh failed")
+        refresh = {"status": "ERROR", "error": str(exc)}
+
+    try:
+        out = v12_live.process_live_scan(
+            kite,
+            results,
+            radar_snapshot,
+            swing_snapshot,
+            now=now,
+            option_snapshot_file=config.V12_OPTION_SNAPSHOT_FILE,
+            option_state_file=config.V12_OPTION_STATE_FILE,
+            earnings_state_file=config.V12_EARNINGS_STATE_FILE,
+            deep_symbol_limit=config.V12_DEEP_SYMBOL_LIMIT,
+            grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
+        )
+    except Exception as exc:  # noqa: BLE001 - V12 is downstream and must fail soft
+        log.exception("V12 live orchestration failed")
+        out = {
+            "trade_console": v12_live.v12_trade_console.build_trade_console(
+                radar_snapshot, swing_snapshot, results, limit=5
+            ),
+            "recorder": {"status": "ERROR", "error": str(exc)},
+            "feasibility": {"status": "UNAVAILABLE", "trial25_locked": True},
+            "earnings": {"status": "UNAVAILABLE", "active_count": 0, "upcoming_7d": []},
+            "trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
+        }
+    out.setdefault("earnings", {})["refresh_status"] = (refresh or {}).get("status") or "UNKNOWN"
+    if (refresh or {}).get("error"):
+        out["earnings"]["refresh_error"] = refresh.get("error")
+    return out
+
+
 def _load_persisted_state():
     """Restores the last scan from disk on startup, so a restart (a
     redeploy, the host restarting the container, etc.) doesn't wipe the
@@ -1526,6 +1575,11 @@ def _load_persisted_state():
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
                 _state["opportunity_forward"] = saved.get("opportunity_forward") or opportunity_forward.empty_state()
+                _state["v12_trade_console"] = saved.get("v12_trade_console") or _state["v12_trade_console"]
+                _state["v12_option_recorder"] = saved.get("v12_option_recorder") or _state["v12_option_recorder"]
+                _state["v12_feasibility"] = saved.get("v12_feasibility") or _state["v12_feasibility"]
+                _state["v12_earnings"] = saved.get("v12_earnings") or _state["v12_earnings"]
+                _state["v12_trial25_status"] = saved.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
         # master is temporarily unavailable after restart, the price scan can
@@ -1555,6 +1609,11 @@ def _save_persisted_state():
             "oi_structure_prev": _state["oi_structure_prev"],
             "scan_symbol_health": _state["scan_symbol_health"],
             "opportunity_forward": _state.get("opportunity_forward") or opportunity_forward.empty_state(),
+            "v12_trade_console": _state.get("v12_trade_console") or {},
+            "v12_option_recorder": _state.get("v12_option_recorder") or {},
+            "v12_feasibility": _state.get("v12_feasibility") or {},
+            "v12_earnings": _state.get("v12_earnings") or {},
+            "v12_trial25_status": _state.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS,
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -1774,6 +1833,9 @@ def _run_loop():
                             market_breadth=breadth,
                         )
                         swing_snapshot = oi_view.swing_research_console(radar_snapshot)
+                        v12_snapshot = _run_v12_live(
+                            kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
+                        )
                         with _state_lock:
                             _state["results"] = results
                             _state["index_direction"] = index_direction
@@ -1787,6 +1849,11 @@ def _run_loop():
                                 _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
                                 swing_research=swing_snapshot,
                             )
+                            _state["v12_trade_console"] = v12_snapshot.get("trade_console") or {}
+                            _state["v12_option_recorder"] = v12_snapshot.get("recorder") or {}
+                            _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
+                            _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
+                            _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                         wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
                             alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
@@ -1806,6 +1873,39 @@ def _run_loop():
                 # change can wake the loop immediately. This wait deliberately happens
                 # outside the heavy-work slot so historical research can start now.
                 _rescan_event.wait(timeout=wait_seconds)
+                _rescan_event.clear()
+            elif kite is not None and v12_live.post_cash_derivative_window(now_ist()):
+                # NSE equity derivatives now remain open after the legacy
+                # 15:30 continuous cash-session boundary. Do NOT extend the
+                # entire scanner: old candle/session logic is intentionally
+                # frozen. Run only the lightweight V12 option recorder so the
+                # fixed 15:37 POST_CAS snapshot is not silently impossible.
+                post_now = now_ist()
+                with _state_lock:
+                    post_results = list(_state.get("results") or [])
+                    post_symbols = list(_state.get("last_fno_symbols") or [])
+                    post_index_direction = _state.get("index_direction")
+                    post_index_chg_pct = _state.get("index_chg_pct")
+                    post_breadth = _state.get("breadth")
+                post_radar = oi_view.live_opportunity_radar(
+                    post_results,
+                    index_direction=post_index_direction,
+                    index_chg_pct=post_index_chg_pct,
+                    market_breadth=post_breadth,
+                )
+                post_swing = oi_view.swing_research_console(post_radar)
+                post_v12 = _run_v12_live(
+                    kite, post_results, post_radar, post_swing, post_symbols, now=post_now
+                )
+                with _state_lock:
+                    _state["v12_trade_console"] = post_v12.get("trade_console") or _state.get("v12_trade_console") or {}
+                    _state["v12_option_recorder"] = post_v12.get("recorder") or {}
+                    _state["v12_feasibility"] = post_v12.get("feasibility") or {}
+                    _state["v12_earnings"] = post_v12.get("earnings") or {}
+                    _state["v12_trial25_status"] = post_v12.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
+                _save_persisted_state()
+                _set_scan_status("V12-POST-CAS", next_scan_due=_iso_after(20))
+                _rescan_event.wait(timeout=20)
                 _rescan_event.clear()
             else:
                 # Not logged in yet today, or outside market hours - the
