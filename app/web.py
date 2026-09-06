@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder
+from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -16,6 +16,19 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 _scanner_started = False
 _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
+
+
+def _v121_surfaces(now=None):
+    now = now or scanner.now_ist()
+    health = v121_index_recorder.index_recorder_health(
+        config.V121_INDEX_VOL_ROOT, config.V121_INDEX_VOL_STATE_FILE,
+        now=now, storage_mode=config.V12_STORAGE_MODE,
+    )
+    backup = v121_backup.backup_status(config.V121_INDEX_VOL_BACKUP_STATE_FILE)
+    if config.V121_BACKUP_S3_BUCKET and backup.get("status") == "OFF-BOX BACKUP NOT CONFIGURED":
+        backup = {**backup, "status": "WAITING_FIRST_BACKUP"}
+    development = v121_development.development_status(config.V121_RV_LAB_STATE_FILE)
+    return health, backup, development
 
 
 def _dashboard_counts(results, *, index_direction=None, index_chg_pct=None, market_breadth=None):
@@ -96,6 +109,7 @@ def dashboard():
         config.V12_OPTION_SNAPSHOT_FILE, config.V12_OPTION_STATE_FILE,
         now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
     )
+    v121_health, v121_backup_state, v121_development_state = _v121_surfaces()
 
     return render_template(
         "index.html",
@@ -114,6 +128,9 @@ def dashboard():
         v12_feasibility=state.get("v12_feasibility") or {},
         v12_earnings=state.get("v12_earnings") or {},
         v12_trial25_status=state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
+        v121_index_vol=v121_health,
+        v121_backup=v121_backup_state,
+        v121_development=v121_development_state,
         research_active=(research_state.get("status") == "running"),
         research_worker=research_state.get("worker") or {},
         live_counts=_dashboard_counts(
@@ -184,6 +201,7 @@ def api_dashboard_state():
     )
     health = v9_playbooks.scan_health_counts(rows)
     research_state = backtest.get_early_research_state()
+    v121_health, v121_backup_state, v121_development_state = _v121_surfaces()
     return jsonify({
         "last_scan": state.get("last_scan"),
         "last_scan_attempt": state.get("last_scan_attempt"),
@@ -219,6 +237,9 @@ def api_dashboard_state():
         "v12_feasibility": state.get("v12_feasibility") or {},
         "v12_earnings": state.get("v12_earnings") or {},
         "v12_trial25_status": state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
+        "v121_index_vol": v121_health,
+        "v121_backup": v121_backup_state,
+        "v121_development": v121_development_state,
         "counts": _dashboard_counts(
             rows, index_direction=state.get("index_direction"),
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
@@ -311,6 +332,53 @@ def api_v12_earnings_state_export():
 @require_dashboard_password
 def api_v12_earnings_ledger_export():
     return _v12_export(config.V12_EARNINGS_LEDGER_FILE, "v12_earnings_ledger.jsonl", "application/x-ndjson")
+
+
+@app.route("/api/v121-index-vol-health")
+@require_dashboard_password
+def api_v121_index_vol_health():
+    health, backup, development = _v121_surfaces()
+    return jsonify({"index_vol": health, "backup": backup, "development": development, "trial25_locked": True})
+
+
+@app.route("/api/v121-development-status")
+@require_dashboard_password
+def api_v121_development_status():
+    return jsonify(v121_development.development_status(config.V121_RV_LAB_STATE_FILE))
+
+
+@app.route("/api/v121-development-run", methods=["POST"])
+@require_dashboard_password
+def api_v121_development_run():
+    import datetime as dt
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"status": "WAITING_LOGIN", "trial25_locked": True}), 409
+    try:
+        start = dt.date.fromisoformat(config.V121_DEVELOPMENT_START)
+    except ValueError:
+        return jsonify({"status": "ERROR", "error": "invalid V121_DEVELOPMENT_START", "trial25_locked": True}), 500
+    end = scanner.now_ist().date() - dt.timedelta(days=1)
+    return jsonify(v121_development.start_development_lab(
+        kite, config.V121_RV_LAB_STATE_FILE, start=start, end=end, min_train=120
+    ))
+
+
+def _v121_current_file(kind):
+    day = scanner.now_ist().date().isoformat()
+    return str(__import__('pathlib').Path(config.V121_INDEX_VOL_ROOT) / f"{day}_{kind}.jsonl")
+
+
+@app.route("/api/v121-index-micro/export")
+@require_dashboard_password
+def api_v121_index_micro_export():
+    return _v12_export(_v121_current_file("micro"), "v121_nifty_micro_today.jsonl", "application/x-ndjson")
+
+
+@app.route("/api/v121-index-depth/export")
+@require_dashboard_password
+def api_v121_index_depth_export():
+    return _v12_export(_v121_current_file("depth"), "v121_nifty_depth_today.jsonl", "application/x-ndjson")
 
 
 @app.route("/quick-settings", methods=["POST"])

@@ -550,6 +550,35 @@
     <div class="v12-links"><a href="/api/v12-option-snapshots/export">Export option snapshots</a><a href="/api/v12-option-state/export">Export option state</a><a href="/api/v12-earnings-ledger/export">Export earnings ledger</a><a href="/api/v12-earnings-state/export">Export earnings state</a></div>
   </section>
 
+  {% set v121i = v121_index_vol|default({}) %}
+  {% set v121b = v121_backup|default({}) %}
+  {% set v121d = v121_development|default({}) %}
+  <section id="v121-index-recorder" class="card v12-card" aria-label="V12.1 index volatility recorder and feasibility lab">
+    <div class="v12-head">
+      <div><div class="v12-kicker">V12.1 · NIFTY INDEX VOLATILITY · DEVELOPMENT ONLY · NOT VALIDATED</div>
+      <h2>Index Volatility Recorder &amp; Feasibility Lab <span class="sub">nearest weekly NIFTY expiry · WebSocket FULL mode · 5s top-of-book · 60s full depth</span></h2></div>
+      <div id="v121-trial25-status" class="v12-lock">TRIAL 25 LOCKED</div>
+    </div>
+    <div class="v12-metrics">
+      <div class="v12-metric"><span>Recorder</span><strong id="v121-recorder-status">{{ v121i.get('recorder_status') or 'WAITING' }}</strong></div>
+      <div class="v12-metric"><span>Storage</span><strong id="v121-storage-status">{% if v121i.get('storage_persistent') %}PERSISTENT VOLUME{% else %}EPHEMERAL WARNING{% endif %}</strong></div>
+      <div class="v12-metric"><span>Active expiry</span><strong id="v121-expiry">{{ v121i.get('active_expiry') or '—' }}</strong></div>
+      <div class="v12-metric"><span>ATM strike</span><strong id="v121-atm">{{ v121i.get('atm_strike') or '—' }}</strong></div>
+      <div class="v12-metric"><span>Subscribed tokens</span><strong id="v121-tokens">{{ v121i.get('token_count',0) }}</strong></div>
+      <div class="v12-metric"><span>Last tick</span><strong id="v121-last-tick">{{ v121i.get('last_tick_at') or '—' }}</strong></div>
+      <div class="v12-metric"><span>5s micro rows</span><strong id="v121-micro-rows">{{ v121i.get('micro_contract_rows',0) }}</strong></div>
+      <div class="v12-metric"><span>60s depth rows</span><strong id="v121-depth-rows">{{ v121i.get('depth_contract_rows',0) }}</strong></div>
+      <div class="v12-metric"><span>Micro file</span><strong id="v121-micro-size">{{ v121i.get('micro_file_bytes',0) }} bytes</strong></div>
+      <div class="v12-metric"><span>Depth file</span><strong id="v121-depth-size">{{ v121i.get('depth_file_bytes',0) }} bytes</strong></div>
+      <div class="v12-metric"><span>Off-box backup</span><strong id="v121-backup-status">{{ v121b.get('status') or 'OFF-BOX BACKUP NOT CONFIGURED' }}</strong></div>
+      <div class="v12-metric"><span>Last backup</span><strong id="v121-last-backup">{{ v121b.get('last_successful_backup_at') or '—' }}</strong></div>
+      <div class="v12-metric"><span>RV development</span><strong id="v121-development-status">{{ v121d.get('status') or 'NOT_RUN' }}</strong></div>
+      <div class="v12-metric"><span>Development sample</span><strong id="v121-development-sample">{{ v121d.get('dataset_rows',0) }}</strong></div>
+    </div>
+    <div class="v12-note"><strong>No V12.1 option-volatility setup is executable or validated.</strong> India VIX is recorded as an input, not treated as a hard-coded premium edge. Any future short-volatility candidate must be defined-risk and survive measured spread, margin, drawdown and tail-risk gates.</div>
+    <div class="v12-links"><button type="button" id="v121-run-development">Run historical RV development lab</button><a href="/api/v121-index-micro/export">Export today's 5s micro data</a><a href="/api/v121-index-depth/export">Export today's 60s depth data</a><a href="/api/v121-index-vol-health">Recorder health JSON</a></div>
+  </section>
+
   <section id="v8-decision-console" class="card v8-console" aria-label="V9.2 evidence-gated live decision console">
     <div class="v8-console-head">
       <div>
@@ -1309,6 +1338,39 @@
     text('v12-trial25-status', trial25Status || 'TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.');
   }
 
+  function renderV121IndexVol(indexVol, backup, development) {
+    indexVol = indexVol || {}; backup = backup || {}; development = development || {};
+    function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
+    function size(value) { var n = Number(value || 0); return n >= 1048576 ? (n/1048576).toFixed(2)+' MB' : n >= 1024 ? (n/1024).toFixed(1)+' KB' : n+' bytes'; }
+    text('v121-recorder-status', indexVol.recorder_status || 'WAITING');
+    text('v121-storage-status', indexVol.storage_persistent ? 'PERSISTENT VOLUME' : 'EPHEMERAL WARNING');
+    text('v121-expiry', indexVol.active_expiry || '—');
+    text('v121-atm', indexVol.atm_strike == null ? '—' : indexVol.atm_strike);
+    text('v121-tokens', indexVol.token_count || 0);
+    text('v121-last-tick', indexVol.last_tick_at || '—');
+    text('v121-micro-rows', indexVol.micro_contract_rows || 0);
+    text('v121-depth-rows', indexVol.depth_contract_rows || 0);
+    text('v121-micro-size', size(indexVol.micro_file_bytes));
+    text('v121-depth-size', size(indexVol.depth_file_bytes));
+    text('v121-backup-status', backup.status || 'OFF-BOX BACKUP NOT CONFIGURED');
+    text('v121-last-backup', backup.last_successful_backup_at || '—');
+    text('v121-development-status', development.status || 'NOT_RUN');
+    text('v121-development-sample', development.dataset_rows || 0);
+    text('v121-trial25-status', 'TRIAL 25 LOCKED');
+  }
+
+  (function bindV121DevelopmentRun(){
+    var btn=document.getElementById('v121-run-development');
+    if (!btn) return;
+    btn.addEventListener('click', function(){
+      btn.disabled=true; btn.textContent='Starting development lab…';
+      fetch('/api/v121-development-run',{method:'POST'}).then(function(r){return r.json();}).then(function(x){
+        btn.textContent=(x.status==='STARTED'||x.status==='ALREADY_RUNNING')?'Development lab '+x.status.toLowerCase():'Development lab '+(x.status||'error');
+        setTimeout(function(){btn.disabled=false;btn.textContent='Run historical RV development lab';},6000);
+      }).catch(function(){btn.disabled=false;btn.textContent='Run historical RV development lab';});
+    });
+  })();
+
   function pollDashboardState() {
     fetch('/api/dashboard-state').then(function (r) {
       if (!r.ok) throw new Error('state failed: ' + r.status);
@@ -1341,6 +1403,7 @@
       renderOpportunityForward(state.opportunity_forward);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
+      renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;

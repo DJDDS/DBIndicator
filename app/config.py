@@ -147,6 +147,20 @@ V12_EARNINGS_STATE_FILE = _V12_STORAGE["earnings_state"]
 V12_SNAPSHOT_GRACE_MINUTES = int(os.getenv("V12_SNAPSHOT_GRACE_MINUTES", "7"))
 V12_DEEP_SYMBOL_LIMIT = int(os.getenv("V12_DEEP_SYMBOL_LIMIT", "40"))
 
+# V12.1 NIFTY near-expiry index-volatility recorder / development lab.
+V121_INDEX_VOL_ROOT = _V12_STORAGE["index_vol_root"]
+V121_INDEX_VOL_STATE_FILE = _V12_STORAGE["index_vol_state"]
+V121_INDEX_VOL_BACKUP_STATE_FILE = _V12_STORAGE["index_vol_backup_state"]
+V121_RV_LAB_STATE_FILE = _V12_STORAGE["rv_lab_state"]
+V121_STRIKE_STEPS = int(os.getenv("V121_STRIKE_STEPS", "12"))
+V121_MICRO_SECONDS = int(os.getenv("V121_MICRO_SECONDS", "5"))
+V121_DEPTH_SECONDS = int(os.getenv("V121_DEPTH_SECONDS", "60"))
+V121_BACKUP_S3_BUCKET = os.getenv("V121_BACKUP_S3_BUCKET", "").strip()
+V121_BACKUP_S3_PREFIX = os.getenv("V121_BACKUP_S3_PREFIX", "dbindicator/v121").strip().strip("/")
+V121_BACKUP_S3_ENDPOINT_URL = os.getenv("V121_BACKUP_S3_ENDPOINT_URL", "").strip()
+V121_BACKUP_S3_REGION = os.getenv("V121_BACKUP_S3_REGION", "ap-south-1").strip()
+V121_DEVELOPMENT_START = os.getenv("V121_DEVELOPMENT_START", "2023-01-01").strip()
+
 # Optional - only needed for the "AI Insights" panel on the dashboard.
 # Get one at console.anthropic.com. Leave blank to disable that panel.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

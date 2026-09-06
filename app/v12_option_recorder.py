@@ -578,7 +578,7 @@ def record_snapshot(
     }
     record = {
         "record_type": "V12_OPTION_SLOT",
-        "build": "2026-09-05-INSTITUTIONAL-V12.0.1-PERSISTENT-OPTION-RECORDER-HEALTH",
+        "build": "2026-09-06-INSTITUTIONAL-V12.1-INDEX-VOLATILITY-RECORDER-FEASIBILITY-LAB",
         "ts": now.isoformat(timespec="seconds"),
         "date": now.date().isoformat(),
         "slot": slot,

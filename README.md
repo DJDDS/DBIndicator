@@ -1,3 +1,17 @@
+# DBIndicator V12.1 — Index Volatility Recorder & Feasibility Lab
+
+**Build:** `2026-09-06-INSTITUTIONAL-V12.1-INDEX-VOLATILITY-RECORDER-FEASIBILITY-LAB`
+
+V12.1 keeps the V12.0.1 single-stock option recorder and live Opportunity Console unchanged, and adds a separate development-only NIFTY near-expiry volatility research lane. It records the nearest NIFTY option expiry over an ATM ±12 paired CE/PE ladder plus NIFTY spot, nearest NIFTY future and INDIA VIX using Kite WebSocket FULL mode. Research persistence uses 5-second top-of-book snapshots and 60-second five-level depth snapshots under the persistent V12 storage root.
+
+The remaining-session realised-variance lab uses historical NIFTY 5-minute bars with a fixed 09:15–10:30 feature window and 10:30–15:10 target window. Prior-day India VIX is a feature only; V12.1 does **not** hard-code a 22–32% option premium, does not create a short-volatility trade signal and cannot unlock Trial 25.
+
+On Railway with a Volume mounted at `/data`, index-volatility files are stored below `/data/v12/index_vol/`. Completed days are gzip-compressed after 16:00. Optional off-box S3-compatible backup is enabled only when `V121_BACKUP_S3_BUCKET` and normal AWS/S3 credentials are configured; otherwise the dashboard explicitly reports `OFF-BOX BACKUP NOT CONFIGURED`.
+
+Dashboard health reports connection/reconnection state, active expiry/ATM, token count, last tick/write, current-day rows/bytes, backup state, development sample state and the permanent Trial-25 lock.
+
+---
+
 # DBIndicator V11.0.5 — Strict Required-Window Factor Contract
 
 Bounded Trial-24 input repair: the pinned IIM Ahmedabad factor parser accepts the production `MF` header as the already-excess market factor (`rm_rf`) while retaining `RF` separately. RF is not subtracted from MF again. No Trial-24 research rule, cost, holdout boundary, or live scanner behavior changes.

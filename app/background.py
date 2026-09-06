@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v121_index_recorder, v121_backup, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1913,6 +1913,7 @@ def _run_loop():
                 # in memory from earlier today) are left untouched so
                 # there's always something on screen to analyse. Check back
                 # periodically without hammering anything.
+                _run_v121_postclose_backup(now_ist())
                 status = "MARKET-CLOSED" if kite is not None else "WAITING-LOGIN"
                 _set_scan_status(status, next_scan_due=_iso_after(30))
                 _rescan_event.wait(timeout=30)
@@ -1925,6 +1926,48 @@ def _run_loop():
             time.sleep(delay)
 
 
+_v121_stream_started = False
+
+
+def _run_v121_postclose_backup(now):
+    if now.weekday() >= 5 or now.hour < 16:
+        return {"status": "WAITING_FOR_CLOSE"}
+    try:
+        return v121_backup.run_daily_backup_cycle(
+            config.V121_INDEX_VOL_ROOT, config.V121_INDEX_VOL_BACKUP_STATE_FILE,
+            now=now, bucket=config.V121_BACKUP_S3_BUCKET, prefix=config.V121_BACKUP_S3_PREFIX,
+            endpoint_url=config.V121_BACKUP_S3_ENDPOINT_URL, region=config.V121_BACKUP_S3_REGION,
+        )
+    except Exception as exc:  # auxiliary backup must never stop scanning
+        log.exception("V12.1 off-box backup failed")
+        return {"status": "ERROR", "error": str(exc)}
+
+
+def _make_v121_stream_service():
+    return v121_index_recorder.IndexVolStreamService(
+        root=config.V121_INDEX_VOL_ROOT,
+        state_file=config.V121_INDEX_VOL_STATE_FILE,
+        access_token_getter=kite_auth.get_access_token,
+        kite_client_getter=kite_auth.get_kite_client,
+        api_key=config.KITE_API_KEY,
+        strike_steps=config.V121_STRIKE_STEPS,
+        micro_seconds=config.V121_MICRO_SECONDS,
+        depth_seconds=config.V121_DEPTH_SECONDS,
+        now_provider=now_ist,
+    )
+
+
+def start_v121_index_stream_once():
+    global _v121_stream_started
+    if _v121_stream_started:
+        return
+    service = _make_v121_stream_service()
+    thread = threading.Thread(target=service.run_forever, daemon=True, name="v121-index-vol-stream")
+    thread.start()
+    _v121_stream_started = True
+
+
 def start_background_scanner():
+    start_v121_index_stream_once()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()

@@ -52,6 +52,11 @@ def exchange_request_token(request_token):
     return access_token
 
 
+def get_access_token():
+    """Return today's cached Kite access token, or None when login is pending."""
+    return _load_cache()
+
+
 def get_kite_client():
     """Returns an authenticated KiteConnect client if today's token is
     already cached, or None if a login is still needed today."""

@@ -19,4 +19,4 @@ def test_v11_template_preserves_trial24_as_read_only_historical_record():
 
 def test_v11_release_marker_is_current_research_build():
     marker = Path("RESEARCH_BUILD.txt").read_text(encoding="utf-8").strip()
-    assert marker == "2026-09-05-INSTITUTIONAL-V12.0.1-PERSISTENT-OPTION-RECORDER-HEALTH"
+    assert marker == "2026-09-06-INSTITUTIONAL-V12.1-INDEX-VOLATILITY-RECORDER-FEASIBILITY-LAB"

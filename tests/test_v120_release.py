@@ -1,6 +1,6 @@
 from pathlib import Path
 
-BUILD = "2026-09-05-INSTITUTIONAL-V12.0.1-PERSISTENT-OPTION-RECORDER-HEALTH"
+BUILD = "2026-09-06-INSTITUTIONAL-V12.1-INDEX-VOLATILITY-RECORDER-FEASIBILITY-LAB"
 
 
 def test_v120_research_build_and_changelog_are_locked():
@@ -45,4 +45,4 @@ def test_v120_closes_v111_rerun_and_backtest_labels_it_read_only():
     assert 'V11.1 MONTHLY BRANCH CLOSED IN V12' in backtest_source
     assert 'id="v111-run-btn" disabled' in html
     assert 'V11.1 Development Lab · CLOSED / READ-ONLY' in html
-    assert '2026-09-05-INSTITUTIONAL-V12.0.1-PERSISTENT-OPTION-RECORDER-HEALTH' in html
+    assert '2026-09-06-INSTITUTIONAL-V12.1-INDEX-VOLATILITY-RECORDER-FEASIBILITY-LAB' in html
