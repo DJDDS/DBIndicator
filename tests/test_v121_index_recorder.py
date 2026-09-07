@@ -132,3 +132,20 @@ def test_micro_tick_preserves_exchange_and_last_trade_timestamps_for_staleness()
     assert out['exchange_timestamp'].startswith('2026-09-07T10:30:04')
     assert out['last_trade_time'].startswith('2026-09-07T10:29:55')
     assert out['quote_age_seconds']==1.0
+
+
+def test_quote_age_handles_production_naive_ist_vs_naive_utc_case():
+    """Recorder wall clock is naive IST; Kite WebSocket exchange time is naive UTC."""
+    from app.v121_index_recorder import _age_seconds
+    observed = dt.datetime(2026, 9, 7, 10, 25, 52)  # now_ist(): naive IST
+    quoted = dt.datetime(2026, 9, 7, 4, 55, 51)     # Kite tick: naive UTC
+    assert _age_seconds(observed, quoted) == 1.0
+
+
+def test_quote_age_honours_aware_offsets_and_real_staleness():
+    from app.v121_index_recorder import _age_seconds
+    observed = dt.datetime(2026, 9, 7, 10, 30, 0, tzinfo=IST)
+    quoted = dt.datetime(2026, 9, 7, 4, 50, 0, tzinfo=dt.timezone.utc)
+    assert _age_seconds(observed, quoted) == 600.0
+    assert _age_seconds(None, quoted) is None
+    assert _age_seconds(observed, 'not-a-date') is None

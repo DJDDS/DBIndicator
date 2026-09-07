@@ -115,3 +115,93 @@ def test_postclose_backup_call_is_not_conditioned_on_kite_login():
     src=inspect.getsource(background._run_loop)
     assert 'if kite is not None:\n                    _run_v121_postclose_backup(now_ist())' not in src
     assert '_run_v121_postclose_backup(now_ist())' in src
+
+
+class LifecycleTicker(FakeTicker):
+    """Threaded fake that can finish one run without creating a second ticker."""
+    def __init__(self, finish='manual_close'):
+        super().__init__()
+        self.connect_args=[]
+        self.on_reconnect=None
+        self.on_noreconnect=None
+        self.finish=finish
+    def connect(self, threaded=False):
+        self.connect_args.append(threaded)
+        self.connected=True
+        self.on_connect(self,{})
+        ticks=[]
+        for tok in self.subscribed[:4]:
+            ticks.append({'instrument_token':tok,'last_price':24612.0 if tok==11 else 13.0 if tok==12 else 24620.0 if tok==999 else 100.0,
+                          'oi':10,'volume_traded':20,'depth':{'buy':[{'price':99,'quantity':10}],'sell':[{'price':101,'quantity':10}]}})
+        self.on_ticks(self,ticks)
+        if self.finish == 'manual_close':
+            self.on_close(self,1000,'test close')
+        elif self.finish == 'noreconnect':
+            self.on_reconnect(self,1)
+            self.on_noreconnect(self)
+    def close(self):
+        self.closed=True
+        self.connected=False
+        if self.on_close:
+            self.on_close(self,1000,'manual close')
+
+
+def test_stream_service_uses_threaded_kiteticker_and_finishes_single_lifecycle(tmp_path):
+    from app.v121_index_recorder import IndexVolStreamService, _read_state
+    ticker=LifecycleTicker(finish='noreconnect')
+    now=dt.datetime(2026,9,7,10,0,tzinfo=IST)
+    factory_calls=[]
+    def factory(api_key, token):
+        factory_calls.append((api_key, token))
+        return ticker
+    svc=IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:FakeKite(),
+        ticker_factory=factory, api_key='key', now_provider=lambda:now,
+        strike_steps=12,micro_seconds=5,depth_seconds=60,
+    )
+    out=svc.run_once(now)
+    assert ticker.connect_args == [True]
+    assert len(factory_calls) == 1
+    state=_read_state(tmp_path/'state.json')
+    assert state['connection_count'] == 1
+    assert state['last_tick_at'] is not None
+    assert state.get('reconnect_attempt') == 1
+    assert out['status'] in ('DISCONNECTED','ERROR')
+
+
+def test_stream_service_transient_close_does_not_spawn_second_ticker(tmp_path):
+    """KiteTicker owns auto-reconnect; our on_close must not call connect again."""
+    from app.v121_index_recorder import IndexVolStreamService
+    ticker=LifecycleTicker(finish='noreconnect')
+    now=dt.datetime(2026,9,7,10,0,tzinfo=IST)
+    calls=[]
+    svc=IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:FakeKite(),
+        ticker_factory=lambda a,t: calls.append(1) or ticker,
+        api_key='key', now_provider=lambda:now,
+    )
+    svc.run_once(now)
+    assert calls == [1]
+    assert ticker.connect_args == [True]
+
+
+def test_stream_service_reuses_active_threaded_ticker_without_duplicate_factory(tmp_path):
+    """run_forever polls run_once; a live threaded ticker must not be recreated."""
+    from app.v121_index_recorder import IndexVolStreamService
+    ticker=LifecycleTicker(finish='stay_open')
+    now=dt.datetime(2026,9,7,10,0,tzinfo=IST)
+    factory_calls=[]
+    svc=IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:FakeKite(),
+        ticker_factory=lambda a,t: factory_calls.append((a,t)) or ticker,
+        api_key='key', now_provider=lambda:now,
+    )
+    first=svc.run_once(now)
+    second=svc.run_once(now)
+    assert first['status'] in ('CONNECTED','RECORDING')
+    assert second['status'] in ('CONNECTED','RECORDING')
+    assert len(factory_calls) == 1
+    assert ticker.connect_args == [True]
