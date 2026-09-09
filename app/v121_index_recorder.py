@@ -269,6 +269,14 @@ def _elapsed(last_value, now: dt.datetime, seconds: int) -> bool:
         return True
 
 
+def _state_age_seconds(now: dt.datetime, value):
+    observed = _as_utc(now, naive_timezone=IST)
+    prior = _as_utc(value, naive_timezone=IST)
+    if observed is None or prior is None:
+        return None
+    return round(max(0.0, (observed - prior).total_seconds()), 3)
+
+
 class IndexVolWriter:
     """Append two-tier NIFTY option research snapshots with atomic health state."""
 
@@ -320,6 +328,7 @@ class IndexVolWriter:
                     state["depth_contract_rows"] = int(state.get("depth_contract_rows") or 0) + len(depth_rows)
                     state["depth_snapshot_count"] = int(state.get("depth_snapshot_count") or 0) + 1
                 state["last_tick_at"] = now.isoformat(timespec="seconds")
+                state["session_last_tick_at"] = now.isoformat(timespec="seconds")
                 state["last_write_error"] = None
                 state["status"] = "RECORDING"
                 _write_state(self.state_file, state)
@@ -341,19 +350,22 @@ def _market_status(now: dt.datetime) -> str:
     return "OPEN" if (9 * 60 + 15) <= minute <= (15 * 60 + 40) else "MARKET_CLOSED"
 
 
-def index_recorder_health(root, state_file, *, now: dt.datetime, storage_mode: str) -> dict:
+def index_recorder_health(root, state_file, *, now: dt.datetime, storage_mode: str, stale_after_seconds: int = 30) -> dict:
     root = Path(root)
     state = _read_state(state_file)
     day = now.date().isoformat()
     micro = root / f"{day}_micro.jsonl"
     depth = root / f"{day}_depth.jsonl"
     market = _market_status(now)
+    tick_age = _state_age_seconds(now, state.get("last_tick_at"))
     if market == "MARKET_CLOSED":
         status = "MARKET_CLOSED"
     elif state.get("last_write_error"):
         status = "ERROR"
-    elif state.get("last_tick_at"):
+    elif tick_age is not None and tick_age <= max(1, int(stale_after_seconds)):
         status = "RECORDING"
+    elif state.get("last_tick_at"):
+        status = "STALE"
     else:
         status = state.get("status") or "WAITING"
     return {
@@ -364,6 +376,7 @@ def index_recorder_health(root, state_file, *, now: dt.datetime, storage_mode: s
         "atm_strike": _float(state.get("atm_strike")),
         "token_count": int(state.get("token_count") or 0),
         "last_tick_at": state.get("last_tick_at"),
+        "last_tick_age_seconds": tick_age,
         "last_micro_write_at": state.get("last_micro_write_at"),
         "last_depth_write_at": state.get("last_depth_write_at"),
         "micro_contract_rows": int(state.get("micro_contract_rows") or 0),
@@ -389,13 +402,22 @@ def _default_ticker_factory(api_key, access_token):
     return KiteTicker(api_key, access_token)
 
 
+def _default_reactor_getter():
+    try:
+        from twisted.internet import reactor
+        return reactor
+    except Exception:
+        return None
+
+
 class IndexVolStreamService:
     """Fail-soft KiteTicker lifecycle for V12.1 NIFTY option recording."""
 
     def __init__(
         self, *, root, state_file, access_token_getter, kite_client_getter,
         ticker_factory=None, api_key="", now_provider=None, strike_steps=12,
-        micro_seconds=5, depth_seconds=60, sleep_fn=time.sleep,
+        micro_seconds=5, depth_seconds=60, sleep_fn=time.sleep, reactor_getter=None,
+        watchdog_stale_seconds=90,
     ):
         self.root = Path(root)
         self.state_file = Path(state_file)
@@ -407,6 +429,8 @@ class IndexVolStreamService:
         self.strike_steps = max(1, int(strike_steps))
         self.writer = IndexVolWriter(self.root, self.state_file, micro_seconds=micro_seconds, depth_seconds=depth_seconds)
         self.sleep_fn = sleep_fn
+        self.reactor_getter = reactor_getter or _default_reactor_getter
+        self.watchdog_stale_seconds = max(15, int(watchdog_stale_seconds))
         self.latest_ticks = {}
         self.universe = None
         self._universe_day = None
@@ -435,12 +459,9 @@ class IndexVolStreamService:
             return _float(tick.get("last_price"))
         return {"spot": lp("spot_token"), "vix": lp("vix_token"), "future": lp("future_token")}
 
-    def _active_ticker_state(self):
+    def _is_current_ticker(self, ticker):
         with self._ticker_lock:
-            active = self._ticker_active and self._ticker is not None
-        if not active:
-            return None
-        return _read_state(self.state_file) or {"status": "CONNECTING"}
+            return self._ticker_active and self._ticker is ticker
 
     def _release_ticker(self, ticker):
         with self._ticker_lock:
@@ -448,15 +469,75 @@ class IndexVolStreamService:
                 self._ticker = None
                 self._ticker_active = False
 
+    def _dispatch_reactor(self, fn):
+        reactor = self.reactor_getter()
+        if reactor is not None and getattr(reactor, "running", False):
+            reactor.callFromThread(fn)
+            return True
+        fn()
+        return False
+
+    def _close_ticker(self, ticker):
+        def close_current():
+            try:
+                ticker.close()
+            except Exception:
+                pass
+        self._dispatch_reactor(close_current)
+
+    def _retire_ticker(self, ticker, *, status, error=None):
+        self._release_ticker(ticker)
+        state = self._status(status, connected=False, last_error=error)
+        self._close_ticker(ticker)
+        return state
+
+    def _active_ticker_state(self, now):
+        with self._ticker_lock:
+            ticker = self._ticker if self._ticker_active else None
+        if ticker is None:
+            return None
+
+        # A WebSocket from yesterday must never block today's instrument/expiry
+        # rebuild. Retire it first; run_once will resolve and connect the new day
+        # immediately in the same poll.
+        if self._universe_day is not None and now.date() != self._universe_day:
+            self._retire_ticker(ticker, status="STALE", error="previous trading-day websocket retired")
+            return None
+
+        state = _read_state(self.state_file) or {"status": "CONNECTING"}
+        heartbeat = state.get("session_last_tick_at") or state.get("session_started_at")
+        age = _state_age_seconds(now, heartbeat)
+        if age is not None and age > self.watchdog_stale_seconds:
+            return self._retire_ticker(
+                ticker, status="STALE",
+                error=f"no live websocket ticks for {int(age)} seconds",
+            )
+        return state
+
+    def _connect_ticker(self, ticker):
+        def connect_current():
+            if not self._is_current_ticker(ticker):
+                return
+            try:
+                ticker.connect(threaded=True)
+            except Exception as exc:
+                self._release_ticker(ticker)
+                self._status("ERROR", connected=False, last_error=str(exc))
+        self._dispatch_reactor(connect_current)
+
     def run_once(self, now=None) -> dict:
         now = now or self.now_provider()
         if _market_status(now) == "MARKET_CLOSED":
-            return self._status("MARKET_CLOSED")
+            with self._ticker_lock:
+                ticker = self._ticker if self._ticker_active else None
+            if ticker is not None:
+                return self._retire_ticker(ticker, status="MARKET_CLOSED", error=None)
+            return self._status("MARKET_CLOSED", connected=False)
 
         # threaded=True returns immediately.  run_forever therefore polls this
         # method while the WebSocket owns its own thread; never create a second
         # KiteTicker while that lifecycle is still active/reconnecting.
-        active_state = self._active_ticker_state()
+        active_state = self._active_ticker_state(now)
         if active_state is not None:
             return active_state
 
@@ -486,6 +567,8 @@ class IndexVolStreamService:
             self._ticker_active = True
 
         def on_connect(ws, response):
+            if not self._is_current_ticker(ticker):
+                return
             ws.subscribe(universe["tokens"])
             ws.set_mode(ws.MODE_FULL, universe["tokens"])
             prior = _read_state(self.state_file)
@@ -496,6 +579,8 @@ class IndexVolStreamService:
             )
 
         def on_ticks(ws, ticks):
+            if not self._is_current_ticker(ticker):
+                return
             tick_now = self.now_provider()
             for tick in ticks or []:
                 tok = tick.get("instrument_token")
@@ -516,6 +601,8 @@ class IndexVolStreamService:
                     self._release_ticker(ticker)
 
         def on_close(ws, code, reason):
+            if not self._is_current_ticker(ticker):
+                return
             # KiteTicker owns transient auto-reconnect.  Do not call connect()
             # from this callback and do not release the lifecycle on an abnormal
             # transient close; on_noreconnect is the terminal retry boundary.
@@ -528,9 +615,13 @@ class IndexVolStreamService:
             )
 
         def on_error(ws, code, reason):
+            if not self._is_current_ticker(ticker):
+                return
             _update_state(self.state_file, status="ERROR", last_error=str(reason or code or "websocket error"))
 
         def on_reconnect(ws, attempts):
+            if not self._is_current_ticker(ticker):
+                return
             prior = _read_state(self.state_file)
             _update_state(
                 self.state_file, status="RECONNECTING", connected=False,
@@ -540,6 +631,8 @@ class IndexVolStreamService:
             )
 
         def on_noreconnect(ws):
+            if not self._is_current_ticker(ticker):
+                return
             self._release_ticker(ticker)
             _update_state(
                 self.state_file, status="DISCONNECTED", connected=False,
@@ -553,15 +646,14 @@ class IndexVolStreamService:
         ticker.on_error = on_error
         ticker.on_reconnect = on_reconnect
         ticker.on_noreconnect = on_noreconnect
-        try:
-            # KiteTicker's supported background-thread path starts Twisted with
-            # installSignalHandlers=False, avoiding Python signal registration
-            # from our non-main recorder thread.
-            self._status("CONNECTING", connected=False, last_error=None)
-            ticker.connect(threaded=True)
-        except Exception as exc:
-            self._release_ticker(ticker)
-            self._status("ERROR", connected=False, last_error=str(exc))
+        # The first lifecycle may start Twisted itself. Later trading sessions
+        # reuse the still-running reactor, and Twisted APIs must then be invoked
+        # on the reactor thread via callFromThread.
+        self._status(
+            "CONNECTING", connected=False, last_error=None,
+            session_started_at=now.isoformat(timespec="seconds"), session_last_tick_at=None,
+        )
+        self._connect_ticker(ticker)
         return _read_state(self.state_file) or {"status": "WAITING"}
 
     def run_forever(self):

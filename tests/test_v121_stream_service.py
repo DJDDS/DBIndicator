@@ -205,3 +205,120 @@ def test_stream_service_reuses_active_threaded_ticker_without_duplicate_factory(
     assert second['status'] in ('CONNECTED','RECORDING')
     assert len(factory_calls) == 1
     assert ticker.connect_args == [True]
+
+
+class FakeReactor:
+    def __init__(self, running):
+        self.running = running
+        self.calls = []
+    def callFromThread(self, fn, *args, **kwargs):
+        self.calls.append((fn, args, kwargs))
+        return fn(*args, **kwargs)
+
+
+class SilentTicker(LifecycleTicker):
+    def connect(self, threaded=False):
+        self.connect_args.append(threaded)
+        self.connected = True
+        self.on_connect(self, {})
+        # Intentionally no ticks: exercises stale-session watchdog.
+
+
+def _multi_day_nfo_rows():
+    rows=[]; tok=100
+    for expiry in (dt.date(2026,9,8), dt.date(2026,9,15)):
+        for strike in range(24000,25300,50):
+            for typ in ('CE','PE'):
+                rows.append({'instrument_token':tok,'tradingsymbol':f'N{expiry:%d}{strike}{typ}','name':'NIFTY','instrument_type':typ,'segment':'NFO-OPT','expiry':expiry,'strike':strike,'lot_size':65}); tok+=1
+    rows.append({'instrument_token':999,'tradingsymbol':'NIFTYSEP26FUT','name':'NIFTY','instrument_type':'FUT','segment':'NFO-FUT','expiry':dt.date(2026,9,29),'strike':0,'lot_size':65})
+    return rows
+
+
+class MultiDayFakeKite(FakeKite):
+    def instruments(self, exchange):
+        return _multi_day_nfo_rows() if exchange=='NFO' else _nse_rows()
+
+
+def test_second_lifecycle_is_dispatched_into_running_twisted_reactor(tmp_path):
+    """A new session must not invoke Twisted connection APIs from the service thread."""
+    from app.v121_index_recorder import IndexVolStreamService
+    ticker = LifecycleTicker(finish='stay_open')
+    reactor = FakeReactor(running=True)
+    now = dt.datetime(2026,9,9,9,16,tzinfo=IST)
+    svc = IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:MultiDayFakeKite(),
+        ticker_factory=lambda a,t:ticker, api_key='key', now_provider=lambda:now,
+        reactor_getter=lambda:reactor,
+    )
+    svc.run_once(now)
+    assert len(reactor.calls) == 1
+    assert ticker.connect_args == [True]
+
+
+def test_new_trading_day_retires_previous_session_and_rebuilds_expiry(tmp_path):
+    """An apparently active prior-day ticker must never block today's expiry rollover."""
+    from app.v121_index_recorder import IndexVolStreamService, _read_state
+    day1 = dt.datetime(2026,9,8,10,0,tzinfo=IST)
+    day2 = dt.datetime(2026,9,9,9,16,tzinfo=IST)
+    clock = {'now': day1}
+    tickers = [LifecycleTicker(finish='stay_open'), LifecycleTicker(finish='stay_open')]
+    calls=[]
+    def factory(a,t):
+        ticker = tickers[len(calls)]
+        calls.append(ticker)
+        return ticker
+    svc = IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:MultiDayFakeKite(),
+        ticker_factory=factory, api_key='key', now_provider=lambda:clock['now'],
+        reactor_getter=lambda:FakeReactor(running=False),
+    )
+    svc.run_once(day1)
+    assert _read_state(tmp_path/'state.json')['active_expiry'] == '2026-09-08'
+    clock['now'] = day2
+    svc.run_once(day2)
+    state = _read_state(tmp_path/'state.json')
+    assert len(calls) == 2
+    assert tickers[0].closed is True
+    assert state['active_expiry'] == '2026-09-15'
+
+
+def test_live_session_watchdog_retires_ticker_when_no_ticks_arrive(tmp_path):
+    from app.v121_index_recorder import IndexVolStreamService, _read_state
+    t0 = dt.datetime(2026,9,9,10,0,tzinfo=IST)
+    clock = {'now': t0}
+    ticker = SilentTicker(finish='stay_open')
+    svc = IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:MultiDayFakeKite(),
+        ticker_factory=lambda a,t:ticker, api_key='key', now_provider=lambda:clock['now'],
+        reactor_getter=lambda:FakeReactor(running=False), watchdog_stale_seconds=30,
+    )
+    svc.run_once(t0)
+    clock['now'] = t0 + dt.timedelta(seconds=31)
+    out = svc.run_once(clock['now'])
+    state = _read_state(tmp_path/'state.json')
+    assert ticker.closed is True
+    assert out['status'] == 'STALE'
+    assert state['status'] == 'STALE'
+    assert state['connected'] is False
+
+
+def test_market_close_retires_live_ticker_instead_of_leaving_it_overnight(tmp_path):
+    from app.v121_index_recorder import IndexVolStreamService
+    t0 = dt.datetime(2026,9,9,15,30,tzinfo=IST)
+    clock = {'now': t0}
+    ticker = LifecycleTicker(finish='stay_open')
+    svc = IndexVolStreamService(
+        root=tmp_path/'data', state_file=tmp_path/'state.json',
+        access_token_getter=lambda:'token', kite_client_getter=lambda:MultiDayFakeKite(),
+        ticker_factory=lambda a,t:ticker, api_key='key', now_provider=lambda:clock['now'],
+        reactor_getter=lambda:FakeReactor(running=False),
+    )
+    svc.run_once(t0)
+    clock['now'] = dt.datetime(2026,9,9,15,41,tzinfo=IST)
+    out = svc.run_once(clock['now'])
+    assert ticker.closed is True
+    assert out['status'] == 'MARKET_CLOSED'
+    assert out['connected'] is False

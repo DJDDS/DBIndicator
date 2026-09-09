@@ -149,3 +149,20 @@ def test_quote_age_honours_aware_offsets_and_real_staleness():
     assert _age_seconds(observed, quoted) == 600.0
     assert _age_seconds(None, quoted) is None
     assert _age_seconds(observed, 'not-a-date') is None
+
+
+def test_index_recorder_health_marks_old_tick_stale_during_market_hours(tmp_path):
+    from app.v121_index_recorder import _write_state, index_recorder_health
+    root = tmp_path / 'index_vol'; root.mkdir()
+    state = tmp_path / 'state.json'
+    _write_state(state, {
+        'status': 'RECORDING', 'connected': True,
+        'last_tick_at': '2026-09-09T01:00:30',
+        'last_write_error': None,
+    })
+    now = dt.datetime(2026, 9, 9, 12, 50, tzinfo=IST)
+    health = index_recorder_health(
+        root, state, now=now, storage_mode='PERSISTENT_VOLUME', stale_after_seconds=30,
+    )
+    assert health['recorder_status'] == 'STALE'
+    assert health['last_tick_age_seconds'] > 30
