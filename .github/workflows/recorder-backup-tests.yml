@@ -12,6 +12,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,7 +26,7 @@ jobs:
           pip install pytest
       - name: Compile
         run: python -m compileall -q app tests
-      - name: Regression test
-        run: pytest -q tests/test_v121_backup_race.py
+      - name: Regression tests
+        run: pytest -q tests/test_v121_backup_race.py tests/test_v121_backup_interruption.py tests/test_v121_backup.py
       - name: Full suite
         run: pytest -q
