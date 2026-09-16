@@ -2,11 +2,12 @@ import datetime as dt
 
 
 def test_recorder_operational_health_is_read_only_and_unprotected(monkeypatch, tmp_path):
+    import run
     from app import config, web
 
     monkeypatch.setattr(web, "start_background_scanner", lambda: None)
     monkeypatch.setattr(web, "_scanner_started", True)
-    monkeypatch.setattr(web.scanner, "now_ist", lambda: dt.datetime(2026, 9, 16, 15, 30))
+    monkeypatch.setattr(run.scanner, "now_ist", lambda: dt.datetime(2026, 9, 16, 15, 30))
 
     root = tmp_path / "index"
     root.mkdir()
@@ -27,7 +28,7 @@ def test_recorder_operational_health_is_read_only_and_unprotected(monkeypatch, t
     monkeypatch.setattr(config, "V12_STORAGE_MODE", "persistent")
     monkeypatch.setattr(config, "DASHBOARD_PASSWORD", "secret")
 
-    response = web.app.test_client().get("/api/recorder-operational-health")
+    response = run.app.test_client().get("/api/recorder-operational-health")
 
     assert response.status_code == 200
     payload = response.get_json()
