@@ -25,8 +25,8 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
       - name: Compile
-        run: python -m compileall -q app tests
-      - name: Regression tests
-        run: pytest -q tests/test_v121_backup_race.py tests/test_v121_backup_interruption.py tests/test_v121_backup.py
+        run: python -m compileall -q app tests run.py
+      - name: Recorder regression tests
+        run: pytest -q tests/test_v121_backup_race.py tests/test_v121_backup_interruption.py tests/test_v121_backup.py tests/test_recorder_observability.py tests/test_recorder_operational_health_endpoint.py
       - name: Full suite
         run: pytest -q
