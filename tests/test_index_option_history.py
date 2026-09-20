@@ -24,9 +24,9 @@ class FakeKite:
         ]
 
 
-def _rows_for_two_days():
+def _rows_for_days(days):
     rows = []
-    for day in ("2026-09-01", "2026-09-02"):
+    for day in days:
         idx = pd.date_range(f"{day} 09:15", periods=375, freq="min")
         for ts in idx:
             close = 100.0
@@ -43,11 +43,14 @@ def _rows_for_two_days():
     return rows
 
 
+def _rows_for_two_days():
+    return _rows_for_days(("2026-09-01", "2026-09-02"))
+
+
 def test_fetch_nifty_history_uses_existing_chunker_and_returns_sorted_unique(monkeypatch):
     rows = _rows_for_two_days()
     kite = FakeKite(rows)
 
-    # Keep the test independent of scanner module's process-global cache.
     monkeypatch.setattr(index_option_history.scanner, "_index_token_cache", {})
 
     frame = index_option_history.fetch_nifty_1m_history(
@@ -85,12 +88,33 @@ def test_stage1_artifacts_include_raw_bars_trades_summaries_and_manifest(tmp_pat
     assert manifest["source_bars"] == 750
     assert manifest["production_deployed"] is False
     assert manifest["v12_recorder_used_for_tuning"] is False
+    assert manifest["locked_splits"]["development"] == {
+        "start": "2019-01-01",
+        "end": "2023-12-31",
+    }
 
     summary = pd.read_csv(result["summary_60m_path"])
     assert set(summary["opening_range_minutes"]) == {15, 30, 45}
-    # The synthetic break at 10:00 occurs before 60/90/120-minute OR windows end,
-    # so only OR windows that finish before the break create signals.
     assert set(summary["trigger_minutes"]) == {1, 3, 5}
+
+
+def test_locked_split_summaries_are_written_without_pooling_periods(tmp_path):
+    rows = _rows_for_days(("2023-12-29", "2024-01-02", "2026-08-31"))
+    bars = pd.DataFrame(rows).rename(columns={"date": "timestamp"}).set_index("timestamp")
+
+    result = index_option_history.run_stage1_from_bars(bars, output_dir=tmp_path)
+    manifest = json.loads(result["manifest_path"].read_text(encoding="utf-8"))
+
+    assert manifest["split_coverage"]["development"]["sessions"] == 1
+    assert manifest["split_coverage"]["validation"]["sessions"] == 1
+    assert manifest["split_coverage"]["historical_holdout"]["sessions"] == 1
+
+    for split in ("development", "validation", "historical_holdout"):
+        for horizon in (60, 120):
+            path = tmp_path / f"stage1_{split}_summary_{horizon}m.csv"
+            assert path.exists()
+            summary = pd.read_csv(path)
+            assert not summary.empty
 
 
 def test_pdf_control_range_gate_can_be_run_as_separate_artifact_set(tmp_path):
