@@ -2,6 +2,7 @@ import datetime as dt
 import json
 
 import pandas as pd
+import pytest
 
 from app import index_option_history
 
@@ -47,16 +48,18 @@ def _rows_for_two_days():
     return _rows_for_days(("2026-09-01", "2026-09-02"))
 
 
-def test_fetch_nifty_history_uses_existing_chunker_and_returns_sorted_unique(monkeypatch):
+def test_fetch_nifty_history_is_strict_throttled_shape_and_sorted(monkeypatch):
     rows = _rows_for_two_days()
     kite = FakeKite(rows)
 
     monkeypatch.setattr(index_option_history.scanner, "_index_token_cache", {})
+    monkeypatch.setattr(index_option_history.time, "sleep", lambda *_: None)
 
-    frame = index_option_history.fetch_nifty_1m_history(
+    frame, report = index_option_history.fetch_nifty_1m_history(
         kite,
         "2026-09-01 09:15",
         "2026-09-02 15:31",
+        return_fetch_report=True,
     )
 
     assert len(frame) == 750
@@ -66,10 +69,32 @@ def test_fetch_nifty_history_uses_existing_chunker_and_returns_sorted_unique(mon
     assert kite.history_calls
     assert all(call[0] == 256265 for call in kite.history_calls)
     assert all(call[3] == "minute" for call in kite.history_calls)
+    assert report["row_count"] == 750
+    assert report["chunks"]
 
 
-def test_stage1_artifacts_include_raw_bars_trades_summaries_and_manifest(tmp_path):
+def test_research_fetch_fails_closed_after_repeated_chunk_error(monkeypatch):
+    class BrokenKite(FakeKite):
+        def historical_data(self, *args, **kwargs):
+            raise RuntimeError("rate limit remains broken")
+
+    kite = BrokenKite([])
+    monkeypatch.setattr(index_option_history.scanner, "_index_token_cache", {})
+    monkeypatch.setattr(index_option_history.time, "sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="research chunk failed"):
+        index_option_history.fetch_nifty_1m_history(
+            kite,
+            "2026-09-01 09:15",
+            "2026-09-02 15:31",
+        )
+
+
+def test_stage1_artifacts_include_only_complete_sessions(tmp_path):
     rows = _rows_for_two_days()
+    # Delete one bar from day two. Research must drop the whole day rather than
+    # quietly measuring a truncated forward path.
+    rows = [r for r in rows if r["date"] != dt.datetime(2026, 9, 2, 12, 0)]
     bars = pd.DataFrame(rows).rename(columns={"date": "timestamp"}).set_index("timestamp")
 
     result = index_option_history.run_stage1_from_bars(bars, output_dir=tmp_path)
@@ -85,7 +110,11 @@ def test_stage1_artifacts_include_raw_bars_trades_summaries_and_manifest(tmp_pat
 
     manifest = json.loads(result["manifest_path"].read_text(encoding="utf-8"))
     assert manifest["instrument"] == "NIFTY 50"
-    assert manifest["source_bars"] == 750
+    assert manifest["source_bars_raw"] == 749
+    assert manifest["source_bars_complete_sessions"] == 375
+    assert manifest["session_quality"]["candidate_sessions"] == 2
+    assert manifest["session_quality"]["complete_sessions"] == 1
+    assert manifest["session_quality"]["dropped_incomplete_sessions"] == 1
     assert manifest["production_deployed"] is False
     assert manifest["v12_recorder_used_for_tuning"] is False
     assert manifest["locked_splits"]["development"] == {
@@ -93,9 +122,8 @@ def test_stage1_artifacts_include_raw_bars_trades_summaries_and_manifest(tmp_pat
         "end": "2023-12-31",
     }
 
-    summary = pd.read_csv(result["summary_60m_path"])
-    assert set(summary["opening_range_minutes"]) == {15, 30, 45}
-    assert set(summary["trigger_minutes"]) == {1, 3, 5}
+    saved_bars = pd.read_csv(result["bars_path"])
+    assert len(saved_bars) == 375
 
 
 def test_locked_split_summaries_are_written_without_pooling_periods(tmp_path):
