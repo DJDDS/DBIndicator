@@ -19,6 +19,13 @@ from . import scanner
 from .index_option_research import evaluate_timing_grid, summarize_timing_grid
 
 
+LOCKED_SPLITS = {
+    "development": ("2019-01-01", "2023-12-31"),
+    "validation": ("2024-01-01", "2025-12-31"),
+    "historical_holdout": ("2026-01-01", "2026-08-31"),
+}
+
+
 def _as_naive_ist(value) -> dt.datetime:
     ts = pd.Timestamp(value)
     if ts.tzinfo is not None:
@@ -69,14 +76,40 @@ def fetch_nifty_1m_history(kite, start, end) -> pd.DataFrame:
     keep = [c for c in ["open", "high", "low", "close", "volume"] if c in frame.columns]
     frame = frame[keep].copy()
 
-    # Historical API requests can include the current forming minute. A row whose
-    # full minute has not elapsed by the requested end timestamp is not admissible.
     complete_before = pd.Timestamp(end_dt)
     index_for_compare = frame.index
     if index_for_compare.tz is not None:
         complete_before = complete_before.tz_localize(index_for_compare.tz)
     completed = (index_for_compare + pd.Timedelta(minutes=1)) <= complete_before
     return frame.loc[completed].copy()
+
+
+def _split_trades(trades: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+    if trades is None or trades.empty:
+        return pd.DataFrame(columns=[] if trades is None else trades.columns)
+    session_date = pd.to_datetime(trades["session"]).dt.date
+    lo = pd.Timestamp(start).date()
+    hi = pd.Timestamp(end).date()
+    return trades[(session_date >= lo) & (session_date <= hi)].copy()
+
+
+def _write_split_summaries(trades: pd.DataFrame, output: Path) -> tuple[dict, dict]:
+    artifacts = {}
+    coverage = {}
+    for split_name, (start, end) in LOCKED_SPLITS.items():
+        split = _split_trades(trades, start, end)
+        coverage[split_name] = {
+            "start": start,
+            "end": end,
+            "signal_rows": int(len(split)),
+            "sessions": int(split["session"].nunique()) if not split.empty else 0,
+        }
+        for horizon in (60, 120):
+            summary = summarize_timing_grid(split, horizon_minutes=horizon)
+            path = output / f"stage1_{split_name}_summary_{horizon}m.csv"
+            summary.to_csv(path, index=False)
+            artifacts[f"{split_name}_summary_{horizon}m"] = path.name
+    return artifacts, coverage
 
 
 def run_stage1_from_bars(
@@ -106,6 +139,7 @@ def run_stage1_from_bars(
     trades.to_csv(trades_path, index=False)
     summary_60m.to_csv(summary_60_path, index=False)
     summary_120m.to_csv(summary_120_path, index=False)
+    split_artifacts, split_coverage = _write_split_summaries(trades, output)
 
     manifest = {
         "research_stage": "Index Option Buying V1 / Stage 1",
@@ -119,11 +153,17 @@ def run_stage1_from_bars(
         ),
         "signal_rows": int(len(trades)),
         "range_pct_bounds": list(range_pct_bounds) if range_pct_bounds is not None else None,
+        "locked_splits": {
+            name: {"start": start, "end": end}
+            for name, (start, end) in LOCKED_SPLITS.items()
+        },
+        "split_coverage": split_coverage,
         "artifacts": {
             "bars": bars_path.name,
             "trades": trades_path.name,
             "summary_60m": summary_60_path.name,
             "summary_120m": summary_120_path.name,
+            **split_artifacts,
         },
         "production_deployed": False,
         "v12_recorder_used_for_tuning": False,
