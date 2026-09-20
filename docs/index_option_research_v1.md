@@ -80,6 +80,23 @@ bar itself is never reused as future path evidence.
 - Future bars may affect MFE/MAE/outcomes but may never alter signal time, range, direction or trigger.
 - The live V12/V12.1 ten-session dataset is excluded from model discovery and tuning.
 
+## Locked historical chronology
+
+The preferred historical request is **2019-01-01 through 2026-08-31**. If the connected historical
+provider cannot supply the complete period, the engine must report the actual first/last timestamp
+and the split coverage; it must not silently substitute another date range.
+
+The research partitions are locked before observing Stage-1 results:
+
+- **Development:** 2019-01-01 through 2023-12-31.
+- **Validation:** 2024-01-01 through 2025-12-31.
+- **Historical holdout:** 2026-01-01 through 2026-08-31.
+- **Forward evidence:** the ongoing September 2026 V12/V12.1 recording period remains untouched and is
+  not used to choose timing, thresholds or filters.
+
+The 2026 historical holdout is not used to choose a timing family. It is opened only after a timing
+family or stable neighbourhood has been selected from development and checked in validation.
+
 ## Research sequence after Stage 1
 
 Stage 2: acceptance/retest confirmation (immediate close vs double-close vs acceptance vs retest).  
@@ -93,9 +110,9 @@ No later-stage feature may be back-fitted into Stage 1 results.
 
 ## Validation discipline
 
-Once sufficient historical data is assembled, observations are split chronologically. Parameter
-families are discovered only in the development segment. The final holdout is not used to choose
-OR duration, trigger clock, filters or thresholds.
+Parameter families are discovered only in the development segment. Validation is used to reject
+unstable families, not to retune them indefinitely. The historical holdout is not used to choose OR
+duration, trigger clock, filters or thresholds.
 
 The Stage-1 summary is descriptive by design and does not auto-rank a "winner". Advancement requires
 robustness across adjacent timing cells and time segments, not the single highest historical mean.
@@ -115,5 +132,5 @@ This branch must not:
 - use the ongoing ten-session recorder dataset for tuning,
 - place orders,
 - emit live BUY CE / BUY PE instructions,
-- deploy to Railway.
+- deploy to Railway production.
 
