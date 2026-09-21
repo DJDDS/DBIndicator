@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+from pathlib import Path
 
 
 def _as_date(value) -> dt.date | None:
@@ -59,3 +61,45 @@ def reconcile_universe(
         "first_seen": _merge_seen(prior.get("first_seen") or {}, live, now, first=True),
         "last_seen": _merge_seen(prior.get("last_seen") or {}, live, now, first=False),
     }
+
+
+def load_universe_state(path) -> dict:
+    """Load the persisted post-freeze F&O reconciliation state fail-soft."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            raw.setdefault("cohort_a_live", [])
+            raw.setdefault("cohort_a_missing_contracts", [])
+            raw.setdefault("new_fno_onboarding", [])
+            raw.setdefault("first_seen", {})
+            raw.setdefault("last_seen", {})
+            return raw
+    except (OSError, ValueError, TypeError):
+        pass
+    return {
+        "asof": None,
+        "cohort_a_live": [],
+        "cohort_a_missing_contracts": [],
+        "new_fno_onboarding": [],
+        "first_seen": {},
+        "last_seen": {},
+    }
+
+
+def _save_universe_state(path, payload: dict) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+        encoding="utf-8",
+    )
+    tmp.replace(p)
+
+
+def update_universe_state(path, frozen_symbols: set[str], contracts_map: dict, now: dt.datetime) -> dict:
+    """Reconcile and atomically persist the frozen cohort versus the live OPTSTK master."""
+    prior = load_universe_state(path)
+    current = reconcile_universe(frozen_symbols, contracts_map, prior, now)
+    _save_universe_state(path, current)
+    return current
