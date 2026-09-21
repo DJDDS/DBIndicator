@@ -1,0 +1,40 @@
+name: Trial 25 shadow recorder verification
+
+on:
+  push:
+    branches: [trial25-shadow-recorder-design-20260921]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Compile
+        run: python -m compileall -q app tests run.py
+      - name: Focused Trial 25 tests when present
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(tests/test_trial25_*.py)
+          if (( ${#files[@]} )); then
+            pytest -q "${files[@]}"
+          else
+            echo "No Trial 25 tests yet."
+          fi
+      - name: Full suite
+        run: pytest -q
