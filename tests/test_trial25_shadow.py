@@ -153,3 +153,47 @@ def test_public_summary_reports_stale_audit_without_efficacy(tmp_path):
     encoded = json.dumps(out).lower()
     for forbidden in ("pnl", "profit_factor", "win_rate", "t_stat", "mean_return"):
         assert forbidden not in encoded
+
+
+def test_calendar_removal_before_entry_kills_discovered_event(tmp_path):
+    state = sh.empty_state()
+    ledger = tmp_path / "ledger.jsonl"
+    active = {
+        "events": {
+            "ABC": {
+                "symbol": "ABC",
+                "meeting_date": "2026-10-09",
+                "state": "ACTIVE",
+                "first_seen_at": "2026-10-01T09:20:00+05:30",
+                "last_changed_at": "2026-10-01T09:20:00+05:30",
+                "source_fingerprint": "active",
+            }
+        }
+    }
+    sh.discover_events(
+        state, active, {"ABC"},
+        now=dt.datetime(2026, 10, 7, 12, 0),
+        ledger_file=ledger,
+    )
+    event = next(iter(state["events"].values()))
+    assert event["status"] == "DISCOVERED"
+
+    removed = {
+        "events": {
+            "ABC": {
+                "symbol": "ABC",
+                "meeting_date": "2026-10-09",
+                "state": "REMOVED",
+                "first_seen_at": "2026-10-01T09:20:00+05:30",
+                "last_changed_at": "2026-10-08T10:00:00+05:30",
+                "source_fingerprint": "removed",
+            }
+        }
+    }
+    sh.discover_events(
+        state, removed, {"ABC"},
+        now=dt.datetime(2026, 10, 8, 10, 1),
+        ledger_file=ledger,
+    )
+    event = next(iter(state["events"].values()))
+    assert event["status"] == "UNAVAILABLE_REMOVED_BEFORE_ENTRY"
