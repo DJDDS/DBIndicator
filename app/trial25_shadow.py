@@ -230,6 +230,24 @@ def public_summary(state: dict | None) -> dict:
             audit = event.get(key) or {}
             for metric in stale:
                 stale[metric] += int(audit.get(metric) or 0)
+
+    queue = []
+    for event in sorted(
+        events,
+        key=lambda row: (
+            str(row.get("entry_date") or "9999-12-31"),
+            str(row.get("symbol") or ""),
+            str(row.get("event_id") or ""),
+        ),
+    )[:20]:
+        queue.append({
+            "event_id": event.get("event_id"),
+            "symbol": event.get("symbol"),
+            "meeting_date": event.get("meeting_date"),
+            "entry_date": event.get("entry_date"),
+            "exit_date": event.get("exit_date"),
+            "status": event.get("status"),
+        })
     return {
         "status": "PREREGISTERED_WAITING_EVENTS" if not events else "STAGE_D_COLLECTING",
         "events_total": len(events),
@@ -238,6 +256,7 @@ def public_summary(state: dict | None) -> dict:
         "target": 40,
         "unavailable_reasons": unavailable,
         "stale_audit": stale,
+        "event_queue": queue,
     }
 
 
