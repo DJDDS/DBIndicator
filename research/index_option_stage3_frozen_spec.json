@@ -1,0 +1,35 @@
+{
+  "spec_id": "INDEX_OPTION_STAGE3_FROZEN_V1",
+  "frozen_on": "2026-09-22",
+  "status": "RESEARCH_SHADOW_ONLY",
+  "instrument": "NIFTY 50",
+  "range_gate": {
+    "min_pct": 0.0015,
+    "max_pct": 0.0060,
+    "provenance": "Stage 2 control_pdf_range_gate; bounds were present in the supplied pre-Stage-2 strategy and preregistered before Stage-2 results."
+  },
+  "opening_range_minutes": 90,
+  "trigger_minutes": 3,
+  "confirmation": "double_close",
+  "buffer_pct_of_session_open": 0.0004,
+  "entry_deadline_ist": "13:00",
+  "time_exit_minutes": 120,
+  "one_trade_per_session": true,
+  "risk": {
+    "stage3_signal_stop": null,
+    "note": "No stop is introduced in the frozen signal test. Stage 3 first measures the pure time-exit signal; option-risk overlays are separate experiments."
+  },
+  "backup_spec": {
+    "opening_range_minutes": 90,
+    "trigger_minutes": 1,
+    "confirmation": "double_close",
+    "all_other_parameters_identical": true
+  },
+  "rejected_stage2_components": [
+    "ungated primary",
+    "retest_10m"
+  ],
+  "selection_rule": "Frozen from Stage 2 audit recommendation before any new post-2026-08-31 evidence is inspected.",
+  "new_nifty_grid_search_allowed": false,
+  "production_deployment_allowed": false
+}
