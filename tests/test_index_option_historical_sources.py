@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from app.index_option_historical_sources import (
+    build_dhan_proxy_ledger,
     dhan_proxy_expressions,
     fetch_dhan_expired_options,
     map_signal_to_dhan_proxy_pnl,
@@ -289,3 +290,69 @@ def test_dhan_proxy_mapper_fails_closed_if_same_contract_not_found_at_exit():
     frame = frame[frame["expression"] != "ATM-2"].copy()
     out = map_signal_to_dhan_proxy_pnl(signal, frame, moneyness="ATM")
     assert out["status"] == "SAME_STRIKE_NOT_FOUND_AT_EXIT"
+
+
+def test_build_dhan_proxy_ledger_fetches_full_grid_and_scores_atm_itm():
+    calls = []
+
+    def fake_fetcher(**kwargs):
+        calls.append((kwargs["expression"], kwargs["option_type"]))
+        expr = kwargs["expression"]
+        side = kwargs["option_type"]
+        if side != "CALL":
+            return pd.DataFrame()
+        rows = {
+            "ATM": [
+                ("2025-01-02 10:51:00+05:30", 100.0, 25000.0, 25010.0),
+                ("2025-01-02 12:51:00+05:30", 160.0, 25100.0, 25110.0),
+            ],
+            "ATM-1": [
+                ("2025-01-02 10:51:00+05:30", 135.0, 24950.0, 25010.0),
+            ],
+            "ATM-2": [
+                ("2025-01-02 12:51:00+05:30", 205.0, 25000.0, 25110.0),
+            ],
+            "ATM-3": [
+                ("2025-01-02 12:51:00+05:30", 245.0, 24950.0, 25110.0),
+            ],
+        }.get(expr, [])
+        return pd.DataFrame(
+            [
+                {
+                    "timestamp": pd.Timestamp(ts),
+                    "open": px,
+                    "high": px,
+                    "low": px,
+                    "close": px,
+                    "strike": strike,
+                    "spot": spot,
+                    "expression": expr,
+                    "option_type": side,
+                    "data_quality": "PROXY_OHLC",
+                    "executable_quote": False,
+                }
+                for ts, px, strike, spot in rows
+            ]
+        )
+
+    signals = pd.DataFrame(
+        [
+            {
+                "session": "2025-01-02",
+                "direction": "Bullish",
+                "signal_time": pd.Timestamp("2025-01-02 10:51:00+05:30"),
+            }
+        ]
+    )
+    ledger = build_dhan_proxy_ledger(
+        signals,
+        access_token="secret",
+        fetcher=fake_fetcher,
+        sleep_fn=lambda *_: None,
+        throttle_seconds=0,
+    )
+
+    assert len(calls) == 21
+    assert set(ledger["moneyness"]) == {"ATM", "ITM1"}
+    assert set(ledger["status"]) == {"OK_PROXY"}
+    assert ledger["can_satisfy_stage3_executable_gate"].eq(False).all()
