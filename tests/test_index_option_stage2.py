@@ -81,13 +81,13 @@ def test_acceptance_5m_requires_five_consecutive_closes_beyond_boundary():
     assert out["signal_time"] == pd.Timestamp("2026-03-02 09:36", tz="Asia/Kolkata")
 
 
-def test_retest_10m_requires_touch_then_reclaim():
+def test_retest_10m_requires_distinct_touch_then_later_reclaim():
     frame = _base_session()
     t0 = pd.Timestamp("2026-03-02 09:30", tz="Asia/Kolkata")
     t1 = pd.Timestamp("2026-03-02 09:31", tz="Asia/Kolkata")
     t2 = pd.Timestamp("2026-03-02 09:32", tz="Asia/Kolkata")
     frame.loc[t0, ["open", "high", "low", "close"]] = [100.0, 100.5, 100.0, 100.4]
-    frame.loc[t1, ["open", "high", "low", "close"]] = [100.4, 100.45, 100.15, 100.2]
+    frame.loc[t1, ["open", "high", "low", "close"]] = [100.4, 100.45, 100.15, 100.18]
     frame.loc[t2, ["open", "high", "low", "close"]] = [100.2, 100.55, 100.1, 100.45]
 
     out = analyze_session_confirmation(
@@ -98,15 +98,38 @@ def test_retest_10m_requires_touch_then_reclaim():
     assert out["confirmation_delay_min"] == 2
 
 
-def test_grid_expands_18_timing_cells_across_four_confirmation_modes():
+def test_grid_covers_all_18_timing_cells_for_non_retest_confirmations():
     frame = _base_session()
-    # Break after 11:20 so every opening range has ended.
     ts = pd.Timestamp("2026-03-02 11:20", tz="Asia/Kolkata")
     frame.loc[frame.index >= ts, ["open", "high", "low", "close"]] = [100.4, 100.6, 100.3, 100.45]
 
-    trades = evaluate_confirmation_grid(frame, buffer_pct=0.0)
-    assert set(trades["confirmation"]) == set(CONFIRMATION_MODES)
+    trades = evaluate_confirmation_grid(
+        frame,
+        confirmations=("immediate", "double_close", "acceptance_5m"),
+        buffer_pct=0.0,
+    )
+    assert set(trades["confirmation"]) == {"immediate", "double_close", "acceptance_5m"}
     assert trades[["opening_range_minutes", "trigger_minutes"]].drop_duplicates().shape[0] == 18
+
+
+def test_retest_mode_is_available_in_grid_when_path_retests():
+    frame = _base_session()
+    t0 = pd.Timestamp("2026-03-02 11:20", tz="Asia/Kolkata")
+    t1 = pd.Timestamp("2026-03-02 11:21", tz="Asia/Kolkata")
+    t2 = pd.Timestamp("2026-03-02 11:22", tz="Asia/Kolkata")
+    frame.loc[t0, ["open", "high", "low", "close"]] = [100.0, 100.5, 100.25, 100.45]
+    frame.loc[t1, ["open", "high", "low", "close"]] = [100.4, 100.42, 100.15, 100.18]
+    frame.loc[t2, ["open", "high", "low", "close"]] = [100.2, 100.55, 100.1, 100.45]
+
+    trades = evaluate_confirmation_grid(
+        frame,
+        opening_ranges=(15,),
+        trigger_windows=(1,),
+        confirmations=("retest_10m",),
+        buffer_pct=0.0,
+    )
+    assert len(trades) == 1
+    assert trades.iloc[0]["confirmation"] == "retest_10m"
 
 
 def test_geopolitical_summary_is_diagnostic_not_a_ranking():
