@@ -213,7 +213,9 @@ def calculate_option_charges(fills: list[dict]) -> dict:
     sell_turnover = sum(value for side, value in normalized if side == "SELL")
     buy_turnover = sum(value for side, value in normalized if side == "BUY")
     brokerage = BROKERAGE_PER_ORDER * len(normalized)
-    stt = sell_turnover * STT_SELL_RATE
+    # Zerodha/NSE contract-note treatment: STT is rounded to the nearest rupee,
+    # with paise >= 50 rounded up. Avoid Python's bankers-rounding at .5.
+    stt = float(math.floor(sell_turnover * STT_SELL_RATE + 0.5))
     exchange = turnover * NSE_TXN_RATE
     sebi = turnover * SEBI_RATE
     stamp = buy_turnover * STAMP_BUY_RATE
