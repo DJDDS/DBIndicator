@@ -11,6 +11,7 @@ No function here places orders or changes the frozen Stage-3 signal.
 from __future__ import annotations
 
 import re
+import time
 from typing import Callable
 
 import pandas as pd
@@ -368,3 +369,106 @@ def map_signal_to_dhan_proxy_pnl(
         "executable": False,
         "can_satisfy_stage3_executable_gate": False,
     }
+
+
+def build_dhan_proxy_ledger(
+    signals: pd.DataFrame,
+    *,
+    access_token: str,
+    fetcher=fetch_dhan_expired_options,
+    sleep_fn=time.sleep,
+    throttle_seconds: float = 0.22,
+    progress_callback=None,
+) -> pd.DataFrame:
+    """Fetch Dhan rolling proxy data only on frozen-signal dates and score ATM/ITM1.
+
+    To preserve the same absolute contract through a 120-minute hold, the
+    complete ATM-10..ATM+10 near-weekly grid is fetched for the required option
+    side on each signal date.  Only the two entry expressions (ATM and one
+    strike ITM) are scored; the wider grid exists solely to find that same
+    absolute strike at exit after the rolling moneyness label changes.
+
+    The returned rows remain non-executable proxy evidence.
+    """
+    if signals is None or signals.empty:
+        return pd.DataFrame()
+    if not str(access_token).strip():
+        raise ValueError("access_token is required")
+    required = {"session", "direction", "signal_time"}
+    missing = required.difference(signals.columns)
+    if missing:
+        raise ValueError(f"signals missing columns: {sorted(missing)}")
+
+    outputs = []
+    expressions = dhan_proxy_expressions()
+    total = len(signals)
+
+    for seq, (_, signal_row) in enumerate(signals.iterrows(), start=1):
+        signal = signal_row.to_dict()
+        session_date = pd.Timestamp(signal["session"]).date()
+        next_date = session_date + pd.Timedelta(days=1)
+        direction = str(signal["direction"])
+        option_type = "CALL" if direction == "Bullish" else "PUT" if direction == "Bearish" else None
+        if option_type is None:
+            outputs.append(
+                {
+                    "status": "INVALID_DIRECTION",
+                    "session": str(signal.get("session")),
+                    "direction": direction,
+                    "moneyness": "ATM",
+                    "executable": False,
+                    "can_satisfy_stage3_executable_gate": False,
+                }
+            )
+            continue
+
+        frames = []
+        for i, expression in enumerate(expressions):
+            frame = fetcher(
+                access_token=access_token,
+                from_date=session_date.isoformat(),
+                to_date=next_date.date().isoformat()
+                if hasattr(next_date, "date")
+                else str(next_date),
+                option_type=option_type,
+                expression=expression,
+            )
+            if frame is not None and not frame.empty:
+                frames.append(frame)
+            if throttle_seconds > 0 and i + 1 < len(expressions):
+                sleep_fn(float(throttle_seconds))
+
+        rolling = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        for moneyness in ("ATM", "ITM1"):
+            row = map_signal_to_dhan_proxy_pnl(
+                signal,
+                rolling,
+                moneyness=moneyness,
+            )
+            # Retain the frozen-signal audit fields without changing the proxy status.
+            for key in (
+                "opening_range_minutes",
+                "trigger_minutes",
+                "confirmation",
+                "range_pct",
+                "range_width",
+                "signal_close",
+                "return_120m_points",
+                "frozen_spec_sha256",
+            ):
+                if key in signal and key not in row:
+                    row[key] = signal[key]
+            outputs.append(row)
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "signal_number": seq,
+                    "signals_total": total,
+                    "session": session_date.isoformat(),
+                    "direction": direction,
+                    "api_calls": len(expressions),
+                }
+            )
+
+    return pd.DataFrame.from_records(outputs)
