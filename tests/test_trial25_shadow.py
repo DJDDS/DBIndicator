@@ -228,3 +228,51 @@ def test_public_summary_exposes_safe_event_queue_without_contracts_or_efficacy()
     assert "spot_at_entry" not in encoded
     assert "pnl" not in encoded
     assert "return" not in encoded
+
+
+def test_frozen_universe_loader_requires_exact_report_sha_and_195_symbols(tmp_path, monkeypatch):
+    import hashlib
+    from app import trial25_shadow as shadow
+
+    report = tmp_path / "freeze.json"
+    payload = {
+        "feasibility": {
+            "status": "STOCK OPTIONS PRACTICALLY TESTABLE",
+            "tradeable_symbol_list": [f"S{i:03d}" for i in range(195)],
+        }
+    }
+    raw = __import__("json").dumps(payload, sort_keys=True).encode("utf-8")
+    report.write_bytes(raw)
+    monkeypatch.setattr(
+        shadow, "FROZEN_FEASIBILITY_REPORT_SHA256", hashlib.sha256(raw).hexdigest()
+    )
+    symbols, status = shadow.load_frozen_symbols(report)
+    assert status == "OK"
+    assert len(symbols) == 195
+
+    tampered = raw + b"\n"
+    report.write_bytes(tampered)
+    symbols, status = shadow.load_frozen_symbols(report)
+    assert symbols == set()
+    assert status == "LOCKED_FEASIBILITY_HASH"
+
+
+def test_frozen_universe_loader_rejects_wrong_symbol_count_even_with_matching_hash(tmp_path, monkeypatch):
+    import hashlib
+    from app import trial25_shadow as shadow
+
+    report = tmp_path / "freeze.json"
+    payload = {
+        "feasibility": {
+            "status": "STOCK OPTIONS PRACTICALLY TESTABLE",
+            "tradeable_symbol_list": [f"S{i:03d}" for i in range(194)],
+        }
+    }
+    raw = __import__("json").dumps(payload, sort_keys=True).encode("utf-8")
+    report.write_bytes(raw)
+    monkeypatch.setattr(
+        shadow, "FROZEN_FEASIBILITY_REPORT_SHA256", hashlib.sha256(raw).hexdigest()
+    )
+    symbols, status = shadow.load_frozen_symbols(report)
+    assert symbols == set()
+    assert status == "LOCKED_FEASIBILITY_COHORT_SIZE"
