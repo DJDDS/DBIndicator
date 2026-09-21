@@ -122,3 +122,12 @@ def test_existing_freeze_detects_tampering(tmp_path):
 
     with pytest.raises(freeze.FreezeIntegrityError):
         freeze.create_10d_feasibility_freeze(state_file, tmp_path)
+
+
+def test_run_entrypoint_invokes_freeze_before_app_creation():
+    source = Path("run.py").read_text(encoding="utf-8")
+    freeze_call = source.index("v12_feasibility_freeze.maybe_freeze_10d")
+    app_create = source.index("app = create_app()")
+    assert freeze_call >= 0
+    assert app_create >= 0
+    assert freeze_call < app_create
