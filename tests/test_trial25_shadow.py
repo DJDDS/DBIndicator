@@ -134,3 +134,22 @@ def test_public_summary_contains_counts_not_raw_quotes(tmp_path):
     assert out["entry_captured"] == 1
     assert out["completed"] == 0
     assert "quotes" not in json.dumps(out).lower()
+
+
+def test_public_summary_reports_stale_audit_without_efficacy(tmp_path):
+    state_file, ledger, raw = _paths(tmp_path)
+    quotes = quote_fixture()
+    for role, snap in quotes.items():
+        snap["two_sided"] = True
+        snap["last_trade_stale_600s"] = role in ("atm_call", "lower_put")
+    entry = sh.record_entry(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event=event_fixture(), structure=structure_fixture(),
+        quotes=quotes, captured_at=NOW,
+    )
+    out = sh.public_summary(sh.load_state(state_file))
+    assert entry["entry_stale_audit"]["live_book_old_trade_legs"] == 2
+    assert out["stale_audit"]["live_book_old_trade_legs"] == 2
+    encoded = json.dumps(out).lower()
+    for forbidden in ("pnl", "profit_factor", "win_rate", "t_stat", "mean_return"):
+        assert forbidden not in encoded
