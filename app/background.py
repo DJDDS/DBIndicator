@@ -1859,7 +1859,7 @@ def _run_loop():
                             _state["v12_option_recorder"] = v12_snapshot.get("recorder") or {}
                             _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
-                            _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
+                            _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}\n                            _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                         wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
                             alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
