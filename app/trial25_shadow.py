@@ -13,6 +13,8 @@ from . import derivative_intelligence, trial25_calendar, trial25_execution, tria
 
 TERMINAL_UNAVAILABLE_PREFIX = "UNAVAILABLE_"
 REQUIRED_ROLES = ("atm_call", "atm_put", "lower_put", "upper_call")
+FROZEN_FEASIBILITY_REPORT_SHA256 = "d14361328e8ed09a5ecb81071e55ceff9d890f76dac3c5154e38e5dc32871260"
+FROZEN_COHORT_SIZE = 195
 
 
 def event_id(symbol, meeting_date, entry_date) -> str:
@@ -304,16 +306,24 @@ def _capture_missed(now: dt.datetime, day_value, clock: dt.time, *, grace_minute
 
 
 def load_frozen_symbols(feasibility_report_file) -> tuple[set[str], str]:
+    """Load only the exact immutable 2026-09-21 feasibility cohort."""
     try:
-        payload = json.loads(Path(feasibility_report_file).read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+        raw = Path(feasibility_report_file).read_bytes()
+    except OSError:
+        return set(), "LOCKED_FEASIBILITY"
+    if hashlib.sha256(raw).hexdigest() != FROZEN_FEASIBILITY_REPORT_SHA256:
+        return set(), "LOCKED_FEASIBILITY_HASH"
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, TypeError):
         return set(), "LOCKED_FEASIBILITY"
     feasibility = payload.get("feasibility") if isinstance(payload.get("feasibility"), dict) else payload
     if feasibility.get("status") != "STOCK OPTIONS PRACTICALLY TESTABLE":
         return set(), "LOCKED_FEASIBILITY"
-    symbols = {str(x) for x in (feasibility.get("tradeable_symbol_list") or []) if str(x)}
-    if len(symbols) < 20:
-        return set(), "LOCKED_FEASIBILITY"
+    listed = [str(x) for x in (feasibility.get("tradeable_symbol_list") or []) if str(x)]
+    symbols = set(listed)
+    if len(listed) != FROZEN_COHORT_SIZE or len(symbols) != FROZEN_COHORT_SIZE:
+        return set(), "LOCKED_FEASIBILITY_COHORT_SIZE"
     return symbols, "OK"
 
 
