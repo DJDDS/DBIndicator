@@ -24,11 +24,12 @@ def test_background_v12_helper_refreshes_calendar_and_processes_scan(monkeypatch
     monkeypatch.setattr(background.config, 'V12_OPTION_SNAPSHOT_FILE', str(tmp_path/'snap.jsonl'))
     monkeypatch.setattr(background.config, 'V12_OPTION_STATE_FILE', str(tmp_path/'opt_state.json'))
     monkeypatch.setattr(background.v12_live, 'refresh_earnings_calendar', lambda symbols, **kw: calls.append(('calendar', set(symbols))) or {'status': 'OK'})
-    monkeypatch.setattr(background.v12_live, 'process_live_scan', lambda kite, results, radar, swing, **kw: calls.append(('scan', len(results))) or {'trade_console': {'intraday': []}, 'recorder': {'status': 'NOT_DUE'}, 'feasibility': {'trial25_locked': True}, 'earnings': {}, 'trial25_status': 'LOCKED'})
+    monkeypatch.setattr(background.v12_live, 'process_live_scan', lambda kite, results, radar, swing, **kw: calls.append(('scan', len(results), set(kw.get('current_fno_symbols') or []))) or {'trade_console': {'intraday': []}, 'recorder': {'status': 'NOT_DUE'}, 'feasibility': {'trial25_locked': True}, 'earnings': {}, 'trial25_shadow': {'status':'STAGE_D_COLLECTING','completed':0,'target':40}, 'trial25_status': 'LOCKED'})
 
     out = background._run_v12_live(object(), [{'symbol':'ABC'}], {'bullish': [], 'bearish': []}, {'1D': {}, '2D': {}}, ['ABC'], now=dt.datetime(2026,9,5,9,31,tzinfo=IST))
     assert out['feasibility']['trial25_locked'] is True
-    assert calls == [('calendar', {'ABC'}), ('scan', 1)]
+    assert calls == [('calendar', {'ABC'}), ('scan', 1, {'ABC'})]
+    assert out['trial25_shadow']['status'] == 'STAGE_D_COLLECTING'
 
 
 def test_background_state_has_v12_surfaces():
@@ -39,6 +40,7 @@ def test_background_state_has_v12_surfaces():
     assert 'v12_feasibility' in state
     assert 'v12_earnings' in state
     assert 'v12_trial25_status' in state
+    assert 'trial25_shadow' in state
 
 
 def test_background_source_contains_lightweight_post_cas_v12_path():
