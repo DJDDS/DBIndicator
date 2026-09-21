@@ -121,9 +121,25 @@ import datetime as dt
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 SUPPORTED_YEARS = {2026}
 
+# Source: NSE/FAOP/71777 dated 2025-12-12, modified by
+# NSE/FAOP/72262 dated 2026-01-12 (adds 2026-01-15).
 NSE_FO_HOLIDAYS_2026 = frozenset({
-    # Populate from the verified NSE 2026 F&O holiday calendar in this task.
-    # Every date is an explicit dt.date value; no runtime scraping.
+    dt.date(2026, 1, 15),
+    dt.date(2026, 1, 26),
+    dt.date(2026, 3, 3),
+    dt.date(2026, 3, 26),
+    dt.date(2026, 3, 31),
+    dt.date(2026, 4, 3),
+    dt.date(2026, 4, 14),
+    dt.date(2026, 5, 1),
+    dt.date(2026, 5, 28),
+    dt.date(2026, 6, 26),
+    dt.date(2026, 9, 14),
+    dt.date(2026, 10, 2),
+    dt.date(2026, 10, 20),
+    dt.date(2026, 11, 10),
+    dt.date(2026, 11, 24),
+    dt.date(2026, 12, 25),
 })
 
 
@@ -173,7 +189,7 @@ def event_known_before_entry(event: dict, entry_capture_at: dt.datetime) -> bool
     return observed <= entry_capture_at
 ```
 
-Populate the holiday set from the official NSE F&O 2026 holiday page before running GREEN. Add the official source URL/date as a source comment next to the constant.
+Use the explicit holiday set above. Do not substitute the NSE Clearing settlement-holiday calendar: Trial 25 needs **trading** days, not settlement days. The two authoritative inputs are NSE/FAOP/71777 and its January-15 modification NSE/FAOP/72262.
 
 - [ ] **Step 4: Add Trial-25 persistent paths**
 
@@ -241,6 +257,52 @@ git commit -m "feat: lock Trial 25 event calendar and storage"
 
 - [ ] **Step 1: Write failing contract-selection tests**
 
+At the top of `tests/test_trial25_execution.py`, define:
+
+```python
+import datetime as dt
+
+from app import trial25_execution as execution
+
+
+def contract(symbol="AAA", expiry=dt.date(2026, 10, 27), strike=100.0, typ="CE", lot_size=100):
+    return {
+        "tradingsymbol": f"{symbol}-{expiry.isoformat()}-{strike:g}-{typ}",
+        "instrument_token": hash((symbol, expiry, strike, typ)) & 0xFFFF,
+        "instrument_type": typ,
+        "strike": float(strike),
+        "expiry": expiry,
+        "lot_size": int(lot_size),
+    }
+
+
+def contract_ladder(expiries, strikes, symbol="AAA"):
+    rows = []
+    for expiry in expiries:
+        for strike in strikes:
+            rows.append(contract(symbol, expiry, strike, "CE"))
+            rows.append(contract(symbol, expiry, strike, "PE"))
+    return rows
+
+
+def raw_quote(*, bid=10.0, bid_qty=200, ask=10.2, ask_qty=200, last_trade_time=None, timestamp=None):
+    return {
+        "last_price": (bid + ask) / 2.0,
+        "last_trade_time": last_trade_time,
+        "timestamp": timestamp,
+        "depth": {
+            "buy": [{"price": bid, "quantity": bid_qty, "orders": 1}],
+            "sell": [{"price": ask, "quantity": ask_qty, "orders": 1}],
+        },
+    }
+
+
+def aware(text):
+    return dt.datetime.fromisoformat(text)
+```
+
+Then add:
+
 ```python
 def test_post_freeze_added_symbol_cannot_be_made_eligible_by_contracts():
     frozen = {"AAA"}
@@ -256,9 +318,15 @@ def test_frozen_symbol_without_live_contracts_is_not_fno_at_entry():
 
 
 def test_nearest_expiry_requires_five_dte_and_survives_exit():
-    rows = contracts(expiries=[date(2026,10,13), date(2026,10,27)])
+    rows = contract_ladder(
+        [dt.date(2026,10,13), dt.date(2026,10,27)],
+        [80,90,100,110,120],
+    )
     chosen = execution.select_event_contracts(
-        rows, spot=100.0, entry_date=date(2026,10,8), exit_date=date(2026,10,12)
+        rows,
+        spot=100.0,
+        entry_date=dt.date(2026,10,8),
+        exit_date=dt.date(2026,10,12),
     )
     assert chosen["expiry"] == "2026-10-27"
 ```
@@ -267,9 +335,15 @@ def test_nearest_expiry_requires_five_dte_and_survives_exit():
 
 ```python
 def test_wings_are_at_or_beyond_two_times_executable_implied_move():
-    rows = contracts(strikes=[60,70,80,90,100,110,120,130,140])
-    quotes = atm_quotes(ce_ask=6.0, pe_ask=5.0)
-    out = execution.freeze_structure(rows, quotes, spot=101.0)
+    rows = contract_ladder(
+        [dt.date(2026,10,27)],
+        [60,70,80,90,100,110,120,130,140],
+    )
+    quotes = {
+        "NFO:AAA-2026-10-27-100-CE": raw_quote(bid=5.8, ask=6.0),
+        "NFO:AAA-2026-10-27-100-PE": raw_quote(bid=4.8, ask=5.0),
+    }
+    out = execution.freeze_structure(rows, quotes, spot=101.0, expiry=dt.date(2026,10,27))
     assert out["atm_strike"] == 100.0
     assert out["lower_put"]["strike"] <= 78.0
     assert out["upper_call"]["strike"] >= 122.0
@@ -283,7 +357,11 @@ def test_old_last_trade_with_current_executable_book_is_fresh():
     received = aware("2026-10-08T15:10:02+05:30")
     leg = execution.normalize_live_quote(
         contract(lot_size=100),
-        quote(last_trade_time="2026-10-08T14:40:00+05:30", bid=10, bid_qty=200, ask=10.2, ask_qty=200),
+        raw_quote(
+            last_trade_time=aware("2026-10-08T14:40:00+05:30"),
+            timestamp=aware("2026-10-08T15:10:01+05:30"),
+            bid=10, bid_qty=200, ask=10.2, ask_qty=200,
+        ),
         requested,
         received,
     )
@@ -292,12 +370,20 @@ def test_old_last_trade_with_current_executable_book_is_fresh():
 
 
 def test_quote_transport_over_15_seconds_fails_closed():
-    leg = quote_leg(api_latency_ms=15001, bid=10, bid_qty=200, ask=10.2, ask_qty=200)
+    leg = {
+        "api_latency_ms": 15001,
+        "best_bid": 10.0, "best_bid_quantity": 200,
+        "best_ask": 10.2, "best_ask_quantity": 200,
+    }
     assert execution.execution_fresh(leg, "SELL", 100)[0] is False
 
 
 def test_insufficient_top_level_quantity_fails_primary_execution():
-    leg = quote_leg(api_latency_ms=300, bid=10, bid_qty=50, ask=10.2, ask_qty=200)
+    leg = {
+        "api_latency_ms": 300,
+        "best_bid": 10.0, "best_bid_quantity": 50,
+        "best_ask": 10.2, "best_ask_quantity": 200,
+    }
     assert execution.execution_fresh(leg, "SELL", 100) == (False, "UNAVAILABLE_QUANTITY")
 ```
 
@@ -412,6 +498,10 @@ git commit -m "feat: add Trial 25 execution kernel"
   - append-only transition ledger and raw-quote ledger.
 
 - [ ] **Step 1: Write failing state-machine tests**
+
+At the top of `tests/test_trial25_shadow.py`, define explicit fixture helpers `earnings_state(symbol)`, `seeded_entry_due_state()`, `entry_capture()`, `completed_state()`, `different_exit_capture()`, and `state_with_completed_raw_events(n)` as plain dictionaries. Each helper must use only fields defined by the state-machine schema in this task; do not import production persistence helpers to construct expected inputs.
+
+Then add:
 
 ```python
 def test_new_event_id_is_deterministic():
@@ -576,7 +666,51 @@ def test_trial25_failure_does_not_break_v12_result(monkeypatch, tmp_path):
 
 - [ ] **Step 3: Write failing dedicated-wing quote test**
 
-Build a fake Kite client where the normal +/-6 deep ladder does not reach the 2.0x wing, but the instrument master does. Assert Trial 25 requests the farther contracts directly and captures them without changing the V12 recorder's deep-symbol limit.
+Add a concrete fake Kite client to `tests/test_trial25_live_integration.py`:
+
+```python
+class FakeKite:
+    def __init__(self, quotes):
+        self.quotes = quotes
+        self.quote_calls = []
+
+    def quote(self, keys):
+        keys = list(keys)
+        self.quote_calls.append(keys)
+        return {key: self.quotes[key] for key in keys if key in self.quotes}
+
+
+def test_trial25_requests_far_wings_directly(monkeypatch, tmp_path):
+    far_put = "NFO:AAA-2026-10-27-70-PE"
+    far_call = "NFO:AAA-2026-10-27-130-CE"
+    kite = FakeKite({
+        far_put: live_book(2.0, 2.1, 100),
+        far_call: live_book(2.2, 2.3, 100),
+    })
+
+    # Seed the event with ATM quotes implying wings beyond +/-6 normal ladder steps.
+    state = seeded_entry_due_event(
+        symbol="AAA",
+        expiry="2026-10-27",
+        atm_strike=100.0,
+        lower_wing_symbol=far_put,
+        upper_wing_symbol=far_call,
+    )
+    out = trial25_shadow.capture_due_entry(
+        kite,
+        state,
+        event_id="AAA:2026-10-09:2026-10-08",
+        now=aware("2026-10-08T15:10:30+05:30"),
+        sleep_fn=lambda _seconds: None,
+    )
+
+    flattened = [key for call in kite.quote_calls for key in call]
+    assert far_put in flattened
+    assert far_call in flattened
+    assert out["events"]["AAA:2026-10-09:2026-10-08"]["state"] == "ENTRY_CAPTURED"
+```
+
+In the same test file define `live_book()`, `aware()`, and `seeded_entry_due_event()` directly above this test so it is self-contained.
 
 - [ ] **Step 4: Run focused tests and confirm RED**
 
@@ -654,6 +788,9 @@ git commit -m "feat: wire Trial 25 shadow capture after V12 recorder"
 - [ ] **Step 1: Write failing pre-40 no-peeking test**
 
 ```python
+# tests/test_trial25_stage_d.py defines local helpers
+# state_with_completed_raw_events(n, shuffled=False), deterministic_first_40(state),
+# and freeze_40(tmp_path) as plain synthetic event dictionaries.
 def test_stage_d_does_not_calculate_returns_before_40(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(stage_d, "_event_return_pct", lambda *a, **k: called.append(True) or 1.0)
@@ -762,6 +899,17 @@ git commit -m "feat: add no-peeking Trial 25 Stage-D calibration"
 - Produces: dashboard/API field `trial25_shadow`; no Trial-25 POST endpoints and no raw export endpoint.
 
 - [ ] **Step 1: Write failing web/API surface test**
+
+At the top of `tests/test_trial25_ui.py` define:
+
+```python
+from pathlib import Path
+
+WEB = Path(__file__).parents[1] / "app" / "web.py"
+TEMPLATE = Path(__file__).parents[1] / "app" / "templates" / "index.html"
+```
+
+Then add:
 
 ```python
 def test_dashboard_state_exposes_trial25_shadow_only_as_read_only_summary():
