@@ -45,7 +45,8 @@ def test_trial25_runtime_files_resolve_under_persistent_v12_volume():
     assert resolved["persistent"] is True
     for key in (
         "trial25_state", "trial25_ledger", "trial25_raw_quotes",
-        "trial25_stage_d", "trial25_stage_d_hash", "trial25_universe_state",\n        "trial25_universe_ledger",
+        "trial25_stage_d", "trial25_stage_d_hash", "trial25_universe_state",
+        "trial25_universe_ledger",
     ):
         assert resolved[key].startswith("/data/v12/trial25/")
 
