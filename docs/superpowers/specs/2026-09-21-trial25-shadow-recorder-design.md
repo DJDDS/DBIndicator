@@ -16,7 +16,7 @@ This build must therefore create a **Trial-25 Stage-D data-acquisition system**,
 
 Success means:
 
-1. Every eligible earnings event is determined from the frozen V12 eligible universe and the point-in-time NSE earnings ledger.
+1. Every primary eligible earnings event is determined from the frozen V12 Cohort-A universe and the point-in-time NSE earnings ledger; later NSE F&O additions are observed separately and cannot silently enter the primary trial.
 2. The system captures one fixed, defined-risk ATM iron-butterfly plan before the event and the same four contracts after the event.
 3. Execution evidence uses executable top-of-book bid/ask and top-level quantity, never midpoint substitution.
 4. The historical V12 `stale` flag is audited and replaced for Trial 25 by an execution-freshness definition that distinguishes an old last trade from a live resting order book.
@@ -57,6 +57,76 @@ The existing V12 feasibility thresholds remain unchanged:
 - first 10 distinct recorded trading days only.
 
 The genuine missing 2026-09-11 09:30 snapshot remains missing.
+
+
+## 3A. NSE F&O universe changes after the frozen feasibility window
+
+The live NSE single-stock F&O universe is allowed to change after the
+2026-09-21 feasibility freeze.  This must **not** silently rewrite the Trial-25
+research cohort.
+
+Two universes are therefore maintained:
+
+### Cohort A — frozen Trial-25 primary universe
+
+The primary Trial-25 universe remains exactly the 195 symbols in the immutable
+2026-09-21 `tradeable_symbol_list`.
+
+- A later F&O addition is **not** inserted into Cohort A.
+- A later F&O exclusion does not rewrite historical eligibility.
+- For a Cohort-A symbol that is being phased out by NSE, a new Trial-25 event is
+  allowed only when the required option expiry and all four contracts are
+  actually listed and remain valid through the planned exit.  Otherwise the
+  event is marked `UNAVAILABLE_NSE_FNO_PHASEOUT`.
+- Once NSE has no valid stock-option contract for the planned event window, the
+  symbol cannot generate new Trial-25 observations even though it remains in
+  the historical frozen Cohort-A list.
+
+This preserves the interpretation of the original feasibility gate.
+
+### New-F&O onboarding pool — operational observation only
+
+Stocks introduced into NSE F&O after the freeze are automatically discovered
+from the live Kite/NSE contract master and placed in a separate
+`NEW_FNO_ONBOARDING` pool.
+
+For each new underlying the system records, from its first live F&O session:
+
+- first F&O trading date;
+- ATM two-sided coverage by fixed V12 slot;
+- executable ATM-straddle spread;
+- term-structure availability;
+- quote-freshness/book-quality diagnostics;
+- lot size and listed expiry continuity.
+
+The onboarding pool is **not part of Trial-25 Stage D or Stage C** and its
+outcomes cannot affect Cohort-A thresholds.
+
+After 10 distinct live F&O trading sessions, the same frozen V12 feasibility
+formula may be applied prospectively to that new stock.  Passing this check
+only makes it eligible for a separately labelled future/secondary cohort (for
+example Trial-25B or a later trial); it does not retroactively join Cohort A.
+
+This rule is particularly important for securities introduced immediately
+before earnings season: brand-new option chains must establish actual Indian
+bid/ask liquidity before they can influence an efficacy study.
+
+### Daily exchange-universe reconciliation
+
+At process start and before each fixed option snapshot, the current stock-option
+underlyings are derived from the live NFO contract master rather than from a
+hard-coded F&O list.
+
+The reconciliation records:
+
+- newly present underlyings;
+- underlyings in NSE phase-out that still have live contracts;
+- underlyings with no remaining live contracts;
+- first/last contract dates seen.
+
+The reconciliation is operational metadata only.  It cannot alter the frozen
+Cohort-A feasibility artifact.
+
 
 ## 4. Architecture
 
@@ -387,6 +457,8 @@ Implementation is test-first.
 - 2026 NSE F&O holiday/session resolver, including weekends and 14-Sep-2026;
 - point-in-time ACTIVE/REVISED/REMOVED earnings handling;
 - frozen-universe rejection;
+- post-freeze NSE F&O addition goes to NEW_FNO_ONBOARDING, not Cohort A;
+- NSE phase-out/exclusion blocks a new event when no valid contracts remain through planned exit;
 - entry and exit date determination;
 - nearest expiry with > exit and >=5 DTE;
 - ATM selection;
@@ -428,7 +500,9 @@ The build is accepted only if all of the following are true:
 
 - existing V12/V12.1 recorders remain healthy;
 - frozen 10-day feasibility files retain their existing hashes;
-- Trial-25 reads exactly the frozen eligible universe;
+- Trial-25 primary research reads exactly the frozen Cohort-A eligible universe;
+- live NSE/Kite universe reconciliation detects additions and phase-outs without rewriting Cohort A;
+- post-freeze additions are recorded only in NEW_FNO_ONBOARDING until a separate prospective cohort is defined;
 - earnings events are point-in-time and session dates are deterministic;
 - dedicated entry/exit quotes use the exact four frozen contracts;
 - transport freshness, last-trade age and book executability are recorded separately;
