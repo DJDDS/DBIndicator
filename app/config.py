@@ -155,7 +155,10 @@ TRIAL25_LEDGER_FILE = _V12_STORAGE["trial25_ledger"]
 TRIAL25_RAW_QUOTES_FILE = _V12_STORAGE["trial25_raw_quotes"]
 TRIAL25_STAGE_D_FILE = _V12_STORAGE["trial25_stage_d"]
 TRIAL25_STAGE_D_HASH_FILE = _V12_STORAGE["trial25_stage_d_hash"]
-TRIAL25_ONBOARDING_FILE = _V12_STORAGE["trial25_onboarding"]
+TRIAL25_UNIVERSE_STATE_FILE = _V12_STORAGE["trial25_universe_state"]
+TRIAL25_UNIVERSE_LEDGER_FILE = _V12_STORAGE["trial25_universe_ledger"]
+# Backward-compatible alias for the pre-release branch name.
+TRIAL25_ONBOARDING_FILE = TRIAL25_UNIVERSE_STATE_FILE
 TRIAL25_FEASIBILITY_FREEZE_FILE = os.path.join(
     V12_STORAGE_ROOT, "research_freezes", "v12_feasibility_10d_2026-09-21.json"
 )
