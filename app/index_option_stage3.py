@@ -149,6 +149,33 @@ def _candidate_rows(trades: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+
+def extract_frozen_candidate_from_stage2(
+    trades: pd.DataFrame,
+    *,
+    enforce_gate: bool = True,
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
+    """Extract the exact frozen family from a Stage-2 trade ledger."""
+    out = _candidate_rows(trades)
+    if out.empty:
+        return out
+    if enforce_gate:
+        rp = pd.to_numeric(out["range_pct"], errors="coerce")
+        out = out[
+            (rp >= FROZEN_SPEC.range_pct_low)
+            & (rp <= FROZEN_SPEC.range_pct_high)
+        ].copy()
+    sessions = pd.to_datetime(out["session"], errors="coerce")
+    if start is not None:
+        out = out[sessions >= pd.Timestamp(start)].copy()
+        sessions = pd.to_datetime(out["session"], errors="coerce")
+    if end is not None:
+        out = out[sessions <= pd.Timestamp(end)].copy()
+    out["frozen_spec_sha256"] = FROZEN_SPEC_SHA256
+    return out.reset_index(drop=True)
+
 def gate_points_check(primary_trades: pd.DataFrame) -> dict:
     """Test the 0.15%-0.60% gate in index points, not R."""
     rows = _candidate_rows(primary_trades)
@@ -459,6 +486,28 @@ def map_signal_to_option_pnl(
     }
 
 
+
+def map_signal_frame_to_option_pnl(
+    signals: pd.DataFrame,
+    quotes: pd.DataFrame,
+    refs: pd.DataFrame,
+    *,
+    instrument: str = "NIFTY 50",
+    moneyness: Sequence[str] = ("ATM", "ITM1"),
+) -> pd.DataFrame:
+    """Map a pre-existing frozen signal ledger to executable option quotes."""
+    rows = []
+    if signals is None or signals.empty:
+        return pd.DataFrame()
+    for _, signal in signals.iterrows():
+        payload = signal.to_dict()
+        for bucket in moneyness:
+            row = map_signal_to_option_pnl(payload, quotes, refs, moneyness=bucket)
+            row["instrument"] = instrument
+            rows.append(row)
+    return pd.DataFrame.from_records(rows)
+
+
 def build_forward_paper_ledger(
     quotes: pd.DataFrame,
     refs: pd.DataFrame,
@@ -472,14 +521,14 @@ def build_forward_paper_ledger(
     signals = evaluate_frozen_spec(bars, instrument=instrument)
     if not signals.empty:
         signals = signals[pd.to_datetime(signals["session"]) >= pd.Timestamp(forward_start)].copy()
-    ledger = []
-    for _, signal in signals.iterrows():
-        payload = signal.to_dict()
-        for bucket in moneyness:
-            row = map_signal_to_option_pnl(payload, quotes, refs, moneyness=bucket)
-            row["instrument"] = instrument
-            ledger.append(row)
-    return signals.reset_index(drop=True), pd.DataFrame.from_records(ledger)
+    ledger = map_signal_frame_to_option_pnl(
+        signals,
+        quotes,
+        refs,
+        instrument=instrument,
+        moneyness=moneyness,
+    )
+    return signals.reset_index(drop=True), ledger
 
 
 def summarize_option_pnl(ledger: pd.DataFrame) -> pd.DataFrame:
@@ -551,72 +600,124 @@ def max_drawdown_from_pnl(ledger: pd.DataFrame) -> float | None:
     return float(drawdown.max())
 
 
+def _option_gate_by_expression(ledger: pd.DataFrame) -> dict:
+    if ledger is None or ledger.empty:
+        return {"status": "WAITING_DATA", "expressions": {}}
+    ok = ledger[ledger["status"].astype(str).eq("OK")].copy()
+    if ok.empty:
+        return {"status": "WAITING_DATA", "expressions": {}}
+    expressions = {}
+    statuses = []
+    for name in ("ATM", "ITM1"):
+        group = ok[ok["moneyness"].astype(str).str.upper().eq(name)].copy()
+        if group.empty:
+            expressions[name] = {"status": "WAITING_DATA", "trade_count": 0}
+            statuses.append("WAITING_DATA")
+            continue
+        net = pd.to_numeric(group["net_pnl"], errors="coerce").dropna()
+        has_expiry = bool(group["expiry_day"].fillna(False).astype(bool).any())
+        has_non_expiry = bool((~group["expiry_day"].fillna(False).astype(bool)).any())
+        status = "PASS" if len(net) and float(net.mean()) > 0 and has_expiry and has_non_expiry else "FAIL"
+        expressions[name] = {
+            "status": status,
+            "trade_count": int(len(net)),
+            "session_count": int(group["session"].nunique()),
+            "mean_net_pnl": float(net.mean()) if len(net) else None,
+            "total_net_pnl": float(net.sum()) if len(net) else None,
+            "expiry_day_trades": int(group["expiry_day"].fillna(False).astype(bool).sum()),
+            "non_expiry_day_trades": int((~group["expiry_day"].fillna(False).astype(bool)).sum()),
+            "bootstrap": session_bootstrap_mean_ci(group, "net_pnl"),
+        }
+        statuses.append(status)
+    overall = "PASS" if statuses and all(x == "PASS" for x in statuses) else (
+        "WAITING_DATA" if any(x == "WAITING_DATA" for x in statuses) else "FAIL"
+    )
+    return {"status": overall, "expressions": expressions}
+
+
+def _forward_gate_by_expression(
+    ledger: pd.DataFrame,
+    *,
+    drawdown_budget: float | None,
+    forward_min_trades: int,
+) -> dict:
+    if ledger is None or ledger.empty:
+        return {"status": "WAITING_40_TRADES", "expressions": {}}
+    ok = ledger[ledger["status"].astype(str).eq("OK")].copy()
+    expressions = {}
+    statuses = []
+    for name in ("ATM", "ITM1"):
+        group = ok[ok["moneyness"].astype(str).str.upper().eq(name)].copy()
+        n = int(len(group))
+        if n < int(forward_min_trades):
+            status = "WAITING_40_TRADES"
+        elif drawdown_budget is None:
+            status = "WAITING_DRAWDOWN_BUDGET"
+        else:
+            total = float(pd.to_numeric(group["net_pnl"], errors="coerce").sum())
+            dd = max_drawdown_from_pnl(group)
+            status = "PASS" if total >= 0 and dd is not None and dd <= float(drawdown_budget) else "FAIL"
+        expressions[name] = {
+            "status": status,
+            "trade_count": n,
+            "required_trades": int(forward_min_trades),
+            "total_net_pnl": float(pd.to_numeric(group["net_pnl"], errors="coerce").sum()) if n else None,
+            "mean_net_pnl": float(pd.to_numeric(group["net_pnl"], errors="coerce").mean()) if n else None,
+            "max_drawdown": max_drawdown_from_pnl(group) if n else None,
+            "drawdown_budget": drawdown_budget,
+        }
+        statuses.append(status)
+    overall = "PASS" if statuses and all(x == "PASS" for x in statuses) else (
+        "FAIL" if any(x == "FAIL" for x in statuses) else (
+            "WAITING_DRAWDOWN_BUDGET" if any(x == "WAITING_DRAWDOWN_BUDGET" for x in statuses)
+            else "WAITING_40_TRADES"
+        )
+    )
+    return {"status": overall, "expressions": expressions}
+
+
 def stage3_gate_report(
     *,
-    option_ledger: pd.DataFrame,
+    historical_option_ledger: pd.DataFrame | None,
+    forward_option_ledger: pd.DataFrame,
     gate_points: dict,
     cross_index: pd.DataFrame,
     drawdown_budget: float | None = None,
     forward_min_trades: int = 40,
 ) -> dict:
-    """Report the preregistered Stage-3 gates without silently relaxing them."""
-    ok = (
-        option_ledger[option_ledger["status"].astype(str).eq("OK")].copy()
-        if option_ledger is not None and not option_ledger.empty
-        else pd.DataFrame()
-    )
-    option_status = "WAITING_DATA"
-    option_mean = None
-    if not ok.empty:
-        option_mean = float(pd.to_numeric(ok["net_pnl"], errors="coerce").mean())
-        has_expiry = bool(ok["expiry_day"].fillna(False).astype(bool).any())
-        has_non_expiry = bool((~ok["expiry_day"].fillna(False).astype(bool)).any())
-        option_status = "PASS" if option_mean > 0 and has_expiry and has_non_expiry else "FAIL"
+    """Report preregistered gates without allowing forward data to replace history."""
+    option_gate = _option_gate_by_expression(historical_option_ledger)
 
     cross_status = "WAITING_DATA"
     if cross_index is not None and not cross_index.empty:
         means = pd.to_numeric(cross_index["mean_120m_points"], errors="coerce").dropna()
         cross_status = "PASS" if bool((means > 0).any()) else "FAIL"
 
-    forward_status = "WAITING_40_TRADES"
-    dd = max_drawdown_from_pnl(ok)
-    if len(ok) >= int(forward_min_trades):
-        if drawdown_budget is None:
-            forward_status = "WAITING_DRAWDOWN_BUDGET"
-        else:
-            total = float(pd.to_numeric(ok["net_pnl"], errors="coerce").sum())
-            forward_status = "PASS" if total >= 0 and dd is not None and dd <= float(drawdown_budget) else "FAIL"
+    forward_gate = _forward_gate_by_expression(
+        forward_option_ledger,
+        drawdown_budget=drawdown_budget,
+        forward_min_trades=forward_min_trades,
+    )
 
     report = {
         "frozen_spec_sha256": FROZEN_SPEC_SHA256,
-        "option_pnl": {
-            "status": option_status,
-            "trade_count": int(len(ok)),
-            "mean_net_pnl": option_mean,
-            "bootstrap": session_bootstrap_mean_ci(ok, "net_pnl") if not ok.empty else None,
-        },
+        "historical_option_pnl_validation_holdout": option_gate,
         "cross_index_replication": {"status": cross_status},
         "gate_points_check": gate_points,
-        "forward_paper": {
-            "status": forward_status,
-            "trade_count": int(len(ok)),
-            "required_trades": int(forward_min_trades),
-            "total_net_pnl": float(pd.to_numeric(ok["net_pnl"], errors="coerce").sum()) if not ok.empty else None,
-            "max_drawdown": dd,
-            "drawdown_budget": drawdown_budget,
-        },
+        "forward_paper": forward_gate,
         "production_ready": False,
     }
     statuses = [
-        report["option_pnl"]["status"],
+        report["historical_option_pnl_validation_holdout"]["status"],
         report["cross_index_replication"]["status"],
         report["gate_points_check"].get("status"),
         report["forward_paper"]["status"],
     ]
     report["all_stage3_gates_pass"] = all(status == "PASS" for status in statuses)
-    report["production_ready"] = bool(report["all_stage3_gates_pass"])
+    report["eligible_for_separate_production_review"] = bool(report["all_stage3_gates_pass"])
+    # Passing research gates never flips a production flag inside research code.
+    report["production_ready"] = False
     return report
-
 
 def write_stage3_artifacts(
     output_dir,
