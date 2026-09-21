@@ -67,3 +67,45 @@ def test_post_cas_time_is_not_a_trial25_capture_slot():
     assert trial25_shadow.capture_kind_due(dt.datetime(2026, 10, 8, 15, 37, tzinfo=IST), "2026-10-08", "2026-10-12") is None
     assert trial25_shadow.capture_kind_due(dt.datetime(2026, 10, 8, 15, 10, tzinfo=IST), "2026-10-08", "2026-10-12") == "ENTRY"
     assert trial25_shadow.capture_kind_due(dt.datetime(2026, 10, 12, 9, 30, tzinfo=IST), "2026-10-08", "2026-10-12") == "EXIT"
+
+
+def test_trial25_preentry_window_forces_fresh_calendar_observation(monkeypatch, tmp_path):
+    from app import v12_live
+    state_file = tmp_path / "earn_state.json"
+    ledger_file = tmp_path / "earn_ledger.jsonl"
+    calls = []
+
+    def fake_fetch(session, symbols, start, end, timeout=25):
+        calls.append((start, end))
+        return {"status": "OK", "events": [], "error": None}
+
+    monkeypatch.setattr(v12_live.v12_earnings_calendar, "fetch_upcoming_earnings", fake_fetch)
+    morning = dt.datetime(2026, 10, 8, 9, 20, tzinfo=IST)
+    preentry = dt.datetime(2026, 10, 8, 15, 5, tzinfo=IST)
+
+    v12_live.refresh_earnings_calendar(
+        {"ABC"}, now=morning, state_file=state_file, ledger_file=ledger_file,
+        session_factory=lambda: object(),
+    )
+    assert v12_live.trial25_preentry_calendar_refresh_due(preentry) is True
+    v12_live.refresh_earnings_calendar(
+        {"ABC"}, now=preentry, state_file=state_file, ledger_file=ledger_file,
+        session_factory=lambda: object(), force=True,
+    )
+    assert len(calls) == 2
+
+
+def test_trial25_preentry_calendar_refresh_window_is_narrow():
+    from app import v12_live
+    assert v12_live.trial25_preentry_calendar_refresh_due(
+        dt.datetime(2026, 10, 8, 14, 59, tzinfo=IST)
+    ) is False
+    assert v12_live.trial25_preentry_calendar_refresh_due(
+        dt.datetime(2026, 10, 8, 15, 0, tzinfo=IST)
+    ) is True
+    assert v12_live.trial25_preentry_calendar_refresh_due(
+        dt.datetime(2026, 10, 8, 15, 17, tzinfo=IST)
+    ) is True
+    assert v12_live.trial25_preentry_calendar_refresh_due(
+        dt.datetime(2026, 10, 8, 15, 18, tzinfo=IST)
+    ) is False
