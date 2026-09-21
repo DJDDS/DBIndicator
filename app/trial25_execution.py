@@ -59,7 +59,7 @@ def _identity(row: dict) -> dict:
     return {
         "tradingsymbol": row.get("tradingsymbol"),
         "instrument_token": row.get("instrument_token"),
-        "type": row.get("instrument_type"),
+        "type": row.get("instrument_type") or row.get("type"),
         "strike": float(row.get("strike")),
         "expiry": _as_date(row.get("expiry")).isoformat(),
         "lot_size": int(row.get("lot_size") or 0),
