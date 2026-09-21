@@ -604,6 +604,7 @@ Implementation is test-first.
 - 2026 NSE F&O holiday/session resolver, including weekends and 14-Sep-2026;
 - point-in-time ACTIVE/REVISED/REMOVED earnings handling;
 - frozen-universe rejection;
+- current-F&O intersection: post-freeze additions are rejected, post-freeze deletions fail closed, and legacy expiring contracts are accepted only when the exact four-leg structure survives through exit;
 - post-29-Sep live F&O roster handling: new admissions excluded, frozen deletions unavailable;
 - post-29-September F&O additions enter onboarding only, never the original confirmatory cohort;
 - F&O removals cannot open a new event;
