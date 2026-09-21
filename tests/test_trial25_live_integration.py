@@ -119,7 +119,7 @@ def test_trial25_process_persists_live_fno_reconciliation_and_reuses_contract_ma
     monkeypatch.setattr(v12_live.trial25_shadow, "load_frozen_symbols", lambda path: ({"OLD"}, "OK"))
     monkeypatch.setattr(v12_live.derivative_intelligence, "get_option_contracts_map", lambda kite: contracts)
 
-    def fake_update(path, frozen, contracts_map, now):
+    def fake_update(path, frozen, contracts_map, now, **kwargs):
         seen["universe_args"] = (path, set(frozen), contracts_map, now)
         return {
             "asof": now.isoformat(timespec="seconds"),
@@ -139,7 +139,8 @@ def test_trial25_process_persists_live_fno_reconciliation_and_reuses_contract_ma
 
     monkeypatch.setattr(v12_live.trial25_universe, "update_universe_state", fake_update)
     monkeypatch.setattr(v12_live.trial25_shadow, "process_due_events", fake_process)
-    monkeypatch.setattr(v12_live.config, "TRIAL25_ONBOARDING_FILE", tmp_path / "onboarding.json")
+    monkeypatch.setattr(v12_live.config, "TRIAL25_UNIVERSE_STATE_FILE", tmp_path / "universe_state.json")
+    monkeypatch.setattr(v12_live.config, "TRIAL25_UNIVERSE_LEDGER_FILE", tmp_path / "universe_ledger.jsonl")
 
     now = dt.datetime(2026, 9, 30, 9, 20, tzinfo=IST)
     out = v12_live._trial25_process(
