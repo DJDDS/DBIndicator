@@ -1346,6 +1346,7 @@ _state = {
     "v12_option_recorder": {"status": "WAITING"},
     "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
     "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
+    "trial25_shadow": {"status": "PREREGISTERED_WAITING_EVENTS", "completed": 0, "target": 40},
     "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
 }
 
@@ -1524,6 +1525,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             option_snapshot_file=config.V12_OPTION_SNAPSHOT_FILE,
             option_state_file=config.V12_OPTION_STATE_FILE,
             earnings_state_file=config.V12_EARNINGS_STATE_FILE,
+            current_fno_symbols=set(fno_symbols or []),
             deep_symbol_limit=config.V12_DEEP_SYMBOL_LIMIT,
             grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
         )
@@ -1536,6 +1538,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             "recorder": {"status": "ERROR", "error": str(exc)},
             "feasibility": {"status": "UNAVAILABLE", "trial25_locked": True},
             "earnings": {"status": "UNAVAILABLE", "active_count": 0, "upcoming_7d": []},
+            "trial25_shadow": {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40},
             "trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
         }
     out.setdefault("earnings", {})["refresh_status"] = (refresh or {}).get("status") or "UNKNOWN"
@@ -1579,6 +1582,7 @@ def _load_persisted_state():
                 _state["v12_option_recorder"] = saved.get("v12_option_recorder") or _state["v12_option_recorder"]
                 _state["v12_feasibility"] = saved.get("v12_feasibility") or _state["v12_feasibility"]
                 _state["v12_earnings"] = saved.get("v12_earnings") or _state["v12_earnings"]
+                _state["trial25_shadow"] = saved.get("trial25_shadow") or _state["trial25_shadow"]
                 _state["v12_trial25_status"] = saved.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
@@ -1613,6 +1617,7 @@ def _save_persisted_state():
             "v12_option_recorder": _state.get("v12_option_recorder") or {},
             "v12_feasibility": _state.get("v12_feasibility") or {},
             "v12_earnings": _state.get("v12_earnings") or {},
+            "trial25_shadow": _state.get("trial25_shadow") or {},
             "v12_trial25_status": _state.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS,
         }
     try:
@@ -1902,6 +1907,7 @@ def _run_loop():
                     _state["v12_option_recorder"] = post_v12.get("recorder") or {}
                     _state["v12_feasibility"] = post_v12.get("feasibility") or {}
                     _state["v12_earnings"] = post_v12.get("earnings") or {}
+                    _state["trial25_shadow"] = post_v12.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                     _state["v12_trial25_status"] = post_v12.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                 _save_persisted_state()
                 _set_scan_status("V12-POST-CAS", next_scan_due=_iso_after(20))
