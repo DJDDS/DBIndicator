@@ -10,6 +10,7 @@ from app.index_option_stage3 import (
     gate_points_check,
     map_signal_to_option_pnl,
     session_bootstrap_mean_ci,
+    stage3_gate_report,
 )
 
 
@@ -180,3 +181,55 @@ def test_session_bootstrap_is_deterministic():
     b = session_bootstrap_mean_ci(frame, "net_pnl", samples=200, seed=7)
     assert a == b
     assert a["n_sessions"] == 4
+
+
+def _positive_option_ledger(n_per_expression=40):
+    rows = []
+    for moneyness in ("ATM", "ITM1"):
+        for i in range(n_per_expression):
+            rows.append(
+                {
+                    "status": "OK",
+                    "session": f"2026-10-{(i % 20) + 1:02d}",
+                    "signal_time": f"2026-10-{(i % 20) + 1:02d}T10:00:00+05:30",
+                    "moneyness": moneyness,
+                    "net_pnl": 10.0,
+                    "expiry_day": bool(i % 2 == 0),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_forward_data_cannot_substitute_for_missing_historical_option_gate():
+    forward = _positive_option_ledger()
+    cross = pd.DataFrame([{"instrument": "BANK NIFTY", "mean_120m_points": 10.0}])
+    report = stage3_gate_report(
+        historical_option_ledger=None,
+        forward_option_ledger=forward,
+        gate_points={"status": "PASS"},
+        cross_index=cross,
+        drawdown_budget=1000.0,
+    )
+    assert report["historical_option_pnl_validation_holdout"]["status"] == "WAITING_DATA"
+    assert report["forward_paper"]["status"] == "PASS"
+    assert report["all_stage3_gates_pass"] is False
+    assert report["production_ready"] is False
+
+
+def test_even_all_stage3_gates_only_enable_separate_review_not_production():
+    historical = _positive_option_ledger(n_per_expression=4)
+    forward = _positive_option_ledger()
+    cross = pd.DataFrame([{"instrument": "SENSEX", "mean_120m_points": 5.0}])
+    report = stage3_gate_report(
+        historical_option_ledger=historical,
+        forward_option_ledger=forward,
+        gate_points={"status": "PASS"},
+        cross_index=cross,
+        drawdown_budget=1000.0,
+    )
+    assert report["historical_option_pnl_validation_holdout"]["status"] == "PASS"
+    assert report["forward_paper"]["status"] == "PASS"
+    assert report["cross_index_replication"]["status"] == "PASS"
+    assert report["all_stage3_gates_pass"] is True
+    assert report["eligible_for_separate_production_review"] is True
+    assert report["production_ready"] is False
