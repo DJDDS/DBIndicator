@@ -134,6 +134,41 @@ The reconciliation is operational metadata only.  It cannot alter the frozen
 Cohort-A feasibility artifact.
 
 
+
+## 3A. F&O universe changes after the 29-September series transition
+
+NSE can add or exclude individual securities from the derivatives universe over
+time. The live scanner already resolves the current F&O stock universe from the
+Kite instrument master, with a persisted last-known-good fallback.
+
+Trial 25 therefore uses **two separate universes**:
+
+1. **Primary confirmatory cohort:** symbols that are in the immutable
+   2026-09-21 feasibility `tradeable_symbol_list` **and** are still present
+   in the live F&O instrument master at the event-entry decision point.
+2. **New-F&O onboarding cohort:** symbols that enter NSE F&O after the frozen
+   feasibility sample. They are recorded operationally but cannot enter the
+   primary Trial-25 Stage-D/Stage-C sample until they independently accumulate
+   10 distinct forward trading days and pass the same locked feasibility gate:
+   >=70% two-sided ATM coverage and <=4% median executable ATM-straddle spread.
+
+For a stock removed from F&O, no new Trial-25 event may be opened after its
+derivatives contracts cease to be available. An already-entered event may be
+completed only if the exact four frozen contracts remain listed and executable;
+otherwise it terminates as `UNAVAILABLE_FNO_REMOVAL`.
+
+The current live F&O membership used for every Trial-25 eligibility decision is
+snapshotted to the Trial-25 ledger with timestamp and source
+(`LIVE_KITE` or `LAST_KNOWN_GOOD`). A `LAST_KNOWN_GOOD` universe may keep
+the ordinary scanner alive, but it is **not sufficient to admit a new
+Trial-25 event**. New Trial-25 entries require a fresh `LIVE_KITE` universe so
+a stale membership cache cannot silently admit an excluded security.
+
+A newly added F&O stock that later passes its own 10-day onboarding gate remains
+a **separate cohort label** in all Trial-25 records. It must not be mixed into
+the original 195-symbol cohort without an explicitly frozen cohort-expansion
+artifact created before that stock's first efficacy outcome is read.
+
 ## 4. Architecture
 
 The feature is split into five small units with explicit interfaces.
@@ -466,6 +501,9 @@ Implementation is test-first.
 - 2026 NSE F&O holiday/session resolver, including weekends and 14-Sep-2026;
 - point-in-time ACTIVE/REVISED/REMOVED earnings handling;
 - frozen-universe rejection;
+- post-29-September F&O additions enter onboarding only, never the original confirmatory cohort;
+- F&O removals cannot open a new event;
+- LAST_KNOWN_GOOD universe cannot admit a new Trial-25 event;
 - live-NFO-membership intersection, including a frozen-but-removed symbol and a newly-added-but-not-frozen symbol;
 - post-freeze NSE F&O addition goes to NEW_FNO_ONBOARDING, not Cohort A;
 - NSE phase-out/exclusion blocks a new event when no valid contracts remain through planned exit;
