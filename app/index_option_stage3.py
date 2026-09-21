@@ -727,6 +727,8 @@ def write_stage3_artifacts(
     option_summary: pd.DataFrame,
     cross_index: pd.DataFrame,
     gate_report: dict,
+    historical_option_ledger: pd.DataFrame | None = None,
+    historical_option_summary: pd.DataFrame | None = None,
     source_files: Iterable[str | Path] = (),
 ) -> dict:
     """Write a reproducible Stage-3 evidence package with SHA-256 hashes."""
@@ -735,8 +737,10 @@ def write_stage3_artifacts(
     files = {}
     for name, frame in (
         ("frozen_signals", signals),
-        ("option_pnl_ledger", option_ledger),
-        ("option_pnl_summary", option_summary),
+        ("forward_option_pnl_ledger", option_ledger),
+        ("forward_option_pnl_summary", option_summary),
+        ("historical_option_pnl_ledger", historical_option_ledger),
+        ("historical_option_pnl_summary", historical_option_summary),
         ("cross_index_replication", cross_index),
     ):
         path = output / f"{name}.csv"
