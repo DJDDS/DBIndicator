@@ -11,6 +11,8 @@ from flask import jsonify
 from app import config, recorder_observability, scanner, v12_feasibility_freeze
 from app.web import create_app
 
+log = logging.getLogger(__name__)
+
 # Freeze the completed first-ten-day stock-option feasibility sample at
 # process boot, before any future market session can append to the live state.
 # This is intentionally fail-soft: provenance work must never prevent the web

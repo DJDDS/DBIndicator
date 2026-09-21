@@ -115,6 +115,14 @@ lot size, less contemporaneous statutory/exchange/broker charges under one
 version-stamped charge function.  Bid/ask crossing therefore enters the result
 directly rather than as an assumed spread.
 
+The **primary return unit is fixed now** as percent of the executable ATM short-
+straddle premium received at entry:
+
+`100 * net_P&L_rupees / ((ATM_CE_bid + ATM_PE_bid) * lot_size)`.
+
+This is the same unit used by the +4% confirmatory effect in Section 8; the
+defined-risk wing debits and all charges remain inside net P&L.
+
 If displayed top-level quantity is insufficient for one lot on any leg, the
 event is unavailable in the executable primary analysis.  A descriptive
 one-lot quote-only sensitivity may be reported separately but cannot rescue the
@@ -126,9 +134,11 @@ HAR/continuous realised-volatility forecasts are **not** the Trial-25 earnings
 signal.
 
 For every eligible event, compute the firm's historical earnings-event absolute
-move using only earnings events available before the current event.  The
-historical estimator and minimum-history rule are fixed in the implementation
-before Trial-25 development outcomes are opened.
+move using only earnings events available before the current event.  This is a
+**secondary development analysis only**.  Its exact estimator and minimum-
+history rule must be separately frozen before that secondary variable is first
+evaluated; it cannot change event eligibility, the primary P&L, Stage-D
+variance calibration, Stage-C sample size, or the primary verdict.
 
 The option-implied event move is the executable ATM straddle ask divided by
 spot.  The prespecified conditioning variable is:
