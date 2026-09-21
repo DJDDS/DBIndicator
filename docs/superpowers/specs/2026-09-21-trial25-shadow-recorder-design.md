@@ -209,6 +209,20 @@ This avoids survivorship bias, prevents post-freeze additions from entering the
 confirmatory sample without equivalent liquidity evidence, and still keeps the
 live system synchronized with NSE membership changes.
 
+
+## 3A. F&O universe changes after 29 September 2026
+
+NSE may add or remove individual securities from the equity-derivatives segment after the ten-day feasibility freeze. Trial 25 must separate **research-universe integrity** from **live instrument availability**:
+
+- a symbol newly admitted to F&O after the 2026-09-21 freeze is **not added to Trial 25**, because it was not part of the frozen feasibility decision;
+- a frozen Trial-25 symbol that is no longer available in the live NFO instrument master at the fixed entry session is marked `UNAVAILABLE_NOT_FNO_AT_ENTRY`;
+- if the exact frozen four-leg position cannot remain listed through the planned exit, the event is rejected before entry;
+- no deleted symbol is replaced with a different symbol;
+- the normal V12 recorder may continue following the current live F&O universe for operational research, but those later additions belong to a future cohort / future trial, not Trial 25;
+- the shadow state records the live F&O-membership check and the instrument-master date used for every event.
+
+This preserves the preregistered 195-symbol cohort while respecting NSE's later F&O additions/deletions.
+
 ## 4. Architecture
 
 The feature is split into five small units with explicit interfaces.
@@ -541,6 +555,7 @@ Implementation is test-first.
 - 2026 NSE F&O holiday/session resolver, including weekends and 14-Sep-2026;
 - point-in-time ACTIVE/REVISED/REMOVED earnings handling;
 - frozen-universe rejection;
+- post-29-Sep live F&O roster handling: new admissions excluded, frozen deletions unavailable;
 - post-29-September F&O additions enter onboarding only, never the original confirmatory cohort;
 - F&O removals cannot open a new event;
 - LAST_KNOWN_GOOD universe cannot admit a new Trial-25 event;
