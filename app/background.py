@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v121_index_recorder, v121_backup, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1968,6 +1968,24 @@ def start_v121_index_stream_once():
 
 
 def start_background_scanner():
+    # Freeze the completed first-ten-day stock-option feasibility sample once.
+    # Fail soft: research provenance must never block the live scanner.
+    try:
+        freeze = v12_feasibility_freeze.maybe_freeze_10d(
+            config.V12_OPTION_STATE_FILE,
+            config.V12_STORAGE_ROOT,
+        )
+        if freeze.get("status") in ("CREATED_AND_VERIFIED", "EXISTING_VALID_FREEZE"):
+            log.info(
+                "V12 10-day feasibility freeze %s: %s tradeable symbols",
+                freeze.get("status"),
+                (freeze.get("feasibility") or {}).get("tradeable_symbols"),
+            )
+        elif freeze.get("status") == "NOT_FROZEN":
+            log.info("V12 10-day feasibility freeze not created: %s", freeze.get("reason"))
+    except Exception:
+        log.exception("V12 10-day feasibility freeze verification failed")
+
     start_v121_index_stream_once()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()
