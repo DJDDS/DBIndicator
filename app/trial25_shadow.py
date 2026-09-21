@@ -452,6 +452,24 @@ def _contract_from_identity(identity: dict) -> dict:
     }
 
 
+def frozen_contracts_available(identities: dict, live_contracts: list[dict]) -> bool:
+    """True only when every frozen entry contract still exists in the live NFO master."""
+    if set(identities or {}) != set(REQUIRED_ROLES):
+        return False
+    live = {
+        (str(row.get("tradingsymbol") or ""), str(row.get("instrument_token")))
+        for row in (live_contracts or [])
+        if row.get("tradingsymbol") and row.get("instrument_token") is not None
+    }
+    return all(
+        (
+            str((identities.get(role) or {}).get("tradingsymbol") or ""),
+            str((identities.get(role) or {}).get("instrument_token")),
+        ) in live
+        for role in REQUIRED_ROLES
+    )
+
+
 def _entry_capture(kite, state, event, contracts_map, *, now, state_file, ledger_file, raw_quote_file, sleep_fn):
     symbol = event["symbol"]
     contracts = list((contracts_map or {}).get(symbol) or [])
@@ -526,10 +544,18 @@ def _entry_capture(kite, state, event, contracts_map, *, now, state_file, ledger
     )
 
 
-def _exit_capture(kite, state, event, *, now, state_file, ledger_file, raw_quote_file, sleep_fn):
+def _exit_capture(kite, state, event, contracts_map, *, now, state_file, ledger_file, raw_quote_file, sleep_fn):
     identities = event.get("contracts") or {}
     if set(identities) != set(REQUIRED_ROLES):
         _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_CONTRACT_CHANGED", now, "FROZEN_CONTRACT_SET_INCOMPLETE")
+        _atomic_save(state_file, state)
+        return
+    live_contracts = list((contracts_map or {}).get(event.get("symbol")) or [])
+    if not frozen_contracts_available(identities, live_contracts):
+        _mark_unavailable(
+            state, ledger_file, event, "UNAVAILABLE_CONTRACT_CHANGED", now,
+            "FROZEN_EXIT_CONTRACTS_NOT_IN_LIVE_MASTER",
+        )
         _atomic_save(state_file, state)
         return
     keys = [f"NFO:{identities[role]['tradingsymbol']}" for role in REQUIRED_ROLES]
@@ -609,7 +635,7 @@ def process_due_events(
                 )
             else:
                 _exit_capture(
-                    kite, state, event, now=now, state_file=state_file,
+                    kite, state, event, contracts_map, now=now, state_file=state_file,
                     ledger_file=ledger_file, raw_quote_file=raw_quote_file, sleep_fn=sleep_fn,
                 )
             state = load_state(state_file)
