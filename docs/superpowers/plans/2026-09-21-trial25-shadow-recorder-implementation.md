@@ -4,7 +4,7 @@
 
 **Goal:** Build and deploy a forward-only, no-peeking Trial-25 Stage-D recorder for earnings-volatility events, with executable four-leg iron-butterfly quotes, current NSE F&O-universe reconciliation, versioned Indian option charges, deterministic event persistence, and a dashboard that exposes only operational/sample-count information before calibration.
 
-**Architecture:** Add four focused Trial-25 modules plus a small F&O-universe/onboarding helper. The existing V12 fixed-slot recorder remains authoritative and runs first; Trial 25 runs sequentially after it only for due earnings events and fails closed without interrupting the scanner. Raw entry/exit quotes are persisted under `/data/v12/trial25`, while a separate Stage-D module enforces the first-40-event no-peeking boundary and freezes only sigma_D and the future Stage-C sample size.
+**Architecture:** Add focused Trial-25 calendar/universe, execution, state-machine, and Stage-D modules beside the existing V12 recorder. The existing V12 fixed-slot recorder remains authoritative and runs first; Trial 25 runs sequentially after it only for due earnings events and fails closed without interrupting the scanner. Raw entry/exit quotes are persisted under `/data/v12/trial25`, while a separate Stage-D module enforces the first-40-event no-peeking boundary and freezes only sigma_D and the future Stage-C sample size.
 
 **Tech Stack:** Python 3.11, Flask, pandas where already used, Kite Connect REST quotes/instrument master, JSON/JSONL atomic persistence, pytest, existing Railway persistent volume.
 
@@ -14,18 +14,17 @@
 
 - Trial-25 primary cohort remains exactly the frozen 2026-09-21 Cohort-A `tradeable_symbol_list`; post-freeze additions never enter Cohort A.
 - A Cohort-A symbol may generate a new event only if current live NFO contracts exist through the planned exit; otherwise fail closed.
-- New F&O symbols discovered after the freeze go only to `NEW_FNO_ONBOARDING`.
 - Entry is PRE_CAS 15:10 IST on the last verified NSE F&O trading session strictly before the earnings meeting date.
 - Exit is OPEN_STABLE 09:30 IST on the first verified NSE F&O trading session strictly after the meeting date.
 - Expiry must be strictly after exit and have at least 5 calendar DTE at entry.
 - Structure is one-lot ATM iron butterfly with protective wings at or beyond +/-2.0x executable ATM implied-move points.
 - Entry/exit use best executable bid/ask and one-lot top-level quantity; no midpoint, last-price, or theoretical-price fallback.
 - Primary execution freshness uses live REST-request latency <=15 seconds plus executable book/quantity; old `last_trade_time` alone does not reject a live executable book.
-- Fee model version is `ZERODHA_NSE_EQ_OPT_2026_04_V1`.
+- Fee model version is `ZERODHA_NSE_EQ_OPT_2026_04_V1`; STT uses the published nearest-rupee rounding rule.
 - No Trial-25 P&L, event return, mean, win rate, PF, or efficacy verdict may be exposed before the first 40 eligible completed Stage-D events are frozen.
 - Stage-D calibration always uses exactly the deterministic first 40 completed events ordered by exit capture timestamp then event ID.
 - Existing V12/V12.1 recorders, Trial 24, frozen feasibility artifacts, and live scanner ranking logic remain unchanged.
-- 2026 F&O holidays are fixed from NSE/FAOP/71777: 26-Jan, 03-Mar, 26-Mar, 31-Mar, 03-Apr, 14-Apr, 01-May, 28-May, 26-Jun, 14-Sep, 02-Oct, 20-Oct, 10-Nov, 24-Nov, 25-Dec.
+- 2026 F&O holidays are fixed from NSE/FAOP/71777 plus its official 15-Jan-2026 Maharashtra-election supplement NSE/FAOP/72262: 15-Jan, 26-Jan, 03-Mar, 26-Mar, 31-Mar, 03-Apr, 14-Apr, 01-May, 28-May, 26-Jun, 14-Sep, 02-Oct, 20-Oct, 10-Nov, 24-Nov, 25-Dec.
 
 ## Review Focus
 
@@ -153,7 +152,7 @@ def test_new_fno_name_is_onboarding_not_primary():
     contracts = {"OLD": [_c("OLD")], "NEWCO": [_c("NEWCO")]}
     out = u.reconcile_universe({"OLD"}, contracts, {}, dt.datetime(2026,9,30,9,20))
     assert out["cohort_a_live"] == ["OLD"]
-    assert out["new_fno_onboarding"] == ["NEWCO"]
+    assert out["post_freeze_new_fno_excluded"] == ["NEWCO"]
     assert "NEWCO" not in out["cohort_a_live"]
 
 def test_removed_frozen_name_is_recorded_not_replaced():
@@ -183,7 +182,7 @@ def reconcile_universe(frozen_symbols, contracts_map, prior, now):
         "asof": now.isoformat(timespec="seconds"),
         "cohort_a_live": present,
         "cohort_a_missing_contracts": missing,
-        "new_fno_onboarding": added,
+        "post_freeze_new_fno_excluded": added,
         "first_seen": _merge_first_seen(prior.get("first_seen") or {}, live, now),
         "last_seen": _merge_last_seen(prior.get("last_seen") or {}, live, now),
     }
@@ -276,7 +275,7 @@ def test_fee_model_components():
     out = ex.calculate_option_charges(fills)
     assert out["model_version"] == "ZERODHA_NSE_EQ_OPT_2026_04_V1"
     assert out["brokerage"] == 40.0
-    assert out["stt"] == pytest.approx(7.5, abs=1e-6)
+    assert out["stt"] == 8.0
     assert out["stamp_duty"] == pytest.approx(0.06, abs=1e-6)
     assert out["total"] > out["brokerage"]
 ```
@@ -316,12 +315,15 @@ SEBI_RATE = 10.0 / 10_000_000.0
 STAMP_BUY_RATE = 0.00003
 GST_RATE = 0.18
 
+def _round_rupee_half_up(value):
+    return float(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
 def calculate_option_charges(fills):
     turnover = sum(float(f["price"]) * int(f["quantity"]) for f in fills)
     sell_turnover = sum(float(f["price"]) * int(f["quantity"]) for f in fills if f["side"] == "SELL")
     buy_turnover = sum(float(f["price"]) * int(f["quantity"]) for f in fills if f["side"] == "BUY")
     brokerage = BROKERAGE_PER_ORDER * len(fills)
-    stt = sell_turnover * STT_SELL_RATE
+    stt = _round_rupee_half_up(sell_turnover * STT_SELL_RATE)
     exchange = turnover * NSE_TXN_RATE
     sebi = turnover * SEBI_RATE
     stamp = buy_turnover * STAMP_BUY_RATE
@@ -720,7 +722,7 @@ Pass it through unchanged. Do not add raw quote/P&L export endpoints.
 Use only:
 - status;
 - frozen Cohort-A count;
-- new-F&O onboarding count;
+- post-freeze new-F&O names excluded from Cohort A;
 - next/upcoming event identifiers/dates;
 - entry/exit state;
 - completed/40;
@@ -745,75 +747,7 @@ git commit -m "feat: add no-peeking Trial 25 Stage-D dashboard"
 
 ---
 
-### Task 7: Add new-F&O onboarding persistence without contaminating Cohort A
-
-**Files:**
-- Create: `app/trial25_onboarding.py`
-- Test: `tests/test_trial25_onboarding.py`
-- Modify: `app/v12_storage.py`
-- Modify: `app/config.py`
-- Modify: `app/v12_live.py`
-
-**Interfaces:**
-- Produces: `update_onboarding(state, universe_reconciliation, slot_summary, now) -> dict`
-- Produces: `onboarding_summary(state) -> dict`
-- New persistent file: `/data/v12/trial25/new_fno_onboarding_state.json`
-
-- [ ] **Step 1: Write 10-session prospective observation test**
-
-```python
-def test_new_symbol_never_enters_cohort_a_after_ten_sessions():
-    state = {}
-    for day in ten_distinct_days():
-        state = ob.update_onboarding(
-            state,
-            {"new_fno_onboarding":["NEWCO"]},
-            {"date":day.isoformat(),"slot":"PRE_CAS","symbol_metrics":{"NEWCO":{"two_sided":True,"spread_pct":1.5}}},
-            dt.datetime.combine(day, dt.time(15,10)),
-        )
-    assert state["symbols"]["NEWCO"]["trading_days"] == 10
-    assert state["symbols"]["NEWCO"]["prospective_feasibility_status"] in {"PASS","FAIL"}
-    assert "NEWCO" not in state.get("cohort_a", [])
-```
-
-- [ ] **Step 2: Write restart/dedup test**
-
-Same date/slot observed twice must count once.
-
-- [ ] **Step 3: Run and confirm RED**
-
-Run: `pytest -q tests/test_trial25_onboarding.py`
-
-- [ ] **Step 4: Implement prospective same-formula metrics**
-
-For onboarding only, compute:
-- distinct trading days;
-- fixed-slot broad/two-sided counts;
-- median ATM straddle spread;
-- term-structure count;
-- first/last contract seen;
-- lot sizes observed.
-
-After 10 distinct sessions, set `prospective_feasibility_status` using the same >=70% and <=4% formula, but label it `SECONDARY_FUTURE_COHORT_ONLY`.
-
-- [ ] **Step 5: Integrate without changing Trial-25 Cohort A**
-
-Update onboarding only after a normal V12 slot capture/reconciliation. Never feed onboarding symbols into `trial25_shadow.discover_events()`.
-
-- [ ] **Step 6: Run Task-7 tests**
-
-Run: `pytest -q tests/test_trial25_onboarding.py tests/test_trial25_universe.py tests/test_v12_live.py`
-
-- [ ] **Step 7: Commit Task 7**
-
-```bash
-git add app/trial25_onboarding.py app/v12_storage.py app/config.py app/v12_live.py tests/test_trial25_onboarding.py
-git commit -m "feat: observe post-freeze F&O additions separately"
-```
-
----
-
-### Task 8: Full regression, provenance checks and deployment verification
+### Task 7: Full regression, provenance checks and deployment verification
 
 **Files:**
 - Modify: `.github/workflows/trial25-shadow-tests.yml`
@@ -842,7 +776,7 @@ def test_no_trial25_order_or_alert_surface_exists():
 Workflow runs:
 ```bash
 python -m compileall -q app tests run.py
-pytest -q tests/test_trial25_calendar.py           tests/test_trial25_universe.py           tests/test_trial25_execution.py           tests/test_trial25_shadow.py           tests/test_trial25_stage_d.py           tests/test_trial25_live_integration.py           tests/test_trial25_dashboard.py           tests/test_trial25_onboarding.py           tests/test_trial25_release.py
+pytest -q tests/test_trial25_calendar.py           tests/test_trial25_universe.py           tests/test_trial25_execution.py           tests/test_trial25_shadow.py           tests/test_trial25_stage_d.py           tests/test_trial25_live_integration.py           tests/test_trial25_dashboard.py           tests/test_trial25_release.py
 pytest -q tests/test_v12_option_recorder.py tests/test_v12_live.py           tests/test_v12_feasibility.py tests/test_v121_release.py tests/test_v1212_release.py
 pytest -q
 ```
@@ -895,8 +829,8 @@ git commit -m "test: lock Trial 25 shadow-recorder release invariants"
 
 ## Self-review result
 
-- **Spec coverage:** calendar, F&O churn, Cohort-A intersection, onboarding pool, contract selection, 2.0x wings, >=5 DTE, dedicated sequential quote path, freshness audit, top-level quantity, charge model, persistence, no-peeking Stage D, dashboard, error handling, regressions and Railway verification are each assigned to a task.
+- **Spec coverage:** calendar, F&O churn, Cohort-A intersection, contract selection, 2.0x wings, >=5 DTE, dedicated sequential quote path, freshness audit, top-level quantity, charge model, persistence, no-peeking Stage D, dashboard, error handling, regressions and Railway verification are each assigned to a task.
 - **Placeholder scan:** no TBD/TODO/“implement later” steps remain.
 - **Type consistency:** later tasks consume the exact function/module names defined in earlier tasks.
-- **Review-focus coverage:** all five review-focus risks have explicit tests in Tasks 1, 2, 3, 4 and 7.
+- **Review-focus coverage:** all five review-focus risks have explicit tests in Tasks 1, 2, 3 and 4.
 - **Scope:** Stage-C efficacy evaluation remains intentionally excluded; this plan ships only Stage-D collection/calibration infrastructure as specified.
