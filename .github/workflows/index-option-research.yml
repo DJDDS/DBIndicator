@@ -34,6 +34,7 @@ jobs:
             app/index_option_stage2.py \
             app/index_option_stage2_history.py \
             app/index_option_stage3.py \
+            app/index_option_fees.py \
             scripts/run_index_option_stage1.py \
             scripts/run_index_option_stage2.py \
             scripts/run_index_option_stage3.py \
@@ -41,7 +42,8 @@ jobs:
             tests/test_index_option_history.py \
             tests/test_index_option_stage2.py \
             tests/test_index_option_stage2_history.py \
-            tests/test_index_option_stage3.py
+            tests/test_index_option_stage3.py \
+            tests/test_index_option_fees.py
       - name: Run research tests
         run: |
           pytest -q \
