@@ -13,7 +13,7 @@ from typing import Callable
 
 import requests
 
-from . import config, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
+from . import config, trial25_shadow, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
 
 TRIAL25_LOCKED_STATUS = "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED."
 
@@ -90,6 +90,22 @@ def post_cash_derivative_window(now: dt.datetime) -> bool:
     minute = now.hour * 60 + now.minute
     return (15 * 60 + 30) < minute <= (15 * 60 + 40)
 
+def _trial25_process(kite, *, now, earnings_state, current_fno_symbols):
+    return trial25_shadow.process_due_events(
+        kite,
+        now=now,
+        earnings_state=earnings_state,
+        current_fno_symbols=set(current_fno_symbols or set()),
+        feasibility_report_file=config.TRIAL25_FEASIBILITY_FREEZE_FILE,
+        state_file=config.TRIAL25_STATE_FILE,
+        ledger_file=config.TRIAL25_LEDGER_FILE,
+        raw_quote_file=config.TRIAL25_RAW_QUOTES_FILE,
+        stage_d_file=config.TRIAL25_STAGE_D_FILE,
+        stage_d_hash_file=config.TRIAL25_STAGE_D_HASH_FILE,
+        grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
+    )
+
+
 def process_live_scan(
     kite,
     results: list[dict],
@@ -100,6 +116,7 @@ def process_live_scan(
     option_snapshot_file,
     option_state_file,
     earnings_state_file,
+    current_fno_symbols: set[str] | None = None,
     deep_symbol_limit: int = 40,
     grace_minutes: int = 7,
 ) -> dict:
@@ -123,6 +140,16 @@ def process_live_scan(
     except Exception as exc:  # noqa: BLE001 - recorder evidence must never stop the live scan
         recorder = {"status": "ERROR", "error": str(exc)}
 
+    try:
+        trial25 = _trial25_process(
+            kite,
+            now=now,
+            earnings_state=earnings_state,
+            current_fno_symbols=current_fno_symbols or {str(r.get("symbol")) for r in results if r.get("symbol")},
+        )
+    except Exception as exc:  # noqa: BLE001 - Trial 25 can never stop V12/live scanning
+        trial25 = {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40}
+
     option_state = v12_option_recorder.load_v12_state(option_state_file)
     feasibility = v12_feasibility.summarize_feasibility(option_state)
     health = v12_option_recorder.recorder_health(
@@ -140,5 +167,10 @@ def process_live_scan(
             "last_refresh_at": earnings_state.get("last_refresh_at"),
             "upcoming_7d": list(earnings_symbols),
         },
-        "trial25_status": TRIAL25_LOCKED_STATUS,
+        "trial25_shadow": trial25,
+        "trial25_status": (
+            TRIAL25_LOCKED_STATUS
+            if trial25.get("status") == "LOCKED_FEASIBILITY"
+            else "TRIAL 25 PREREGISTERED — STAGE D SHADOW COLLECTION."
+        ),
     }
