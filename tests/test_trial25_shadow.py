@@ -276,3 +276,23 @@ def test_frozen_universe_loader_rejects_wrong_symbol_count_even_with_matching_ha
     symbols, status = shadow.load_frozen_symbols(report)
     assert symbols == set()
     assert status == "LOCKED_FEASIBILITY_COHORT_SIZE"
+
+
+def test_frozen_exit_contracts_must_still_exist_in_live_master():
+    structure = structure_fixture()
+    identities = structure["contract_identities"]
+
+    live_contracts = []
+    for role, identity in identities.items():
+        live_contracts.append({
+            "tradingsymbol": identity["tradingsymbol"],
+            "instrument_token": identity["instrument_token"],
+            "instrument_type": identity["type"],
+            "strike": identity["strike"],
+            "expiry": dt.date.fromisoformat(identity["expiry"]),
+            "lot_size": identity["lot_size"],
+        })
+    assert sh.frozen_contracts_available(identities, live_contracts) is True
+
+    removed = [row for row in live_contracts if row["instrument_token"] != 4]
+    assert sh.frozen_contracts_available(identities, removed) is False
