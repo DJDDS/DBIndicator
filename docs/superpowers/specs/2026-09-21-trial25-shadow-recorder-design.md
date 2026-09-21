@@ -223,6 +223,38 @@ NSE may add or remove individual securities from the equity-derivatives segment 
 
 This preserves the preregistered 195-symbol cohort while respecting NSE's later F&O additions/deletions.
 
+
+## 3A. F&O universe turnover after 29 September
+
+NSE may introduce new stock derivatives or phase existing stocks out of the
+F&O segment after the ten-day feasibility freeze. Trial 25 must not let this
+normal universe turnover contaminate the frozen research population.
+
+For every prospective event, the admissible underlying set is:
+
+`frozen_tradeable_symbol_list INTERSECT live_stock_option_contract_universe`.
+
+Rules:
+
+- a stock added to NSE F&O after the 2026-09-21 freeze is **not** admitted to
+  Trial 25, even if it has excellent later liquidity, because it did not pass
+  the frozen ten-day feasibility sample;
+- a frozen symbol that remains in the current contract master may continue to
+  be considered only if the fixed Trial-25 expiry rule can be satisfied;
+- a symbol being phased out by NSE is automatically unavailable when no live
+  stock-option expiry exists that is strictly after the planned exit and has
+  at least 5 calendar DTE at entry;
+- there is no manual replacement of an excluded frozen symbol with a newly
+  introduced F&O symbol;
+- the event record stores the current-contract-master observation used to
+  prove that the underlying and all four contracts were live at entry.
+
+The implementation therefore does not need to hard-code a changing list of
+September additions/deletions. The frozen universe provides research
+provenance, while the live Kite/NSE contract master provides current
+tradability. This is fail-closed: absence from either side means no Trial-25
+entry.
+
 ## 4. Architecture
 
 The feature is split into five small units with explicit interfaces.
