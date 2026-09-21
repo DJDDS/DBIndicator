@@ -18,6 +18,12 @@ _FILES = {
     "index_vol_state": ("V121_INDEX_VOL_STATE_FILE", "v121_index_vol_state.json"),
     "index_vol_backup_state": ("V121_INDEX_VOL_BACKUP_STATE_FILE", "v121_index_vol_backup_state.json"),
     "rv_lab_state": ("V121_RV_LAB_STATE_FILE", "v121_rv_lab_state.json"),
+    "trial25_state": ("TRIAL25_STATE_FILE", "trial25/trial25_state.json"),
+    "trial25_ledger": ("TRIAL25_LEDGER_FILE", "trial25/trial25_event_ledger.jsonl"),
+    "trial25_raw_quotes": ("TRIAL25_RAW_QUOTES_FILE", "trial25/trial25_raw_quotes.jsonl"),
+    "trial25_stage_d": ("TRIAL25_STAGE_D_FILE", "trial25/trial25_stage_d_calibration.json"),
+    "trial25_stage_d_hash": ("TRIAL25_STAGE_D_HASH_FILE", "trial25/trial25_stage_d_calibration.sha256"),
+    "trial25_onboarding": ("TRIAL25_ONBOARDING_FILE", "trial25/new_fno_onboarding_state.json"),
 }
 
 
@@ -35,6 +41,7 @@ def resolve_v12_storage(environ: Mapping[str, str] | None = None) -> dict:
     root = str(Path(mount) / "v12") if mount else "."
     out = {"root": root, "volume_mount": mount or None}
     out["index_vol_root"] = str(Path(root) / "index_vol") if mount else "index_vol"
+    out["trial25_root"] = str(Path(root) / "trial25") if mount else "trial25"
     resolved = []
     for name, (env_key, filename) in _FILES.items():
         explicit = str(env.get(env_key) or "").strip()
