@@ -13,7 +13,7 @@ from typing import Callable
 
 import requests
 
-from . import config, trial25_shadow, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
+from . import config, derivative_intelligence, trial25_shadow, trial25_universe, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
 
 TRIAL25_LOCKED_STATUS = "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED."
 
@@ -91,7 +91,20 @@ def post_cash_derivative_window(now: dt.datetime) -> bool:
     return (15 * 60 + 30) < minute <= (15 * 60 + 40)
 
 def _trial25_process(kite, *, now, earnings_state, current_fno_symbols):
-    return trial25_shadow.process_due_events(
+    frozen, freeze_status = trial25_shadow.load_frozen_symbols(
+        config.TRIAL25_FEASIBILITY_FREEZE_FILE
+    )
+    if freeze_status != "OK":
+        return {"status": "LOCKED_FEASIBILITY", "completed": 0, "target": 40}
+
+    # Use the actual current NFO contract master, not only the scanner's cash
+    # universe, so post-freeze F&O additions and phased removals are recorded
+    # exactly as contracts become available/unavailable.
+    contracts_map = derivative_intelligence.get_option_contracts_map(kite)
+    universe = trial25_universe.update_universe_state(
+        config.TRIAL25_ONBOARDING_FILE, frozen, contracts_map, now
+    )
+    summary = trial25_shadow.process_due_events(
         kite,
         now=now,
         earnings_state=earnings_state,
@@ -102,8 +115,14 @@ def _trial25_process(kite, *, now, earnings_state, current_fno_symbols):
         raw_quote_file=config.TRIAL25_RAW_QUOTES_FILE,
         stage_d_file=config.TRIAL25_STAGE_D_FILE,
         stage_d_hash_file=config.TRIAL25_STAGE_D_HASH_FILE,
+        contracts_map=contracts_map,
         grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
     )
+    summary["cohort_a_live"] = len(universe.get("cohort_a_live") or [])
+    summary["cohort_a_missing_contracts"] = len(universe.get("cohort_a_missing_contracts") or [])
+    summary["new_fno_onboarding"] = len(universe.get("new_fno_onboarding") or [])
+    summary["universe_asof"] = universe.get("asof")
+    return summary
 
 
 def process_live_scan(
