@@ -570,6 +570,16 @@
       <div class="v12-metric"><span>Calibration</span><strong id="trial25-calibration">{{ t25.get('calibration_status') or 'WAITING_FOR_40' }}</strong></div>
       <div class="v12-metric"><span>Stage-C required N</span><strong id="trial25-stage-c-n">{{ t25.get('stage_c_required_n') if t25.get('stage_c_required_n') is not none else 'LOCKED' }}</strong></div>
     </div>
+    <div class="v12-panel">
+      <h3>Point-in-time event queue</h3>
+      <div id="trial25-event-queue" class="v12-list">
+        {% for event in t25.get('event_queue', [])[:8] %}
+        <div class="v8-empty"><strong>{{ event.get('symbol') or '—' }}</strong> · meeting {{ event.get('meeting_date') or '—' }} · entry {{ event.get('entry_date') or '—' }} · exit {{ event.get('exit_date') or '—' }} · {{ event.get('status') or '—' }}</div>
+        {% else %}
+        <div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>
+        {% endfor %}
+      </div>
+    </div>
     <div class="v12-note"><strong>Research integrity:</strong> no Trial-25 P&amp;L, mean return, win rate, profit factor or t-statistic is shown while Stage D accumulates. Stocks added to NSE F&amp;O after the frozen feasibility sample are tracked as onboarding-only and cannot enter the primary cohort; frozen names remain eligible only while actual live stock-option contracts exist.</div>
   </section>
 
@@ -1377,6 +1387,20 @@
     text('trial25-stale-old-trade', stale.live_book_old_trade_legs || 0);
     text('trial25-calibration', shadow.calibration_status || 'WAITING_FOR_40');
     text('trial25-stage-c-n', shadow.stage_c_required_n == null ? 'LOCKED' : shadow.stage_c_required_n);
+    var queueBox = document.getElementById('trial25-event-queue');
+    var queue = Array.isArray(shadow.event_queue) ? shadow.event_queue.slice(0, 8) : [];
+    if (queueBox) {
+      function esc(value) {
+        return String(value == null ? '—' : value)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      }
+      queueBox.innerHTML = queue.length ? queue.map(function (event) {
+        return '<div class="v8-empty"><strong>' + esc(event.symbol) + '</strong> · meeting ' +
+          esc(event.meeting_date) + ' · entry ' + esc(event.entry_date) + ' · exit ' +
+          esc(event.exit_date) + ' · ' + esc(event.status) + '</div>';
+      }).join('') : '<div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>';
+    }
   }
 
   function renderV121IndexVol(indexVol, backup, development) {
