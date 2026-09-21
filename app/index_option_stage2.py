@@ -9,8 +9,8 @@ Confirmation modes are deliberately mechanical:
 - double_close: two consecutive completed trigger bars close beyond the same boundary.
 - acceptance_5m: after the initial trigger, five consecutive completed 1-minute closes
   remain beyond the breakout boundary.
-- retest_10m: after the initial trigger, price retests the OR boundary within 10 minutes
-  and then a completed 1-minute close re-establishes beyond the buffered trigger.
+- retest_10m: after the initial trigger, price retests the OR boundary within 10 minutes,
+  then a later completed 1-minute close re-establishes beyond the buffered trigger.
 
 The U.S.-Iran war regime beginning 2026-02-28 is recorded as EXOGENOUS DIAGNOSTIC
 metadata only. It is never used to choose a signal or tune a threshold.
@@ -24,9 +24,7 @@ import pandas as pd
 
 from .index_option_research import (
     DEFAULT_ENTRY_DEADLINE,
-    SESSION_CLOSE,
     SESSION_OPEN,
-    TimingSpec,
     _at_clock,
     _complete_minute_block,
     _forward_metrics,
@@ -131,15 +129,17 @@ def _confirm_retest_10m(
     if block.empty:
         return None
 
-    retested = False
+    retest_time = None
     for ts, row in block.iterrows():
         high = float(row["high"])
         low = float(row["low"])
         close = float(row["close"])
+
         if direction == "Bullish":
-            if low <= range_high:
-                retested = True
-            if retested and close >= long_trigger:
+            if retest_time is None and low <= range_high:
+                retest_time = ts
+                continue
+            if retest_time is not None and ts > retest_time and close >= long_trigger:
                 return {
                     "start": ts,
                     "end": ts + pd.Timedelta(minutes=1),
@@ -149,9 +149,10 @@ def _confirm_retest_10m(
                     "close": close,
                 }
         else:
-            if high >= range_low:
-                retested = True
-            if retested and close <= short_trigger:
+            if retest_time is None and high >= range_low:
+                retest_time = ts
+                continue
+            if retest_time is not None and ts > retest_time and close <= short_trigger:
                 return {
                     "start": ts,
                     "end": ts + pd.Timedelta(minutes=1),
@@ -217,7 +218,6 @@ def analyze_session_confirmation(
         if direction is None:
             continue
 
-        confirmed = None
         if spec.confirmation == "immediate":
             confirmed = bar
         elif spec.confirmation == "double_close":
@@ -237,7 +237,7 @@ def analyze_session_confirmation(
                 short_trigger=short_trigger,
                 deadline=deadline,
             )
-        elif spec.confirmation == "retest_10m":
+        else:
             confirmed = _confirm_retest_10m(
                 session,
                 bar,
