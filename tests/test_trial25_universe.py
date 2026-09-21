@@ -101,3 +101,38 @@ def test_reconciliation_preserves_first_seen_across_restarts(tmp_path):
     second = u.update_universe_state(state_file, set(), contracts, day2)
     assert second["first_seen"]["NEWCO"] == first["first_seen"]["NEWCO"]
     assert second["last_seen"]["NEWCO"] == day2.isoformat(timespec="seconds")
+
+
+def test_universe_ledger_is_append_only_on_new_day_or_membership_change(tmp_path):
+    state_file = tmp_path / "universe_state.json"
+    ledger_file = tmp_path / "universe_ledger.jsonl"
+    old_only = {"OLD": [_c("OLD"), _c("OLD", typ="PE")]}
+    with_new = {
+        **old_only,
+        "NEWCO": [_c("NEWCO"), _c("NEWCO", typ="PE")],
+    }
+
+    u.update_universe_state(
+        state_file, {"OLD"}, old_only, dt.datetime(2026, 9, 29, 9, 20),
+        ledger_path=ledger_file,
+    )
+    u.update_universe_state(
+        state_file, {"OLD"}, old_only, dt.datetime(2026, 9, 29, 10, 20),
+        ledger_path=ledger_file,
+    )
+    u.update_universe_state(
+        state_file, {"OLD"}, with_new, dt.datetime(2026, 9, 29, 11, 20),
+        ledger_path=ledger_file,
+    )
+    u.update_universe_state(
+        state_file, {"OLD"}, with_new, dt.datetime(2026, 9, 30, 9, 20),
+        ledger_path=ledger_file,
+    )
+
+    rows = [__import__("json").loads(line) for line in ledger_file.read_text().splitlines()]
+    assert len(rows) == 3
+    assert rows[0]["source"] == "LIVE_KITE"
+    assert rows[1]["added"] == ["NEWCO"]
+    assert rows[1]["new_fno_onboarding"] == ["NEWCO"]
+    assert rows[2]["trading_date"] == "2026-09-30"
+    assert rows[2]["symbol_set_sha256"] == rows[1]["symbol_set_sha256"]
