@@ -1510,6 +1510,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             now=now,
             state_file=config.V12_EARNINGS_STATE_FILE,
             ledger_file=config.V12_EARNINGS_LEDGER_FILE,
+            force=v12_live.trial25_preentry_calendar_refresh_due(now),
         )
     except Exception as exc:  # noqa: BLE001 - auxiliary calendar cannot stop live scanning
         log.exception("V12 earnings calendar refresh failed")
