@@ -47,7 +47,13 @@ The implementation must use the existing frozen feasibility artifacts under:
 - `/data/v12/research_freezes/v12_feasibility_10d_2026-09-21.json`
 - `/data/v12/research_freezes/v12_feasibility_10d_2026-09-21.sha256`
 
-The eligible universe is exactly the frozen `tradeable_symbol_list`. No later symbol may be added because it later becomes more liquid.
+The research-eligible universe is exactly the frozen `tradeable_symbol_list`. No later symbol may be added because it later becomes more liquid.
+
+NSE F&O membership can change after the freeze. Trial 25 therefore uses a prospective **intersection rule** at each event entry:
+
+`Trial25 event-eligible = frozen tradeable_symbol_list AND a currently listed option contract set that satisfies the locked expiry/exit rules`.
+
+If a frozen symbol has been removed/phased out of F&O and no valid contract set exists at entry, the event is recorded as `UNAVAILABLE_NOT_FNO_AT_ENTRY`. A symbol newly introduced to F&O after the freeze is **not admitted to Trial 25**, because it did not pass the frozen ten-day feasibility sample. The ordinary V12 recorder may continue recording such new F&O symbols for a future separately preregistered study; those observations cannot change the Trial-25 universe.
 
 The existing V12 feasibility thresholds remain unchanged:
 
@@ -173,6 +179,7 @@ States:
 or fail-closed terminal states such as:
 
 - `UNAVAILABLE_NOT_IN_FROZEN_UNIVERSE`
+- `UNAVAILABLE_NOT_FNO_AT_ENTRY`
 - `UNAVAILABLE_CALENDAR`
 - `UNAVAILABLE_ENTRY_SNAPSHOT`
 - `UNAVAILABLE_EXPIRY`
@@ -235,22 +242,24 @@ The system does not use the 13:00 or 15:37 snapshots to rescue an event.
 
 At entry, for each eligible symbol:
 
-1. Use the exact underlying spot captured for the event request.
-2. Consider listed stock-option expiries that:
+1. Verify the symbol is in the frozen eligible universe.
+2. Verify the current Kite/NSE instrument master exposes a valid live stock-option contract set for the symbol. This is the operational source of truth for post-freeze F&O additions/exclusions; no manually maintained membership list may override the actual listed contracts.
+3. Use the exact underlying spot captured for the event request.
+4. Consider listed stock-option expiries that:
    - expire strictly after the planned exit session; and
    - have at least **5 calendar DTE at entry**.
-3. Select the nearest such expiry.
-4. Select the strike nearest spot as ATM.
-5. Fetch the ATM CE and PE executable quotes.
-6. Define executable implied-move points as:
+5. Select the nearest such expiry.
+6. Select the strike nearest spot as ATM.
+7. Fetch the ATM CE and PE executable quotes.
+8. Define executable implied-move points as:
    `ATM_CE_ask + ATM_PE_ask`.
-7. Protective put target:
+9. Protective put target:
    `ATM - 2.0 * implied_move_points`.
-8. Protective call target:
+10. Protective call target:
    `ATM + 2.0 * implied_move_points`.
-9. Select the nearest listed put strike at or below the put target and the nearest listed call strike at or above the call target.
-10. Fetch those exact protective contracts.
-11. Freeze the four trading symbols and instrument tokens in the event record.
+11. Select the nearest listed put strike at or below the put target and the nearest listed call strike at or above the call target.
+12. Fetch those exact protective contracts.
+13. Freeze the four trading symbols and instrument tokens in the event record.
 
 The exact same four contracts are used at exit. There is no re-centering after the event.
 
