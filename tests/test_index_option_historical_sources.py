@@ -136,6 +136,7 @@ def test_executable_archive_validator_rejects_crossed_or_missing_quotes():
                 "best_ask": 100.0,
                 "bid_qty": 150,
                 "ask_qty": 225,
+                "spot": 25010.0,
             }
         ]
     )
