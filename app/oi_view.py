@@ -6,6 +6,8 @@ without a live broker session.
 
 import math
 
+from .early_onset import assess_early_onset
+
 
 def _num(value, default=None):
     try:
@@ -485,16 +487,44 @@ def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_
             chase_guard = "EXTENDED"
             reasons.insert(0, "Extended >1.25 ATR — do not chase")
 
-        score = round(max(0.0, min(100.0, score)), 1)
-        status = "HIGH ATTENTION" if score >= 70.0 else ("BUILDING" if score >= 55.0 else "EARLY")
-        if score < 40.0:
-            continue
+        legacy_score = round(max(0.0, min(100.0, score)), 1)
+        onset = assess_early_onset(row, direction, fallback_score=legacy_score)
+        if onset.get("usable"):
+            # Visibility is driven by *current pressure*, while ranking is
+            # pressure multiplied by remaining runway.  This prevents a strong
+            # but already-spent move from crowding out a forming one.
+            score = float(onset.get("score") or 0.0)
+            visibility_score = float(onset.get("pressure") or 0.0)
+            status = str(onset.get("action_stage") or onset.get("phase") or "OBSERVE")
+            if onset.get("phase") == "EXTENDED":
+                chase_guard = "EXTENDED"
+            if visibility_score < 40.0:
+                continue
+        else:
+            score = legacy_score
+            visibility_score = legacy_score
+            status = "HIGH ATTENTION" if score >= 70.0 else ("BUILDING" if score >= 55.0 else "EARLY")
+            if score < 40.0:
+                continue
 
         item = {
             "symbol": str(row.get("symbol")),
             "direction": direction,
             "score": score,
             "status": status,
+            "phase": onset.get("phase"),
+            "action_stage": onset.get("action_stage"),
+            "pressure": onset.get("pressure"),
+            "onset_coverage": onset.get("coverage"),
+            "runway": onset.get("runway"),
+            "runway_label": onset.get("runway_label"),
+            "price_move_60m_atr": onset.get("price_move_60m_atr"),
+            "trigger_level": onset.get("trigger_level"),
+            "trigger_distance_atr": onset.get("trigger_distance_atr"),
+            "trigger_crossed": onset.get("trigger_crossed"),
+            "oi_concentration_pct": onset.get("oi_concentration_pct"),
+            "oi_15m_chg_pct": onset.get("fresh_oi_15m_pct"),
+            "onset_axes": onset.get("axis_scores"),
             "reasons": reasons[:10],
             "oi_structure": structure,
             "price_chg_pct": price,
@@ -518,16 +548,27 @@ def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_
             "compression_score": _num(row.get("compression_score")),
             "shadow_movement_stage": row.get("shadow_movement_stage"),
             "oi_z": _num(row.get("oi_z")),
-            "price_move_60m_atr": _num(row.get("price_move_60m_atr")),
+            # price_move_60m_atr is derived by early_onset when the live row
+            # does not already carry it; this also repairs the 2D route.
         }
         buckets[direction].append(item)
 
     def order(items):
+        phase_priority = {
+            "PRE-IGNITION": 6,
+            "IGNITION": 5,
+            "QUIET": 3,
+            "UNDERWAY": 2,
+            "EXTENDED": 1,
+            "FADING": 0,
+            "FALLBACK": 2,
+        }
         items.sort(
             key=lambda item: (
+                phase_priority.get(str(item.get("phase") or ""), 2),
                 float(item.get("score") or 0.0),
-                abs(float(item.get("oi_day_chg_pct") or 0.0)),
-                abs(float(item.get("price_chg_pct") or 0.0)),
+                float(item.get("pressure") or 0.0),
+                float(item.get("runway") or 0.0),
                 item.get("symbol") or "",
             ),
             reverse=True,

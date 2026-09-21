@@ -13,7 +13,7 @@ from typing import Callable
 
 import requests
 
-from . import config, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
+from . import config, derivative_intelligence, trial25_shadow, trial25_universe, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
 
 TRIAL25_LOCKED_STATUS = "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED."
 
@@ -30,6 +30,7 @@ def refresh_earnings_calendar(
     ledger_file,
     session_factory: Callable[[], object] = requests.Session,
     horizon_days: int = 45,
+    force: bool = False,
 ) -> dict:
     """Refresh the point-in-time earnings calendar at most once per IST date.
 
@@ -43,7 +44,7 @@ def refresh_earnings_calendar(
             last_date = dt.datetime.fromisoformat(str(last_refresh)).date()
         except (TypeError, ValueError):
             last_date = None
-        if last_date == now.date():
+        if last_date == now.date() and not force:
             return prior
     last_attempt = prior.get("last_attempt_at")
     if last_attempt:
@@ -83,12 +84,56 @@ def refresh_earnings_calendar(
 
 
 
+def trial25_preentry_calendar_refresh_due(now: dt.datetime) -> bool:
+    """Refresh NSE earnings once near the 15:10 Trial-25 entry window."""
+    if now.weekday() >= 5:
+        return False
+    minute = now.hour * 60 + now.minute
+    return (15 * 60) <= minute <= (15 * 60 + 17)
+
+
 def post_cash_derivative_window(now: dt.datetime) -> bool:
     """True only while derivatives remain open after the legacy 15:30 cash scan."""
     if now.weekday() >= 5:
         return False
     minute = now.hour * 60 + now.minute
     return (15 * 60 + 30) < minute <= (15 * 60 + 40)
+
+def _trial25_process(kite, *, now, earnings_state, current_fno_symbols):
+    frozen, freeze_status = trial25_shadow.load_frozen_symbols(
+        config.TRIAL25_FEASIBILITY_FREEZE_FILE
+    )
+    if freeze_status != "OK":
+        return {"status": "LOCKED_FEASIBILITY", "completed": 0, "target": 40}
+
+    # Use the actual current NFO contract master, not only the scanner's cash
+    # universe, so post-freeze F&O additions and phased removals are recorded
+    # exactly as contracts become available/unavailable.
+    contracts_map = derivative_intelligence.get_option_contracts_map(kite)
+    universe = trial25_universe.update_universe_state(
+        config.TRIAL25_UNIVERSE_STATE_FILE, frozen, contracts_map, now,
+        ledger_path=config.TRIAL25_UNIVERSE_LEDGER_FILE,
+    )
+    summary = trial25_shadow.process_due_events(
+        kite,
+        now=now,
+        earnings_state=earnings_state,
+        current_fno_symbols=set(current_fno_symbols or set()),
+        feasibility_report_file=config.TRIAL25_FEASIBILITY_FREEZE_FILE,
+        state_file=config.TRIAL25_STATE_FILE,
+        ledger_file=config.TRIAL25_LEDGER_FILE,
+        raw_quote_file=config.TRIAL25_RAW_QUOTES_FILE,
+        stage_d_file=config.TRIAL25_STAGE_D_FILE,
+        stage_d_hash_file=config.TRIAL25_STAGE_D_HASH_FILE,
+        contracts_map=contracts_map,
+        grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
+    )
+    summary["cohort_a_live"] = len(universe.get("cohort_a_live") or [])
+    summary["cohort_a_missing_contracts"] = len(universe.get("cohort_a_missing_contracts") or [])
+    summary["new_fno_onboarding"] = len(universe.get("new_fno_onboarding") or [])
+    summary["universe_asof"] = universe.get("asof")
+    return summary
+
 
 def process_live_scan(
     kite,
@@ -100,6 +145,7 @@ def process_live_scan(
     option_snapshot_file,
     option_state_file,
     earnings_state_file,
+    current_fno_symbols: set[str] | None = None,
     deep_symbol_limit: int = 40,
     grace_minutes: int = 7,
 ) -> dict:
@@ -123,6 +169,16 @@ def process_live_scan(
     except Exception as exc:  # noqa: BLE001 - recorder evidence must never stop the live scan
         recorder = {"status": "ERROR", "error": str(exc)}
 
+    try:
+        trial25 = _trial25_process(
+            kite,
+            now=now,
+            earnings_state=earnings_state,
+            current_fno_symbols=current_fno_symbols or {str(r.get("symbol")) for r in results if r.get("symbol")},
+        )
+    except Exception as exc:  # noqa: BLE001 - Trial 25 can never stop V12/live scanning
+        trial25 = {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40}
+
     option_state = v12_option_recorder.load_v12_state(option_state_file)
     feasibility = v12_feasibility.summarize_feasibility(option_state)
     health = v12_option_recorder.recorder_health(
@@ -140,5 +196,10 @@ def process_live_scan(
             "last_refresh_at": earnings_state.get("last_refresh_at"),
             "upcoming_7d": list(earnings_symbols),
         },
-        "trial25_status": TRIAL25_LOCKED_STATUS,
+        "trial25_shadow": trial25,
+        "trial25_status": (
+            TRIAL25_LOCKED_STATUS
+            if trial25.get("status") == "LOCKED_FEASIBILITY"
+            else "TRIAL 25 PREREGISTERED — STAGE D SHADOW COLLECTION."
+        ),
     }

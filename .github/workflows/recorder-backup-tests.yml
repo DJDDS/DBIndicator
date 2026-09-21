@@ -2,7 +2,7 @@ name: Recorder backup verification
 
 on:
   push:
-    branches: [recorder-backup-fix-clean-20260916]
+    branches: [recorder-backup-fix-clean-20260916, v12-trial25-prereg-freeze-20260921, v12-trial25-freeze-bootstrap-20260921]
   workflow_dispatch:
 
 permissions:

@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v121_index_recorder, v121_backup, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1346,6 +1346,7 @@ _state = {
     "v12_option_recorder": {"status": "WAITING"},
     "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
     "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
+    "trial25_shadow": {"status": "PREREGISTERED_WAITING_EVENTS", "completed": 0, "target": 40},
     "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
 }
 
@@ -1509,6 +1510,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             now=now,
             state_file=config.V12_EARNINGS_STATE_FILE,
             ledger_file=config.V12_EARNINGS_LEDGER_FILE,
+            force=v12_live.trial25_preentry_calendar_refresh_due(now),
         )
     except Exception as exc:  # noqa: BLE001 - auxiliary calendar cannot stop live scanning
         log.exception("V12 earnings calendar refresh failed")
@@ -1524,6 +1526,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             option_snapshot_file=config.V12_OPTION_SNAPSHOT_FILE,
             option_state_file=config.V12_OPTION_STATE_FILE,
             earnings_state_file=config.V12_EARNINGS_STATE_FILE,
+            current_fno_symbols=set(fno_symbols or []),
             deep_symbol_limit=config.V12_DEEP_SYMBOL_LIMIT,
             grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
         )
@@ -1536,6 +1539,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             "recorder": {"status": "ERROR", "error": str(exc)},
             "feasibility": {"status": "UNAVAILABLE", "trial25_locked": True},
             "earnings": {"status": "UNAVAILABLE", "active_count": 0, "upcoming_7d": []},
+            "trial25_shadow": {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40},
             "trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
         }
     out.setdefault("earnings", {})["refresh_status"] = (refresh or {}).get("status") or "UNKNOWN"
@@ -1579,6 +1583,7 @@ def _load_persisted_state():
                 _state["v12_option_recorder"] = saved.get("v12_option_recorder") or _state["v12_option_recorder"]
                 _state["v12_feasibility"] = saved.get("v12_feasibility") or _state["v12_feasibility"]
                 _state["v12_earnings"] = saved.get("v12_earnings") or _state["v12_earnings"]
+                _state["trial25_shadow"] = saved.get("trial25_shadow") or _state["trial25_shadow"]
                 _state["v12_trial25_status"] = saved.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
@@ -1613,6 +1618,7 @@ def _save_persisted_state():
             "v12_option_recorder": _state.get("v12_option_recorder") or {},
             "v12_feasibility": _state.get("v12_feasibility") or {},
             "v12_earnings": _state.get("v12_earnings") or {},
+            "trial25_shadow": _state.get("trial25_shadow") or {},
             "v12_trial25_status": _state.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS,
         }
     try:
@@ -1853,6 +1859,7 @@ def _run_loop():
                             _state["v12_option_recorder"] = v12_snapshot.get("recorder") or {}
                             _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
+                            _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                             _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                         wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
@@ -1902,6 +1909,7 @@ def _run_loop():
                     _state["v12_option_recorder"] = post_v12.get("recorder") or {}
                     _state["v12_feasibility"] = post_v12.get("feasibility") or {}
                     _state["v12_earnings"] = post_v12.get("earnings") or {}
+                    _state["trial25_shadow"] = post_v12.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                     _state["v12_trial25_status"] = post_v12.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                 _save_persisted_state()
                 _set_scan_status("V12-POST-CAS", next_scan_due=_iso_after(20))
@@ -1968,6 +1976,24 @@ def start_v121_index_stream_once():
 
 
 def start_background_scanner():
+    # Freeze the completed first-ten-day stock-option feasibility sample once.
+    # Fail soft: research provenance must never block the live scanner.
+    try:
+        freeze = v12_feasibility_freeze.maybe_freeze_10d(
+            config.V12_OPTION_STATE_FILE,
+            config.V12_STORAGE_ROOT,
+        )
+        if freeze.get("status") in ("CREATED_AND_VERIFIED", "EXISTING_VALID_FREEZE"):
+            log.info(
+                "V12 10-day feasibility freeze %s: %s tradeable symbols",
+                freeze.get("status"),
+                (freeze.get("feasibility") or {}).get("tradeable_symbols"),
+            )
+        elif freeze.get("status") == "NOT_FROZEN":
+            log.info("V12 10-day feasibility freeze not created: %s", freeze.get("reason"))
+    except Exception:
+        log.exception("V12 10-day feasibility freeze verification failed")
+
     start_v121_index_stream_once()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()

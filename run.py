@@ -6,10 +6,45 @@ Or in production, with a proper WSGI server, e.g.:
 are per-process, so multiple workers would each try to log in/scan
 independently.)
 """
+import json
+
 from flask import jsonify
 
-from app import config, recorder_observability, scanner
+from app import config, recorder_observability, scanner, v12_feasibility_freeze
 from app.web import create_app
+
+
+# Freeze the completed first-ten-day stock-option feasibility sample at
+# process boot, before any future market session can append to the live state.
+# This is intentionally fail-soft: provenance work must never prevent the web
+# service or live recorders from starting.
+try:
+    V12_FEASIBILITY_FREEZE_BOOT = v12_feasibility_freeze.maybe_freeze_10d(
+        config.V12_OPTION_STATE_FILE,
+        config.V12_STORAGE_ROOT,
+    )
+except Exception as exc:  # pragma: no cover - production safety net
+    V12_FEASIBILITY_FREEZE_BOOT = {
+        "status": "FREEZE_VERIFICATION_ERROR",
+        "reason": str(exc),
+    }
+
+print(
+    "V12_FEASIBILITY_FREEZE_BOOT "
+    + json.dumps(
+        {
+            "status": V12_FEASIBILITY_FREEZE_BOOT.get("status"),
+            "feasibility": V12_FEASIBILITY_FREEZE_BOOT.get("feasibility") or {},
+            "hashes": V12_FEASIBILITY_FREEZE_BOOT.get("hashes") or {},
+            "paths": V12_FEASIBILITY_FREEZE_BOOT.get("paths") or {},
+            "reason": V12_FEASIBILITY_FREEZE_BOOT.get("reason"),
+        },
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    ),
+    flush=True,
+)
 
 app = create_app()
 

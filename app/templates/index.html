@@ -507,11 +507,11 @@
       <div class="v12-lock">EXECUTABLE CANDIDATE · NOT VALIDATED</div>
     </div>
     <div class="v12-grid">
-      <div class="v12-panel"><h3>Intraday · OBSERVE → WATCH → SETUP → EXECUTABLE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for V12 live candidates…</div></div></div>
+      <div class="v12-panel"><h3>Intraday · FORMING → ARMED → TRIGGERED · LATE/FADE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for early-onset candidates…</div></div></div>
       <div class="v12-panel"><h3>1D swing attention</h3><div id="v12-swing-1d-list" class="v12-list"><div class="v8-empty">Waiting for 1D candidates…</div></div></div>
       <div class="v12-panel"><h3>2D swing attention</h3><div id="v12-swing-2d-list" class="v12-list"><div class="v8-empty">Waiting for 2D candidates…</div></div></div>
     </div>
-    <div class="v12-note"><strong>Use:</strong> this card helps you decide what deserves live attention now. EXECUTABLE means the setup has a defined structural reference and the current futures/option spread clears the operational liquidity gate. It does <strong>not</strong> mean independently validated profitability.</div>
+    <div class="v12-note"><strong>Use:</strong> result first. FORMING means pressure is building before the move, ARMED means it is close to a structural trigger, TRIGGERED means the underlying trigger fired while derivative liquidity is executable, and LATE/FADING means do not chase. This remains <strong>NOT VALIDATED</strong> and does not touch the option recorder or Trial-25 research.</div>
   </section>
 
   {% set v12f = v12_feasibility|default({}) %}
@@ -548,6 +548,39 @@
     </div>
     <div class="v12-note">First 10 distinct trading days are <strong>recording only</strong>. The stock-option route becomes practically testable only if at least 20 symbols maintain ≥70% two-sided ATM coverage and ≤4% median executable straddle spread. No efficacy conclusion and no Trial 25 can be generated here.</div>
     <div class="v12-links"><a href="/api/v12-option-snapshots/export">Export option snapshots</a><a href="/api/v12-option-state/export">Export option state</a><a href="/api/v12-earnings-ledger/export">Export earnings ledger</a><a href="/api/v12-earnings-state/export">Export earnings state</a></div>
+  </section>
+
+  {% set t25 = trial25_shadow|default({}) %}
+  {% set t25stale = t25.get('stale_audit') or {} %}
+  <section id="trial25-stage-d" class="card v12-card" aria-label="Trial 25 earnings volatility Stage D shadow recorder">
+    <div class="v12-head">
+      <div><div class="v12-kicker">TRIAL 25 · EARNINGS VOLATILITY · STAGE D</div>
+      <h2>Shadow Event Recorder <span class="sub">defined-risk iron butterfly · 15:10 entry · 09:30 post-event exit · no efficacy peeking</span></h2></div>
+      <div id="trial25-status" class="v12-lock">{{ t25.get('status') or 'PREREGISTERED_WAITING_EVENTS' }}</div>
+    </div>
+    <div class="v12-metrics">
+      <div class="v12-metric"><span>Stage-D completed</span><strong id="trial25-completed">{{ t25.get('completed', 0) }}/{{ t25.get('target', 40) }}</strong></div>
+      <div class="v12-metric"><span>Frozen eligible universe</span><strong id="trial25-frozen-universe">{{ t25.get('frozen_cohort_size', 195) }}</strong></div>
+      <div class="v12-metric"><span>Current F&amp;O overlap</span><strong id="trial25-current-overlap">{{ t25.get('cohort_a_live', t25.get('current_fno_overlap', 0)) }}</strong></div>
+      <div class="v12-metric"><span>New F&amp;O · onboarding only</span><strong id="trial25-new-fno">{{ t25.get('new_fno_onboarding', 0) }}</strong></div>
+      <div class="v12-metric"><span>Frozen names without live contracts</span><strong id="trial25-fno-missing">{{ t25.get('cohort_a_missing_contracts', 0) }}</strong></div>
+      <div class="v12-metric"><span>Events discovered</span><strong id="trial25-events-total">{{ t25.get('events_total', 0) }}</strong></div>
+      <div class="v12-metric"><span>Entries captured</span><strong id="trial25-entries">{{ t25.get('entry_captured', 0) }}</strong></div>
+      <div class="v12-metric"><span>Executable book + old last trade</span><strong id="trial25-stale-old-trade">{{ t25stale.get('live_book_old_trade_legs', 0) }}</strong></div>
+      <div class="v12-metric"><span>Calibration</span><strong id="trial25-calibration">{{ t25.get('calibration_status') or 'WAITING_FOR_40' }}</strong></div>
+      <div class="v12-metric"><span>Stage-C required N</span><strong id="trial25-stage-c-n">{{ t25.get('stage_c_required_n') if t25.get('stage_c_required_n') is not none else 'LOCKED' }}</strong></div>
+    </div>
+    <div class="v12-panel">
+      <h3>Point-in-time event queue</h3>
+      <div id="trial25-event-queue" class="v12-list">
+        {% for event in t25.get('event_queue', [])[:8] %}
+        <div class="v8-empty"><strong>{{ event.get('symbol') or '—' }}</strong> · meeting {{ event.get('meeting_date') or '—' }} · entry {{ event.get('entry_date') or '—' }} · exit {{ event.get('exit_date') or '—' }} · {{ event.get('status') or '—' }}</div>
+        {% else %}
+        <div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="v12-note"><strong>Research integrity:</strong> no Trial-25 P&amp;L, mean return, win rate, profit factor or t-statistic is shown while Stage D accumulates. Stocks added to NSE F&amp;O after the frozen feasibility sample are tracked as onboarding-only and cannot enter the primary cohort; frozen names remain eligible only while actual live stock-option contracts exist.</div>
   </section>
 
   {% set v121i = v121_index_vol|default({}) %}
@@ -728,7 +761,7 @@
       <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Watchlist</h2>
       <span class="footer-note">Click a header to sort &middot; use the filter row to narrow &middot; click a row to open its chart</span>
     </div>
-    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar or validated production eligibility.</div>
+    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar · EARLY ONSET or validated production eligibility.</div>
     <div class="table-scroll">
     <table id="main-table">
       <thead>
@@ -1287,23 +1320,30 @@
     function rowCard(row) {
       row = row || {};
       var state = String(row.trade_state || 'OBSERVE').toUpperCase();
-      var cls = state === 'EXECUTABLE' ? 'exec' : (state === 'SETUP' ? 'setup' : 'watch');
-      var score = Number(row.horizon_score != null ? row.horizon_score : row.score);
-      var scoreText = Number.isFinite(score) ? Math.round(score) : '—';
+      var phase = String(row.phase || '').toUpperCase();
+      var cls = state === 'TRIGGERED' || state === 'EXECUTABLE' ? 'exec' : ((state === 'ARMED' || state === 'FORMING' || state === 'SETUP') ? 'setup' : 'watch');
       var trigger = num(row.trigger_reference, 2, '');
-      var fut = num(row.fut_spread_bps, 1, 'bp');
-      var opt = num(row.option_spread_pct, 1, '%');
+      var distance = Number(row.trigger_distance_atr);
+      var distanceText = Number.isFinite(distance) ? distance.toFixed(2) + ' ATR' : '—';
+      var spent = Number(row.spent_atr);
+      var spentText = Number.isFinite(spent) ? Math.abs(spent).toFixed(2) + ' ATR spent' : '—';
+      var oi15 = Number(row.oi_15m_chg_pct);
+      var oi15Text = Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—';
+      var rvol = Number(row.tod_rvol != null ? row.tod_rvol : row.vol_multiple);
+      var rvolText = Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—';
       return '<div class="v12-row ' + cls + '">' +
-        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + ' · score ' + scoreText + '</div>' +
+        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + (phase ? ' · ' + v12Esc(phase) : '') + '</div>' +
         '<div class="state ' + cls + '">' + v12Esc(state + ' · NOT VALIDATED') + '</div>' +
-        '<div class="detail">Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong> · Trigger/invalidation ref ' + trigger + ' · FUT spread ' + fut + ' · Option spread ' + opt + '<br>' + v12Esc(row.operational_reason || '') + '</div></div>';
+        '<div class="detail">Trigger <strong>' + trigger + '</strong> · distance ' + distanceText + ' · ' + spentText +
+        ' · OI15 ' + oi15Text + ' · RVOL ' + rvolText + ' · Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong><br>' +
+        v12Esc(row.operational_reason || '') + '</div></div>';
     }
     function fill(id, rows, empty) {
       var el = document.getElementById(id); if (!el) return;
       rows = Array.isArray(rows) ? rows : [];
       el.innerHTML = rows.length ? rows.map(rowCard).join('') : '<div class="v8-empty">' + v12Esc(empty) + '</div>';
     }
-    fill('v12-intraday-list', consoleData.intraday, 'No V12 intraday candidate currently clears OBSERVE quality.');
+    fill('v12-intraday-list', consoleData.intraday, 'No clean early-onset/trigger sequence is active right now.');
     var swing = consoleData.swing || {};
     fill('v12-swing-1d-list', swing['1D'], 'No 1D candidate currently.');
     fill('v12-swing-2d-list', swing['2D'], 'No 2D candidate currently.');
@@ -1336,6 +1376,38 @@
     text('v12-earnings-count', Array.isArray(earnings.upcoming_7d) ? earnings.upcoming_7d.length : 0);
     text('v12-term-coverage', pct(feasibility.term_structure_coverage_pct));
     text('v12-trial25-status', trial25Status || 'TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.');
+  }
+
+  function renderTrial25Shadow(shadow) {
+    shadow = shadow || {};
+    function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
+    var target = Number(shadow.target || 40);
+    text('trial25-status', shadow.status || 'PREREGISTERED_WAITING_EVENTS');
+    text('trial25-completed', String(shadow.completed || 0) + '/' + target);
+    text('trial25-frozen-universe', shadow.frozen_cohort_size == null ? 195 : shadow.frozen_cohort_size);
+    text('trial25-current-overlap', shadow.cohort_a_live == null ? (shadow.current_fno_overlap || 0) : shadow.cohort_a_live);
+    text('trial25-new-fno', shadow.new_fno_onboarding || 0);
+    text('trial25-fno-missing', shadow.cohort_a_missing_contracts || 0);
+    text('trial25-events-total', shadow.events_total || 0);
+    text('trial25-entries', shadow.entry_captured || 0);
+    var stale = shadow.stale_audit || {};
+    text('trial25-stale-old-trade', stale.live_book_old_trade_legs || 0);
+    text('trial25-calibration', shadow.calibration_status || 'WAITING_FOR_40');
+    text('trial25-stage-c-n', shadow.stage_c_required_n == null ? 'LOCKED' : shadow.stage_c_required_n);
+    var queueBox = document.getElementById('trial25-event-queue');
+    var queue = Array.isArray(shadow.event_queue) ? shadow.event_queue.slice(0, 8) : [];
+    if (queueBox) {
+      function esc(value) {
+        return String(value == null ? '—' : value)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      }
+      queueBox.innerHTML = queue.length ? queue.map(function (event) {
+        return '<div class="v8-empty"><strong>' + esc(event.symbol) + '</strong> · meeting ' +
+          esc(event.meeting_date) + ' · entry ' + esc(event.entry_date) + ' · exit ' +
+          esc(event.exit_date) + ' · ' + esc(event.status) + '</div>';
+      }).join('') : '<div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>';
+    }
   }
 
   function renderV121IndexVol(indexVol, backup, development) {
@@ -1403,6 +1475,7 @@
       renderOpportunityForward(state.opportunity_forward);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
+      renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
@@ -1457,24 +1530,27 @@
       return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(digits == null ? 1 : digits) + '%' : '—';
     }
     function card(row, rank, side) {
-      var status = row.status || 'EARLY';
-      var statusClass = status === 'HIGH ATTENTION' ? 'high' : (status === 'BUILDING' ? 'building' : 'early');
+      var phase = String(row.phase || 'FALLBACK');
+      var action = String(row.action_stage || row.status || 'OBSERVE');
+      var statusClass = action === 'TRIGGERED' ? 'high' : ((action === 'ARMED' || action === 'FORMING') ? 'building' : 'early');
       var chase = row.chase_guard === 'EXTENDED' ? ' · EXTENDED' : '';
-      var reasons = (row.reasons || []).slice(0, 6).map(function (reason) {
+      var reasons = (row.reasons || []).slice(0, 5).map(function (reason) {
         var warn = String(reason).indexOf('do not chase') >= 0 ? ' warn' : '';
         return '<span class="lor-reason' + warn + '">' + v8Esc(reason) + '</span>';
       }).join('');
       var rvol = row.tod_rvol != null ? Number(row.tod_rvol) : Number(row.vol_multiple);
+      var oi15 = Number(row.oi_15m_chg_pct);
+      var dist = Number(row.trigger_distance_atr);
+      var runway = Number(row.runway);
       return '<article class="lor-card ' + side + '">' +
         '<div class="lor-rank">#' + rank + '</div>' +
-        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
-        '<div class="lor-score"><strong>' + v8Num(row.score, 0) + '</strong><span class="' + statusClass + '">' + v8Esc(status) + '</span></div>' +
+        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(phase) + ' · ' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
+        '<div class="lor-score"><strong style="font-size:10px;line-height:1.15;">' + v8Esc(action) + '</strong><span class="' + statusClass + '">' + v8Esc(phase) + '</span></div>' +
         '<div class="lor-evidence"><div class="lor-metrics">' +
-          '<span>Price ' + signed(row.price_chg_pct, 2) + '</span>' +
-          '<span>Day OI ' + signed(row.oi_day_chg_pct, 1) + '</span>' +
-          '<span>OI30 ' + signed(row.oi_30m_chg_pct, 1) + '</span>' +
+          '<span>OI15 ' + (Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—') + '</span>' +
           '<span>RVOL ' + (Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—') + '</span>' +
-          '<span>Rel ' + v8Num(row.relative, 0) + '</span>' +
+          '<span>Trigger Δ ' + (Number.isFinite(dist) ? dist.toFixed(2) + ' ATR' : '—') + '</span>' +
+          '<span>Runway ' + (Number.isFinite(runway) ? runway.toFixed(2) : '—') + '</span>' +
         '</div><div class="lor-reasons">' + reasons + '</div></div>' +
       '</article>';
     }
