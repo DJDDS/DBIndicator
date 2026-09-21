@@ -507,11 +507,11 @@
       <div class="v12-lock">EXECUTABLE CANDIDATE · NOT VALIDATED</div>
     </div>
     <div class="v12-grid">
-      <div class="v12-panel"><h3>Intraday · OBSERVE → WATCH → SETUP → EXECUTABLE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for V12 live candidates…</div></div></div>
+      <div class="v12-panel"><h3>Intraday · FORMING → ARMED → TRIGGERED · LATE/FADE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for early-onset candidates…</div></div></div>
       <div class="v12-panel"><h3>1D swing attention</h3><div id="v12-swing-1d-list" class="v12-list"><div class="v8-empty">Waiting for 1D candidates…</div></div></div>
       <div class="v12-panel"><h3>2D swing attention</h3><div id="v12-swing-2d-list" class="v12-list"><div class="v8-empty">Waiting for 2D candidates…</div></div></div>
     </div>
-    <div class="v12-note"><strong>Use:</strong> this card helps you decide what deserves live attention now. EXECUTABLE means the setup has a defined structural reference and the current futures/option spread clears the operational liquidity gate. It does <strong>not</strong> mean independently validated profitability.</div>
+    <div class="v12-note"><strong>Use:</strong> result first. FORMING means pressure is building before the move, ARMED means it is close to a structural trigger, TRIGGERED means the underlying trigger fired while derivative liquidity is executable, and LATE/FADING means do not chase. This remains <strong>NOT VALIDATED</strong> and does not touch the option recorder or Trial-25 research.</div>
   </section>
 
   {% set v12f = v12_feasibility|default({}) %}
@@ -761,7 +761,7 @@
       <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Watchlist</h2>
       <span class="footer-note">Click a header to sort &middot; use the filter row to narrow &middot; click a row to open its chart</span>
     </div>
-    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar or validated production eligibility.</div>
+    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar · EARLY ONSET or validated production eligibility.</div>
     <div class="table-scroll">
     <table id="main-table">
       <thead>
@@ -1320,23 +1320,30 @@
     function rowCard(row) {
       row = row || {};
       var state = String(row.trade_state || 'OBSERVE').toUpperCase();
-      var cls = state === 'EXECUTABLE' ? 'exec' : (state === 'SETUP' ? 'setup' : 'watch');
-      var score = Number(row.horizon_score != null ? row.horizon_score : row.score);
-      var scoreText = Number.isFinite(score) ? Math.round(score) : '—';
+      var phase = String(row.phase || '').toUpperCase();
+      var cls = state === 'TRIGGERED' || state === 'EXECUTABLE' ? 'exec' : ((state === 'ARMED' || state === 'FORMING' || state === 'SETUP') ? 'setup' : 'watch');
       var trigger = num(row.trigger_reference, 2, '');
-      var fut = num(row.fut_spread_bps, 1, 'bp');
-      var opt = num(row.option_spread_pct, 1, '%');
+      var distance = Number(row.trigger_distance_atr);
+      var distanceText = Number.isFinite(distance) ? distance.toFixed(2) + ' ATR' : '—';
+      var spent = Number(row.spent_atr);
+      var spentText = Number.isFinite(spent) ? Math.abs(spent).toFixed(2) + ' ATR spent' : '—';
+      var oi15 = Number(row.oi_15m_chg_pct);
+      var oi15Text = Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—';
+      var rvol = Number(row.tod_rvol != null ? row.tod_rvol : row.vol_multiple);
+      var rvolText = Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—';
       return '<div class="v12-row ' + cls + '">' +
-        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + ' · score ' + scoreText + '</div>' +
+        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + (phase ? ' · ' + v12Esc(phase) : '') + '</div>' +
         '<div class="state ' + cls + '">' + v12Esc(state + ' · NOT VALIDATED') + '</div>' +
-        '<div class="detail">Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong> · Trigger/invalidation ref ' + trigger + ' · FUT spread ' + fut + ' · Option spread ' + opt + '<br>' + v12Esc(row.operational_reason || '') + '</div></div>';
+        '<div class="detail">Trigger <strong>' + trigger + '</strong> · distance ' + distanceText + ' · ' + spentText +
+        ' · OI15 ' + oi15Text + ' · RVOL ' + rvolText + ' · Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong><br>' +
+        v12Esc(row.operational_reason || '') + '</div></div>';
     }
     function fill(id, rows, empty) {
       var el = document.getElementById(id); if (!el) return;
       rows = Array.isArray(rows) ? rows : [];
       el.innerHTML = rows.length ? rows.map(rowCard).join('') : '<div class="v8-empty">' + v12Esc(empty) + '</div>';
     }
-    fill('v12-intraday-list', consoleData.intraday, 'No V12 intraday candidate currently clears OBSERVE quality.');
+    fill('v12-intraday-list', consoleData.intraday, 'No clean early-onset/trigger sequence is active right now.');
     var swing = consoleData.swing || {};
     fill('v12-swing-1d-list', swing['1D'], 'No 1D candidate currently.');
     fill('v12-swing-2d-list', swing['2D'], 'No 2D candidate currently.');
@@ -1523,24 +1530,27 @@
       return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(digits == null ? 1 : digits) + '%' : '—';
     }
     function card(row, rank, side) {
-      var status = row.status || 'EARLY';
-      var statusClass = status === 'HIGH ATTENTION' ? 'high' : (status === 'BUILDING' ? 'building' : 'early');
+      var phase = String(row.phase || 'FALLBACK');
+      var action = String(row.action_stage || row.status || 'OBSERVE');
+      var statusClass = action === 'TRIGGERED' ? 'high' : ((action === 'ARMED' || action === 'FORMING') ? 'building' : 'early');
       var chase = row.chase_guard === 'EXTENDED' ? ' · EXTENDED' : '';
-      var reasons = (row.reasons || []).slice(0, 6).map(function (reason) {
+      var reasons = (row.reasons || []).slice(0, 5).map(function (reason) {
         var warn = String(reason).indexOf('do not chase') >= 0 ? ' warn' : '';
         return '<span class="lor-reason' + warn + '">' + v8Esc(reason) + '</span>';
       }).join('');
       var rvol = row.tod_rvol != null ? Number(row.tod_rvol) : Number(row.vol_multiple);
+      var oi15 = Number(row.oi_15m_chg_pct);
+      var dist = Number(row.trigger_distance_atr);
+      var runway = Number(row.runway);
       return '<article class="lor-card ' + side + '">' +
         '<div class="lor-rank">#' + rank + '</div>' +
-        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
-        '<div class="lor-score"><strong>' + v8Num(row.score, 0) + '</strong><span class="' + statusClass + '">' + v8Esc(status) + '</span></div>' +
+        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(phase) + ' · ' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
+        '<div class="lor-score"><strong style="font-size:10px;line-height:1.15;">' + v8Esc(action) + '</strong><span class="' + statusClass + '">' + v8Esc(phase) + '</span></div>' +
         '<div class="lor-evidence"><div class="lor-metrics">' +
-          '<span>Price ' + signed(row.price_chg_pct, 2) + '</span>' +
-          '<span>Day OI ' + signed(row.oi_day_chg_pct, 1) + '</span>' +
-          '<span>OI30 ' + signed(row.oi_30m_chg_pct, 1) + '</span>' +
+          '<span>OI15 ' + (Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—') + '</span>' +
           '<span>RVOL ' + (Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—') + '</span>' +
-          '<span>Rel ' + v8Num(row.relative, 0) + '</span>' +
+          '<span>Trigger Δ ' + (Number.isFinite(dist) ? dist.toFixed(2) + ' ATR' : '—') + '</span>' +
+          '<span>Runway ' + (Number.isFinite(runway) ? runway.toFixed(2) : '—') + '</span>' +
         '</div><div class="lor-reasons">' + reasons + '</div></div>' +
       '</article>';
     }
