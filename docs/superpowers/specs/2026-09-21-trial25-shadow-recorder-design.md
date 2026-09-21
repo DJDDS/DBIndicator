@@ -169,6 +169,46 @@ a **separate cohort label** in all Trial-25 records. It must not be mixed into
 the original 195-symbol cohort without an explicitly frozen cohort-expansion
 artifact created before that stock's first efficacy outcome is read.
 
+
+
+## 3A. F&O membership changes after the ten-day freeze
+
+The frozen 195-stock feasibility universe is an immutable historical research
+artifact, but live exchange eligibility is time-varying. Trial 25 therefore
+separates **research qualification** from **current F&O availability**.
+
+For every prospective event, the system must compare the symbol against an
+as-of-date F&O membership ledger built from the daily NSE contract master and,
+where available, the NSE introduction/exclusion tracker/circular metadata.
+
+Rules:
+
+- a symbol must be in the frozen 195-stock feasibility universe **and** still
+  have valid stock-option contracts for the required entry/exit window to enter
+  the original Trial-25 sample;
+- if NSE has announced an exclusion, no new Trial-25 event may be opened when
+  the required event structure cannot be carried through the planned exit; an
+  already-open event may complete only if all four frozen contracts remain
+  listed and tradable through exit;
+- a newly introduced F&O stock after the 2026-09-21 freeze is **not added** to
+  the original Trial-25 universe merely because it appears in the Kite/NSE
+  contract master;
+- new F&O entrants are recorded in a separate
+  `NEW_FNO_PROBATION` observation-only lane;
+- a new entrant must complete 10 distinct forward trading sessions under the
+  same V12 feasibility rules (>=70% two-sided ATM coverage and <=4% median
+  executable ATM-straddle spread) before it can be marked
+  `QUALIFIED_FOR_FUTURE_TRIAL`;
+- qualification of a new entrant does not retroactively amend Trial 25. It is
+  evidence for a later preregistered trial/version only;
+- deletions, additions and effective dates are persisted point-in-time so a
+  later contract master cannot rewrite which names were actually available on
+  an earlier event date.
+
+This avoids survivorship bias, prevents post-freeze additions from entering the
+confirmatory sample without equivalent liquidity evidence, and still keeps the
+live system synchronized with NSE membership changes.
+
 ## 4. Architecture
 
 The feature is split into five small units with explicit interfaces.
