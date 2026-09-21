@@ -111,7 +111,8 @@ def _trial25_process(kite, *, now, earnings_state, current_fno_symbols):
     # exactly as contracts become available/unavailable.
     contracts_map = derivative_intelligence.get_option_contracts_map(kite)
     universe = trial25_universe.update_universe_state(
-        config.TRIAL25_ONBOARDING_FILE, frozen, contracts_map, now
+        config.TRIAL25_UNIVERSE_STATE_FILE, frozen, contracts_map, now,
+        ledger_path=config.TRIAL25_UNIVERSE_LEDGER_FILE,
     )
     summary = trial25_shadow.process_due_events(
         kite,
