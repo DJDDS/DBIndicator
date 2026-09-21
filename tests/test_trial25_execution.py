@@ -129,7 +129,7 @@ def test_fee_model_components_are_pinned():
     turnover = 7000.0
     assert out["model_version"] == "ZERODHA_NSE_EQ_OPT_2026_04_V1"
     assert out["brokerage"] == pytest.approx(40.0, abs=1e-8)
-    assert out["stt"] == pytest.approx(7.5, abs=1e-8)
+    assert out["stt"] == pytest.approx(8.0, abs=1e-8)
     assert out["exchange_transaction_charge"] == pytest.approx(turnover * 0.0003553, abs=1e-8)
     assert out["sebi_fee"] == pytest.approx(turnover * 0.000001, abs=1e-8)
     assert out["stamp_duty"] == pytest.approx(2000.0 * 0.00003, abs=1e-8)
@@ -140,3 +140,15 @@ def test_fee_model_components_are_pinned():
         + out["sebi_fee"] + out["stamp_duty"] + out["gst"],
         abs=1e-8,
     )
+
+
+def test_fee_model_rounds_stt_to_nearest_rupee_half_up():
+    below = ex.calculate_option_charges([
+        {"side": "SELL", "price": 99.86, "quantity": 50},
+    ])
+    half = ex.calculate_option_charges([
+        {"side": "SELL", "price": 100.0, "quantity": 50},
+    ])
+    assert 99.86 * 50 * ex.STT_SELL_RATE == pytest.approx(7.4895, abs=1e-12)
+    assert below["stt"] == 7.0
+    assert half["stt"] == 8.0
