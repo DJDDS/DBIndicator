@@ -147,6 +147,16 @@ V12_EARNINGS_STATE_FILE = _V12_STORAGE["earnings_state"]
 V12_SNAPSHOT_GRACE_MINUTES = int(os.getenv("V12_SNAPSHOT_GRACE_MINUTES", "7"))
 V12_DEEP_SYMBOL_LIMIT = int(os.getenv("V12_DEEP_SYMBOL_LIMIT", "40"))
 
+# Trial 25 forward earnings-volatility shadow recorder. All files live under
+# the same persistent V12 Railway volume and are research-only.
+TRIAL25_ROOT = _V12_STORAGE["trial25_root"]
+TRIAL25_STATE_FILE = _V12_STORAGE["trial25_state"]
+TRIAL25_LEDGER_FILE = _V12_STORAGE["trial25_ledger"]
+TRIAL25_RAW_QUOTES_FILE = _V12_STORAGE["trial25_raw_quotes"]
+TRIAL25_STAGE_D_FILE = _V12_STORAGE["trial25_stage_d"]
+TRIAL25_STAGE_D_HASH_FILE = _V12_STORAGE["trial25_stage_d_hash"]
+TRIAL25_ONBOARDING_FILE = _V12_STORAGE["trial25_onboarding"]
+
 # V12.1 NIFTY near-expiry index-volatility recorder / development lab.
 V121_INDEX_VOL_ROOT = _V12_STORAGE["index_vol_root"]
 V121_INDEX_VOL_STATE_FILE = _V12_STORAGE["index_vol_state"]
