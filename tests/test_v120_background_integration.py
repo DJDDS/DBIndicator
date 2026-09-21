@@ -48,3 +48,12 @@ def test_background_source_contains_lightweight_post_cas_v12_path():
     source = (Path(__file__).parents[1] / 'app' / 'background.py').read_text(encoding='utf-8')
     assert 'v12_live.post_cash_derivative_window' in source
     assert 'V12-POST-CAS' in source
+
+
+def test_normal_market_scan_publishes_fresh_trial25_shadow_to_dashboard_state():
+    from pathlib import Path
+    source = (Path(__file__).parents[1] / "app" / "background.py").read_text(encoding="utf-8")
+    marker = '_state["v12_trade_console"] = v12_snapshot.get("trade_console") or {}'
+    start = source.index(marker)
+    block = source[start:start + 1400]
+    assert '_state["trial25_shadow"] = v12_snapshot.get("trial25_shadow")' in block
