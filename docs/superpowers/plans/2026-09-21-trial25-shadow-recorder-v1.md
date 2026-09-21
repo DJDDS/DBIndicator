@@ -2,760 +2,798 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a forward-only Trial-25 Stage-D earnings-volatility shadow recorder that captures one executable, defined-risk iron-butterfly event per eligible earnings announcement without exposing efficacy outcomes before the fixed 40-event calibration boundary.
+**Goal:** Build a forward, no-peeking Trial-25 earnings-volatility shadow recorder that survives the 29-September F&O universe change, captures executable four-leg iron-butterfly entry/exit evidence, and freezes Stage-D variance after exactly the first 40 eligible completed events.
 
-**Architecture:** Add four focused modules: trading-calendar/event-date resolution, executable-option mechanics and fees, persistent Trial-25 event state, and Stage-D no-peeking calibration. Integrate them sequentially after the existing V12 fixed-slot recorder so they share the current Kite session and instrument master without adding a second quote thread. The dashboard receives a read-only operational summary only.
+**Architecture:** Add focused Trial-25 modules beside the existing V12 recorder rather than modifying scanner-selection logic. The baseline 195-stock cohort remains immutable; daily NFO membership is recorded point-in-time, newly introduced F&O names must pass the same 10-session feasibility gate prospectively, and removed names fail closed when required contracts disappear. Trial-25 uses a deterministic event state machine, dedicated serialized quote pass, versioned Indian-option charge model, and a no-peeking Stage-D summary.
 
-**Tech Stack:** Python 3.11, Flask, existing Kite Connect integration, JSON/JSONL atomic persistence, pytest, Railway persistent volume.
+**Tech Stack:** Python 3.11, Flask, existing Kite Connect client, JSON/JSONL persistence on Railway Volume, pytest, SHA-256 provenance, existing V12/V12.1 runtime patterns.
 
 **Spec:** `docs/superpowers/specs/2026-09-21-trial25-shadow-recorder-design.md`
 
 ## Global Constraints
 
-- Trial 25 is research/shadow only; it must never place broker orders or generate production trade alerts.
-- Frozen Trial-25 universe is exactly the 2026-09-21 V12 `tradeable_symbol_list`; new post-freeze F&O admissions are excluded.
-- A frozen symbol no longer available in the live NFO master at entry is `UNAVAILABLE_NOT_FNO_AT_ENTRY`.
-- Entry is the verified trading session before the earnings meeting, `PRE_CAS` 15:10 IST; exit is the verified trading session after the meeting, `OPEN_STABLE` 09:30 IST.
-- Missing fixed snapshots are never backfilled with another slot.
-- Structure is one-lot ATM iron butterfly with protective wings at >= 2.0x executable implied-move distance.
-- Nearest expiry must expire after planned exit and have >=5 calendar DTE at entry.
-- Same four contracts are frozen at entry and used at exit; no re-centering.
-- Primary execution uses bid/ask plus one-lot top-level quantity; never midpoint, last price, or theoretical fallback.
-- Primary execution freshness is REST-request freshness (<=15 s round-trip) plus executable book; an old last trade alone does not invalidate a current two-sided book.
+- Baseline Trial-25 universe is the immutable 2026-09-21 frozen `tradeable_symbol_list`.
+- Newly introduced F&O symbols require 10 distinct post-introduction trading sessions under the unchanged V12 gate: two-sided ATM coverage >=70% and median ATM-straddle spread <=4%.
+- Supplemental eligibility begins only on the next trading day after the 10-session gate passes; never retroactively.
+- Removed symbols are never silently replaced; an event is unavailable when required contracts no longer exist.
+- Entry is fixed at PRE_CAS 15:10 IST on the last verified F&O trading session strictly before the registered earnings date.
+- Exit is fixed at OPEN_STABLE 09:30 IST on the first verified F&O trading session strictly after the registered earnings date.
+- Nearest listed expiry must expire strictly after planned exit and have at least 5 calendar DTE at entry.
+- Structure is one-lot ATM iron butterfly with protective wings at or beyond +/-2.0x executable ATM-straddle ask implied-move points.
+- Entry sells ATM CE/PE at best bid and buys wings at best ask; exit reverses on best ask/bid.
+- Primary execution requires live REST response latency <=15 seconds, two-sided positive book, and required-side top-level quantity >= one recorded lot on all four legs.
+- Old `last_trade_time` alone does not make an otherwise current executable REST book ineligible; it remains a separately reported stale-activity diagnostic.
 - Fee model version is `ZERODHA_NSE_EQ_OPT_2026_04_V1`.
-- Before the first 40 eligible completed Stage-D events, no individual or aggregate P&L/return/win-rate/PF/direction-of-effect field may be computed for any dashboard/API response.
-- When completed eligible events first reach >=40, deterministically freeze exactly the first 40 ordered by exit-capture timestamp then event ID.
-- Existing V12/V12.1 recorders, Trial-24 final holdout, frozen ten-day feasibility artifacts, and live directional scanner behavior remain unchanged.
-- 2026 regular-session holidays are the NSE-published weekday holidays current as of 2026-09-21; Sunday Muhurat trading is not treated as a normal F&O research session.
-- Post-29-Sep F&O additions/deletions are resolved from the live NFO instrument master at event entry, not from a hardcoded future roster.
+- No Trial-25 event P&L, return, mean, median, win rate, profit factor, or efficacy direction may be returned by dashboard/API before Stage-D calibration.
+- Stage-D calibration uses exactly the deterministic first 40 eligible completed events, ordered by exit-capture timestamp then event ID, even if more than one event completes in the scanner cycle that crosses 40.
+- Stage-D can freeze only sample standard deviation, exact event IDs, fee-model/code hashes, and required independent Stage-C N.
+- Trial 24 final holdout, V12/V12.1 recorder rules, and the live directional scanner remain unchanged.
+- Trial-25 failures are fail-soft and must never stop the scanner or existing recorders.
+- Persistent runtime files live below the existing Railway V12 root.
+- No live broker order, alert, or production strategy activation is added.
 
 ## Review Focus
 
-- **NSE roster turnover after 29-Sep:** a newly admitted symbol that appears in Kite must still be excluded if absent from the frozen 195; a frozen deleted symbol must fail closed rather than being replaced.
-- **Earnings revisions around the entry boundary:** a revision first seen after entry must not rewrite the registered event date or contracts.
-- **Old last trade with live resting book:** an old `last_trade_time` must be recorded as a diagnostic but not cause a false execution rejection when the dedicated REST snapshot is fresh and top-of-book is executable.
-- **Several events complete in one 09:30 cycle near event #40:** calibration must always use exactly the deterministic first 40 events and never 41+.
-- **Restart/redeploy during an event:** persisted entry contracts and event IDs must survive and prevent duplicate entry/exit captures.
+1. **Monthly F&O membership transition around 29/30 September:** a symbol newly appearing in the NFO master must start at session 1/10 and remain Trial-25-ineligible until the next trading day after a valid 10-session gate; a disappeared symbol must not be silently replaced.
+2. **Earnings-date revision at the entry boundary:** a revision first observed before the 15:10 entry uses the revised date; a revision first observed after entry must not rewrite the captured event.
+3. **REST book vs last-trade age disagreement:** a live <=15-second REST snapshot with valid one-lot two-sided depth must remain execution-fresh even when `last_trade_time` is >600 seconds old, while the diagnostic flags that disagreement.
+4. **Several events complete together at the Stage-D boundary:** if completed count jumps from 38 to 43, the freeze must select exactly the first 40 by `(exit_captured_at, event_id)`.
+5. **Restart during a due capture window:** a persisted `ENTRY_CAPTURED` or `COMPLETED_RAW` event must not be quoted or appended a second time after process restart.
 
 ---
 
-### Task 1: Trading Calendar, Earnings-Date Resolution, and Frozen/Live F&O Membership
+## File Structure
+
+### New files
+
+- `app/trial25_universe.py` — point-in-time F&O membership ledger and supplemental 10-session feasibility.
+- `app/trial25_calendar.py` — verified 2026 NSE F&O trading sessions and point-in-time earnings-event date resolution.
+- `app/trial25_execution.py` — pure contract selection, book validation, freshness diagnostics, and versioned fee model.
+- `app/trial25_shadow.py` — event state machine, append-only ledger/raw quote persistence, idempotent capture.
+- `app/trial25_stage_d.py` — no-peeking operational summary and deterministic 40-event calibration freeze.
+- `tests/test_trial25_universe.py`
+- `tests/test_trial25_calendar.py`
+- `tests/test_trial25_execution.py`
+- `tests/test_trial25_shadow.py`
+- `tests/test_trial25_stage_d.py`
+- `tests/test_trial25_live_integration.py`
+
+### Modified files
+
+- `TRIAL25_PREREGISTRATION.md` — incorporate rolling F&O membership and the >=5-DTE clarification before any event is admitted.
+- `app/v12_storage.py` — add Trial-25 persistent paths.
+- `app/config.py` — expose resolved Trial-25 paths/constants.
+- `app/v12_live.py` — call Trial-25 processing after the normal V12 recorder, serially and fail-soft.
+- `app/background.py` — pass current F&O universe source/symbols into V12/Trial-25 orchestration and persist read-only Trial-25 summary in scanner state.
+- `app/web.py` — expose no-peeking Trial-25 summary in dashboard JSON/template context.
+- `app/templates/index.html` — compact Stage-D operational panel only.
+- existing V12/V12.1 regression tests — extend only where integration contracts require it.
+
+---
+
+### Task 1: Lock research contract and persistent paths
 
 **Files:**
-- Create: `app/trial25_calendar.py`
-- Create: `tests/test_trial25_calendar.py`
 - Modify: `TRIAL25_PREREGISTRATION.md`
+- Modify: `app/v12_storage.py`
+- Modify: `app/config.py`
+- Test: `tests/test_v12_storage.py`
 
 **Interfaces:**
-- Consumes: V12 earnings-state rows, frozen eligible-symbol set, live `contracts_map`.
+- Consumes: existing `resolve_v12_storage(environ) -> dict`
 - Produces:
-  - `is_trading_day(day: date) -> bool`
-  - `previous_trading_day(day: date) -> date`
-  - `next_trading_day(day: date) -> date`
-  - `resolve_event_sessions(event: dict, known_at: datetime) -> dict`
-  - `fno_membership_status(symbol: str, frozen_symbols: set[str], contracts_map: dict) -> dict`
+  - `V12_TRIAL25_ROOT`
+  - `V12_TRIAL25_STATE_FILE`
+  - `V12_TRIAL25_LEDGER_FILE`
+  - `V12_TRIAL25_RAW_QUOTES_FILE`
+  - `V12_TRIAL25_UNIVERSE_STATE_FILE`
+  - `V12_TRIAL25_UNIVERSE_LEDGER_FILE`
+  - `V12_TRIAL25_STAGE_D_FILE`
+  - `V12_TRIAL25_STAGE_D_HASH_FILE`
 
-- [ ] **Step 1: Write failing calendar/session tests**
+- [ ] **Step 1: Update the preregistration before any Trial-25 event can be admitted**
 
-```python
-# tests/test_trial25_calendar.py
-import datetime as dt
-from app import trial25_calendar as cal
-
-
-def test_2026_nse_holidays_and_weekends_are_not_regular_sessions():
-    assert cal.is_trading_day(dt.date(2026, 9, 14)) is False
-    assert cal.is_trading_day(dt.date(2026, 10, 2)) is False
-    assert cal.is_trading_day(dt.date(2026, 9, 20)) is False
-    assert cal.is_trading_day(dt.date(2026, 9, 21)) is True
-
-
-def test_event_sessions_skip_weekend_and_gandhi_jayanti():
-    event = {
-        "symbol": "INFY",
-        "meeting_date": "2026-10-02",
-        "state": "ACTIVE",
-        "first_seen_at": "2026-09-25T09:00:00",
-        "last_changed_at": "2026-09-25T09:00:00",
-    }
-    out = cal.resolve_event_sessions(event, known_at=dt.datetime(2026, 10, 1, 15, 10))
-    assert out["status"] == "OK"
-    assert out["entry_date"] == "2026-10-01"
-    assert out["exit_date"] == "2026-10-05"
-
-
-def test_unknown_calendar_year_fails_closed():
-    event = {
-        "symbol": "INFY",
-        "meeting_date": "2027-01-15",
-        "state": "ACTIVE",
-        "first_seen_at": "2026-12-01T09:00:00",
-        "last_changed_at": "2026-12-01T09:00:00",
-    }
-    assert cal.resolve_event_sessions(event, known_at=dt.datetime(2027, 1, 14, 15, 10))["status"] == "UNVERIFIED_TRADING_CALENDAR"
-```
-
-- [ ] **Step 2: Run the calendar tests and verify RED**
-
-Run:
-```bash
-pytest -q tests/test_trial25_calendar.py
-```
-
-Expected: import failure because `app.trial25_calendar` does not yet exist.
-
-- [ ] **Step 3: Implement the verified 2026 calendar**
-
-```python
-# app/trial25_calendar.py
-from __future__ import annotations
-import datetime as dt
-
-NSE_FO_HOLIDAYS_2026 = frozenset({
-    dt.date(2026, 1, 15), dt.date(2026, 1, 26),
-    dt.date(2026, 2, 19),
-    dt.date(2026, 3, 3), dt.date(2026, 3, 19), dt.date(2026, 3, 26), dt.date(2026, 3, 31),
-    dt.date(2026, 4, 1), dt.date(2026, 4, 3), dt.date(2026, 4, 14),
-    dt.date(2026, 5, 1), dt.date(2026, 5, 28),
-    dt.date(2026, 6, 26),
-    dt.date(2026, 8, 26),
-    dt.date(2026, 9, 14),
-    dt.date(2026, 10, 2), dt.date(2026, 10, 20),
-    dt.date(2026, 11, 10), dt.date(2026, 11, 24),
-    dt.date(2026, 12, 25),
-})
-
-
-def is_trading_day(day: dt.date) -> bool:
-    if day.year != 2026:
-        return False
-    return day.weekday() < 5 and day not in NSE_FO_HOLIDAYS_2026
-
-
-def previous_trading_day(day: dt.date) -> dt.date:
-    if day.year != 2026:
-        raise ValueError("UNVERIFIED_TRADING_CALENDAR")
-    cur = day - dt.timedelta(days=1)
-    while not is_trading_day(cur):
-        cur -= dt.timedelta(days=1)
-    return cur
-
-
-def next_trading_day(day: dt.date) -> dt.date:
-    if day.year != 2026:
-        raise ValueError("UNVERIFIED_TRADING_CALENDAR")
-    cur = day + dt.timedelta(days=1)
-    while not is_trading_day(cur):
-        cur += dt.timedelta(days=1)
-    return cur
-```
-
-Then add `resolve_event_sessions` so it accepts only `ACTIVE` or `REVISED`, requires `first_seen_at <= known_at`, and returns ISO entry/exit dates. If the meeting year is not 2026, return `{"status": "UNVERIFIED_TRADING_CALENDAR"}`.
-
-- [ ] **Step 4: Add failing post-29-Sep F&O membership tests**
-
-```python
-def test_new_post_freeze_fno_symbol_is_excluded():
-    out = cal.fno_membership_status(
-        "NEWFNO",
-        frozen_symbols={"INFY", "TCS"},
-        contracts_map={"NEWFNO": [{"instrument_type": "CE"}, {"instrument_type": "PE"}]},
-    )
-    assert out["status"] == "NOT_IN_FROZEN_UNIVERSE"
-
-
-def test_frozen_symbol_deleted_from_live_fno_is_unavailable():
-    out = cal.fno_membership_status(
-        "INFY",
-        frozen_symbols={"INFY", "TCS"},
-        contracts_map={"TCS": [{"instrument_type": "CE"}, {"instrument_type": "PE"}]},
-    )
-    assert out["status"] == "UNAVAILABLE_NOT_FNO_AT_ENTRY"
-
-
-def test_frozen_symbol_with_live_ce_and_pe_is_eligible():
-    out = cal.fno_membership_status(
-        "INFY",
-        frozen_symbols={"INFY"},
-        contracts_map={"INFY": [{"instrument_type": "CE"}, {"instrument_type": "PE"}]},
-    )
-    assert out["status"] == "OK"
-```
-
-- [ ] **Step 5: Implement frozen/live F&O membership**
-
-```python
-def fno_membership_status(symbol: str, frozen_symbols: set[str], contracts_map: dict) -> dict:
-    symbol = str(symbol)
-    if symbol not in set(frozen_symbols or set()):
-        return {"status": "NOT_IN_FROZEN_UNIVERSE", "symbol": symbol}
-    rows = list((contracts_map or {}).get(symbol) or [])
-    types = {row.get("instrument_type") for row in rows}
-    if not {"CE", "PE"}.issubset(types):
-        return {"status": "UNAVAILABLE_NOT_FNO_AT_ENTRY", "symbol": symbol}
-    return {"status": "OK", "symbol": symbol}
-```
-
-- [ ] **Step 6: Update the preregistration text before any event is admitted**
-
-Add explicit language to `TRIAL25_PREREGISTRATION.md`:
+Add the approved rolling F&O membership rule in substance:
 
 ```markdown
-### F&O roster changes after the 2026-09-21 feasibility freeze
+### Point-in-time F&O membership
 
-The confirmatory cohort never expands after the freeze. Securities newly
-admitted to NSE equity derivatives after the freeze are not Trial-25 symbols.
-A frozen symbol that is absent from the live NFO instrument master at the fixed
-entry session is UNAVAILABLE_NOT_FNO_AT_ENTRY. No replacement symbol is used.
-The live instrument-master observation date is stored with every event.
+The 2026-09-21 frozen tradeable_symbol_list is the immutable baseline cohort.
+A later F&O addition is not eligible immediately. From its first observed NFO
+instrument-master date it must complete 10 distinct trading sessions under the
+same >=70% two-sided ATM coverage and <=4% median ATM-straddle spread gate.
+Eligibility starts only on the next trading day after that gate passes.
+
+A baseline or supplemental name whose required contracts no longer exist is
+operationally unavailable for that event; it is not replaced.
+
+Daily NFO membership is persisted point-in-time so later Exchange changes
+cannot rewrite event-date eligibility.
 ```
 
-Also clarify the expiry constraint as **nearest expiry strictly after planned exit and >=5 calendar DTE at entry**.
+Also change the expiry rule to explicitly require both conditions:
 
-- [ ] **Step 7: Run Task-1 tests**
+```markdown
+Use the nearest listed expiry that expires strictly after planned exit and has
+at least 5 calendar DTE at entry.
+```
+
+- [ ] **Step 2: Write failing storage-path tests**
+
+Add to `tests/test_v12_storage.py`:
+
+```python
+def test_trial25_paths_live_under_persistent_v12_root():
+    out = resolve_v12_storage({"RAILWAY_VOLUME_MOUNT_PATH": "/data"})
+    assert out["trial25_root"] == "/data/v12/trial25"
+    assert out["trial25_state"] == "/data/v12/trial25/trial25_state.json"
+    assert out["trial25_ledger"] == "/data/v12/trial25/trial25_event_ledger.jsonl"
+    assert out["trial25_raw_quotes"] == "/data/v12/trial25/trial25_raw_quotes.jsonl"
+    assert out["trial25_universe_state"] == "/data/v12/trial25/trial25_universe_state.json"
+    assert out["trial25_universe_ledger"] == "/data/v12/trial25/trial25_universe_ledger.jsonl"
+    assert out["trial25_stage_d"] == "/data/v12/trial25/trial25_stage_d_calibration.json"
+    assert out["trial25_stage_d_hash"] == "/data/v12/trial25/trial25_stage_d_calibration.sha256"
+    assert out["persistent"] is True
+```
+
+- [ ] **Step 3: Run test and verify it fails**
 
 Run:
+
 ```bash
-pytest -q tests/test_trial25_calendar.py
+pytest -q tests/test_v12_storage.py -k trial25
+```
+
+Expected: FAIL because the Trial-25 keys do not exist.
+
+- [ ] **Step 4: Extend storage resolution minimally**
+
+In `app/v12_storage.py`, derive `trial25_root = Path(root) / "trial25"` and return the eight exact paths above. Include them in persistence-under-volume validation.
+
+In `app/config.py`, expose those values without introducing new environment tunables.
+
+- [ ] **Step 5: Run storage tests**
+
+```bash
+pytest -q tests/test_v12_storage.py
 ```
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add app/trial25_calendar.py tests/test_trial25_calendar.py TRIAL25_PREREGISTRATION.md
-git commit -m "feat: add Trial 25 calendar and frozen F&O cohort"
+git add TRIAL25_PREREGISTRATION.md app/v12_storage.py app/config.py tests/test_v12_storage.py
+git commit -m "trial25: lock membership contract and storage paths"
 ```
 
 ---
 
-### Task 2: Executable Quote Freshness, Iron-Butterfly Selection, and 2026 Charges
+### Task 2: Point-in-time F&O membership and supplemental feasibility
+
+**Files:**
+- Create: `app/trial25_universe.py`
+- Create: `tests/test_trial25_universe.py`
+
+**Interfaces:**
+- Consumes:
+  - frozen feasibility JSON path
+  - current list of NFO instrument rows
+  - current fixed-slot broad summary: `dict[symbol, summary]`
+  - `now: datetime`
+- Produces:
+  - `stock_fno_symbols(instruments: list[dict]) -> set[str]`
+  - `observe_membership(state, symbols, now) -> tuple[state, ledger_records]`
+  - `record_supplemental_session(state, symbol, day, two_sided, straddle_spread_pct) -> dict`
+  - `eligible_on(state, symbol, trading_date) -> tuple[bool, str]`
+  - `load_universe_state(path) -> dict`
+  - `save_universe_state(path, state) -> None`
+
+- [ ] **Step 1: Write failing baseline/addition/removal tests**
+
+Create `tests/test_trial25_universe.py`:
+
+```python
+import datetime as dt
+
+from app import trial25_universe as u
+
+
+def test_membership_detects_addition_and_removal_without_rewriting_history():
+    state = u.empty_universe_state(["RELIANCE", "TCS"])
+    d1 = dt.datetime(2026, 9, 29, 9, 20)
+    d2 = dt.datetime(2026, 9, 30, 9, 20)
+
+    state, first = u.observe_membership(state, {"RELIANCE", "TCS"}, d1)
+    state, second = u.observe_membership(state, {"RELIANCE", "NEWFNO"}, d2)
+
+    assert first[-1]["symbols"] == ["RELIANCE", "TCS"]
+    assert second[-1]["added"] == ["NEWFNO"]
+    assert second[-1]["removed"] == ["TCS"]
+    assert state["symbols"]["NEWFNO"]["first_seen_fno"] == "2026-09-30"
+    assert state["symbols"]["TCS"]["last_removed_fno"] == "2026-09-30"
+
+
+def test_new_fno_name_is_not_eligible_until_next_day_after_ten_session_gate():
+    state = u.empty_universe_state(["RELIANCE"])
+    state, _ = u.observe_membership(state, {"RELIANCE", "NEWFNO"}, dt.datetime(2026, 9, 30, 9, 20))
+    dates = [
+        dt.date(2026, 9, 30), dt.date(2026, 10, 1), dt.date(2026, 10, 5),
+        dt.date(2026, 10, 6), dt.date(2026, 10, 7), dt.date(2026, 10, 8),
+        dt.date(2026, 10, 9), dt.date(2026, 10, 12), dt.date(2026, 10, 13),
+        dt.date(2026, 10, 14),
+    ]
+    for day in dates:
+        state = u.record_supplemental_session(
+            state, "NEWFNO", day, two_sided=True, straddle_spread_pct=2.0
+        )
+
+    assert u.eligible_on(state, "NEWFNO", dt.date(2026, 10, 14))[0] is False
+    assert u.eligible_on(state, "NEWFNO", dt.date(2026, 10, 15)) == (True, "SUPPLEMENTAL_10D_PASS")
+
+
+def test_supplemental_gate_uses_same_coverage_and_spread_rule():
+    state = u.empty_universe_state([])
+    state, _ = u.observe_membership(state, {"NEWFNO"}, dt.datetime(2026, 9, 30, 9, 20))
+    dates = [dt.date(2026, 10, d) for d in (1, 5, 6, 7, 8, 9, 12, 13, 14, 15)]
+    for i, day in enumerate(dates):
+        state = u.record_supplemental_session(
+            state, "NEWFNO", day,
+            two_sided=i < 6,
+            straddle_spread_pct=3.0 if i < 6 else None,
+        )
+    ok, reason = u.eligible_on(state, "NEWFNO", dt.date(2026, 10, 16))
+    assert ok is False
+    assert reason == "SUPPLEMENTAL_GATE_NOT_PASSED"
+
+
+def test_removed_baseline_name_is_unavailable_when_not_currently_in_fno():
+    state = u.empty_universe_state(["TCS"])
+    state, _ = u.observe_membership(state, {"TCS"}, dt.datetime(2026, 9, 29, 9, 20))
+    state, _ = u.observe_membership(state, set(), dt.datetime(2026, 9, 30, 9, 20))
+    assert u.eligible_on(state, "TCS", dt.date(2026, 10, 1)) == (False, "NOT_CURRENT_FNO_MEMBER")
+```
+
+- [ ] **Step 2: Run and verify red**
+
+```bash
+pytest -q tests/test_trial25_universe.py
+```
+
+Expected: import/module failure.
+
+- [ ] **Step 3: Implement membership state**
+
+Create `app/trial25_universe.py` with this public shape:
+
+```python
+def empty_universe_state(baseline_symbols):
+    return {
+        "version": 1,
+        "baseline_symbols": sorted(set(map(str, baseline_symbols or []))),
+        "current_symbols": [],
+        "last_observed_date": None,
+        "membership_hash": None,
+        "symbols": {},
+        "supplemental": {},
+    }
+
+
+def stock_fno_symbols(instruments):
+    out = set()
+    for row in instruments or []:
+        typ = str(row.get("instrument_type") or "")
+        name = str(row.get("name") or "").strip().upper()
+        segment = str(row.get("segment") or "")
+        if name and typ in {"FUT", "CE", "PE"} and segment.startswith("NFO"):
+            out.add(name)
+    return out
+```
+
+Membership observations hash the sorted symbol list with SHA-256, append at most once per date/hash, and store explicit `added`/`removed` arrays.
+
+For supplemental qualification, aggregate one session observation per distinct trading date:
+
+```python
+coverage_pct = 100.0 * two_sided_sessions / recorded_sessions
+median_spread = statistics.median(valid_spreads) if valid_spreads else None
+passed = recorded_sessions >= 10 and coverage_pct >= 70.0 and median_spread is not None and median_spread <= 4.0
+```
+
+When `passed` becomes true, set `qualified_on=<decision date>`; `eligible_from` is the next verified trading session supplied by Task 3.
+
+Do not use future snapshots to backfill an earlier date.
+
+- [ ] **Step 4: Add idempotency/hash test**
+
+```python
+def test_same_day_same_membership_is_idempotent():
+    state = u.empty_universe_state(["RELIANCE"])
+    now = dt.datetime(2026, 9, 30, 9, 20)
+    state, first = u.observe_membership(state, {"RELIANCE", "NEWFNO"}, now)
+    first_hash = state["membership_hash"]
+    state, second = u.observe_membership(state, {"RELIANCE", "NEWFNO"}, now)
+    assert second == []
+    assert state["membership_hash"] == first_hash
+```
+
+- [ ] **Step 5: Run green**
+
+```bash
+pytest -q tests/test_trial25_universe.py
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/trial25_universe.py tests/test_trial25_universe.py
+git commit -m "trial25: preserve point-in-time F&O membership"
+```
+
+---
+
+### Task 3: Verified 2026 F&O trading calendar and earnings timing
+
+**Files:**
+- Create: `app/trial25_calendar.py`
+- Create: `tests/test_trial25_calendar.py`
+
+**Interfaces:**
+- Consumes: V12 earnings-state event dict, `as_known_at: datetime`
+- Produces:
+  - `is_fno_trading_day(day: date) -> bool`
+  - `previous_fno_trading_day(day: date) -> date`
+  - `next_fno_trading_day(day: date) -> date`
+  - `revision_known_before_entry(event: dict, entry_at: datetime) -> bool`
+  - `resolve_event_sessions(event: dict, as_known_at: datetime) -> dict`
+
+- [ ] **Step 1: Write failing holiday/session tests**
+
+Use official NSE F&O circular NSE/FAOP/71777:
+
+```python
+def test_2026_fno_holidays_and_weekends_are_closed():
+    assert cal.is_fno_trading_day(dt.date(2026, 9, 14)) is False
+    assert cal.is_fno_trading_day(dt.date(2026, 10, 2)) is False
+    assert cal.is_fno_trading_day(dt.date(2026, 10, 20)) is False
+    assert cal.is_fno_trading_day(dt.date(2026, 10, 3)) is False
+    assert cal.is_fno_trading_day(dt.date(2026, 10, 5)) is True
+
+
+def test_earnings_event_uses_strictly_previous_and_next_fno_sessions():
+    event = {
+        "symbol": "RELIANCE",
+        "meeting_date": "2026-10-09",
+        "state": "ACTIVE",
+        "first_seen_at": "2026-09-21T10:00:00",
+        "last_changed_at": "2026-09-21T10:00:00",
+    }
+    out = cal.resolve_event_sessions(event, dt.datetime(2026, 10, 8, 15, 0))
+    assert out["entry_date"] == "2026-10-08"
+    assert out["exit_date"] == "2026-10-12"
+```
+
+- [ ] **Step 2: Add revision-boundary test**
+
+```python
+def test_post_entry_revision_cannot_rewrite_captured_event():
+    event = {
+        "meeting_date": "2026-10-12",
+        "first_seen_at": "2026-09-21T10:00:00",
+        "last_changed_at": "2026-10-08T15:20:00",
+        "state": "REVISED",
+    }
+    assert cal.revision_known_before_entry(
+        event,
+        dt.datetime(2026, 10, 8, 15, 10),
+    ) is False
+```
+
+- [ ] **Step 3: Run red**
+
+```bash
+pytest -q tests/test_trial25_calendar.py
+```
+
+- [ ] **Step 4: Implement deterministic 2026 F&O calendar**
+
+Define:
+
+```python
+FNO_HOLIDAYS_2026 = {
+    dt.date(2026, 1, 26),
+    dt.date(2026, 3, 3),
+    dt.date(2026, 3, 26),
+    dt.date(2026, 3, 31),
+    dt.date(2026, 4, 3),
+    dt.date(2026, 4, 14),
+    dt.date(2026, 5, 1),
+    dt.date(2026, 5, 28),
+    dt.date(2026, 6, 26),
+    dt.date(2026, 9, 14),
+    dt.date(2026, 10, 2),
+    dt.date(2026, 10, 20),
+    dt.date(2026, 11, 10),
+    dt.date(2026, 11, 24),
+    dt.date(2026, 12, 25),
+}
+```
+
+For any year other than 2026, fail closed with `UNVERIFIED_TRADING_CALENDAR`; do not infer weekdays-only.
+
+- [ ] **Step 5: Run green**
+
+```bash
+pytest -q tests/test_trial25_calendar.py
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/trial25_calendar.py tests/test_trial25_calendar.py
+git commit -m "trial25: add verified earnings trading calendar"
+```
+
+---
+
+### Task 4: Execution primitives, stale audit, and Indian option charges
 
 **Files:**
 - Create: `app/trial25_execution.py`
 - Create: `tests/test_trial25_execution.py`
 
 **Interfaces:**
-- Consumes: option contract rows from Kite instrument master, dedicated quote payloads, spot, planned exit date.
 - Produces:
-  - `select_structure(contracts, spot, entry_date, exit_date, quote_lookup) -> dict`
-  - `execution_leg(snapshot, side: str, lot_size: int) -> dict`
-  - `quote_freshness(quote, request_at, received_at) -> dict`
-  - `option_charges(fills: list[dict]) -> dict`
-  - constant `FEE_MODEL_VERSION = "ZERODHA_NSE_EQ_OPT_2026_04_V1"`
+  - `select_event_contracts(contracts, spot, entry_date, exit_date, atm_ask_total) -> dict`
+  - `book_snapshot(contract, quote, requested_at, received_at, required_side) -> dict`
+  - `execution_book_ok(snapshot, lot_size) -> tuple[bool, str]`
+  - `iron_fly_entry_credit(legs) -> float`
+  - `iron_fly_exit_debit(legs) -> float`
+  - `option_charges(fills) -> dict`
+  - `FEE_MODEL_VERSION = "ZERODHA_NSE_EQ_OPT_2026_04_V1"`
 
 - [ ] **Step 1: Write failing expiry/ATM/wing tests**
 
 ```python
-# tests/test_trial25_execution.py
-import datetime as dt
-from app import trial25_execution as ex
-
-
-def _c(symbol, expiry, strike, typ, lot=250):
-    return {
-        "tradingsymbol": f"{symbol}{expiry:%y%m%d}{int(strike)}{typ}",
-        "instrument_token": hash((symbol, expiry, strike, typ)) & 0x7FFFFFFF,
-        "expiry": expiry,
-        "strike": strike,
-        "instrument_type": typ,
-        "lot_size": lot,
-    }
-
-
-def test_structure_uses_nearest_expiry_after_exit_with_at_least_5_dte():
-    entry = dt.date(2026, 10, 8)
-    exit_day = dt.date(2026, 10, 12)
-    e1 = dt.date(2026, 10, 13)
-    e2 = dt.date(2026, 10, 27)
-    contracts = []
-    for expiry in (e1, e2):
-        for strike in (900, 950, 1000, 1050, 1100):
-            contracts += [_c("ABC", expiry, strike, "CE"), _c("ABC", expiry, strike, "PE")]
-    quotes = {
-        ("2026-10-13", 1000, "CE"): {"best_ask": 30.0},
-        ("2026-10-13", 1000, "PE"): {"best_ask": 25.0},
-    }
-    out = ex.structure_targets(contracts, spot=1002.0, entry_date=entry, exit_date=exit_day, atm_quote_lookup=quotes)
+def test_selects_nearest_expiry_after_exit_with_at_least_five_dte():
+    contracts = option_chain(
+        expiries=[dt.date(2026, 10, 13), dt.date(2026, 10, 27)],
+        strikes=[900, 950, 1000, 1050, 1100],
+    )
+    out = ex.select_event_contracts(
+        contracts,
+        spot=1004.0,
+        entry_date=dt.date(2026, 10, 8),
+        exit_date=dt.date(2026, 10, 12),
+        atm_ask_total=50.0,
+    )
     assert out["expiry"] == "2026-10-13"
     assert out["atm_strike"] == 1000.0
-    assert out["put_wing_strike"] == 900.0
-    assert out["call_wing_strike"] == 1150.0 or out["status"] == "UNAVAILABLE_WING_OUTSIDE_LISTED_STRIKES"
+    assert out["lower_put_strike"] == 900.0
+    assert out["upper_call_strike"] == 1100.0
 ```
 
-Use a second fixture with strikes through 1150 and assert exact 900/1150 wings. This pins the 2.0 x (30+25)=110-point wing rule and verifies no inward wing substitution.
+Also assert no eligible expiry returns `{"status":"UNAVAILABLE_EXPIRY"}`.
 
-- [ ] **Step 2: Run selection tests and verify RED**
-
-```bash
-pytest -q tests/test_trial25_execution.py -k "structure"
-```
-
-- [ ] **Step 3: Implement pure structure selection**
-
-Implement:
+- [ ] **Step 2: Write freshness and one-lot depth tests**
 
 ```python
-FEE_MODEL_VERSION = "ZERODHA_NSE_EQ_OPT_2026_04_V1"
-MIN_DTE = 5
-WING_MULTIPLIER = 2.0
-MAX_REST_LATENCY_SECONDS = 15.0
-
-
-def choose_expiry(contracts, entry_date, exit_date):
-    expiries = sorted({
-        row["expiry"] for row in contracts
-        if row.get("instrument_type") in ("CE", "PE")
-        and row.get("expiry") is not None
-        and row["expiry"] > exit_date
-        and (row["expiry"] - entry_date).days >= MIN_DTE
-    })
-    return expiries[0] if expiries else None
-```
-
-`structure_targets` must select nearest ATM strike, compute implied-move points from ATM **asks**, then select a put strike at or below target and call strike at or above target. If either does not exist, return `UNAVAILABLE_WING_OUTSIDE_LISTED_STRIKES`; never pull the wing inward.
-
-- [ ] **Step 4: Write failing freshness/book tests**
-
-```python
-def test_old_last_trade_does_not_reject_fresh_executable_book():
-    request_at = dt.datetime(2026, 10, 8, 15, 10, 0)
-    received_at = dt.datetime(2026, 10, 8, 15, 10, 2)
+def test_old_last_trade_does_not_reject_current_executable_rest_book():
+    requested = dt.datetime(2026, 10, 8, 15, 10, 0)
+    received = dt.datetime(2026, 10, 8, 15, 10, 2)
     quote = {
-        "last_trade_time": dt.datetime(2026, 10, 8, 14, 40, 0),
+        "last_trade_time": dt.datetime(2026, 10, 8, 14, 0, 0),
         "timestamp": dt.datetime(2026, 10, 8, 15, 10, 1),
         "depth": {
-            "buy": [{"price": 50.0, "quantity": 500}],
-            "sell": [{"price": 50.5, "quantity": 500}],
+            "buy": [{"price": 100.0, "quantity": 500, "orders": 3}],
+            "sell": [{"price": 101.0, "quantity": 500, "orders": 2}],
         },
     }
-    f = ex.quote_freshness(quote, request_at, received_at)
-    assert f["transport_fresh"] is True
-    assert f["last_trade_stale_600s"] is True
-    leg = ex.execution_leg(quote, side="SELL", lot_size=250, request_at=request_at, received_at=received_at)
-    assert leg["status"] == "OK"
-    assert leg["execution_price"] == 50.0
+    snap = ex.book_snapshot({"lot_size": 250}, quote, requested, received, "SELL")
+    assert snap["last_trade_stale_600s"] is True
+    assert snap["transport_fresh"] is True
+    assert ex.execution_book_ok(snap, 250) == (True, "OK")
 
 
-def test_insufficient_top_level_quantity_fails_closed():
-    q = {"depth": {"buy": [{"price": 50.0, "quantity": 100}], "sell": [{"price": 50.5, "quantity": 500}]}}
-    out = ex.execution_leg(
-        q, side="SELL", lot_size=250,
-        request_at=dt.datetime(2026, 10, 8, 15, 10),
-        received_at=dt.datetime(2026, 10, 8, 15, 10, 1),
+def test_transport_latency_over_15_seconds_fails_closed():
+    requested = dt.datetime(2026, 10, 8, 15, 10, 0)
+    received = dt.datetime(2026, 10, 8, 15, 10, 16)
+    snap = ex.book_snapshot(
+        {"lot_size": 250},
+        {"depth": {"buy": [{"price": 100, "quantity": 500}], "sell": [{"price": 101, "quantity": 500}]}},
+        requested, received, "SELL",
     )
-    assert out["status"] == "UNAVAILABLE_QUANTITY"
+    assert ex.execution_book_ok(snap, 250) == (False, "STALE_TRANSPORT")
 ```
 
-Also test 15.0 seconds accepted, >15.0 rejected, one-sided book rejected, zero/negative prices rejected, and BUY consumes best ask while SELL consumes best bid.
-
-- [ ] **Step 5: Implement the stale-audit/execution contract**
+- [ ] **Step 3: Write charge-model test with exact formula**
 
 ```python
-def quote_freshness(quote, request_at, received_at):
-    latency = max(0.0, (received_at - request_at).total_seconds())
-    last_trade = quote.get("last_trade_time")
-    quote_ts = quote.get("timestamp")
-    return {
-        "api_latency_ms": round(latency * 1000.0, 3),
-        "transport_fresh": latency <= MAX_REST_LATENCY_SECONDS,
-        "quote_timestamp_age_s": _age_seconds(quote_ts, received_at),
-        "last_trade_age_s": _age_seconds(last_trade, received_at),
-        "last_trade_stale_600s": (
-            _age_seconds(last_trade, received_at) is not None
-            and _age_seconds(last_trade, received_at) > 600.0
-        ),
-    }
-```
+def manual_charges(fills):
+    brokerage = 20.0 * len(fills)
+    sell_turnover = sum(f["price"] * f["quantity"] for f in fills if f["side"] == "SELL")
+    buy_turnover = sum(f["price"] * f["quantity"] for f in fills if f["side"] == "BUY")
+    turnover = sell_turnover + buy_turnover
+    stt = sell_turnover * 0.0015
+    txn = turnover * 0.0003553
+    sebi = turnover * 0.000001
+    stamp = buy_turnover * 0.00003
+    gst = 0.18 * (brokerage + txn + sebi)
+    return brokerage + stt + txn + sebi + stamp + gst
 
-`execution_leg` must require a two-sided valid book even though only one side is consumed. It records both bid/ask and quantities, then selects best bid for SELL and best ask for BUY.
 
-- [ ] **Step 6: Write failing fee-model tests**
-
-Use a deterministic eight-fill round trip:
-
-```python
-def test_zerodha_nse_option_charge_model_components():
+def test_fee_model_matches_frozen_2026_formula():
     fills = [
-        {"side": "SELL", "price": 50.0, "quantity": 250},
-        {"side": "SELL", "price": 45.0, "quantity": 250},
-        {"side": "BUY", "price": 10.0, "quantity": 250},
-        {"side": "BUY", "price": 8.0, "quantity": 250},
-        {"side": "BUY", "price": 25.0, "quantity": 250},
-        {"side": "BUY", "price": 22.0, "quantity": 250},
-        {"side": "SELL", "price": 4.0, "quantity": 250},
-        {"side": "SELL", "price": 3.0, "quantity": 250},
+        {"side": "SELL", "price": 100.0, "quantity": 250},
+        {"side": "SELL", "price": 80.0, "quantity": 250},
+        {"side": "BUY", "price": 15.0, "quantity": 250},
+        {"side": "BUY", "price": 12.0, "quantity": 250},
     ]
-    out = ex.option_charges(fills)
-    assert out["version"] == "ZERODHA_NSE_EQ_OPT_2026_04_V1"
-    assert out["brokerage"] == 160.0
-    assert out["sell_turnover"] == 25500.0
-    assert out["buy_turnover"] == 16250.0
-    assert out["total_turnover"] == 41750.0
-    assert out["stt"] == 38.0  # 0.15% sell premium, rounded per model
-    assert out["total"] > 160.0
+    got = ex.option_charges(fills)
+    assert got["version"] == "ZERODHA_NSE_EQ_OPT_2026_04_V1"
+    assert got["total"] == pytest.approx(manual_charges(fills), rel=1e-12)
 ```
 
-Add exact expected transaction-charge, SEBI-fee, stamp-duty and GST assertions after computing them once from the formulas below; use round-to-paise for service charges and the current Zerodha-documented nearest-rupee STT behavior.
-
-- [ ] **Step 7: Implement the frozen fee model**
-
-```python
-BROKERAGE_PER_ORDER = 20.0
-STT_SELL_PREMIUM_RATE = 0.0015
-NSE_OPTION_TXN_RATE = 0.0003553
-SEBI_RATE = 10.0 / 10_000_000.0
-STAMP_BUY_RATE = 0.00003
-GST_RATE = 0.18
-
-
-def option_charges(fills):
-    fills = list(fills or [])
-    sell_turnover = sum(float(x["price"]) * int(x["quantity"]) for x in fills if x["side"] == "SELL")
-    buy_turnover = sum(float(x["price"]) * int(x["quantity"]) for x in fills if x["side"] == "BUY")
-    total_turnover = sell_turnover + buy_turnover
-    brokerage = BROKERAGE_PER_ORDER * len(fills)
-    stt = float(round(sell_turnover * STT_SELL_PREMIUM_RATE))
-    transaction = total_turnover * NSE_OPTION_TXN_RATE
-    sebi = total_turnover * SEBI_RATE
-    stamp = buy_turnover * STAMP_BUY_RATE
-    gst = GST_RATE * (brokerage + transaction + sebi)
-    total = brokerage + stt + transaction + sebi + stamp + gst
-    return {
-        "version": FEE_MODEL_VERSION,
-        "brokerage": round(brokerage, 2),
-        "sell_turnover": round(sell_turnover, 2),
-        "buy_turnover": round(buy_turnover, 2),
-        "total_turnover": round(total_turnover, 2),
-        "stt": round(stt, 2),
-        "transaction_charges": round(transaction, 2),
-        "sebi_charges": round(sebi, 2),
-        "stamp_duty": round(stamp, 2),
-        "gst": round(gst, 2),
-        "total": round(total, 2),
-    }
-```
-
-Do not add a generic slippage percentage; the test must assert that bid/ask crossing is already represented by the chosen fill prices.
-
-- [ ] **Step 8: Run Task-2 tests**
+- [ ] **Step 4: Run red**
 
 ```bash
 pytest -q tests/test_trial25_execution.py
 ```
 
-Expected: PASS.
+- [ ] **Step 5: Implement pure execution module**
 
-- [ ] **Step 9: Commit**
+Ensure `book_snapshot` records:
+
+```python
+{
+    "requested_at": ...,
+    "received_at": ...,
+    "api_latency_ms": ...,
+    "quote_timestamp": ...,
+    "quote_timestamp_age_s": ...,
+    "last_trade_time": ...,
+    "last_trade_age_s": ...,
+    "last_trade_stale_600s": ...,
+    "best_bid": ...,
+    "best_bid_qty": ...,
+    "best_ask": ...,
+    "best_ask_qty": ...,
+    "transport_fresh": api_latency_ms <= 15000,
+    "required_side": "BUY" | "SELL",
+}
+```
+
+Use exact executable formulas from the spec; do not import midpoint-return helpers.
+
+- [ ] **Step 6: Run green**
+
+```bash
+pytest -q tests/test_trial25_execution.py
+```
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add app/trial25_execution.py tests/test_trial25_execution.py
-git commit -m "feat: add Trial 25 executable structure and fees"
+git commit -m "trial25: add executable iron-fly primitives"
 ```
 
 ---
 
-### Task 3: Persistent Trial-25 Event State Machine and Raw Quote Ledger
+### Task 5: Persistent Trial-25 event state machine
 
 **Files:**
 - Create: `app/trial25_shadow.py`
 - Create: `tests/test_trial25_shadow.py`
-- Modify: `app/v12_storage.py`
-- Modify: `app/config.py`
 
 **Interfaces:**
-- Consumes:
-  - frozen feasibility report;
-  - earnings state;
-  - live contracts map;
-  - due fixed slot;
-  - dedicated quote function.
 - Produces:
-  - `load_state(path) -> dict`
+  - `empty_state() -> dict`
+  - `make_event(...) -> dict`
   - `discover_events(...) -> dict`
-  - `process_due_events(...) -> dict`
-  - `public_summary(state) -> dict`
-  - persistent state/ledger/raw-quote files under `/data/v12/trial25/`.
+  - `due_transition(event, now) -> str | None`
+  - `capture_entry(...) -> dict`
+  - `capture_exit(...) -> dict`
+  - `public_event(event) -> dict`
+  - `load_state(path) -> dict`
+  - `save_state(path, state) -> None`
+  - `append_ledger(path, record) -> None`
+  - `append_raw_quotes(path, record) -> None`
 
-- [ ] **Step 1: Extend V12 storage paths with failing test**
-
-Add to the existing storage test:
-
-```python
-def test_trial25_paths_follow_persistent_v12_root(monkeypatch):
-    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
-    from app.v12_storage import resolve_v12_storage
-    out = resolve_v12_storage(dict(os.environ))
-    assert out["trial25_root"] == "/data/v12/trial25"
-    assert out["trial25_state"].endswith("/v12/trial25/trial25_state.json")
-    assert out["trial25_ledger"].endswith("/v12/trial25/trial25_event_ledger.jsonl")
-    assert out["trial25_raw_quotes"].endswith("/v12/trial25/trial25_raw_quotes.jsonl")
-```
-
-- [ ] **Step 2: Add paths to `v12_storage.py` and `config.py`**
-
-The resolver must derive all Trial-25 files from the same root as existing V12 persistence. Do not add a second Railway volume.
-
-Expose:
+- [ ] **Step 1: Write failing event-state tests**
 
 ```python
-TRIAL25_ROOT
-TRIAL25_STATE_FILE
-TRIAL25_EVENT_LEDGER_FILE
-TRIAL25_RAW_QUOTES_FILE
-TRIAL25_STAGE_D_FILE
-TRIAL25_STAGE_D_HASH_FILE
-```
-
-- [ ] **Step 3: Write failing discovery/idempotency tests**
-
-```python
-def test_new_fno_admission_never_creates_trial25_event(tmp_path):
-    frozen = {"INFY"}
-    earnings = {
-        "events": {
-            "NEWFNO": {
-                "symbol": "NEWFNO", "meeting_date": "2026-10-09",
-                "state": "ACTIVE", "first_seen_at": "2026-09-25T10:00:00",
-                "last_changed_at": "2026-09-25T10:00:00",
-            }
-        }
-    }
-    state = shadow.discover_events(
-        shadow.empty_state(), earnings, frozen, {"NEWFNO": [{"instrument_type": "CE"}, {"instrument_type": "PE"}]},
-        now=dt.datetime(2026, 10, 8, 14, 0),
-        instrument_master_date=dt.date(2026, 10, 8),
+def test_event_id_is_deterministic_and_entry_freezes_four_contracts():
+    event = shadow.make_event(
+        symbol="RELIANCE",
+        meeting_date=dt.date(2026, 10, 9),
+        entry_date=dt.date(2026, 10, 8),
+        exit_date=dt.date(2026, 10, 12),
     )
-    assert state["events"] == {}
+    first = shadow.capture_entry(event, executable_entry_fixture(), captured_at="2026-10-08T15:10:03")
+    second = shadow.capture_entry(first, executable_entry_fixture(), captured_at="2026-10-08T15:10:04")
+    assert first["event_id"] == second["event_id"]
+    assert first["state"] == "ENTRY_CAPTURED"
+    assert second == first
+    assert len(first["contracts"]) == 4
 
 
-def test_restart_does_not_duplicate_entry_capture(tmp_path):
-    # Seed one ENTRY_CAPTURED event with four frozen contracts.
-    # Calling process_due_events again at the same slot must not append another ENTRY_CAPTURED transition.
-    ...
+def test_exit_rejects_contract_change():
+    entered = shadow.capture_entry(base_event(), executable_entry_fixture(), captured_at="2026-10-08T15:10:03")
+    changed = executable_exit_fixture()
+    changed["atm_ce"]["instrument_token"] = 999999
+    out = shadow.capture_exit(entered, changed, captured_at="2026-10-12T09:30:02")
+    assert out["state"] == "UNAVAILABLE_CONTRACT_CHANGED"
+
+
+def test_completed_event_public_shape_has_no_pnl():
+    completed = completed_raw_event_fixture()
+    public = shadow.public_event(completed)
+    forbidden = {"pnl", "return", "return_pct", "profit", "win", "loss"}
+    assert forbidden.isdisjoint(set(public))
 ```
 
-Replace the ellipsis with a concrete seeded state fixture in the actual test file; the test must count ledger transition records before/after the repeated call.
-
-- [ ] **Step 4: Implement append-only event identity and atomic state**
-
-Event ID:
+- [ ] **Step 2: Add restart/idempotency test**
 
 ```python
-def event_id(symbol, meeting_date, entry_date):
-    canonical = f"{symbol}|{meeting_date}|{entry_date}"
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+def test_persisted_entry_is_not_appended_twice_after_restart(tmp_path):
+    state_file = tmp_path / "state.json"
+    ledger_file = tmp_path / "ledger.jsonl"
+    raw_file = tmp_path / "raw.jsonl"
+    state = shadow.empty_state()
+    state = shadow.record_entry_once(
+        state, base_event(), executable_entry_fixture(),
+        state_file=state_file, ledger_file=ledger_file, raw_file=raw_file,
+        captured_at="2026-10-08T15:10:03",
+    )
+    reloaded = shadow.load_state(state_file)
+    state2 = shadow.record_entry_once(
+        reloaded, base_event(), executable_entry_fixture(),
+        state_file=state_file, ledger_file=ledger_file, raw_file=raw_file,
+        captured_at="2026-10-08T15:10:05",
+    )
+    assert state2 == reloaded
+    assert len(ledger_file.read_text().splitlines()) == 1
+    assert len(raw_file.read_text().splitlines()) == 1
 ```
 
-State skeleton:
+- [ ] **Step 3: Run red**
 
-```python
-def empty_state():
-    return {
-        "version": 1,
-        "stage": "STAGE_D_ACCUMULATING",
-        "events": {},
-        "last_error": None,
-        "last_write_error": None,
-        "last_updated_at": None,
-    }
+```bash
+pytest -q tests/test_trial25_shadow.py
 ```
 
-Use temp-file + `os.replace` for state JSON and append-only JSONL for transitions/raw quote envelopes.
-
-Every transition record must include:
+- [ ] **Step 4: Implement explicit fail-closed terminal states**
 
 ```python
-{
-    "event_id": ...,
-    "symbol": ...,
-    "meeting_date": ...,
-    "entry_date": ...,
-    "exit_date": ...,
-    "state_from": ...,
-    "state_to": ...,
-    "observed_at": ...,
-    "instrument_master_date": ...,
-    "reason": ...,
+UNAVAILABLE_STATES = {
+    "UNAVAILABLE_NOT_IN_FROZEN_UNIVERSE",
+    "UNAVAILABLE_SUPPLEMENTAL_NOT_QUALIFIED",
+    "UNAVAILABLE_CALENDAR",
+    "UNAVAILABLE_ENTRY_SNAPSHOT",
+    "UNAVAILABLE_EXPIRY",
+    "UNAVAILABLE_ATM_BOOK",
+    "UNAVAILABLE_WING_BOOK",
+    "UNAVAILABLE_QUANTITY",
+    "UNAVAILABLE_EXIT_BOOK",
+    "UNAVAILABLE_CONTRACT_CHANGED",
 }
 ```
 
-- [ ] **Step 5: Write failing entry-capture tests**
+Store raw executable quotes but no derived P&L fields before calibration.
 
-Tests must cover:
+Use atomic temp+rename for state JSON and append-only JSONL for transitions/raw quotes.
 
-1. frozen symbol + live F&O + due 15:10 -> freezes exact four contracts;
-2. frozen symbol deleted from NFO -> `UNAVAILABLE_NOT_FNO_AT_ENTRY`;
-3. post-freeze new F&O admission -> no event;
-4. expiry unavailable -> `UNAVAILABLE_EXPIRY`;
-5. wing unavailable -> `UNAVAILABLE_WING_BOOK`;
-6. quantity short -> `UNAVAILABLE_QUANTITY`;
-7. earnings revision first seen after entry cannot rewrite meeting date.
-
-Use a fake quote function returning a deterministic mapping and request/receive timestamps.
-
-- [ ] **Step 6: Implement dedicated entry capture**
-
-The implementation flow inside `process_due_events` must be:
-
-```python
-if slot == "PRE_CAS":
-    for event in entry_due_events:
-        membership = trial25_calendar.fno_membership_status(...)
-        if membership["status"] != "OK":
-            terminal_unavailable(...)
-            continue
-        # Resolve candidate expiry/ATM.
-        # Fetch ATM pair first.
-        # Compute implied move from executable ATM asks.
-        # Resolve exact wing contracts.
-        # Fetch only missing wing quotes.
-        # Validate all four execution sides and one-lot quantity.
-        # Freeze contract identifiers + entry quote envelope.
-```
-
-The function receives a `quote_fetcher(keys) -> (quotes, request_at, received_at, errors)` dependency so unit tests do not touch Kite.
-
-- [ ] **Step 7: Write failing exit-contract tests**
-
-```python
-def test_exit_uses_same_four_contracts_and_never_recenters():
-    # Entry spot 1000, exit spot 1120.
-    # The event must request the four entry trading symbols, not a new ATM set.
-    ...
-```
-
-Also test missing exact exit symbol/token -> `UNAVAILABLE_CONTRACT_CHANGED` and one-sided exit book -> `UNAVAILABLE_EXIT_BOOK`.
-
-- [ ] **Step 8: Implement exact-contract exit capture**
-
-At `OPEN_STABLE` on the registered exit session, request only the stored four trading symbols. Validate the exact symbol/token pair, record exit quote envelopes, then transition to `COMPLETED_RAW`.
-
-Do **not** calculate P&L in this module.
-
-- [ ] **Step 9: Implement no-peeking public summary**
-
-```python
-PUBLIC_EVENT_KEYS = {
-    "event_id", "symbol", "meeting_date", "entry_date", "exit_date",
-    "state", "unavailable_reason", "expiry", "atm_strike",
-    "put_wing_strike", "call_wing_strike",
-}
-
-
-def public_summary(state):
-    events = []
-    for raw in (state.get("events") or {}).values():
-        events.append({key: raw.get(key) for key in PUBLIC_EVENT_KEYS})
-    return {
-        "stage": state.get("stage"),
-        "completed_stage_d": sum(e.get("state") == "COMPLETED_RAW" for e in (state.get("events") or {}).values()),
-        "events": sorted(events, key=lambda x: (x.get("meeting_date") or "", x.get("symbol") or "")),
-    }
-```
-
-A test must recursively assert the serialized summary contains none of:
-
-`pnl`, `profit`, `return`, `win_rate`, `profit_factor`, `mean`, `median`, `t_stat`.
-
-- [ ] **Step 10: Run Task-3 tests**
+- [ ] **Step 5: Run green**
 
 ```bash
-pytest -q tests/test_trial25_shadow.py tests/test_v12_storage.py
+pytest -q tests/test_trial25_shadow.py
 ```
 
-Expected: PASS.
-
-- [ ] **Step 11: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add app/trial25_shadow.py app/v12_storage.py app/config.py tests/test_trial25_shadow.py tests/test_v12_storage.py
-git commit -m "feat: add persistent Trial 25 event recorder"
+git add app/trial25_shadow.py tests/test_trial25_shadow.py
+git commit -m "trial25: add persistent earnings event state machine"
 ```
 
 ---
 
-### Task 4: Stage-D 40-Event No-Peeking Calibration and Immutable Freeze
+### Task 6: No-peeking Stage-D summary and deterministic 40-event freeze
 
 **Files:**
 - Create: `app/trial25_stage_d.py`
 - Create: `tests/test_trial25_stage_d.py`
 
 **Interfaces:**
-- Consumes: Trial-25 state with `COMPLETED_RAW` events and raw quote envelopes.
+- Consumes: raw completed Trial-25 events, fee model, Stage-D freeze paths
 - Produces:
-  - `maybe_freeze_stage_d(state, *, calibration_file, hash_file, fee_model_version, code_path) -> dict`
-  - `stage_d_status(...) -> dict`
-- Internal only:
-  - `_primary_return(event) -> float`
+  - `operational_summary(state) -> dict`
+  - `maybe_freeze_calibration(state, report_path, hash_path) -> dict`
+  - `verify_calibration(report_path, hash_path) -> dict`
 
-- [ ] **Step 1: Write failing under-40 no-peeking test**
+- [ ] **Step 1: Write no-peeking tests**
 
 ```python
-def test_39_events_never_compute_or_return_efficacy(monkeypatch, tmp_path):
-    state = make_completed_state(39)
-    called = False
-    def forbidden(_event):
-        nonlocal called
-        called = True
-        raise AssertionError("P&L must not be opened before 40 events")
-    monkeypatch.setattr(stage_d, "_primary_return", forbidden)
-    out = stage_d.maybe_freeze_stage_d(
+def test_summary_before_40_exposes_counts_but_no_efficacy():
+    state = state_with_completed_events(39)
+    out = stage.operational_summary(state)
+    assert out["completed_eligible"] == 39
+    assert out["target"] == 40
+    assert out["calibration_status"] == "COLLECTING"
+    forbidden = {
+        "mean_return", "median_return", "win_rate", "profit_factor",
+        "pnl", "return_pct", "t_stat",
+    }
+    assert forbidden.isdisjoint(set(out))
+
+
+def test_freeze_does_not_run_at_39(tmp_path):
+    out = stage.maybe_freeze_calibration(
+        state_with_completed_events(39),
+        tmp_path / "cal.json",
+        tmp_path / "cal.sha256",
+    )
+    assert out["status"] == "COLLECTING"
+    assert not (tmp_path / "cal.json").exists()
+```
+
+- [ ] **Step 2: Write the 38->43 deterministic boundary test**
+
+```python
+def test_stage_d_uses_exactly_first_40_when_cycle_completes_five_events(tmp_path):
+    state = state_with_completed_events(43, shuffled=True)
+    out = stage.maybe_freeze_calibration(
         state,
-        calibration_file=tmp_path / "stage_d.json",
-        hash_file=tmp_path / "stage_d.sha256",
-        fee_model_version="ZERODHA_NSE_EQ_OPT_2026_04_V1",
-        code_path=Path(stage_d.__file__),
+        tmp_path / "cal.json",
+        tmp_path / "cal.sha256",
     )
-    assert out == {"status": "ACCUMULATING", "completed": 39, "required": 40}
-    assert called is False
+    assert out["status"] == "FROZEN"
+    frozen = json.loads((tmp_path / "cal.json").read_text())
+    expected = sorted(
+        state["events"].values(),
+        key=lambda e: (e["exit_captured_at"], e["event_id"]),
+    )[:40]
+    assert frozen["event_ids"] == [e["event_id"] for e in expected]
+    assert len(frozen["event_ids"]) == 40
+    assert "mean_return" not in frozen
+    assert "event_returns" not in frozen
 ```
 
-- [ ] **Step 2: Write deterministic-first-40 test**
-
-Create 42 completed events where two share the same exit timestamp. Assert the selected IDs equal:
+- [ ] **Step 3: Write freeze immutability test**
 
 ```python
-expected = [
-    e["event_id"]
-    for e in sorted(events, key=lambda e: (e["exit_captured_at"], e["event_id"]))[:40]
-]
+def test_existing_calibration_is_hash_verified_not_overwritten(tmp_path):
+    state = state_with_completed_events(40)
+    first = stage.maybe_freeze_calibration(state, tmp_path/"cal.json", tmp_path/"cal.sha256")
+    before = (tmp_path/"cal.json").read_bytes()
+    later = state_with_completed_events(60)
+    second = stage.maybe_freeze_calibration(later, tmp_path/"cal.json", tmp_path/"cal.sha256")
+    assert second["status"] == "EXISTING_VALID_FREEZE"
+    assert (tmp_path/"cal.json").read_bytes() == before
 ```
 
-and that the freeze contains exactly those IDs.
+- [ ] **Step 4: Run red**
 
-- [ ] **Step 3: Implement private P&L only inside Stage-D**
+```bash
+pytest -q tests/test_trial25_stage_d.py
+```
+
+- [ ] **Step 5: Implement internal-only return calculation**
+
+Inside `maybe_freeze_calibration`, compute event returns only in local variables:
 
 ```python
-def _primary_return(event):
-    lot = int(event["lot_size"])
-    entry = event["entry_execution"]
-    exit_ = event["exit_execution"]
-
-    entry_credit = (
-        entry["atm_ce_sell"] + entry["atm_pe_sell"]
-        - entry["upper_ce_buy"] - entry["lower_pe_buy"]
-    )
-    exit_debit = (
-        exit_["atm_ce_buy"] + exit_["atm_pe_buy"]
-        - exit_["upper_ce_sell"] - exit_["lower_pe_sell"]
-    )
-    fills = _fee_fills_from_event(event)
-    charges = trial25_execution.option_charges(fills)["total"]
-    gross_rupees = (entry_credit - exit_debit) * lot
-    net_rupees = gross_rupees - charges
-    denom = (entry["atm_ce_sell"] + entry["atm_pe_sell"]) * lot
-    if denom <= 0:
-        raise ValueError("invalid ATM entry premium")
-    return 100.0 * net_rupees / denom
+entry_credit_rupees = entry_credit_per_unit * lot_size
+exit_debit_rupees = exit_debit_per_unit * lot_size
+charges = option_charges(entry_fills + exit_fills)["total"]
+net_pnl = entry_credit_rupees - exit_debit_rupees - charges
+return_pct = 100.0 * net_pnl / ((atm_ce_entry_bid + atm_pe_entry_bid) * lot_size)
 ```
 
-This function must not be imported by `web.py`, `v12_live.py`, or `trial25_shadow.py`.
-
-- [ ] **Step 4: Implement sigma-only calibration**
-
-For the deterministic first 40 returns:
+Then compute only:
 
 ```python
 sigma_d = statistics.stdev(returns)
@@ -769,123 +807,112 @@ Persist only:
 
 ```python
 {
-    "status": "STAGE_D_FROZEN",
-    "event_ids": [... exactly 40 ...],
-    "event_count": 40,
-    "sigma_d": ...,
-    "stage_c_required_n": ...,
-    "effect_size_pct_of_atm_premium": 4.0,
-    "z_alpha": 1.644854,
-    "z_beta": 0.841621,
-    "fee_model_version": "ZERODHA_NSE_EQ_OPT_2026_04_V1",
-    "code_sha256": ...,
-    "source_state_sha256": ...,
-    "created_at": ...,
+    "status": "FROZEN",
+    "event_ids": [...40 ids...],
+    "sigma_d": sigma_d,
+    "required_stage_c_n": required_n,
+    "fee_model_version": FEE_MODEL_VERSION,
+    "trial25_stage_d_code_sha256": ...,
+    "frozen_at": ...,
 }
 ```
 
-Do not persist event returns, Stage-D mean, win rate, PF, t-stat, or sign counts.
+No individual returns or mean may be written to state/report/logs.
 
-- [ ] **Step 5: Add immutable/hash verification tests**
-
-Tests must prove:
-
-- an existing valid calibration is returned as `EXISTING_VALID_FREEZE`;
-- later events 41+ cannot change sigma/N;
-- a changed calibration file with stale manifest fails as `FREEZE_HASH_MISMATCH`;
-- a restart produces identical event IDs and values.
-
-- [ ] **Step 6: Run Task-4 tests**
+- [ ] **Step 6: Run green**
 
 ```bash
 pytest -q tests/test_trial25_stage_d.py
 ```
 
-Expected: PASS.
-
 - [ ] **Step 7: Commit**
 
 ```bash
 git add app/trial25_stage_d.py tests/test_trial25_stage_d.py
-git commit -m "feat: add no-peeking Trial 25 Stage-D calibration"
+git commit -m "trial25: enforce no-peeking Stage-D calibration"
 ```
 
 ---
 
-### Task 5: Sequential V12 Integration Without a Second Quote Thread
+### Task 7: Serialized live orchestration after existing V12 recorder
 
 **Files:**
 - Modify: `app/v12_live.py`
 - Modify: `app/background.py`
-- Create: `tests/test_trial25_v12_integration.py`
+- Create: `tests/test_trial25_live_integration.py`
+- Modify: `tests/test_v12_live.py`
 
 **Interfaces:**
-- Consumes previous-task modules.
-- Produces new state keys:
-  - `trial25_shadow`
-  - `trial25_stage_d`
-- Must preserve existing return keys from `process_live_scan`.
+- Consumes current `kite`, scanner `results`, `fno_symbols`, current universe source, NFO contracts, existing V12 recorder result
+- Produces `trial25_shadow` read-only summary in `process_live_scan()` output
 
-- [ ] **Step 1: Write failing integration-order test**
-
-Use monkeypatches:
+- [ ] **Step 1: Write ordering test**
 
 ```python
-def test_trial25_runs_after_normal_v12_recorder(monkeypatch):
+def test_trial25_quote_pass_runs_after_normal_v12_capture(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(v12_live.v12_option_recorder, "record_snapshot", lambda *a, **k: calls.append("v12") or {"status": "CAPTURED"})
-    monkeypatch.setattr(v12_live.trial25_shadow, "process_due_events", lambda *a, **k: calls.append("trial25") or {"status": "OK"})
-    out = v12_live.process_live_scan(...)
-    assert calls.index("v12") < calls.index("trial25")
+    monkeypatch.setattr(v12_option_recorder, "record_snapshot", lambda *a, **k: calls.append("v12") or {"status":"CAPTURED"})
+    monkeypatch.setattr(trial25_shadow, "process_due_events", lambda *a, **k: calls.append("trial25") or {"status":"COLLECTING"})
+    out = run_live_fixture(tmp_path)
+    assert calls == ["v12", "trial25"]
+    assert out["trial25_shadow"]["status"] == "COLLECTING"
 ```
 
-Build the fixture with concrete temporary paths, minimal `results`, earnings state, and frozen-feasibility fixture.
-
-- [ ] **Step 2: Write fail-soft integration test**
+- [ ] **Step 2: Write fail-soft test**
 
 ```python
-def test_trial25_exception_never_breaks_v12(monkeypatch):
-    monkeypatch.setattr(v12_live.trial25_shadow, "process_due_events", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    out = v12_live.process_live_scan(...)
-    assert out["recorder"]["status"] in {"CAPTURED", "NOT_DUE"}
+def test_trial25_failure_never_breaks_v12(monkeypatch, tmp_path):
+    monkeypatch.setattr(v12_option_recorder, "record_snapshot", lambda *a, **k: {"status":"CAPTURED"})
+    def boom(*a, **k):
+        raise RuntimeError("trial25 synthetic failure")
+    monkeypatch.setattr(trial25_shadow, "process_due_events", boom)
+    out = run_live_fixture(tmp_path)
+    assert out["recorder"]["status"] == "CAPTURED"
     assert out["trial25_shadow"]["status"] == "ERROR"
-    assert "boom" in out["trial25_shadow"]["error"]
 ```
 
-- [ ] **Step 3: Implement lazy frozen-universe loading**
+- [ ] **Step 3: Write fallback-universe test**
 
-Add a helper that loads `research_freezes/v12_feasibility_10d_2026-09-21.json`, verifies status and hash via the existing `v12_feasibility_freeze` verification path, and extracts `tradeable_symbol_list`.
-
-If verification fails, Trial 25 returns `WAITING_VALID_FREEZE` and makes no quote calls.
-
-- [ ] **Step 4: Implement sequential Trial-25 orchestration**
-
-After `record_snapshot` completes:
-
-1. determine whether the current fixed slot is relevant to any Trial-25 event;
-2. if not, do no Trial-25 quote call;
-3. if relevant, sleep through the same conservative rate-limit boundary used by V12 before dedicated option requests;
-4. call `trial25_shadow.process_due_events`;
-5. call `trial25_stage_d.maybe_freeze_stage_d`;
-6. attach only `trial25_shadow.public_summary(...)` and `stage_d_status(...)` to application state.
-
-Do not create a thread, timer, cron job, or second Kite client.
-
-- [ ] **Step 5: Integrate with `background.py` state**
-
-Where V12 result keys are assigned, add:
+A fallback universe may preserve scanning but must never create F&O membership changes:
 
 ```python
-_state["trial25_shadow"] = v12.get("trial25_shadow") or {}
-_state["trial25_stage_d"] = v12.get("trial25_stage_d") or {}
+def test_fallback_fno_universe_cannot_promote_or_remove_membership():
+    out = trial25_universe.observe_runtime_universe(
+        state=universe_state_fixture(),
+        symbols={"RELIANCE"},
+        source="LAST_KNOWN_GOOD",
+        now=dt.datetime(2026, 9, 30, 9, 20),
+    )
+    assert out["membership_updated"] is False
+    assert out["reason"] == "UNVERIFIED_RUNTIME_UNIVERSE"
 ```
 
-Keep existing `v12_trial25_status` compatibility string until Task 6 changes the visible panel.
-
-- [ ] **Step 6: Run integration + V12 regressions**
+- [ ] **Step 4: Run red**
 
 ```bash
-pytest -q   tests/test_trial25_v12_integration.py   tests/test_v12_option_recorder.py   tests/test_v12_live.py   tests/test_v12_feasibility.py   tests/test_v121_release.py   tests/test_v1212_release.py
+pytest -q tests/test_trial25_live_integration.py tests/test_v12_live.py
+```
+
+- [ ] **Step 5: Integrate without a new thread**
+
+Modify `v12_live.process_live_scan` to:
+
+1. perform the existing V12 recorder call unchanged;
+2. obtain/reuse the NFO contract map where possible;
+3. update Trial-25 membership only from a verified `LIVE_KITE` universe observation;
+4. update supplemental feasibility from the normal fixed-slot broad summary when available;
+5. when an entry/exit transition is due, sleep conservatively for the Kite quote rate limit and perform only the dedicated event quote request;
+6. call `trial25_stage_d.operational_summary`;
+7. return `trial25_shadow`.
+
+Wrap Trial-25 operations in a fail-soft exception boundary that cannot propagate into the main scanner.
+
+Modify `background.py` to persist only the public Trial-25 summary.
+
+- [ ] **Step 6: Run focused integration tests**
+
+```bash
+pytest -q tests/test_trial25_live_integration.py tests/test_v12_live.py tests/test_v12_option_recorder.py
 ```
 
 Expected: PASS.
@@ -893,140 +920,110 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/v12_live.py app/background.py tests/test_trial25_v12_integration.py
-git commit -m "feat: integrate Trial 25 shadow recorder after V12 capture"
+git add app/v12_live.py app/background.py tests/test_trial25_live_integration.py tests/test_v12_live.py
+git commit -m "trial25: integrate shadow recorder after V12 capture"
 ```
 
 ---
 
-### Task 6: No-Peeking Trial-25 Dashboard Surface
+### Task 8: No-peeking dashboard surface
 
 **Files:**
 - Modify: `app/web.py`
-- Modify: `templates/index.html`
-- Create: `tests/test_trial25_dashboard.py`
+- Modify: `app/templates/index.html`
+- Modify: existing dashboard route regression test file
 
 **Interfaces:**
-- Consumes: `state["trial25_shadow"]`, `state["trial25_stage_d"]`.
-- Produces:
-  - dashboard context `trial25_shadow`, `trial25_stage_d`;
-  - dashboard-state JSON keys with operational-only information.
+- Consumes: `state["trial25_shadow"]`
+- Produces: dashboard panel and `/api/dashboard-state["trial25_shadow"]`
 
-- [ ] **Step 1: Write failing API no-peeking test**
+- [ ] **Step 1: Write failing route test**
 
 ```python
-FORBIDDEN = (
-    "pnl", "profit_factor", "win_rate", "mean_return", "median_return",
-    "event_return", "t_stat", "gross_return", "net_return",
-)
-
-
-def test_dashboard_state_exposes_trial25_operations_but_no_efficacy(client, monkeypatch):
-    monkeypatch.setattr(web, "get_state", lambda: {
-        "results": [],
-        "trial25_shadow": {
-            "stage": "STAGE_D_ACCUMULATING",
-            "completed_stage_d": 7,
-            "events": [{"event_id": "x", "symbol": "INFY", "state": "ENTRY_CAPTURED"}],
-        },
-        "trial25_stage_d": {"status": "ACCUMULATING", "completed": 7, "required": 40},
+def test_dashboard_api_exposes_trial25_operations_but_no_efficacy(client, monkeypatch):
+    state = dashboard_state_with_trial25({
+        "status": "STAGE_D_COLLECTING",
+        "completed_eligible": 7,
+        "target": 40,
+        "upcoming_events": [{"symbol":"RELIANCE","meeting_date":"2026-10-09"}],
+        "stale_audit": {"book_live_last_trade_old": 3},
     })
+    monkeypatch.setattr(background, "get_state", lambda: state)
     payload = client.get("/api/dashboard-state", headers=auth()).get_json()
-    assert payload["trial25_stage_d"]["completed"] == 7
-    text = json.dumps(payload["trial25_shadow"]).lower() + json.dumps(payload["trial25_stage_d"]).lower()
-    for forbidden in FORBIDDEN:
-        assert forbidden not in text
+    t25 = payload["trial25_shadow"]
+    assert t25["completed_eligible"] == 7
+    forbidden = {"mean_return","win_rate","profit_factor","pnl","return_pct"}
+    assert forbidden.isdisjoint(set(t25))
 ```
 
-- [ ] **Step 2: Add dashboard/API context**
-
-Add to both `dashboard()` and `api_dashboard_state()`:
+- [ ] **Step 2: Write template leakage test**
 
 ```python
-trial25_shadow=state.get("trial25_shadow") or {},
-trial25_stage_d=state.get("trial25_stage_d") or {},
+def test_trial25_panel_contains_no_pnl_labels_before_stage_d(client, monkeypatch):
+    html = client.get("/", headers=auth()).get_data(as_text=True)
+    assert "TRIAL 25" in html
+    assert "Stage-D completed" in html
+    assert "Trial-25 P&L" not in html
+    assert "Trial-25 Win Rate" not in html
+    assert "Trial-25 Profit Factor" not in html
 ```
 
-No endpoint returns raw Trial-25 JSONL files in v1.
-
-- [ ] **Step 3: Add the compact dashboard panel**
-
-Render:
-
-```html
-<section class="card" id="trial25-stage-d">
-  <h3>Trial 25 — Earnings Volatility / Stage D</h3>
-  <div class="status">PREREGISTERED · RESEARCH ONLY</div>
-  <div>Frozen eligible universe: {{ trial25_shadow.get("frozen_universe_count", 0) }}</div>
-  <div>Stage-D completed: {{ trial25_stage_d.get("completed", 0) }} / 40</div>
-  <div>Calibration: {{ trial25_stage_d.get("status", "ACCUMULATING") }}</div>
-  <div>Old-last-trade / live-book audit: {{ trial25_shadow.get("stale_audit", {}) }}</div>
-  <!-- Event rows may show symbol/date/state/contracts/unavailable reason only. -->
-</section>
-```
-
-Do not add P&L, return, win rate, PF, mean, median, direction-of-effect, or rank-by-performance fields.
-
-- [ ] **Step 4: Add HTML leakage test**
-
-Render the dashboard with a 7-event state and assert the HTML contains `Stage-D completed` and not any forbidden efficacy labels.
-
-- [ ] **Step 5: Run dashboard tests**
+- [ ] **Step 3: Run red**
 
 ```bash
-pytest -q tests/test_trial25_dashboard.py tests/test_web.py
+pytest -q tests -k "trial25 and dashboard"
 ```
 
-Expected: PASS.
+- [ ] **Step 4: Add compact operational panel**
+
+Before calibration, render only:
+
+```text
+TRIAL 25 — EARNINGS VOLATILITY / STAGE D
+Status
+Baseline eligible symbols
+Supplemental F&O names: collecting / qualified
+Upcoming eligible earnings events
+Entry due / captured
+Exit due / completed raw
+Unavailable event counts by reason
+Stage-D completed: X / 40
+Book live + last trade >10m
+Book invalid + recent last trade
+Calibration: COLLECTING / FROZEN
+Required Stage-C N (only after calibration freeze)
+```
+
+No raw-quote export and no P&L columns.
+
+- [ ] **Step 5: Run green**
+
+```bash
+pytest -q tests -k "trial25 and dashboard"
+```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add app/web.py templates/index.html tests/test_trial25_dashboard.py
-git commit -m "feat: add no-peeking Trial 25 Stage-D dashboard"
+git add app/web.py app/templates/index.html tests
+git commit -m "trial25: add no-peeking Stage-D dashboard"
 ```
 
 ---
 
-### Task 7: Release Integrity, Full Regression, and Railway Acceptance
+### Task 9: Full research-integrity regression and release gate
 
 **Files:**
-- Create: `TRIAL25_STAGE_D_CHANGELOG.md`
-- Modify only if needed for tests: `.github/workflows/*.yml`
+- Modify only release notes/tests if verification reveals a real compatibility issue.
+- No strategy logic changes are allowed in this task.
 
 **Interfaces:**
-- Consumes completed implementation.
-- Produces a release-ready branch/commit with verified hashes and no research-state mutation.
+- Consumes all prior tasks
+- Produces verified release candidate ready for Railway deployment
 
-- [ ] **Step 1: Write a release-integrity test**
+- [ ] **Step 1: Verify frozen V12 hashes are unchanged**
 
-Create `tests/test_trial25_release.py` that asserts:
-
-```python
-def test_trial25_preregistration_and_no_peeking_contract():
-    text = Path("TRIAL25_PREREGISTRATION.md").read_text(encoding="utf-8")
-    assert "ZERODHA_NSE_EQ_OPT_2026_04_V1" in text
-    assert ">=5 calendar DTE" in text or "at least 5 calendar DTE" in text
-    assert "UNAVAILABLE_NOT_FNO_AT_ENTRY" in text
-
-
-def test_trial25_modules_do_not_import_order_execution():
-    for path in (
-        "app/trial25_calendar.py",
-        "app/trial25_execution.py",
-        "app/trial25_shadow.py",
-        "app/trial25_stage_d.py",
-    ):
-        text = Path(path).read_text(encoding="utf-8").lower()
-        assert "place_order(" not in text
-        assert "kite.place_order" not in text
-```
-
-Also assert no raw Trial-25 export route exists.
-
-- [ ] **Step 2: Record the existing frozen feasibility hashes before tests**
-
-Expected existing hashes from the live freeze:
+The production freeze must remain:
 
 ```text
 v12_option_state_10d_2026-09-21.json
@@ -1039,86 +1036,82 @@ v12_feasibility_10d_2026-09-21.json
 d14361328e8ed09a5ecb81071e55ceff9d890f76dac3c5154e38e5dc32871260
 ```
 
-The deployment verification must confirm these same files still exist and validate; implementation code must never overwrite them.
+A different hash is a release failure, not a reason to update the expected constants.
 
-- [ ] **Step 3: Run focused Trial-25 suite**
+- [ ] **Step 2: Run all Trial-25 tests**
 
 ```bash
-pytest -q   tests/test_trial25_calendar.py   tests/test_trial25_execution.py   tests/test_trial25_shadow.py   tests/test_trial25_stage_d.py   tests/test_trial25_v12_integration.py   tests/test_trial25_dashboard.py   tests/test_trial25_release.py
+pytest -q   tests/test_trial25_universe.py   tests/test_trial25_calendar.py   tests/test_trial25_execution.py   tests/test_trial25_shadow.py   tests/test_trial25_stage_d.py   tests/test_trial25_live_integration.py
 ```
 
 Expected: all PASS.
 
-- [ ] **Step 4: Run the existing V12/V12.1 compatibility suite**
+- [ ] **Step 3: Run V12/V12.1 compatibility suite**
 
 ```bash
-pytest -q   tests/test_v12_option_recorder.py   tests/test_v12_feasibility.py   tests/test_v12_feasibility_freeze.py   tests/test_v12_live.py   tests/test_v12_storage.py   tests/test_v121_release.py   tests/test_v1212_release.py
+pytest -q   tests/test_v12_storage.py   tests/test_v12_option_recorder.py   tests/test_v12_live.py   tests/test_v12_feasibility.py   tests/test_v12_feasibility_freeze.py   tests/test_v121_index_recorder.py   tests/test_v121_release.py   tests/test_v1212_release.py
 ```
 
 Expected: all PASS.
 
-- [ ] **Step 5: Run compile + complete repository tests**
+- [ ] **Step 4: Run full repository suite**
 
 ```bash
-python -m compileall -q app tests run.py
 pytest -q
 ```
 
-Expected: compilation succeeds and complete suite passes with no new failures.
+Expected: 100% pass; warnings may remain only if already-existing and unrelated.
 
-- [ ] **Step 6: Add changelog**
-
-`TRIAL25_STAGE_D_CHANGELOG.md` must record:
-
-- frozen 195-symbol feasibility cohort;
-- post-29-Sep additions excluded / frozen deletions unavailable;
-- 2026 NSE verified trading-calendar behavior;
-- exact 15:10/09:30 timing;
-- >=5 DTE and 2.0x wings;
-- executable bid/ask + lot-depth rule;
-- stale-last-trade audit distinction;
-- fee-model version;
-- 40-event no-peeking calibration;
-- no production activation.
-
-- [ ] **Step 7: Commit release verification**
+- [ ] **Step 5: Compile Python**
 
 ```bash
-git add tests/test_trial25_release.py TRIAL25_STAGE_D_CHANGELOG.md
-git commit -m "test: verify Trial 25 Stage-D release integrity"
+python -m compileall -q app tests run.py
 ```
 
-- [ ] **Step 8: Whole-branch review before merge**
+Expected: exit code 0.
 
-Because the user selected **Native** execution, complete all tasks in this session and then perform one fresh whole-branch review. Review specifically for:
+- [ ] **Step 6: Inspect branch diff for prohibited changes**
 
-1. accidental efficacy leakage before 40 events;
-2. dynamic F&O roster contamination;
-3. duplicate event capture across restart;
-4. rate-limit interference with the V12 recorder;
-5. any mutation of the frozen feasibility sample.
+```bash
+git diff --name-only main...HEAD
+git diff --stat main...HEAD
+```
 
-Do not merge until review findings are resolved and tests rerun.
+Confirm no changes to Trial-24 final-holdout data, scanner signal thresholds, V12 feasibility thresholds, V12.1 index-vol research rules, or live broker order/alert code.
 
-- [ ] **Step 9: Merge/deploy and verify Railway**
+- [ ] **Step 7: Add release note and commit**
 
-After merge to `main`, wait for Railway deployment success, then verify read-only:
+Release note text:
 
-- `kite-scanner` deployment = SUCCESS;
-- 2 GB `/data` volume still mounted;
-- both existing option recorders remain healthy;
-- `/data/v12/trial25/` exists and is writable;
-- Trial-25 dashboard says `STAGE D`, completed count initially 0 (or only genuinely captured forward events);
-- no P&L/return fields visible;
-- frozen V12 feasibility files/hashes unchanged;
-- no Twisted/KiteTicker/quote/write traceback introduced.
+```text
+Trial 25 Stage-D shadow recorder
+Research-only / no production activation
+No-peeking P&L gate: active until first 40 eligible completed events
+Baseline universe: frozen 2026-09-21 feasibility cohort
+Supplemental F&O membership: same 10-session feasibility rule, prospective only
+```
 
-If any acceptance check fails, rollback the Trial-25 integration commit while preserving all recorder data.
+Commit:
 
-## Self-Review Result
+```bash
+git add .
+git commit -m "trial25: finalize Stage-D shadow recorder"
+```
 
-- **Spec coverage:** all architecture, data-flow, error, execution, persistence, no-peeking, F&O-roster, dashboard, and deployment requirements have an owning task.
-- **Placeholder scan:** plan contains no implementation placeholders; test fixtures that require full setup explicitly instruct the implementer to write concrete seeded state rather than leaving ellipses in committed code.
-- **Type consistency:** module/function names in later tasks match the interfaces defined by earlier tasks.
-- **Review-focus coverage:** all five high-risk conditions have explicit tests in Tasks 1, 2, 3, 4, and 7.
-- **Scope:** Stage C is intentionally not implemented here; this plan ends with a working Stage-D recorder and calibration gate.
+- [ ] **Step 8: Request final review before merge/deploy**
+
+Review must specifically inspect no-peeking leakage paths, F&O addition/removal eligibility, stale-book logic, fee-model arithmetic, idempotent persistence/restart behavior, first-40 calibration selection, and scanner/V12 fail-soft isolation.
+
+- [ ] **Step 9: Railway production acceptance after merge**
+
+After verified merge/deploy:
+
+- deployment is `SUCCESS`;
+- 2-GB `/data` volume remains mounted;
+- existing V12/V12.1 state files remain intact;
+- `/data/v12/trial25/` contains only Trial-25 runtime artifacts;
+- dashboard shows `STAGE D — COLLECTING` and genuine `X/40`;
+- no P&L/return field is present;
+- current F&O membership is recorded only from `LIVE_KITE`;
+- existing option recorders still capture normal slots;
+- no new Twisted/KiteTicker/write/runtime errors appear.
