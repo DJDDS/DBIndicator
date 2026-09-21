@@ -550,6 +550,39 @@
     <div class="v12-links"><a href="/api/v12-option-snapshots/export">Export option snapshots</a><a href="/api/v12-option-state/export">Export option state</a><a href="/api/v12-earnings-ledger/export">Export earnings ledger</a><a href="/api/v12-earnings-state/export">Export earnings state</a></div>
   </section>
 
+  {% set t25 = trial25_shadow|default({}) %}
+  {% set t25stale = t25.get('stale_audit') or {} %}
+  <section id="trial25-stage-d" class="card v12-card" aria-label="Trial 25 earnings volatility Stage D shadow recorder">
+    <div class="v12-head">
+      <div><div class="v12-kicker">TRIAL 25 · EARNINGS VOLATILITY · STAGE D</div>
+      <h2>Shadow Event Recorder <span class="sub">defined-risk iron butterfly · 15:10 entry · 09:30 post-event exit · no efficacy peeking</span></h2></div>
+      <div id="trial25-status" class="v12-lock">{{ t25.get('status') or 'PREREGISTERED_WAITING_EVENTS' }}</div>
+    </div>
+    <div class="v12-metrics">
+      <div class="v12-metric"><span>Stage-D completed</span><strong id="trial25-completed">{{ t25.get('completed', 0) }}/{{ t25.get('target', 40) }}</strong></div>
+      <div class="v12-metric"><span>Frozen eligible universe</span><strong id="trial25-frozen-universe">{{ t25.get('frozen_cohort_size', 195) }}</strong></div>
+      <div class="v12-metric"><span>Current F&amp;O overlap</span><strong id="trial25-current-overlap">{{ t25.get('cohort_a_live', t25.get('current_fno_overlap', 0)) }}</strong></div>
+      <div class="v12-metric"><span>New F&amp;O · onboarding only</span><strong id="trial25-new-fno">{{ t25.get('new_fno_onboarding', 0) }}</strong></div>
+      <div class="v12-metric"><span>Frozen names without live contracts</span><strong id="trial25-fno-missing">{{ t25.get('cohort_a_missing_contracts', 0) }}</strong></div>
+      <div class="v12-metric"><span>Events discovered</span><strong id="trial25-events-total">{{ t25.get('events_total', 0) }}</strong></div>
+      <div class="v12-metric"><span>Entries captured</span><strong id="trial25-entries">{{ t25.get('entry_captured', 0) }}</strong></div>
+      <div class="v12-metric"><span>Executable book + old last trade</span><strong id="trial25-stale-old-trade">{{ t25stale.get('live_book_old_trade_legs', 0) }}</strong></div>
+      <div class="v12-metric"><span>Calibration</span><strong id="trial25-calibration">{{ t25.get('calibration_status') or 'WAITING_FOR_40' }}</strong></div>
+      <div class="v12-metric"><span>Stage-C required N</span><strong id="trial25-stage-c-n">{{ t25.get('stage_c_required_n') if t25.get('stage_c_required_n') is not none else 'LOCKED' }}</strong></div>
+    </div>
+    <div class="v12-panel">
+      <h3>Point-in-time event queue</h3>
+      <div id="trial25-event-queue" class="v12-list">
+        {% for event in t25.get('event_queue', [])[:8] %}
+        <div class="v8-empty"><strong>{{ event.get('symbol') or '—' }}</strong> · meeting {{ event.get('meeting_date') or '—' }} · entry {{ event.get('entry_date') or '—' }} · exit {{ event.get('exit_date') or '—' }} · {{ event.get('status') or '—' }}</div>
+        {% else %}
+        <div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="v12-note"><strong>Research integrity:</strong> no Trial-25 P&amp;L, mean return, win rate, profit factor or t-statistic is shown while Stage D accumulates. Stocks added to NSE F&amp;O after the frozen feasibility sample are tracked as onboarding-only and cannot enter the primary cohort; frozen names remain eligible only while actual live stock-option contracts exist.</div>
+  </section>
+
   {% set v121i = v121_index_vol|default({}) %}
   {% set v121b = v121_backup|default({}) %}
   {% set v121d = v121_development|default({}) %}
@@ -1338,6 +1371,38 @@
     text('v12-trial25-status', trial25Status || 'TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.');
   }
 
+  function renderTrial25Shadow(shadow) {
+    shadow = shadow || {};
+    function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
+    var target = Number(shadow.target || 40);
+    text('trial25-status', shadow.status || 'PREREGISTERED_WAITING_EVENTS');
+    text('trial25-completed', String(shadow.completed || 0) + '/' + target);
+    text('trial25-frozen-universe', shadow.frozen_cohort_size == null ? 195 : shadow.frozen_cohort_size);
+    text('trial25-current-overlap', shadow.cohort_a_live == null ? (shadow.current_fno_overlap || 0) : shadow.cohort_a_live);
+    text('trial25-new-fno', shadow.new_fno_onboarding || 0);
+    text('trial25-fno-missing', shadow.cohort_a_missing_contracts || 0);
+    text('trial25-events-total', shadow.events_total || 0);
+    text('trial25-entries', shadow.entry_captured || 0);
+    var stale = shadow.stale_audit || {};
+    text('trial25-stale-old-trade', stale.live_book_old_trade_legs || 0);
+    text('trial25-calibration', shadow.calibration_status || 'WAITING_FOR_40');
+    text('trial25-stage-c-n', shadow.stage_c_required_n == null ? 'LOCKED' : shadow.stage_c_required_n);
+    var queueBox = document.getElementById('trial25-event-queue');
+    var queue = Array.isArray(shadow.event_queue) ? shadow.event_queue.slice(0, 8) : [];
+    if (queueBox) {
+      function esc(value) {
+        return String(value == null ? '—' : value)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      }
+      queueBox.innerHTML = queue.length ? queue.map(function (event) {
+        return '<div class="v8-empty"><strong>' + esc(event.symbol) + '</strong> · meeting ' +
+          esc(event.meeting_date) + ' · entry ' + esc(event.entry_date) + ' · exit ' +
+          esc(event.exit_date) + ' · ' + esc(event.status) + '</div>';
+      }).join('') : '<div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>';
+    }
+  }
+
   function renderV121IndexVol(indexVol, backup, development) {
     indexVol = indexVol || {}; backup = backup || {}; development = development || {};
     function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
@@ -1403,6 +1468,7 @@
       renderOpportunityForward(state.opportunity_forward);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
+      renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
