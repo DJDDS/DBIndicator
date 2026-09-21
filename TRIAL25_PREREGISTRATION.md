@@ -36,9 +36,13 @@ already-existing V12 gate:
 - at least 10 distinct recorded trading days.
 
 The **eligible stock universe is exactly the frozen
-`tradeable_symbol_list`**.  No later name may be added because its subsequent
-spread happens to look attractive.  A name may be unavailable for a specific
-event only for a predeclared execution/data reason below.
+`tradeable_symbol_list`**. No later NSE F&O addition may enter Trial 25 because
+it was not part of the frozen pre-outcome feasibility cohort. A frozen symbol
+must also have a currently listed qualifying OPTSTK expiry at entry. If NSE is
+phasing the symbol out, an already-listed unexpired contract may still be used
+only while it survives the planned exit and satisfies the fixed >=5-DTE rule;
+once no such contract exists, the event is unavailable. This execution gate
+does not rewrite the frozen cohort.
 
 The genuine missing 2026-09-11 09:30 snapshot remains missing.  It is never
 backfilled or replaced.
@@ -82,7 +86,7 @@ volatility, capped tails), never a naked short straddle.
 
 At entry:
 
-- use the nearest listed expiry that expires strictly after the planned exit;
+- use the nearest listed expiry that expires strictly after the planned exit and has at least 5 calendar DTE at entry;
 - short the call and put at the strike nearest spot;
 - compute the executable ATM implied move from
   `(ATM call ask + ATM put ask) / spot`;
@@ -124,9 +128,16 @@ This is the same unit used by the +4% confirmatory effect in Section 8; the
 defined-risk wing debits and all charges remain inside net P&L.
 
 If displayed top-level quantity is insufficient for one lot on any leg, the
-event is unavailable in the executable primary analysis.  A descriptive
+event is unavailable in the executable primary analysis. A descriptive
 one-lot quote-only sensitivity may be reported separately but cannot rescue the
 primary result.
+
+For Trial 25, quote freshness is an execution property, not a last-trade-age
+proxy. The dedicated REST quote request must complete within 15 seconds and
+return a positive two-sided book with the required one-lot top-level quantity.
+`last_trade_time` older than 600 seconds is retained as a diagnostic but does
+not by itself reject a currently executable book. No outcome data were read to
+set this rule.
 
 ## 7. Predictor — no HAR jump forecast
 
