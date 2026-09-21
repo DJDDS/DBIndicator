@@ -197,3 +197,34 @@ def test_calendar_removal_before_entry_kills_discovered_event(tmp_path):
     )
     event = next(iter(state["events"].values()))
     assert event["status"] == "UNAVAILABLE_REMOVED_BEFORE_ENTRY"
+
+
+def test_public_summary_exposes_safe_event_queue_without_contracts_or_efficacy():
+    state = {
+        "events": {
+            "evt-1": {
+                "event_id": "evt-1",
+                "symbol": "ABC",
+                "meeting_date": "2026-10-09",
+                "entry_date": "2026-10-08",
+                "exit_date": "2026-10-12",
+                "status": "DISCOVERED",
+                "contracts": {"secret": "must-not-leak"},
+                "spot_at_entry": 100.0,
+            }
+        }
+    }
+    out = sh.public_summary(state)
+    assert out["event_queue"] == [{
+        "event_id": "evt-1",
+        "symbol": "ABC",
+        "meeting_date": "2026-10-09",
+        "entry_date": "2026-10-08",
+        "exit_date": "2026-10-12",
+        "status": "DISCOVERED",
+    }]
+    encoded = json.dumps(out["event_queue"]).lower()
+    assert "contracts" not in encoded
+    assert "spot_at_entry" not in encoded
+    assert "pnl" not in encoded
+    assert "return" not in encoded
