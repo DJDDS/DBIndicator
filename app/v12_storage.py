@@ -23,7 +23,8 @@ _FILES = {
     "trial25_raw_quotes": ("TRIAL25_RAW_QUOTES_FILE", "trial25/trial25_raw_quotes.jsonl"),
     "trial25_stage_d": ("TRIAL25_STAGE_D_FILE", "trial25/trial25_stage_d_calibration.json"),
     "trial25_stage_d_hash": ("TRIAL25_STAGE_D_HASH_FILE", "trial25/trial25_stage_d_calibration.sha256"),
-    "trial25_onboarding": ("TRIAL25_ONBOARDING_FILE", "trial25/new_fno_onboarding_state.json"),
+    "trial25_universe_state": ("TRIAL25_UNIVERSE_STATE_FILE", "trial25/trial25_universe_state.json"),
+    "trial25_universe_ledger": ("TRIAL25_UNIVERSE_LEDGER_FILE", "trial25/trial25_universe_ledger.jsonl"),
 }
 
 
