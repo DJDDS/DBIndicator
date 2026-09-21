@@ -6,7 +6,7 @@ candidate selected after the 21-Sep-2026 audit and adds the evidence that Stage
 
 * returns in NIFTY points and percent of spot (not only R);
 * executable long-option P&L using ask on entry and bid on exit;
-* the repository's versioned NSE equity-option charge model;
+* a Stage-3-local versioned NSE index-option charge model;
 * a NIFTY-futures directional control from the same recorded timestamps;
 * a session-level bootstrap confidence interval;
 * unchanged cross-index replication on externally supplied 1-minute bars; and
@@ -30,7 +30,7 @@ import pandas as pd
 
 from .index_option_research import _validate_1m_ohlc
 from .index_option_stage2 import Stage2Spec, analyze_session_confirmation
-from .trial25_execution import FEE_MODEL_VERSION, calculate_option_charges
+from .index_option_fees import FEE_MODEL_VERSION, calculate_option_charges
 
 
 AUDIT_DATE = "2026-09-21"
