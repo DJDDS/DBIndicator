@@ -259,7 +259,24 @@ entry.
 
 The feature is split into five small units with explicit interfaces.
 
-### 4.1 `app/trial25_calendar.py`
+### 4.1 `app/trial25_universe.py`
+
+Purpose: preserve point-in-time F&O membership and control supplemental eligibility.
+
+Responsibilities:
+
+- build the current individual-stock F&O symbol set from the live NFO instrument master;
+- append a daily membership snapshot only when the observed symbol-set hash changes or the trading date changes;
+- compare current membership with the prior observation and record `ADDED` / `REMOVED` deltas without rewriting history;
+- seed the immutable baseline cohort from the frozen 2026-09-21 feasibility report;
+- maintain supplemental per-symbol feasibility statistics beginning no earlier than first observed F&O membership;
+- promote a new symbol only after 10 distinct post-introduction trading sessions satisfy the unchanged >=70% two-sided-coverage and <=4% median-spread rule;
+- make promotion effective the next trading day, never retroactively;
+- expose `eligible_on(symbol, date)` and the reason when false.
+
+The live Kite/NFO instrument master is the operational truth for whether contracts actually exist. The daily membership ledger is persisted and hashed so the experiment can later prove which universe was available at each event.
+
+### 4.2 `app/trial25_calendar.py`
 
 Purpose: convert the existing point-in-time earnings ledger into deterministic event dates and trading-session dates.
 
@@ -275,7 +292,7 @@ For 2026, the trading calendar is versioned from the official NSE F&O holiday ci
 
 This deliberately avoids adding a fragile live holiday-page parser to the critical event path.
 
-### 4.2 `app/trial25_execution.py`
+### 4.3 `app/trial25_execution.py`
 
 Purpose: pure contract selection, quote-quality validation, charge calculation, and synthetic-testable execution maths.
 
@@ -289,7 +306,7 @@ Responsibilities:
 
 No file I/O and no dashboard logic belongs here.
 
-### 4.3 `app/trial25_shadow.py`
+### 4.4 `app/trial25_shadow.py`
 
 Purpose: Trial-25 event state machine and persistence.
 
@@ -312,7 +329,7 @@ or fail-closed terminal states such as:
 
 Each transition is append-only in an event ledger and summarized in an atomic JSON state file.
 
-### 4.4 `app/trial25_stage_d.py`
+### 4.5 `app/trial25_stage_d.py`
 
 Purpose: no-peeking Stage-D gate.
 
@@ -328,7 +345,7 @@ At exactly 40 eligible completed events:
 - does not publish the Stage-D mean or event-level returns;
 - writes an immutable hash-backed Stage-D calibration artifact.
 
-### 4.5 Dashboard integration
+### 4.6 Dashboard integration
 
 The existing dashboard receives a compact `trial25_shadow` surface. It shows:
 
