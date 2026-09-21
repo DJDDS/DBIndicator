@@ -73,6 +73,7 @@ def _finalize_stage2(
     output: Path,
     source_bars_raw: int,
     source_bars_complete_sessions: int,
+    source_complete_sessions: int,
     session_quality: dict,
     range_pct_bounds,
     checkpoint_dir: Path,
@@ -94,8 +95,9 @@ def _finalize_stage2(
         split_coverage[split_name] = {
             "start": start,
             "end": end,
-            "signal_rows": int(len(split)),
-            "sessions": int(split["session"].nunique()) if not split.empty else 0,
+            "trade_rows": int(len(split)),
+            "signal_rows": int(len(split)),  # deprecated alias retained for old artifacts/tests
+            "sessions_with_any_trade": int(split["session"].nunique()) if not split.empty else 0,
         }
         for horizon in (60, 120):
             summary = summarize_confirmation_grid(split, horizon_minutes=horizon)
@@ -110,13 +112,41 @@ def _finalize_stage2(
         regime.to_csv(path, index=False)
         artifacts[f"geopolitical_regime_{horizon}m"] = path.name
 
+    def _sha256(path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    artifact_hashes = {
+        key: _sha256(output / filename)
+        for key, filename in artifacts.items()
+        if (output / filename).exists()
+    }
+    sessions_with_any_trade = int(trades["session"].nunique()) if not trades.empty else 0
+
     manifest = {
         "research_stage": "Index Option Buying V1 / Stage 2",
         "instrument": "NIFTY 50",
+        "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "source_bars_raw": int(source_bars_raw),
         "source_bars_complete_sessions": int(source_bars_complete_sessions),
+        "source_complete_sessions": int(source_complete_sessions),
+        "sessions_with_any_trade": sessions_with_any_trade,
+        "sessions_without_any_trade": max(0, int(source_complete_sessions) - sessions_with_any_trade),
         "session_quality": session_quality,
-        "signal_rows": int(len(trades)),
+        "trade_rows": int(len(trades)),
+        "signal_rows": int(len(trades)),  # deprecated alias; rows are config-trade rows, not unique signals
+        "mechanics": {
+            "r_definition": "directional_index_move_divided_by_opening_range_width",
+            "stop_rule": "none",
+            "entry_deadline_ist": "13:00",
+            "one_trade_per_session_per_config": True,
+            "hold_horizons_minutes": [60, 120],
+            "regular_session_close_ist": "15:30",
+            "note": "13:00 entry deadline guarantees the 120-minute horizon ends by 15:00; no 120m candidate is carried past 15:30.",
+        },
         "range_pct_bounds": list(range_pct_bounds) if range_pct_bounds is not None else None,
         "locked_splits": {
             name: {"start": start, "end": end}
@@ -135,6 +165,7 @@ def _finalize_stage2(
             "families_completed": len(list(checkpoint_dir.glob("or*_trig*.csv"))),
         },
         "artifacts": artifacts,
+        "artifact_sha256": artifact_hashes,
         "production_deployed": False,
         "v12_recorder_used_for_tuning": False,
     }
@@ -219,6 +250,7 @@ def run_stage2_from_bars(
         output=output,
         source_bars_raw=len(bars_1m),
         source_bars_complete_sessions=len(complete_bars),
+        source_complete_sessions=int(complete_bars.index.normalize().nunique()),
         session_quality=session_quality,
         range_pct_bounds=range_pct_bounds,
         checkpoint_dir=checkpoint_dir,
