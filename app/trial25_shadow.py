@@ -318,6 +318,19 @@ def discover_events(state: dict, earnings_state: dict, frozen_symbols: set[str],
             continue
         source = dict(source or {})
         source["symbol"] = symbol
+
+        # A cancellation/removal observed before we have entered must kill the
+        # previously discovered event. Once entry is captured, keep the event
+        # intention-to-treat; a later calendar change cannot rewrite it.
+        if str(source.get("state") or "") == "REMOVED":
+            for prior in list(events.values()):
+                if prior.get("symbol") == symbol and prior.get("status") in ("DISCOVERED", "ENTRY_DUE"):
+                    _mark_unavailable(
+                        state, ledger_file, prior, "UNAVAILABLE_REMOVED_BEFORE_ENTRY", now,
+                        "POINT_IN_TIME_EARNINGS_EVENT_REMOVED_BEFORE_ENTRY",
+                    )
+            continue
+
         resolved = trial25_calendar.resolve_event_sessions(source, now)
         if resolved.get("status") != "KNOWN_BEFORE_ENTRY":
             continue
