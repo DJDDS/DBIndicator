@@ -466,6 +466,7 @@ Implementation is test-first.
 - 2026 NSE F&O holiday/session resolver, including weekends and 14-Sep-2026;
 - point-in-time ACTIVE/REVISED/REMOVED earnings handling;
 - frozen-universe rejection;
+- live-NFO-membership intersection, including a frozen-but-removed symbol and a newly-added-but-not-frozen symbol;
 - post-freeze NSE F&O addition goes to NEW_FNO_ONBOARDING, not Cohort A;
 - NSE phase-out/exclusion blocks a new event when no valid contracts remain through planned exit;
 - entry and exit date determination;
