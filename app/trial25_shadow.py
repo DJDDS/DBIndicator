@@ -74,6 +74,30 @@ def _transition(ledger_file, event_id_value: str, old: str | None, new: str, whe
     })
 
 
+def _stale_audit(quotes: dict | None) -> dict:
+    """Summarize book executability versus legacy last-trade staleness without P&L."""
+    out = {
+        "legs": 0,
+        "live_book_old_trade_legs": 0,
+        "live_book_recent_trade_legs": 0,
+        "live_book_unknown_trade_age_legs": 0,
+        "non_executable_legs": 0,
+    }
+    for snap in (quotes or {}).values():
+        if not isinstance(snap, dict):
+            continue
+        out["legs"] += 1
+        if not bool(snap.get("two_sided")):
+            out["non_executable_legs"] += 1
+        elif snap.get("last_trade_stale_600s") is True:
+            out["live_book_old_trade_legs"] += 1
+        elif snap.get("last_trade_stale_600s") is False:
+            out["live_book_recent_trade_legs"] += 1
+        else:
+            out["live_book_unknown_trade_age_legs"] += 1
+    return out
+
+
 def record_entry(*, state_file, ledger_file, raw_quote_file, event: dict, structure: dict, quotes: dict, captured_at) -> dict:
     state = load_state(state_file)
     key = _event_key(event)
@@ -119,6 +143,7 @@ def record_entry(*, state_file, ledger_file, raw_quote_file, event: dict, struct
         "lot_size": int(structure.get("lot_size") or 0),
         "contracts": identities,
         "entry_captured_at": captured_at.isoformat(timespec="seconds"),
+        "entry_stale_audit": _stale_audit(quotes),
     }
     _append(raw_quote_file, {
         "event_id": key,
@@ -182,6 +207,7 @@ def record_exit(*, state_file, ledger_file, raw_quote_file, event_id: str, quote
     _transition(ledger_file, event_id, event.get("status"), "COMPLETED_RAW", captured_at)
     event["status"] = "COMPLETED_RAW"
     event["exit_captured_at"] = exit_at
+    event["exit_stale_audit"] = _stale_audit(quotes)
     state["exit_capture_count"] = int(state.get("exit_capture_count") or 0) + 1
     state["last_updated_at"] = exit_at
     _atomic_save(state_file, state)
@@ -192,6 +218,18 @@ def public_summary(state: dict | None) -> dict:
     events = list(((state or {}).get("events") or {}).values())
     counts = Counter(str(event.get("status") or "UNKNOWN") for event in events)
     unavailable = {k: v for k, v in sorted(counts.items()) if k.startswith(TERMINAL_UNAVAILABLE_PREFIX)}
+    stale = {
+        "legs": 0,
+        "live_book_old_trade_legs": 0,
+        "live_book_recent_trade_legs": 0,
+        "live_book_unknown_trade_age_legs": 0,
+        "non_executable_legs": 0,
+    }
+    for event in events:
+        for key in ("entry_stale_audit", "exit_stale_audit"):
+            audit = event.get(key) or {}
+            for metric in stale:
+                stale[metric] += int(audit.get(metric) or 0)
     return {
         "status": "PREREGISTERED_WAITING_EVENTS" if not events else "STAGE_D_COLLECTING",
         "events_total": len(events),
@@ -199,6 +237,7 @@ def public_summary(state: dict | None) -> dict:
         "completed": counts.get("COMPLETED_RAW", 0),
         "target": 40,
         "unavailable_reasons": unavailable,
+        "stale_audit": stale,
     }
 
 
