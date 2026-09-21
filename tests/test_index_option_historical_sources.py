@@ -2,7 +2,9 @@ import pandas as pd
 import pytest
 
 from app.index_option_historical_sources import (
+    dhan_proxy_expressions,
     fetch_dhan_expired_options,
+    map_signal_to_dhan_proxy_pnl,
     normalize_dhan_rolling_response,
     validate_executable_quote_archive,
 )
@@ -145,3 +147,145 @@ def test_executable_archive_validator_rejects_crossed_or_missing_quotes():
 
     with pytest.raises(ValueError, match="missing columns"):
         validate_executable_quote_archive(crossed.drop(columns=["best_ask"]))
+
+
+def _rolling_frames_for_signal():
+    entry_ts = pd.Timestamp("2025-01-02 10:51:00+05:30")
+    exit_ts = pd.Timestamp("2025-01-02 12:51:00+05:30")
+    rows = []
+    # Entry ATM is 25000. At exit, spot moved enough that the SAME 25000 strike
+    # is now represented by ATM-2. This pins the exact-contract requirement.
+    rows.extend(
+        [
+            {
+                "timestamp": entry_ts,
+                "open": 100.0,
+                "high": 105.0,
+                "low": 98.0,
+                "close": 103.0,
+                "strike": 25000.0,
+                "spot": 25010.0,
+                "expression": "ATM",
+                "option_type": "CALL",
+                "data_quality": "PROXY_OHLC",
+                "executable_quote": False,
+            },
+            {
+                "timestamp": exit_ts,
+                "open": 160.0,
+                "high": 165.0,
+                "low": 158.0,
+                "close": 162.0,
+                "strike": 25100.0,
+                "spot": 25110.0,
+                "expression": "ATM",
+                "option_type": "CALL",
+                "data_quality": "PROXY_OHLC",
+                "executable_quote": False,
+            },
+            {
+                "timestamp": exit_ts,
+                "open": 205.0,
+                "high": 210.0,
+                "low": 200.0,
+                "close": 208.0,
+                "strike": 25000.0,
+                "spot": 25110.0,
+                "expression": "ATM-2",
+                "option_type": "CALL",
+                "data_quality": "PROXY_OHLC",
+                "executable_quote": False,
+            },
+        ]
+    )
+    return pd.DataFrame(rows)
+
+
+def test_dhan_proxy_expressions_cover_same_contract_migration():
+    expressions = dhan_proxy_expressions()
+    assert expressions[0] == "ATM-10"
+    assert "ATM" in expressions
+    assert expressions[-1] == "ATM+10"
+    assert len(expressions) == 21
+
+
+def test_dhan_proxy_mapper_tracks_same_absolute_strike_across_rolling_bucket():
+    signal = {
+        "session": "2025-01-02",
+        "direction": "Bullish",
+        "signal_time": pd.Timestamp("2025-01-02 10:51:00+05:30"),
+    }
+    out = map_signal_to_dhan_proxy_pnl(
+        signal,
+        _rolling_frames_for_signal(),
+        moneyness="ATM",
+    )
+    assert out["status"] == "OK_PROXY"
+    assert out["entry_expression"] == "ATM"
+    assert out["exit_expression"] == "ATM-2"
+    assert out["strike"] == 25000.0
+    assert out["entry_proxy_price"] == 100.0
+    assert out["exit_proxy_price"] == 205.0
+    assert out["premium_points"] == 105.0
+    assert out["executable"] is False
+    assert out["data_quality"] == "PROXY_OHLC_NO_BID_ASK"
+
+
+def test_dhan_proxy_mapper_uses_one_strike_itm_for_calls():
+    frame = _rolling_frames_for_signal()
+    extra = pd.DataFrame(
+        [
+            {
+                "timestamp": pd.Timestamp("2025-01-02 10:51:00+05:30"),
+                "open": 135.0,
+                "high": 140.0,
+                "low": 132.0,
+                "close": 138.0,
+                "strike": 24950.0,
+                "spot": 25010.0,
+                "expression": "ATM-1",
+                "option_type": "CALL",
+                "data_quality": "PROXY_OHLC",
+                "executable_quote": False,
+            },
+            {
+                "timestamp": pd.Timestamp("2025-01-02 12:51:00+05:30"),
+                "open": 245.0,
+                "high": 250.0,
+                "low": 240.0,
+                "close": 248.0,
+                "strike": 24950.0,
+                "spot": 25110.0,
+                "expression": "ATM-3",
+                "option_type": "CALL",
+                "data_quality": "PROXY_OHLC",
+                "executable_quote": False,
+            },
+        ]
+    )
+    signal = {
+        "session": "2025-01-02",
+        "direction": "Bullish",
+        "signal_time": pd.Timestamp("2025-01-02 10:51:00+05:30"),
+    }
+    out = map_signal_to_dhan_proxy_pnl(
+        signal,
+        pd.concat([frame, extra], ignore_index=True),
+        moneyness="ITM1",
+    )
+    assert out["status"] == "OK_PROXY"
+    assert out["strike"] == 24950.0
+    assert out["entry_expression"] == "ATM-1"
+    assert out["exit_expression"] == "ATM-3"
+
+
+def test_dhan_proxy_mapper_fails_closed_if_same_contract_not_found_at_exit():
+    signal = {
+        "session": "2025-01-02",
+        "direction": "Bullish",
+        "signal_time": pd.Timestamp("2025-01-02 10:51:00+05:30"),
+    }
+    frame = _rolling_frames_for_signal()
+    frame = frame[frame["expression"] != "ATM-2"].copy()
+    out = map_signal_to_dhan_proxy_pnl(signal, frame, moneyness="ATM")
+    assert out["status"] == "SAME_STRIKE_NOT_FOUND_AT_EXIT"
