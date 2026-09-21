@@ -69,8 +69,8 @@ Purpose: convert the existing point-in-time earnings ledger into deterministic e
 Responsibilities:
 
 - read only the current V12 earnings state/ledger;
-- accept only `ACTIVE` or `REVISED` financial-results events that were known before entry;
-- preserve revisions using the date known at entry;
+- accept only `ACTIVE` or `REVISED` financial-results events whose `first_seen_at` / current revision was recorded before the fixed entry capture;
+- preserve revisions using the latest meeting date known before entry; a revision first observed after entry cannot rewrite the event;
 - calculate the last NSE F&O trading session before the registered meeting date;
 - calculate the first NSE F&O trading session after the registered meeting date.
 
@@ -324,9 +324,9 @@ Before 40 eligible completed events:
 - no raw Trial-25 export route is provided;
 - internal state stores the raw executable quotes required for later calculation, but not derived event P&L.
 
-At the 40-event transition:
+At the first transition where at least 40 eligible events are complete:
 
-1. verify the exact first 40 eligible event IDs;
+1. deterministically select the first 40 by exit-capture timestamp then event ID and verify those exact event IDs;
 2. compute charge-adjusted event returns internally;
 3. use them only to calculate sample standard deviation `sigma_D`;
 4. calculate:
@@ -399,7 +399,7 @@ Implementation is test-first.
 - Zerodha/NSE fee components;
 - idempotent event-state transitions;
 - no-peeking summary omits P&L fields;
-- Stage-D transition only at exactly 40 eligible completed events;
+- Stage-D transition when count first reaches >=40, always using exactly the deterministic first 40 events;
 - Stage-D freeze immutability/hash validation.
 
 ### Integration/regression tests
