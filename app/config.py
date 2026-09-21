@@ -156,6 +156,9 @@ TRIAL25_RAW_QUOTES_FILE = _V12_STORAGE["trial25_raw_quotes"]
 TRIAL25_STAGE_D_FILE = _V12_STORAGE["trial25_stage_d"]
 TRIAL25_STAGE_D_HASH_FILE = _V12_STORAGE["trial25_stage_d_hash"]
 TRIAL25_ONBOARDING_FILE = _V12_STORAGE["trial25_onboarding"]
+TRIAL25_FEASIBILITY_FREEZE_FILE = os.path.join(
+    V12_STORAGE_ROOT, "research_freezes", "v12_feasibility_10d_2026-09-21.json"
+)
 
 # V12.1 NIFTY near-expiry index-volatility recorder / development lab.
 V121_INDEX_VOL_ROOT = _V12_STORAGE["index_vol_root"]
