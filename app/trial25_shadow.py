@@ -1,10 +1,14 @@
 """Persistent, no-P&L Trial-25 event evidence state machine."""
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
+import time
 from collections import Counter
 from pathlib import Path
+
+from . import derivative_intelligence, trial25_calendar, trial25_execution, trial25_stage_d
 
 
 TERMINAL_UNAVAILABLE_PREFIX = "UNAVAILABLE_"
@@ -196,3 +200,350 @@ def public_summary(state: dict | None) -> dict:
         "target": 40,
         "unavailable_reasons": unavailable,
     }
+
+
+ENTRY_CLOCK = dt.time(15, 10)
+EXIT_CLOCK = dt.time(9, 30)
+DEFAULT_GRACE_MINUTES = 7
+
+
+def _parse_date(value) -> dt.date | None:
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    try:
+        return dt.date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def capture_kind_due(now: dt.datetime, entry_date, exit_date, *, grace_minutes: int = DEFAULT_GRACE_MINUTES) -> str | None:
+    entry = _parse_date(entry_date)
+    exit_day = _parse_date(exit_date)
+    compare_now = now.replace(tzinfo=None) if now.tzinfo is not None else now
+    for kind, day, clock in (("ENTRY", entry, ENTRY_CLOCK), ("EXIT", exit_day, EXIT_CLOCK)):
+        if day is None or compare_now.date() != day:
+            continue
+        scheduled = dt.datetime.combine(day, clock)
+        delta = (compare_now - scheduled).total_seconds() / 60.0
+        if 0 <= delta <= max(0, int(grace_minutes)):
+            return kind
+    return None
+
+
+def _capture_missed(now: dt.datetime, day_value, clock: dt.time, *, grace_minutes: int) -> bool:
+    day = _parse_date(day_value)
+    if day is None:
+        return False
+    compare_now = now.replace(tzinfo=None) if now.tzinfo is not None else now
+    if compare_now.date() < day:
+        return False
+    if compare_now.date() > day:
+        return True
+    scheduled = dt.datetime.combine(day, clock) + dt.timedelta(minutes=max(0, int(grace_minutes)))
+    return compare_now > scheduled
+
+
+def load_frozen_symbols(feasibility_report_file) -> tuple[set[str], str]:
+    try:
+        payload = json.loads(Path(feasibility_report_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return set(), "LOCKED_FEASIBILITY"
+    feasibility = payload.get("feasibility") if isinstance(payload.get("feasibility"), dict) else payload
+    if feasibility.get("status") != "STOCK OPTIONS PRACTICALLY TESTABLE":
+        return set(), "LOCKED_FEASIBILITY"
+    symbols = {str(x) for x in (feasibility.get("tradeable_symbol_list") or []) if str(x)}
+    if len(symbols) < 20:
+        return set(), "LOCKED_FEASIBILITY"
+    return symbols, "OK"
+
+
+def _mark_unavailable(state: dict, ledger_file, event: dict, status: str, when: dt.datetime, reason: str) -> dict:
+    if event.get("status") == "COMPLETED_RAW" or str(event.get("status") or "").startswith(TERMINAL_UNAVAILABLE_PREFIX):
+        return event
+    old = event.get("status")
+    event["status"] = status
+    event["reason"] = reason
+    event["unavailable_at"] = when.isoformat(timespec="seconds")
+    state["last_updated_at"] = event["unavailable_at"]
+    _transition(ledger_file, event["event_id"], old, status, when, reason)
+    return event
+
+
+def discover_events(state: dict, earnings_state: dict, frozen_symbols: set[str], *, now: dt.datetime, ledger_file) -> dict:
+    events = state.setdefault("events", {})
+    for symbol, source in sorted(((earnings_state or {}).get("events") or {}).items()):
+        symbol = str(symbol)
+        if symbol not in frozen_symbols:
+            continue
+        source = dict(source or {})
+        source["symbol"] = symbol
+        resolved = trial25_calendar.resolve_event_sessions(source, now)
+        if resolved.get("status") != "KNOWN_BEFORE_ENTRY":
+            continue
+
+        # Once an event has entered the market, a later calendar revision may
+        # not create a replacement event for the same symbol before its exit.
+        open_market_event = next((
+            row for row in events.values()
+            if row.get("symbol") == symbol and row.get("status") in ("ENTRY_CAPTURED", "EXIT_DUE")
+        ), None)
+        if open_market_event is not None:
+            continue
+
+        key = event_id(symbol, resolved["meeting_date"], resolved["entry_date"])
+        if key in events:
+            continue
+        for prior in list(events.values()):
+            if prior.get("symbol") == symbol and prior.get("status") in ("DISCOVERED", "ENTRY_DUE") and prior.get("event_id") != key:
+                _mark_unavailable(
+                    state, ledger_file, prior, "UNAVAILABLE_REVISED_BEFORE_ENTRY", now,
+                    "POINT_IN_TIME_EARNINGS_DATE_REVISED_BEFORE_ENTRY",
+                )
+        row = {
+            "event_id": key,
+            "symbol": symbol,
+            "meeting_date": resolved["meeting_date"],
+            "entry_date": resolved["entry_date"],
+            "exit_date": resolved["exit_date"],
+            "status": "DISCOVERED",
+            "discovered_at": now.isoformat(timespec="seconds"),
+            "source_fingerprint": source.get("source_fingerprint"),
+            "calendar_first_seen_at": source.get("first_seen_at"),
+            "calendar_last_changed_at": source.get("last_changed_at"),
+        }
+        events[key] = row
+        _transition(ledger_file, key, None, "DISCOVERED", now)
+    return state
+
+
+def _eligible_expiry_rows(contracts: list[dict], entry_date: dt.date, exit_date: dt.date) -> tuple[dt.date | None, list[dict]]:
+    eligible = []
+    for row in contracts or []:
+        expiry = _parse_date(row.get("expiry"))
+        if row.get("instrument_type") not in ("CE", "PE") or expiry is None:
+            continue
+        if expiry <= exit_date or (expiry - entry_date).days < 5:
+            continue
+        eligible.append((expiry, row))
+    expiries = sorted({expiry for expiry, _ in eligible})
+    if not expiries:
+        return None, []
+    expiry = expiries[0]
+    return expiry, [row for exp, row in eligible if exp == expiry]
+
+
+def _atm_pair(contracts: list[dict], spot: float, entry_date: dt.date, exit_date: dt.date) -> tuple[dict | None, dict | None]:
+    _expiry, rows = _eligible_expiry_rows(contracts, entry_date, exit_date)
+    strikes = sorted({float(row.get("strike")) for row in rows if row.get("strike") is not None})
+    if not strikes:
+        return None, None
+    atm = min(strikes, key=lambda strike: (abs(strike - float(spot)), strike))
+    call = next((row for row in rows if row.get("instrument_type") == "CE" and float(row.get("strike")) == atm), None)
+    put = next((row for row in rows if row.get("instrument_type") == "PE" and float(row.get("strike")) == atm), None)
+    return call, put
+
+
+def _clock_now(reference: dt.datetime) -> dt.datetime:
+    return dt.datetime.now(reference.tzinfo) if reference.tzinfo is not None else dt.datetime.now()
+
+
+def _quote(kite, keys: list[str], reference: dt.datetime, *, sleep_fn, pace: bool) -> tuple[dict, dt.datetime, dt.datetime]:
+    if pace:
+        sleep_fn(1.02)
+    requested = _clock_now(reference)
+    payload = kite.quote(keys) or {}
+    received = _clock_now(reference)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Kite quote payload is not a dict")
+    return payload, requested, received
+
+
+def _contract_from_identity(identity: dict) -> dict:
+    return {
+        "tradingsymbol": identity.get("tradingsymbol"),
+        "instrument_token": identity.get("instrument_token"),
+        "instrument_type": identity.get("type"),
+        "strike": identity.get("strike"),
+        "expiry": _parse_date(identity.get("expiry")),
+        "lot_size": identity.get("lot_size"),
+    }
+
+
+def _entry_capture(kite, state, event, contracts_map, *, now, state_file, ledger_file, raw_quote_file, sleep_fn):
+    symbol = event["symbol"]
+    contracts = list((contracts_map or {}).get(symbol) or [])
+    entry_date = _parse_date(event["entry_date"])
+    exit_date = _parse_date(event["exit_date"])
+    if not contracts or entry_date is None or exit_date is None:
+        _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_NOT_CURRENT_FNO", now, "NO_CURRENT_OPTSTK_CONTRACTS")
+        _atomic_save(state_file, state)
+        return
+
+    spot_payload, _, _ = _quote(kite, [f"NSE:{symbol}"], now, sleep_fn=sleep_fn, pace=True)
+    spot = ((spot_payload.get(f"NSE:{symbol}") or {}).get("last_price"))
+    try:
+        spot = float(spot)
+    except (TypeError, ValueError):
+        spot = 0.0
+    if spot <= 0:
+        _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_ENTRY_SNAPSHOT", now, "INVALID_UNDERLYING_SPOT")
+        _atomic_save(state_file, state)
+        return
+
+    atm_call, atm_put = _atm_pair(contracts, spot, entry_date, exit_date)
+    if atm_call is None or atm_put is None:
+        _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_EXPIRY", now, "NO_QUALIFYING_ATM_EXPIRY")
+        _atomic_save(state_file, state)
+        return
+    atm_keys = [f"NFO:{atm_call['tradingsymbol']}", f"NFO:{atm_put['tradingsymbol']}"]
+    atm_payload, req, recv = _quote(kite, atm_keys, now, sleep_fn=sleep_fn, pace=True)
+    atm_c = trial25_execution.normalize_live_quote(atm_call, atm_payload.get(atm_keys[0]) or {}, req, recv)
+    atm_p = trial25_execution.normalize_live_quote(atm_put, atm_payload.get(atm_keys[1]) or {}, req, recv)
+    for snap in (atm_c, atm_p):
+        ok, reason = trial25_execution.validate_leg("SELL", snap, int(snap.get("lot_size") or 0))
+        if not ok:
+            _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_ATM_BOOK", now, reason or "ATM_BOOK")
+            _atomic_save(state_file, state)
+            return
+    move = float(atm_c["best_ask"]) + float(atm_p["best_ask"])
+    structure = trial25_execution.select_structure(contracts, spot, entry_date, exit_date, implied_move_points=move)
+    if structure.get("status") != "OK":
+        status = "UNAVAILABLE_EXPIRY" if structure.get("status") == "UNAVAILABLE_EXPIRY" else "UNAVAILABLE_WING_BOOK"
+        _mark_unavailable(state, ledger_file, event, status, now, structure.get("status") or status)
+        _atomic_save(state_file, state)
+        return
+
+    roles = structure["contract_identities"]
+    keys = [f"NFO:{roles[role]['tradingsymbol']}" for role in REQUIRED_ROLES]
+    final_payload, req, recv = _quote(kite, keys, now, sleep_fn=sleep_fn, pace=True)
+    snaps = {}
+    for role, key in zip(REQUIRED_ROLES, keys):
+        snap = trial25_execution.normalize_live_quote(_contract_from_identity(roles[role]), final_payload.get(key) or {}, req, recv)
+        side = "SELL" if role in ("atm_call", "atm_put") else "BUY"
+        ok, reason = trial25_execution.validate_leg(side, snap, structure["lot_size"])
+        if not ok:
+            status = "UNAVAILABLE_QUANTITY" if reason == "INSUFFICIENT_TOP_QTY" else ("UNAVAILABLE_ATM_BOOK" if role.startswith("atm_") else "UNAVAILABLE_WING_BOOK")
+            _mark_unavailable(state, ledger_file, event, status, now, reason or status)
+            _atomic_save(state_file, state)
+            return
+        snaps[role] = snap
+    bid_total = float(snaps["atm_call"]["best_bid"]) + float(snaps["atm_put"]["best_bid"])
+    ask_total = float(snaps["atm_call"]["best_ask"]) + float(snaps["atm_put"]["best_ask"])
+    mid = (bid_total + ask_total) / 2.0
+    spread_pct = (ask_total - bid_total) / mid * 100.0 if mid > 0 else 999.0
+    if spread_pct > 4.0:
+        _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_ATM_BOOK", now, "ATM_STRADDLE_SPREAD_GT_4PCT")
+        _atomic_save(state_file, state)
+        return
+    event["spot_at_entry"] = spot
+    event["atm_straddle_spread_pct"] = round(spread_pct, 4)
+    record_entry(
+        state_file=state_file, ledger_file=ledger_file, raw_quote_file=raw_quote_file,
+        event=event, structure=structure, quotes=snaps, captured_at=now,
+    )
+
+
+def _exit_capture(kite, state, event, *, now, state_file, ledger_file, raw_quote_file, sleep_fn):
+    identities = event.get("contracts") or {}
+    if set(identities) != set(REQUIRED_ROLES):
+        _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_CONTRACT_CHANGED", now, "FROZEN_CONTRACT_SET_INCOMPLETE")
+        _atomic_save(state_file, state)
+        return
+    keys = [f"NFO:{identities[role]['tradingsymbol']}" for role in REQUIRED_ROLES]
+    payload, req, recv = _quote(kite, keys, now, sleep_fn=sleep_fn, pace=True)
+    snaps = {}
+    lot = int(event.get("lot_size") or 0)
+    for role, key in zip(REQUIRED_ROLES, keys):
+        snap = trial25_execution.normalize_live_quote(_contract_from_identity(identities[role]), payload.get(key) or {}, req, recv)
+        side = "BUY" if role in ("atm_call", "atm_put") else "SELL"
+        ok, reason = trial25_execution.validate_leg(side, snap, lot)
+        if not ok:
+            status = "UNAVAILABLE_QUANTITY" if reason == "INSUFFICIENT_TOP_QTY" else "UNAVAILABLE_EXIT_BOOK"
+            _mark_unavailable(state, ledger_file, event, status, now, reason or status)
+            _atomic_save(state_file, state)
+            return
+        snaps[role] = snap
+    record_exit(
+        state_file=state_file, ledger_file=ledger_file, raw_quote_file=raw_quote_file,
+        event_id=event["event_id"], quotes=snaps, captured_at=now,
+    )
+
+
+def process_due_events(
+    kite,
+    *,
+    now: dt.datetime,
+    earnings_state: dict,
+    current_fno_symbols: set[str],
+    feasibility_report_file,
+    state_file,
+    ledger_file,
+    raw_quote_file,
+    stage_d_file,
+    stage_d_hash_file,
+    contracts_map: dict | None = None,
+    sleep_fn=None,
+    grace_minutes: int = DEFAULT_GRACE_MINUTES,
+) -> dict:
+    """Advance Trial-25 events using only the two preregistered fixed slots."""
+    frozen, freeze_status = load_frozen_symbols(feasibility_report_file)
+    if freeze_status != "OK":
+        return {"status": "LOCKED_FEASIBILITY", "completed": 0, "target": 40}
+    state = load_state(state_file)
+    discover_events(state, earnings_state, frozen, now=now, ledger_file=ledger_file)
+    _atomic_save(state_file, state)
+    sleep_fn = sleep_fn or time.sleep
+
+    due_events = []
+    for event in list(state.get("events", {}).values()):
+        status = event.get("status")
+        if status in ("COMPLETED_RAW",) or str(status or "").startswith(TERMINAL_UNAVAILABLE_PREFIX):
+            continue
+        kind = capture_kind_due(now, event.get("entry_date"), event.get("exit_date"), grace_minutes=grace_minutes)
+        if kind == "ENTRY" and status in ("DISCOVERED", "ENTRY_DUE"):
+            event["status"] = "ENTRY_DUE"
+            due_events.append(("ENTRY", event))
+        elif kind == "EXIT" and status in ("ENTRY_CAPTURED", "EXIT_DUE"):
+            event["status"] = "EXIT_DUE"
+            due_events.append(("EXIT", event))
+        elif status in ("DISCOVERED", "ENTRY_DUE") and _capture_missed(now, event.get("entry_date"), ENTRY_CLOCK, grace_minutes=grace_minutes):
+            _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_ENTRY_SNAPSHOT", now, "FIXED_1510_SLOT_MISSED")
+        elif status in ("ENTRY_CAPTURED", "EXIT_DUE") and _capture_missed(now, event.get("exit_date"), EXIT_CLOCK, grace_minutes=grace_minutes):
+            _mark_unavailable(state, ledger_file, event, "UNAVAILABLE_EXIT_BOOK", now, "FIXED_0930_SLOT_MISSED")
+    _atomic_save(state_file, state)
+
+    if due_events:
+        contracts_map = contracts_map if contracts_map is not None else derivative_intelligence.get_option_contracts_map(kite)
+        for kind, event in due_events:
+            # New post-freeze names never arrive here; frozen names are gated
+            # by actual current option contracts, not merely scanner membership.
+            if event["symbol"] not in frozen:
+                continue
+            if kind == "ENTRY":
+                _entry_capture(
+                    kite, state, event, contracts_map, now=now, state_file=state_file,
+                    ledger_file=ledger_file, raw_quote_file=raw_quote_file, sleep_fn=sleep_fn,
+                )
+            else:
+                _exit_capture(
+                    kite, state, event, now=now, state_file=state_file,
+                    ledger_file=ledger_file, raw_quote_file=raw_quote_file, sleep_fn=sleep_fn,
+                )
+            state = load_state(state_file)
+
+    summary = public_summary(state)
+    summary["frozen_cohort_size"] = len(frozen)
+    summary["current_fno_overlap"] = len(frozen & {str(x) for x in (current_fno_symbols or set())})
+    completed = len([e for e in state.get("events", {}).values() if e.get("status") == "COMPLETED_RAW"])
+    if completed >= 40:
+        calibration = trial25_stage_d.maybe_freeze_calibration(
+            state, raw_quote_file, stage_d_file, stage_d_hash_file
+        )
+        summary["calibration_status"] = calibration.get("status")
+        if calibration.get("stage_c_required_n") is not None:
+            summary["stage_c_required_n"] = calibration.get("stage_c_required_n")
+    else:
+        summary["calibration_status"] = "WAITING_FOR_40"
+    return summary
