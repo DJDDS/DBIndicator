@@ -509,7 +509,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit Task 3**
 
 ```bash
-git add app/trial25_shadow.py app/v12_storage.py app/config.py tests/test_trial25_shadow.py tests/test_v12_storage.py
+git add app/trial25_shadow.py app/v12_storage.py app/config.py tests/test_trial25_shadow.py tests/test_trial25_storage.py
 git commit -m "feat: persist Trial 25 event state safely"
 ```
 
