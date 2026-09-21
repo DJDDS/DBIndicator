@@ -4,7 +4,7 @@
 
 **Goal:** Build a forward-only, no-peeking Trial-25 earnings-volatility shadow recorder that captures one defined-risk executable iron-butterfly event per eligible earnings announcement without changing the existing V12/V12.1 research recorders.
 
-**Architecture:** Add four focused Trial-25 modules: a point-in-time event/session resolver, a pure execution/fees kernel, a persistent event state machine, and a Stage-D calibration gate. Wire them sequentially into the existing V12 live scan after the normal option recorder, expose only operational/sample-count fields on the dashboard, and keep the first 40 completed eligible events hidden from efficacy inspection.
+**Architecture:** Add five focused Trial-25 units: a point-in-time F&O membership/probation ledger, an event/session resolver, a pure execution/fees kernel, a persistent event state machine, and a Stage-D calibration gate. Wire them sequentially into the existing V12 live scan after the normal option recorder, expose only operational/sample-count fields on the dashboard, and keep the first 40 completed eligible events hidden from efficacy inspection.
 
 **Tech Stack:** Python 3.11, Flask, pytest, Kite Connect REST quotes/instrument master, JSON/JSONL persistent files on Railway Volume, existing V12/V12.1 orchestration and dashboard.
 
@@ -13,8 +13,9 @@
 ## Global Constraints
 
 - Trial 25 is research/shadow only; no broker orders, production alerts, or live strategy activation.
-- Frozen eligible universe is exactly the 2026-09-21 V12 `tradeable_symbol_list`; newly added F&O names after the freeze cannot enter Trial 25.
-- A frozen symbol may enter an event only if live listed option contracts at entry satisfy the locked expiry/exit rules; otherwise use `UNAVAILABLE_NOT_FNO_AT_ENTRY`.
+- Frozen eligible universe is exactly the 2026-09-21 V12 `tradeable_symbol_list`; newly added F&O names after the freeze cannot enter the original Trial 25.
+- Post-freeze F&O additions are recorded in a separate `NEW_FNO_PROBATION` lane. They need 10 distinct forward trading sessions under the same >=70% two-sided ATM coverage and <=4% median ATM-straddle-spread gate before they can be marked `QUALIFIED_FOR_FUTURE_TRIAL`; this never amends Trial 25.
+- A frozen symbol may enter an event only if it is still live-listed for the required entry/exit structure; otherwise use `UNAVAILABLE_NOT_FNO_AT_ENTRY`.
 - Entry is PRE_CAS 15:10 IST on the last verified NSE F&O trading session strictly before the registered earnings date.
 - Exit is OPEN_STABLE 09:30 IST on the first verified NSE F&O trading session strictly after the registered earnings date.
 - Entry/exit use the existing 7-minute grace; missed slots are never backfilled.
@@ -32,11 +33,236 @@
 
 ## Review Focus
 
-1. **F&O membership churn after 29-Sep:** a newly introduced symbol must stay excluded from Trial 25, while a frozen symbol with no valid live contract must fail closed as `UNAVAILABLE_NOT_FNO_AT_ENTRY`.
+1. **F&O membership churn after 29-Sep:** a newly introduced symbol must stay excluded from Trial 25 but accumulate an independent probation record; a frozen symbol with no valid live contract must fail closed as `UNAVAILABLE_NOT_FNO_AT_ENTRY`; an incomplete instrument-master refresh must never mass-delete symbols.
 2. **Holiday / weekend adjacency:** earnings on or around weekends/holidays must resolve to the correct last-before and first-after F&O sessions; unsupported calendar years must fail closed.
 3. **Old last trade but live book:** an executable quote returned now with an old `last_trade_time` must remain execution-fresh while the stale diagnostic records the age.
 4. **Scanner retries / redeploys:** repeated calls inside the same grace window must not duplicate event discovery, entry capture, exit capture, or Stage-D membership.
 5. **Several events reaching the 40-event boundary together:** Stage D must freeze exactly the deterministic first 40 and leave later completions outside the variance-calibration sample.
+
+---
+
+### Task 0: Point-in-Time F&O Membership Ledger and New-Entrant Probation
+
+**Files:**
+- Create: `app/trial25_membership.py`
+- Create: `tests/test_trial25_membership.py`
+- Modify: `app/config.py`
+- Modify: `app/v12_storage.py`
+- Modify: `app/v12_live.py` only to pass the current complete F&O universe and completed V12 slot summary into this module.
+
+**Interfaces:**
+- Consumes: current complete F&O symbol set from the live scanner, immutable frozen Trial-25 symbols, and the symbol-level ATM summaries already produced by a completed V12 fixed-slot capture.
+- Produces:
+  - `observe_membership(path, *, observed_at, symbols, source_complete) -> dict`
+  - `membership_status(state, symbol, on_date, frozen_symbols) -> str`
+  - `record_probation_slot(path, *, date, slot, symbol_summaries, current_symbols, frozen_symbols) -> dict`
+  - `probation_summary(state) -> dict`
+  - storage path `TRIAL25_MEMBERSHIP_STATE_FILE`.
+
+- [ ] **Step 1: Write failing complete/incomplete-universe tests**
+
+```python
+import datetime as dt
+
+from app import trial25_membership as membership
+
+
+def test_complete_observation_records_add_and_remove(tmp_path):
+    path = tmp_path / "membership.json"
+    membership.observe_membership(
+        path,
+        observed_at=dt.datetime(2026, 9, 28, 9, 20),
+        symbols={"AAA", "BBB"},
+        source_complete=True,
+    )
+    state = membership.observe_membership(
+        path,
+        observed_at=dt.datetime(2026, 9, 30, 9, 20),
+        symbols={"BBB", "CCC"},
+        source_complete=True,
+    )
+    assert {"symbol":"AAA", "change":"REMOVED", "effective_date":"2026-09-30"} in state["events"]
+    assert {"symbol":"CCC", "change":"ADDED", "effective_date":"2026-09-30"} in state["events"]
+
+
+def test_incomplete_observation_cannot_remove_existing_symbol(tmp_path):
+    path = tmp_path / "membership.json"
+    membership.observe_membership(
+        path,
+        observed_at=dt.datetime(2026, 9, 28, 9, 20),
+        symbols={"AAA", "BBB"},
+        source_complete=True,
+    )
+    state = membership.observe_membership(
+        path,
+        observed_at=dt.datetime(2026, 9, 29, 9, 20),
+        symbols={"BBB"},
+        source_complete=False,
+    )
+    assert membership.membership_status(
+        state, "AAA", dt.date(2026, 9, 29), {"AAA"}
+    ) == "ORIGINAL_ACTIVE"
+```
+
+- [ ] **Step 2: Run and confirm RED**
+
+Run:
+
+```bash
+pytest -q tests/test_trial25_membership.py -k "complete_observation or incomplete_observation"
+```
+
+Expected: import failure because `app.trial25_membership` does not exist.
+
+- [ ] **Step 3: Implement atomic point-in-time membership state**
+
+The persisted schema contains:
+
+```python
+{
+    "version": 1,
+    "current_symbols": [],
+    "last_complete_observation": None,
+    "last_incomplete_observation": None,
+    "events": [],
+    "probation": {},
+}
+```
+
+Use temp-file + atomic rename. Only a `source_complete=True` observation may change `current_symbols` or create `ADDED` / `REMOVED` events.
+
+`membership_status(...)` returns exactly one of:
+
+```text
+ORIGINAL_ACTIVE
+ORIGINAL_INACTIVE
+NEW_FNO_PROBATION
+OUTSIDE_TRIAL25
+```
+
+- [ ] **Step 4: Write failing probation tests**
+
+```python
+def test_new_fno_needs_ten_distinct_days_and_same_v12_gate(tmp_path):
+    path = tmp_path / "membership.json"
+    frozen = {"AAA"}
+    for i in range(10):
+        day = dt.date(2026, 9, 30) + dt.timedelta(days=i)
+        if day.weekday() >= 5:
+            continue
+        membership.record_probation_slot(
+            path,
+            date=day,
+            slot="OPEN_STABLE",
+            symbol_summaries={
+                "NEWFNO": {
+                    "primary": {
+                        "two_sided": True,
+                        "straddle_spread_pct": 2.0,
+                    }
+                }
+            },
+            current_symbols={"AAA", "NEWFNO"},
+            frozen_symbols=frozen,
+        )
+    summary = membership.probation_summary(membership.load_state(path))["NEWFNO"]
+    assert summary["trial25_eligible"] is False
+    if summary["trading_days"] >= 10:
+        assert summary["status"] == "QUALIFIED_FOR_FUTURE_TRIAL"
+
+
+def test_wide_spread_new_fno_never_qualifies_future_trial(tmp_path):
+    path = tmp_path / "membership.json"
+    for n in range(10):
+        membership.record_probation_slot(
+            path,
+            date=dt.date(2026, 10, 5) + dt.timedelta(days=n),
+            slot="OPEN_STABLE",
+            symbol_summaries={
+                "NEWFNO": {
+                    "primary": {
+                        "two_sided": True,
+                        "straddle_spread_pct": 6.0,
+                    }
+                }
+            },
+            current_symbols={"NEWFNO"},
+            frozen_symbols=set(),
+        )
+    out = membership.probation_summary(membership.load_state(path))["NEWFNO"]
+    assert out["status"] != "QUALIFIED_FOR_FUTURE_TRIAL"
+    assert out["trial25_eligible"] is False
+```
+
+- [ ] **Step 5: Implement probation accounting with the locked V12 thresholds**
+
+Per new symbol persist:
+
+```python
+{
+    "first_seen_date": "2026-09-30",
+    "trading_days": [],
+    "broad_snapshots": 0,
+    "two_sided_snapshots": 0,
+    "spread_values": [],
+}
+```
+
+Compute:
+
+```python
+coverage_pct = 100.0 * two_sided_snapshots / broad_snapshots
+median_spread_pct = statistics.median(spread_values)
+qualified = (
+    len(set(trading_days)) >= 10
+    and coverage_pct >= 70.0
+    and median_spread_pct <= 4.0
+)
+```
+
+Even when `qualified` is true, return `trial25_eligible=False`; the status is evidence for a later preregistered trial only.
+
+- [ ] **Step 6: Add persistent path**
+
+Extend `app/v12_storage.py` / `app/config.py`:
+
+```python
+TRIAL25_MEMBERSHIP_STATE_FILE = str(
+    Path(TRIAL25_ROOT) / "trial25_membership_state.json"
+)
+```
+
+- [ ] **Step 7: Add the non-bloating V12 hook**
+
+Do **not** put all `broad_summaries` into the long-lived scanner state. Instead add an optional callback to `v12_option_recorder.record_snapshot(..., broad_capture_hook=None)` invoked only after the normal V12 snapshot/state write succeeds:
+
+```python
+if broad_capture_hook is not None:
+    broad_capture_hook(
+        date=now.date(),
+        slot=slot,
+        broad_summaries=broad_summaries,
+    )
+```
+
+Wrap the hook separately so a probation bookkeeping failure cannot turn a successful V12 capture into a failed capture. A dedicated regression test must assert V12 still returns `CAPTURED` when the hook raises.
+
+- [ ] **Step 8: Run tests**
+
+Run:
+
+```bash
+pytest -q tests/test_trial25_membership.py tests/test_v120_option_recorder.py
+```
+
+Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add app/trial25_membership.py app/config.py app/v12_storage.py app/v12_option_recorder.py app/v12_live.py tests/test_trial25_membership.py tests/test_v120_option_recorder.py
+git commit -m "feat: track Trial 25 F&O membership and new-entrant probation"
+```
 
 ---
 
