@@ -30,6 +30,7 @@ def refresh_earnings_calendar(
     ledger_file,
     session_factory: Callable[[], object] = requests.Session,
     horizon_days: int = 45,
+    force: bool = False,
 ) -> dict:
     """Refresh the point-in-time earnings calendar at most once per IST date.
 
@@ -43,7 +44,7 @@ def refresh_earnings_calendar(
             last_date = dt.datetime.fromisoformat(str(last_refresh)).date()
         except (TypeError, ValueError):
             last_date = None
-        if last_date == now.date():
+        if last_date == now.date() and not force:
             return prior
     last_attempt = prior.get("last_attempt_at")
     if last_attempt:
@@ -81,6 +82,14 @@ def refresh_earnings_calendar(
     v12_earnings_calendar._save_state(state_file, state)
     return state
 
+
+
+def trial25_preentry_calendar_refresh_due(now: dt.datetime) -> bool:
+    """Refresh NSE earnings once near the 15:10 Trial-25 entry window."""
+    if now.weekday() >= 5:
+        return False
+    minute = now.hour * 60 + now.minute
+    return (15 * 60) <= minute <= (15 * 60 + 17)
 
 
 def post_cash_derivative_window(now: dt.datetime) -> bool:
