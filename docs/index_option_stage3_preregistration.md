@@ -9,7 +9,7 @@ Forward evidence begins: **22 September 2026**
 
 Stage 2 established that the ungated NIFTY opening-range breakout should not be carried forward. The audited pocket worth testing is narrow, and the 2026 historical holdout has already been viewed. Therefore Stage 3 is not another parameter search. It is an attempt to falsify one frozen rule with executable option prices and genuinely new evidence.
 
-The existing DBIndicator V12.1 NIFTY index-volatility recorder is the forward market-data source for this work. Stage 3 may **read** recorder artifacts but must not alter recorder sampling, thresholds, universe selection, persistence, Trial 25, V12 feasibility, or any production playbook.
+The existing DBIndicator V12.1 **NIFTY index-volatility recorder** is the forward market-data source for this work. Stage 3 is **index-only**: it does not research or score individual F&O stocks and it does not consume Trial-25 earnings outcomes. It may read index-recorder artifacts but must not alter recorder sampling, thresholds, persistence, V12 feasibility, Trial 25, or any production playbook.
 
 ## Frozen signal specification
 
@@ -48,7 +48,7 @@ For every forward signal, both expressions are evaluated:
 
 A bullish signal buys CE; a bearish signal buys PE. Entry is at the recorded **best ask** and exit is at the recorded **best bid**. The top-of-book quantity must cover one lot. Quotes older than the locked freshness limit are rejected. No midpoint fills and no synthetic Black-Scholes prices are substituted for missing quotes.
 
-The existing version-stamped Zerodha/NSE equity-option charge model from app/trial25_execution.py is used so brokerage, STT, exchange charges, SEBI fees, stamp duty and GST are deducted from every round trip.
+A dedicated version-stamped index-option fee model in `app/index_option_fees.py` is used so brokerage, STT, exchange charges, SEBI fees, stamp duty and GST are deducted from every round trip. Stage 3 has no runtime dependency on Trial 25.
 
 ### 3. Futures control
 
@@ -64,7 +64,7 @@ Only sessions dated **22 September 2026 or later** count as new Stage-3 forward 
 
 ### 5. Cross-index replication
 
-If independent one-minute BANK NIFTY and/or SENSEX data are supplied, the exact same frozen NIFTY specification is applied unchanged. There is no index-specific retuning. Results are reported in index points with a session-level bootstrap confidence interval.
+The scope remains indices only. If independent one-minute BANK NIFTY and/or SENSEX data are supplied, the exact same frozen NIFTY specification is applied unchanged. There is no index-specific retuning. Results are reported in index points with a session-level bootstrap confidence interval.
 
 ## Preregistered Stage-3 gates
 
