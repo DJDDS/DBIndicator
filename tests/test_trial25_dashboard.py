@@ -20,6 +20,7 @@ def test_dashboard_has_stage_d_panel_and_live_renderer_without_efficacy_fields()
     assert 'id="trial25-new-fno"' in html
     assert 'id="trial25-fno-missing"' in html
     assert 'id="trial25-stale-old-trade"' in html
+    assert 'id="trial25-event-queue"' in html
     assert 'function renderTrial25Shadow' in html
     assert 'renderTrial25Shadow(state.trial25_shadow);' in html
 
