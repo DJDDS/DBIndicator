@@ -233,3 +233,138 @@ def validate_executable_quote_archive(frame: pd.DataFrame) -> pd.DataFrame:
     out["data_quality"] = "EXECUTABLE_BID_ASK"
     out["executable_quote"] = True
     return out.sort_values(["snapshot_ts", "strike", "type"]).reset_index(drop=True)
+
+
+def dhan_proxy_expressions() -> tuple[str, ...]:
+    """Return the complete Dhan near-expiry index rolling strike grid."""
+    return tuple(
+        [f"ATM-{n}" for n in range(10, 0, -1)]
+        + ["ATM"]
+        + [f"ATM+{n}" for n in range(1, 11)]
+    )
+
+
+def _first_proxy_row_at_or_after(
+    frame: pd.DataFrame,
+    target,
+    *,
+    max_delay_seconds: int = 60,
+) -> dict | None:
+    if frame is None or frame.empty:
+        return None
+    work = frame.copy()
+    work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
+    work = work.dropna(subset=["timestamp"]).sort_values("timestamp")
+    target = pd.Timestamp(target)
+    eligible = work[work["timestamp"] >= target]
+    if eligible.empty:
+        return None
+    row = eligible.iloc[0]
+    if (pd.Timestamp(row["timestamp"]) - target).total_seconds() > max_delay_seconds:
+        return None
+    return row.to_dict()
+
+
+def map_signal_to_dhan_proxy_pnl(
+    signal: dict,
+    rolling: pd.DataFrame,
+    *,
+    moneyness: str,
+    hold_minutes: int = 120,
+    max_delay_seconds: int = 60,
+) -> dict:
+    """Map one frozen signal to same-contract Dhan rolling OHLC proxy P&L.
+
+    This is deliberately NON-EXECUTABLE evidence.  Entry/exit use the OPEN of
+    the first completed minute bucket at/after the target timestamp.  The exit
+    is located by the same absolute strike across all relative rolling buckets,
+    so a contract that migrates from ATM to ATM-2 is not accidentally replaced
+    by the new ATM contract.
+    """
+    if rolling is None or rolling.empty:
+        return {"status": "NO_PROXY_DATA", "moneyness": str(moneyness).upper()}
+
+    direction = str(signal.get("direction"))
+    option_type = "CALL" if direction == "Bullish" else "PUT" if direction == "Bearish" else None
+    if option_type is None:
+        return {"status": "INVALID_DIRECTION", "moneyness": str(moneyness).upper()}
+
+    m = str(moneyness).upper()
+    if m == "ATM":
+        entry_expression = "ATM"
+    elif m == "ITM1":
+        entry_expression = "ATM-1" if option_type == "CALL" else "ATM+1"
+    else:
+        raise ValueError("moneyness must be ATM or ITM1")
+
+    work = rolling.copy()
+    if "option_type" not in work.columns or "expression" not in work.columns:
+        return {"status": "INVALID_PROXY_SCHEMA", "moneyness": m}
+    work = work[
+        work["option_type"].astype(str).str.upper().eq(option_type)
+    ].copy()
+    if work.empty:
+        return {"status": "NO_PROXY_OPTION_SIDE", "moneyness": m}
+
+    signal_time = pd.Timestamp(signal["signal_time"])
+    entry_pool = work[work["expression"].astype(str).str.upper().eq(entry_expression)]
+    entry = _first_proxy_row_at_or_after(
+        entry_pool,
+        signal_time,
+        max_delay_seconds=max_delay_seconds,
+    )
+    if entry is None:
+        return {"status": "NO_PROXY_ENTRY", "moneyness": m}
+
+    try:
+        entry_price = float(entry["open"])
+        strike = float(entry["strike"])
+    except (TypeError, ValueError, KeyError):
+        return {"status": "INVALID_PROXY_ENTRY", "moneyness": m}
+    if not pd.notna(entry_price) or entry_price <= 0 or not pd.notna(strike):
+        return {"status": "INVALID_PROXY_ENTRY", "moneyness": m}
+
+    exit_target = signal_time + pd.Timedelta(minutes=int(hold_minutes))
+    strikes = pd.to_numeric(work.get("strike"), errors="coerce")
+    same_contract = work[strikes.eq(strike)].copy()
+    exit_row = _first_proxy_row_at_or_after(
+        same_contract,
+        exit_target,
+        max_delay_seconds=max_delay_seconds,
+    )
+    if exit_row is None:
+        return {
+            "status": "SAME_STRIKE_NOT_FOUND_AT_EXIT",
+            "moneyness": m,
+            "strike": strike,
+        }
+
+    try:
+        exit_price = float(exit_row["open"])
+    except (TypeError, ValueError, KeyError):
+        return {"status": "INVALID_PROXY_EXIT", "moneyness": m, "strike": strike}
+    if not pd.notna(exit_price) or exit_price <= 0:
+        return {"status": "INVALID_PROXY_EXIT", "moneyness": m, "strike": strike}
+
+    premium_points = exit_price - entry_price
+    return {
+        "status": "OK_PROXY",
+        "session": str(signal.get("session")),
+        "direction": direction,
+        "signal_time": signal_time.isoformat(),
+        "exit_target": exit_target.isoformat(),
+        "moneyness": m,
+        "option_type": option_type,
+        "strike": strike,
+        "entry_expression": str(entry.get("expression")),
+        "exit_expression": str(exit_row.get("expression")),
+        "entry_timestamp": pd.Timestamp(entry["timestamp"]).isoformat(),
+        "exit_timestamp": pd.Timestamp(exit_row["timestamp"]).isoformat(),
+        "entry_proxy_price": entry_price,
+        "exit_proxy_price": exit_price,
+        "premium_points": float(premium_points),
+        "premium_return_pct": float(premium_points / entry_price * 100.0),
+        "data_quality": "PROXY_OHLC_NO_BID_ASK",
+        "executable": False,
+        "can_satisfy_stage3_executable_gate": False,
+    }
