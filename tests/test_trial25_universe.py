@@ -75,3 +75,29 @@ def test_first_and_last_seen_are_persistent_across_reconciliation():
     assert out["first_seen"]["OLD"] == "2026-09-29T09:20:00"
     assert out["first_seen"]["NEWCO"] == now.isoformat(timespec="seconds")
     assert out["last_seen"]["OLD"] == now.isoformat(timespec="seconds")
+
+
+def test_reconciliation_state_is_persisted_atomically(tmp_path):
+    state_file = tmp_path / "onboarding.json"
+    contracts = {
+        "OLD": [_c("OLD"), _c("OLD", typ="PE")],
+        "NEWCO": [_c("NEWCO"), _c("NEWCO", typ="PE")],
+    }
+    now = dt.datetime(2026, 9, 30, 9, 20)
+    out = u.update_universe_state(state_file, {"OLD"}, contracts, now)
+    assert out["cohort_a_live"] == ["OLD"]
+    assert out["new_fno_onboarding"] == ["NEWCO"]
+    restored = u.load_universe_state(state_file)
+    assert restored == out
+    assert not (tmp_path / "onboarding.json.tmp").exists()
+
+
+def test_reconciliation_preserves_first_seen_across_restarts(tmp_path):
+    state_file = tmp_path / "onboarding.json"
+    day1 = dt.datetime(2026, 9, 30, 9, 20)
+    day2 = dt.datetime(2026, 10, 1, 9, 20)
+    contracts = {"NEWCO": [_c("NEWCO"), _c("NEWCO", typ="PE")]}
+    first = u.update_universe_state(state_file, set(), contracts, day1)
+    second = u.update_universe_state(state_file, set(), contracts, day2)
+    assert second["first_seen"]["NEWCO"] == first["first_seen"]["NEWCO"]
+    assert second["last_seen"]["NEWCO"] == day2.isoformat(timespec="seconds")
