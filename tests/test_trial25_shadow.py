@@ -1,0 +1,136 @@
+import datetime as dt
+import json
+from pathlib import Path
+
+from app import trial25_shadow as sh
+
+
+NOW = dt.datetime(2026, 10, 8, 15, 10, 4)
+
+
+def event_fixture():
+    return {
+        "symbol": "ABC",
+        "meeting_date": "2026-10-09",
+        "entry_date": "2026-10-08",
+        "exit_date": "2026-10-12",
+        "status": "ENTRY_DUE",
+    }
+
+
+def structure_fixture(atm=100):
+    def leg(role, typ, strike, token):
+        return {
+            "role": role, "type": typ, "strike": float(strike),
+            "expiry": "2026-10-27", "lot_size": 50,
+            "tradingsymbol": f"ABC-{strike}-{typ}", "instrument_token": token,
+        }
+    return {
+        "status": "OK", "expiry": "2026-10-27", "atm_strike": float(atm), "lot_size": 50,
+        "contract_identities": {
+            "atm_call": leg("atm_call", "CE", atm, 1),
+            "atm_put": leg("atm_put", "PE", atm, 2),
+            "lower_put": leg("lower_put", "PE", 80, 3),
+            "upper_call": leg("upper_call", "CE", 120, 4),
+        },
+    }
+
+
+def quote_fixture():
+    return {
+        "atm_call": {"tradingsymbol": "ABC-100-CE", "instrument_token": 1, "best_bid": 10.0, "best_ask": 10.2},
+        "atm_put": {"tradingsymbol": "ABC-100-PE", "instrument_token": 2, "best_bid": 9.8, "best_ask": 10.0},
+        "lower_put": {"tradingsymbol": "ABC-80-PE", "instrument_token": 3, "best_bid": 1.0, "best_ask": 1.1},
+        "upper_call": {"tradingsymbol": "ABC-120-CE", "instrument_token": 4, "best_bid": 0.9, "best_ask": 1.0},
+    }
+
+
+def _paths(tmp_path):
+    return (tmp_path/"state.json", tmp_path/"ledger.jsonl", tmp_path/"raw.jsonl")
+
+
+def test_event_id_is_deterministic_and_does_not_depend_on_expiry():
+    a = sh.event_id("ABC", "2026-10-09", "2026-10-08")
+    b = sh.event_id("ABC", "2026-10-09", "2026-10-08")
+    assert a == b
+    assert len(a) == 24
+
+
+def test_entry_capture_freezes_exact_four_contracts_and_is_idempotent(tmp_path):
+    state_file, ledger, raw = _paths(tmp_path)
+    first = sh.record_entry(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event=event_fixture(), structure=structure_fixture(),
+        quotes=quote_fixture(), captured_at=NOW,
+    )
+    changed = structure_fixture(atm=105)
+    second = sh.record_entry(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event=event_fixture(), structure=changed,
+        quotes=quote_fixture(), captured_at=NOW + dt.timedelta(seconds=1),
+    )
+    assert first["event_id"] == second["event_id"]
+    assert second["status"] == "ENTRY_CAPTURED"
+    assert second["contracts"] == first["contracts"]
+    state = sh.load_state(state_file)
+    assert state["entry_capture_count"] == 1
+    assert len(raw.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_exit_requires_same_contract_ids(tmp_path):
+    state_file, ledger, raw = _paths(tmp_path)
+    entry = sh.record_entry(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event=event_fixture(), structure=structure_fixture(),
+        quotes=quote_fixture(), captured_at=NOW,
+    )
+    bad = quote_fixture()
+    bad["upper_call"] = dict(bad["upper_call"])
+    bad["upper_call"]["instrument_token"] = 999
+    out = sh.record_exit(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event_id=entry["event_id"], quotes=bad,
+        captured_at=dt.datetime(2026, 10, 12, 9, 30, 4),
+    )
+    assert out["status"] == "UNAVAILABLE_CONTRACT_CHANGED"
+
+
+def test_completed_raw_event_is_immutable_and_restart_safe(tmp_path):
+    state_file, ledger, raw = _paths(tmp_path)
+    entry = sh.record_entry(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event=event_fixture(), structure=structure_fixture(),
+        quotes=quote_fixture(), captured_at=NOW,
+    )
+    completed = sh.record_exit(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event_id=entry["event_id"], quotes=quote_fixture(),
+        captured_at=dt.datetime(2026, 10, 12, 9, 30, 4),
+    )
+    assert completed["status"] == "COMPLETED_RAW"
+    before_state = state_file.read_bytes()
+    before_raw = raw.read_bytes()
+    again = sh.record_exit(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event_id=entry["event_id"], quotes=quote_fixture(),
+        captured_at=dt.datetime(2026, 10, 12, 9, 30, 5),
+    )
+    assert again["status"] == "COMPLETED_RAW"
+    assert state_file.read_bytes() == before_state
+    assert raw.read_bytes() == before_raw
+    restored = sh.load_state(state_file)
+    assert restored["events"][entry["event_id"]]["status"] == "COMPLETED_RAW"
+    assert restored["exit_capture_count"] == 1
+
+
+def test_public_summary_contains_counts_not_raw_quotes(tmp_path):
+    state_file, ledger, raw = _paths(tmp_path)
+    entry = sh.record_entry(
+        state_file=state_file, ledger_file=ledger, raw_quote_file=raw,
+        event=event_fixture(), structure=structure_fixture(),
+        quotes=quote_fixture(), captured_at=NOW,
+    )
+    out = sh.public_summary(sh.load_state(state_file))
+    assert out["entry_captured"] == 1
+    assert out["completed"] == 0
+    assert "quotes" not in json.dumps(out).lower()
