@@ -109,3 +109,45 @@ def test_trial25_preentry_calendar_refresh_window_is_narrow():
     assert v12_live.trial25_preentry_calendar_refresh_due(
         dt.datetime(2026, 10, 8, 15, 18, tzinfo=IST)
     ) is False
+
+
+def test_trial25_process_persists_live_fno_reconciliation_and_reuses_contract_map(monkeypatch, tmp_path):
+    from app import v12_live
+    contracts = {"OLD": [{"instrument_type": "CE"}], "NEWCO": [{"instrument_type": "PE"}]}
+    seen = {}
+
+    monkeypatch.setattr(v12_live.trial25_shadow, "load_frozen_symbols", lambda path: ({"OLD"}, "OK"))
+    monkeypatch.setattr(v12_live.derivative_intelligence, "get_option_contracts_map", lambda kite: contracts)
+
+    def fake_update(path, frozen, contracts_map, now):
+        seen["universe_args"] = (path, set(frozen), contracts_map, now)
+        return {
+            "asof": now.isoformat(timespec="seconds"),
+            "cohort_a_live": ["OLD"],
+            "cohort_a_missing_contracts": [],
+            "new_fno_onboarding": ["NEWCO"],
+        }
+
+    def fake_process(kite, **kwargs):
+        seen["process_contracts"] = kwargs["contracts_map"]
+        return {
+            "status": "PREREGISTERED_WAITING_EVENTS",
+            "completed": 0,
+            "target": 40,
+            "frozen_cohort_size": 1,
+        }
+
+    monkeypatch.setattr(v12_live.trial25_universe, "update_universe_state", fake_update)
+    monkeypatch.setattr(v12_live.trial25_shadow, "process_due_events", fake_process)
+    monkeypatch.setattr(v12_live.config, "TRIAL25_ONBOARDING_FILE", tmp_path / "onboarding.json")
+
+    now = dt.datetime(2026, 9, 30, 9, 20, tzinfo=IST)
+    out = v12_live._trial25_process(
+        object(), now=now, earnings_state={}, current_fno_symbols={"OLD", "NEWCO"}
+    )
+    assert seen["process_contracts"] is contracts
+    assert seen["universe_args"][1] == {"OLD"}
+    assert seen["universe_args"][2] is contracts
+    assert out["cohort_a_live"] == 1
+    assert out["new_fno_onboarding"] == 1
+    assert out["cohort_a_missing_contracts"] == 0
