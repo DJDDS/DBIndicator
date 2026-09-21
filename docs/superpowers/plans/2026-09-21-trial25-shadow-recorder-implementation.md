@@ -308,6 +308,8 @@ def validate_leg(side, snap, lot_size):
 - [ ] **Step 6: Implement frozen fee formula**
 
 ```python
+from decimal import Decimal, ROUND_HALF_UP
+
 BROKERAGE_PER_ORDER = 20.0
 STT_SELL_RATE = 0.0015
 NSE_TXN_RATE = 0.0003553
@@ -365,14 +367,17 @@ git commit -m "feat: add Trial 25 executable structure and charge model"
 **Files:**
 - Create: `app/trial25_shadow.py`
 - Test: `tests/test_trial25_shadow.py`
+- Create: `tests/test_trial25_storage.py`
 - Modify: `app/v12_storage.py`
 - Modify: `app/config.py`
 
 **Interfaces:**
 - Produces: `load_state(path) -> dict`
-- Produces: `discover_events(...) -> dict`
-- Produces: `process_due_events(kite, ..., now: datetime) -> dict`
-- Produces: `public_summary(state) -> dict`
+- Produces: `discover_events(earnings_state: dict, frozen_symbols: set[str], contracts_map: dict, now: datetime) -> list[dict]`
+- Produces: `record_entry(*, state_file, ledger_file, raw_file, event: dict, structure: dict, quotes: dict, captured_at: datetime) -> dict`
+- Produces: `record_exit(*, state_file, ledger_file, raw_file, event_id: str, quotes: dict, captured_at: datetime) -> dict`
+- Produces: `process_due_events(kite, *, now: datetime, contracts_map: dict, earnings_state: dict, frozen_symbols: set[str], state_file, ledger_file, raw_file, sleep_fn=None) -> dict`
+- Produces: `public_summary(state: dict) -> dict`
 - Storage config keys: `TRIAL25_ROOT`, `TRIAL25_STATE_FILE`, `TRIAL25_LEDGER_FILE`, `TRIAL25_RAW_QUOTES_FILE`, `TRIAL25_STAGE_D_FILE`, `TRIAL25_STAGE_D_HASH_FILE`
 
 - [ ] **Step 1: Write failing event-state tests**
@@ -399,8 +404,37 @@ def test_entry_capture_freezes_exact_four_contracts_and_is_idempotent(tmp_path):
     assert sh.load_state(state_file)["entry_capture_count"] == 1
 
 def test_exit_requires_same_contract_ids(tmp_path):
-    ...
-    out = sh.record_exit(..., quotes_with_wrong_token())
+    state_file = tmp_path/"state.json"
+    ledger_file = tmp_path/"ledger.jsonl"
+    raw_file = tmp_path/"raw.jsonl"
+    event = {
+        "event_id":"evt1","symbol":"INFY","registered_meeting_date":"2026-10-09",
+        "entry_date":"2026-10-08","exit_date":"2026-10-12","status":"ENTRY_DUE",
+    }
+    structure = {
+        "expiry":"2026-10-27",
+        "contracts":[
+            {"role":"ATM_CE","tradingsymbol":"INFY26OCT1000CE","instrument_token":1,"lot_size":400},
+            {"role":"ATM_PE","tradingsymbol":"INFY26OCT1000PE","instrument_token":2,"lot_size":400},
+            {"role":"WING_CE","tradingsymbol":"INFY26OCT1100CE","instrument_token":3,"lot_size":400},
+            {"role":"WING_PE","tradingsymbol":"INFY26OCT900PE","instrument_token":4,"lot_size":400},
+        ],
+    }
+    entry_quotes = {str(i):{"best_bid":10+i,"best_ask":11+i,"best_bid_qty":400,"best_ask_qty":400} for i in range(1,5)}
+    sh.record_entry(
+        state_file=state_file, ledger_file=ledger_file, raw_file=raw_file,
+        event=event, structure=structure, quotes=entry_quotes,
+        captured_at=dt.datetime(2026,10,8,15,10,3),
+    )
+    wrong_exit_quotes = {
+        "999":{"instrument_token":999,"tradingsymbol":"INFY_WRONG","best_bid":5,"best_ask":6,
+               "best_bid_qty":400,"best_ask_qty":400}
+    }
+    out = sh.record_exit(
+        state_file=state_file, ledger_file=ledger_file, raw_file=raw_file,
+        event_id="evt1", quotes=wrong_exit_quotes,
+        captured_at=dt.datetime(2026,10,12,9,30,3),
+    )
     assert out["status"] == "UNAVAILABLE_CONTRACT_CHANGED"
 ```
 
@@ -408,11 +442,22 @@ def test_exit_requires_same_contract_ids(tmp_path):
 
 ```python
 def test_completed_raw_event_is_immutable(tmp_path):
-    event_id = build_completed_event(tmp_path)
-    before = (tmp_path/"state.json").read_bytes()
-    out = sh.record_exit(...same event...)
+    state_file = tmp_path/"state.json"
+    payload = {
+        "version":1,
+        "events":{"evt1":{"event_id":"evt1","status":"COMPLETED_RAW",
+                          "exit_captured_at":"2026-10-12T09:30:03"}},
+        "entry_capture_count":1,
+    }
+    state_file.write_text(json.dumps(payload, sort_keys=True, separators=(",",":")), encoding="utf-8")
+    before = state_file.read_bytes()
+    out = sh.record_exit(
+        state_file=state_file, ledger_file=tmp_path/"ledger.jsonl",
+        raw_file=tmp_path/"raw.jsonl", event_id="evt1", quotes={},
+        captured_at=dt.datetime(2026,10,12,9,30,4),
+    )
     assert out["status"] == "COMPLETED_RAW"
-    assert (tmp_path/"state.json").read_bytes() == before
+    assert state_file.read_bytes() == before
 ```
 
 - [ ] **Step 3: Run state-machine tests and confirm RED**
@@ -457,7 +502,7 @@ Every transition appends one JSON line containing event ID, old/new state, times
 
 - [ ] **Step 7: Run Task-3 tests**
 
-Run: `pytest -q tests/test_trial25_shadow.py tests/test_v12_storage.py`
+Run: `pytest -q tests/test_trial25_shadow.py tests/test_trial25_storage.py`
 
 Expected: PASS.
 
@@ -514,7 +559,10 @@ def test_calibration_uses_exact_first_40_when_four_finish_together(tmp_path):
 def test_existing_calibration_is_verified_not_rewritten(tmp_path):
     first = freeze_40(tmp_path)
     before = Path(first["path"]).read_bytes()
-    second = sd.maybe_freeze_calibration(state_with_completed(45), ...)
+    second = sd.maybe_freeze_calibration(
+        state_with_completed(45), tmp_path/"raw.jsonl",
+        tmp_path/"calibration.json", tmp_path/"calibration.sha256",
+    )
     assert second["status"] == "EXISTING_VALID_FREEZE"
     assert Path(first["path"]).read_bytes() == before
 ```
@@ -558,13 +606,16 @@ Calibration JSON contains:
 ```python
 {
   "status":"FROZEN_STAGE_D",
-  "event_ids":[...exactly 40...],
-  "sigma_d": ...,
-  "stage_c_required_n": ...,
+  "event_ids":["evt000","evt001","evt002","evt003","evt004","evt005","evt006","evt007","evt008","evt009",
+               "evt010","evt011","evt012","evt013","evt014","evt015","evt016","evt017","evt018","evt019",
+               "evt020","evt021","evt022","evt023","evt024","evt025","evt026","evt027","evt028","evt029",
+               "evt030","evt031","evt032","evt033","evt034","evt035","evt036","evt037","evt038","evt039"],
+  "sigma_d": 12.5,
+  "stage_c_required_n": 61,
   "fee_model_version": ex.FEE_MODEL_VERSION,
   "trial25_stage_d_code_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
   "trial25_execution_code_sha256": sha256(Path(ex.__file__).read_bytes()).hexdigest(),
-  "frozen_at_utc": ...
+  "frozen_at_utc":"2026-10-20T10:00:00+00:00"
 }
 ```
 
@@ -591,7 +642,7 @@ git commit -m "feat: enforce Trial 25 Stage-D no-peeking calibration"
 - Modify: `app/v12_live.py`
 - Modify: `app/background.py`
 - Test: `tests/test_trial25_live_integration.py`
-- Test: `tests/test_v12_live.py`
+- Test: `tests/test_v120_live_integration.py`
 
 **Interfaces:**
 - Consumes Task-1 universe/calendar helpers.
@@ -606,7 +657,14 @@ def test_trial25_capture_runs_after_v12_and_not_in_parallel(monkeypatch):
     calls = []
     monkeypatch.setattr(v12_option_recorder, "record_snapshot", lambda *a, **k: calls.append("v12") or {"status":"CAPTURED"})
     monkeypatch.setattr(trial25_shadow, "process_due_events", lambda *a, **k: calls.append("trial25") or {"status":"OK"})
-    out = v12_live.process_live_scan(...)
+    out = v12_live.process_live_scan(
+        object(), [], {}, {},
+        now=dt.datetime(2026,10,8,15,10),
+        option_snapshot_file=tmp_path/"v12.jsonl",
+        option_state_file=tmp_path/"v12_state.json",
+        earnings_state_file=tmp_path/"earnings.json",
+        deep_symbol_limit=40, grace_minutes=7,
+    )
     assert calls == ["v12", "trial25"]
     assert out["trial25_shadow"]["status"] == "OK"
 ```
@@ -616,7 +674,14 @@ def test_trial25_capture_runs_after_v12_and_not_in_parallel(monkeypatch):
 ```python
 def test_trial25_error_never_breaks_existing_v12(monkeypatch):
     monkeypatch.setattr(trial25_shadow, "process_due_events", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    out = v12_live.process_live_scan(...)
+    out = v12_live.process_live_scan(
+        object(), [], {}, {},
+        now=dt.datetime(2026,10,8,15,10),
+        option_snapshot_file=tmp_path/"v12.jsonl",
+        option_state_file=tmp_path/"v12_state.json",
+        earnings_state_file=tmp_path/"earnings.json",
+        deep_symbol_limit=40, grace_minutes=7,
+    )
     assert out["recorder"]["status"] in {"CAPTURED","NOT_DUE"}
     assert out["trial25_shadow"]["status"] == "ERROR"
 ```
@@ -627,7 +692,7 @@ Assert `background.py` does not create a new `threading.Thread` for Trial 25 and
 
 - [ ] **Step 4: Run integration tests and confirm RED**
 
-Run: `pytest -q tests/test_trial25_live_integration.py tests/test_v12_live.py`
+Run: `pytest -q tests/test_trial25_live_integration.py tests/test_v120_live_integration.py`
 
 - [ ] **Step 5: Update `v12_live.process_live_scan()`**
 
@@ -653,14 +718,14 @@ Do not change scan rank/shortlist logic.
 
 - [ ] **Step 7: Run Task-5 tests**
 
-Run: `pytest -q tests/test_trial25_live_integration.py tests/test_v12_live.py tests/test_v12_option_recorder.py`
+Run: `pytest -q tests/test_trial25_live_integration.py tests/test_v120_live_integration.py tests/test_v120_option_recorder.py`
 
 Expected: PASS.
 
 - [ ] **Step 8: Commit Task 5**
 
 ```bash
-git add app/v12_live.py app/background.py tests/test_trial25_live_integration.py tests/test_v12_live.py
+git add app/v12_live.py app/background.py tests/test_trial25_live_integration.py tests/test_v120_live_integration.py
 git commit -m "feat: integrate Trial 25 sequential shadow capture"
 ```
 
@@ -734,7 +799,7 @@ No efficacy metric.
 
 - [ ] **Step 6: Run Task-6 tests**
 
-Run: `pytest -q tests/test_trial25_dashboard.py tests/test_web_routes.py`
+Run: `pytest -q tests/test_trial25_dashboard.py tests/test_v120_web_api.py tests/test_v120_ui.py`
 
 Expected: PASS.
 
@@ -750,7 +815,7 @@ git commit -m "feat: add no-peeking Trial 25 Stage-D dashboard"
 ### Task 7: Full regression, provenance checks and deployment verification
 
 **Files:**
-- Modify: `.github/workflows/trial25-shadow-tests.yml`
+- Create: `.github/workflows/trial25-shadow-tests.yml`
 - Create or modify: `tests/test_trial25_release.py`
 - No production logic unless a failing regression proves a defect.
 
@@ -777,7 +842,7 @@ Workflow runs:
 ```bash
 python -m compileall -q app tests run.py
 pytest -q tests/test_trial25_calendar.py           tests/test_trial25_universe.py           tests/test_trial25_execution.py           tests/test_trial25_shadow.py           tests/test_trial25_stage_d.py           tests/test_trial25_live_integration.py           tests/test_trial25_dashboard.py           tests/test_trial25_release.py
-pytest -q tests/test_v12_option_recorder.py tests/test_v12_live.py           tests/test_v12_feasibility.py tests/test_v121_release.py tests/test_v1212_release.py
+pytest -q tests/test_v120_option_recorder.py tests/test_v120_live_integration.py           tests/test_v120_feasibility.py tests/test_v121_release.py tests/test_v1212_release.py
 pytest -q
 ```
 
@@ -830,7 +895,7 @@ git commit -m "test: lock Trial 25 shadow-recorder release invariants"
 ## Self-review result
 
 - **Spec coverage:** calendar, F&O churn, Cohort-A intersection, contract selection, 2.0x wings, >=5 DTE, dedicated sequential quote path, freshness audit, top-level quantity, charge model, persistence, no-peeking Stage D, dashboard, error handling, regressions and Railway verification are each assigned to a task.
-- **Placeholder scan:** no TBD/TODO/“implement later” steps remain.
+- **Placeholder scan:** no TBD/TODO/ellipsis placeholders remain; every code step names concrete arguments and files.
 - **Type consistency:** later tasks consume the exact function/module names defined in earlier tasks.
 - **Review-focus coverage:** all five review-focus risks have explicit tests in Tasks 1, 2, 3 and 4.
 - **Scope:** Stage-C efficacy evaluation remains intentionally excluded; this plan ships only Stage-D collection/calibration infrastructure as specified.
