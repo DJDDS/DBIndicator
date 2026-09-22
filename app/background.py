@@ -1342,6 +1342,8 @@ _state = {
     "market_regime": None,
     "scan_symbol_health": {},
     "opportunity_forward": opportunity_forward.empty_state(),
+    "opportunity_radar": {"label": "EARLY MOVE · RESEARCH / SHADOW", "bullish": [], "bearish": [], "counts": {}},
+    "early_radar_lifecycle": {},
     "v12_trade_console": {"label": "V12 LIVE TRADE OPPORTUNITY CONSOLE", "validation_label": "NOT VALIDATED", "intraday": [], "swing": {"1D": [], "2D": []}, "counts": {}},
     "v12_option_recorder": {"status": "WAITING"},
     "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
@@ -1587,6 +1589,8 @@ def _load_persisted_state():
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
                 _state["opportunity_forward"] = saved.get("opportunity_forward") or opportunity_forward.empty_state()
+                _state["opportunity_radar"] = saved.get("opportunity_radar") or _state["opportunity_radar"]
+                _state["early_radar_lifecycle"] = saved.get("early_radar_lifecycle") or {}
                 _state["v12_trade_console"] = saved.get("v12_trade_console") or _state["v12_trade_console"]
                 _state["v12_option_recorder"] = saved.get("v12_option_recorder") or _state["v12_option_recorder"]
                 _state["v12_feasibility"] = saved.get("v12_feasibility") or _state["v12_feasibility"]
@@ -1622,6 +1626,8 @@ def _save_persisted_state():
             "oi_structure_prev": _state["oi_structure_prev"],
             "scan_symbol_health": _state["scan_symbol_health"],
             "opportunity_forward": _state.get("opportunity_forward") or opportunity_forward.empty_state(),
+            "opportunity_radar": _state.get("opportunity_radar") or {},
+            "early_radar_lifecycle": _state.get("early_radar_lifecycle") or {},
             "v12_trade_console": _state.get("v12_trade_console") or {},
             "v12_option_recorder": _state.get("v12_option_recorder") or {},
             "v12_feasibility": _state.get("v12_feasibility") or {},
@@ -1842,9 +1848,12 @@ def _run_loop():
                             log.exception("V9.4 magnitude shadow registration failed")
                         scan_now = now_ist()
                         scan_ts = scan_now.isoformat(timespec="seconds")
+                        with _state_lock:
+                            early_lifecycle = _state.get("early_radar_lifecycle") or {}
+                            _state["early_radar_lifecycle"] = early_lifecycle
                         radar_snapshot = oi_view.live_opportunity_radar(
                             results, index_direction=index_direction, index_chg_pct=index_chg_pct,
-                            market_breadth=breadth,
+                            market_breadth=breadth, lifecycle_state=early_lifecycle, now=scan_now,
                         )
                         swing_snapshot = oi_view.swing_research_console(radar_snapshot)
                         # V12.2B is a separate interim execution-assist lane.
@@ -1869,6 +1878,7 @@ def _run_loop():
                                 _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
                                 swing_research=swing_snapshot,
                             )
+                            _state["opportunity_radar"] = radar_snapshot
                             _state["v12_trade_console"] = v12_snapshot.get("trade_console") or {}
                             _state["v12_option_recorder"] = v12_snapshot.get("recorder") or {}
                             _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
@@ -1909,17 +1919,22 @@ def _run_loop():
                     post_index_direction = _state.get("index_direction")
                     post_index_chg_pct = _state.get("index_chg_pct")
                     post_breadth = _state.get("breadth")
+                with _state_lock:
+                    post_lifecycle = _state.get("early_radar_lifecycle") or {}
+                    _state["early_radar_lifecycle"] = post_lifecycle
                 post_radar = oi_view.live_opportunity_radar(
                     post_results,
                     index_direction=post_index_direction,
                     index_chg_pct=post_index_chg_pct,
                     market_breadth=post_breadth,
+                    lifecycle_state=post_lifecycle, now=post_now,
                 )
                 post_swing = oi_view.swing_research_console(post_radar)
                 post_v12 = _run_v12_live(
                     kite, post_results, post_radar, post_swing, post_symbols, now=post_now
                 )
                 with _state_lock:
+                    _state["opportunity_radar"] = post_radar
                     _state["v12_trade_console"] = post_v12.get("trade_console") or _state.get("v12_trade_console") or {}
                     _state["v12_option_recorder"] = post_v12.get("recorder") or {}
                     _state["v12_feasibility"] = post_v12.get("feasibility") or {}
