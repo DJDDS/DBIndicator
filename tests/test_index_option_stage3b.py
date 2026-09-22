@@ -226,3 +226,39 @@ def test_stage3b_write_artifacts_returns_decision_object_not_path(tmp_path):
     assert out["refinement_path"].name == "stage3b_refinement_expiry_exclusion.json"
     assert out["decision_path"].exists()
     assert out["refinement_path"].exists()
+
+
+
+def test_stage3b_waiting_friction_reports_pilot_ceiling():
+    frame = _ledger(val=-1.0, hold=8.0)
+    out = decision_report(frame, friction_log=None, banknifty_replication=None)
+    assert out["decision"] == "WAITING_FRICTION"
+    assert out["pilot_possible_before_friction"] is False
+    assert out["decision_ceiling_before_friction"] == "PARK"
+    assert out["break_even_friction_points"] > 0
+    assert "PARK or KILL" in out["reason"]
+
+
+def test_stage3b_park_does_not_wait_for_bank_when_split_already_fails():
+    frame = _ledger(val=-1.0, hold=8.0)
+    out = decision_report(
+        frame,
+        friction_log=_friction(value=1.0),
+        banknifty_replication=None,
+    )
+    assert out["net_2024_to_2026_points"] > 0
+    assert out["net_validation_points"] < 0
+    assert out["decision"] == "PARK"
+    assert "BANK NIFTY replication cannot rescue Pilot" in out["reason"]
+
+
+def test_stage3b_waits_for_bank_only_after_all_nifty_pilot_prerequisites_pass():
+    out = decision_report(
+        _ledger(val=4.0, hold=4.0),
+        friction_log=_friction(value=2.0),
+        banknifty_replication=None,
+    )
+    assert out["net_2024_to_2026_points"] > 1.0
+    assert out["net_validation_points"] > 0
+    assert out["net_holdout_points"] > 0
+    assert out["decision"] == "WAITING_REPLICATION"
