@@ -329,12 +329,23 @@ def decision_report(
     combined_gross = _mean_for_dates(frame, "2024-01-01", "2026-08-31")
     friction = summarize_friction(friction_log)
 
+    pilot_possible_before_friction = bool(
+        combined_gross is not None
+        and val_gross is not None
+        and hold_gross is not None
+        and combined_gross > PILOT_NET_OVERALL_POINTS
+        and val_gross > 0
+        and hold_gross > 0
+    )
     report = {
         "primary_expression": PRIMARY_EXPRESSION,
         "comparator_expression": COMPARATOR_EXPRESSION,
         "gross_validation_points": val_gross,
         "gross_holdout_points": hold_gross,
         "gross_2024_to_2026_points": combined_gross,
+        "break_even_friction_points": combined_gross,
+        "pilot_possible_before_friction": pilot_possible_before_friction,
+        "decision_ceiling_before_friction": "PILOT" if pilot_possible_before_friction else "PARK",
         "early_kill_floor_gross_points": EARLY_KILL_GROSS_FLOOR_POINTS,
         "friction": friction,
         "banknifty_replication": banknifty_replication or {
@@ -354,9 +365,17 @@ def decision_report(
         return report
 
     if friction["status"] != "READY":
+        ceiling_note = (
+            " Pilot remains possible before friction."
+            if pilot_possible_before_friction
+            else " Pilot is already impossible because at least one preregistered gross prerequisite is non-positive or <= +1 point; final outcome is PARK or KILL."
+        )
         report.update({
             "decision": "WAITING_FRICTION",
-            "reason": f"Need at least {MIN_FRICTION_SAMPLES} ITM1 live friction observations.",
+            "reason": (
+                f"Need at least {MIN_FRICTION_SAMPLES} ITM1 live friction observations."
+                + ceiling_note
+            ),
         })
         return report
 
@@ -377,20 +396,38 @@ def decision_report(
         })
         return report
 
+    mixed_splits = (
+        net_val is None or net_hold is None or net_val <= 0 or net_hold <= 0
+    )
+
+    # BANK NIFTY can only distinguish PILOT from PARK after all NIFTY-side
+    # Pilot prerequisites already pass. It must not block a PARK when NIFTY
+    # itself has already made PILOT impossible.
+    if net_all is not None and (net_all <= PILOT_NET_OVERALL_POINTS or mixed_splits):
+        report.update({
+            "decision": "PARK",
+            "reason": (
+                "Mean net is positive, but NIFTY fails at least one preregistered Pilot prerequisite "
+                "(overall net <= +1 point or validation/holdout split is non-positive). "
+                "BANK NIFTY replication cannot rescue Pilot."
+            ),
+        })
+        return report
+
     bank = report["banknifty_replication"]
     bank_ready = bank.get("status") == "READY" and bank.get("mean_120m_points") is not None
     if not bank_ready:
         report.update({
             "decision": "WAITING_REPLICATION",
-            "reason": "NIFTY survived the net-cost kill test; BANK NIFTY zero-retune gross replication is still required.",
+            "reason": (
+                "NIFTY passes all net-cost Pilot prerequisites; BANK NIFTY zero-retune gross replication "
+                "is the remaining Pilot/Park discriminator."
+            ),
         })
         return report
 
     bank_positive = float(bank["mean_120m_points"]) > 0
-    mixed_splits = (
-        net_val is None or net_hold is None or net_val <= 0 or net_hold <= 0
-    )
-    if net_all is not None and net_all > PILOT_NET_OVERALL_POINTS and not mixed_splits and bank_positive:
+    if bank_positive:
         report.update({
             "decision": "PILOT",
             "reason": (
@@ -402,10 +439,7 @@ def decision_report(
 
     report.update({
         "decision": "PARK",
-        "reason": (
-            "Net expectancy is positive but <= +1 point, splits are mixed, "
-            "or BANK NIFTY gross replication is non-positive."
-        ),
+        "reason": "NIFTY passes its net prerequisites, but BANK NIFTY gross replication is non-positive.",
     })
     return report
 
