@@ -9,7 +9,7 @@ from . import alerts, backtest, background, config, delivery, early_signal, indi
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
-from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console
+from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar
 
 log = logging.getLogger(__name__)
 
@@ -98,9 +98,12 @@ def dashboard():
         all_results, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
-    opportunity_radar = live_opportunity_radar(
+    base_opportunity_radar = state.get("opportunity_radar") or live_opportunity_radar(
         all_results, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+    )
+    opportunity_radar = overlay_tactical_radar(
+        base_opportunity_radar, state.get("v122b_tactical") or {}
     )
     forward_validation = opportunity_forward.summarize(state.get("opportunity_forward"))
     research_state = backtest.get_early_research_state()
@@ -225,14 +228,19 @@ def api_dashboard_state():
             rows, index_direction=state.get("index_direction"),
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
         ),
-        "opportunity_radar": live_opportunity_radar(
-            rows, index_direction=state.get("index_direction"),
-            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        "opportunity_radar": overlay_tactical_radar(
+            state.get("opportunity_radar") or live_opportunity_radar(
+                rows, index_direction=state.get("index_direction"),
+                index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+            ),
+            state.get("v122b_tactical") or {},
         ),
-        "swing_research": swing_research_console(live_opportunity_radar(
-            rows, index_direction=state.get("index_direction"),
-            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
-        )),
+        "swing_research": swing_research_console(
+            state.get("opportunity_radar") or live_opportunity_radar(
+                rows, index_direction=state.get("index_direction"),
+                index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+            )
+        ),
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
         "v12_trade_console": state.get("v12_trade_console") or {},
         "v122b_tactical": state.get("v122b_tactical") or {},
@@ -264,11 +272,14 @@ def api_v8_dashboard():
         rows, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
-    payload["opportunity_radar"] = live_opportunity_radar(
+    base_radar = state.get("opportunity_radar") or live_opportunity_radar(
         rows, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
-    payload["swing_research"] = swing_research_console(payload["opportunity_radar"])
+    payload["opportunity_radar"] = overlay_tactical_radar(
+        base_radar, state.get("v122b_tactical") or {}
+    )
+    payload["swing_research"] = swing_research_console(base_radar)
     payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()

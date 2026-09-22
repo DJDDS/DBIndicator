@@ -205,7 +205,9 @@ def select_tactical_pool(radar: dict, results: Iterable[dict], *, max_pool: int 
         rows: list[dict] = []
         seen: set[str] = set()
 
-        for item in list((radar or {}).get(key) or []):
+        scout_key = "scout_" + key
+        source_rows = list((radar or {}).get(scout_key) or (radar or {}).get(key) or [])
+        for item in source_rows:
             symbol = str(item.get("symbol") or "")
             base = by_symbol.get(symbol)
             if not base:
@@ -213,7 +215,7 @@ def select_tactical_pool(radar: dict, results: Iterable[dict], *, max_pool: int 
             merged = dict(base)
             merged.update(item)
             merged["direction"] = direction
-            merged["tactical_source"] = "EARLY_RADAR"
+            merged["tactical_source"] = "EARLY_SCOUT" if scout_key in (radar or {}) else "EARLY_RADAR"
             if str(merged.get("phase") or "") in ("EXTENDED", "FADING"):
                 continue
             rows.append(merged)
