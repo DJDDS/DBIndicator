@@ -5,6 +5,7 @@ on:
     branches:
       - index-option-research-v1-20260920
       - index-option-stage3-audit-20260922
+      - index-option-stage3b-killtest-20260922
   workflow_dispatch:
 
 permissions:
@@ -36,16 +37,19 @@ jobs:
           app/index_option_stage3.py
           app/index_option_fees.py
           app/index_option_historical_sources.py
+          app/index_option_stage3b.py
           scripts/run_index_option_stage1.py
           scripts/run_index_option_stage2.py
           scripts/run_index_option_stage3.py
           scripts/fetch_index_option_historical_proxy.py
+          scripts/run_index_option_stage3b.py
           tests/test_index_option_research.py
           tests/test_index_option_history.py
           tests/test_index_option_stage2.py
           tests/test_index_option_stage2_history.py
           tests/test_index_option_stage3.py
           tests/test_index_option_historical_sources.py
+          tests/test_index_option_stage3b.py
       - name: Run research tests
         run: >
           pytest -q
