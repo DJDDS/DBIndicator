@@ -847,17 +847,23 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
         )
         participation_shift = bool(row.get("participation_accelerating_now"))
         rvol3 = _num(trow.get("rvol_3m"))
-        if rvol3 is not None and rvol3 >= 1.25:
+        rvol3_accel = _num(trow.get("rvol_3m_accel"))
+        # A transition matters more than an already-high static RVOL reading.
+        if rvol3_accel is not None and rvol3_accel > 0.15:
             participation_shift = True
 
         rel3 = _num(trow.get("relative_3m_vs_nifty_pct"))
         relative_shift = rel3 is not None and sign * rel3 > 0.10
 
-        depth_support = _num((trow.get("depth") or {}).get("support_fraction"))
-        basis_change = _num((trow.get("basis") or {}).get("basis_change_60s_pct_points"))
+        depth = trow.get("depth") or {}
+        depth_support = _num(depth.get("support_fraction"))
+        depth_count = int(_num(depth.get("count"), 0) or 0)
+        basis = trow.get("basis") or {}
+        basis_change = _num(basis.get("basis_change_60s_pct_points"))
+        basis_valid = bool(basis.get("valid"))
         microstructure_shift = bool(
-            (depth_support is not None and depth_support >= 0.55)
-            or (basis_change is not None and sign * basis_change > 0)
+            (depth_count >= 3 and depth_support is not None and depth_support >= 0.60)
+            or (basis_valid and basis_change is not None and sign * basis_change > 0)
         )
 
         # Event gate: fresh participation plus at least one independent
@@ -915,8 +921,10 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
             "trigger": trow.get("trigger") if trow.get("trigger") is not None else row.get("trigger_level"),
             "invalidation": trow.get("invalidation"),
             "rvol_3m": rvol3,
+            "rvol_3m_accel": rvol3_accel,
             "relative_3m_vs_nifty_pct": rel3,
             "depth_support_fraction": depth_support,
+            "depth_sample_count": depth_count,
             "basis_change_60s_pct_points": basis_change,
             "oi_accelerating": oi_shift,
             "participation_shift": participation_shift,
