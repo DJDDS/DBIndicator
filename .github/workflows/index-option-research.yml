@@ -59,3 +59,4 @@ jobs:
           tests/test_index_option_stage2_history.py
           tests/test_index_option_stage3.py
           tests/test_index_option_historical_sources.py
+          tests/test_index_option_stage3b.py
