@@ -30,14 +30,14 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           set +e
-          pytest -q > branch-regression.log 2>&1
+          pytest --import-mode=importlib -q > branch-regression.log 2>&1
           BRANCH_RC=$?
           grep -E '^(FAILED|ERROR) ' branch-regression.log | awk '{print $2}' | sort -u > branch-failures.txt
           git fetch origin main
           git worktree add ../production-main origin/main
           (
             cd ../production-main
-            PYTHONPATH="$PWD" pytest -q > ../production-main-regression.log 2>&1
+            PYTHONPATH="$PWD" pytest --import-mode=importlib -q > ../production-main-regression.log 2>&1
             echo $? > ../production-main-rc.txt
           )
           BASE_RC=$(cat ../production-main-rc.txt)
