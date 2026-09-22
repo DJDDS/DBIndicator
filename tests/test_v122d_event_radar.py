@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.oi_view import event_driven_early_radar
+from app import v122d_forward
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -106,3 +107,50 @@ def test_visible_template_no_longer_uses_legacy_movement_score_section():
     # The old exact visible section headings must be gone.
     assert "<h2>⚡ Production Early Radar" not in text
     assert ">Shadow Early Radar <" not in text
+
+
+
+def test_price_cross_without_live_evidence_is_break_watch_not_accepted():
+    radar = _base(_scout(
+        oi_acceleration=0.0,
+        oi_accelerating_now=False,
+        participation_accelerating_now=False,
+    ))
+    tactical = {
+        "candidates": [{
+            "symbol": "ABC", "direction": "Bullish", "state": "TRADEABLE",
+            "setup": "MICRO_BREAKOUT", "trigger": 101.2, "invalidation": 99.8,
+            "live_price": 101.25, "tradeable": True,
+            "rvol_3m": 1.1, "rvol_3m_accel": 0.0,
+            "relative_3m_vs_nifty_pct": 0.0,
+            "depth": {"support_fraction": 0.5, "count": 5},
+            "basis": {"valid": True, "basis_change_60s_pct_points": 0.0},
+        }]
+    }
+    row = event_driven_early_radar(radar, tactical)["rows"][0]
+    assert row["event_state"] == "BREAK_WATCH"
+    assert "did not confirm acceptance" in row["reason"]
+
+
+def test_forward_ledger_records_real_stage_outcomes_not_scores():
+    t0 = __import__("datetime").datetime(2026, 9, 22, 10, 0)
+    snapshot = {
+        "rows": [{
+            "symbol": "ABC", "direction": "Bullish", "event_state": "PRESSURE_SHIFT",
+            "event_source": "3M_LIVE", "live_price": 100.0, "trigger": 101.0,
+            "invalidation": 99.0, "participation_shift": True,
+            "oi_accelerating": True, "relative_shift": False,
+            "microstructure_shift": False, "independent_evidence_count": 1,
+        }]
+    }
+    state = v122d_forward.process(None, snapshot, now=t0)
+    assert len(state["events"]) == 1
+    assert state["events"][0]["event_state"] == "PRESSURE_SHIFT"
+
+    snapshot["rows"][0]["live_price"] = 100.8
+    state = v122d_forward.process(state, snapshot, now=t0 + __import__("datetime").timedelta(minutes=5))
+    out = state["events"][0]["outcomes"]["5m"]
+    assert out["directional_return_pct"] == 0.8
+    summary = v122d_forward.summarize(state)
+    assert summary["by_stage"]["PRESSURE_SHIFT"]["5m"]["n"] == 1
+    assert summary["by_stage"]["PRESSURE_SHIFT"]["5m"]["avg_return_pct"] == 0.8
