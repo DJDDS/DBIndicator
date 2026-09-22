@@ -204,3 +204,22 @@ def test_3m_ready_overlay_can_surface_hidden_scout_immediately():
     assert out["bullish"][0]["symbol"] == "FAST"
     assert out["bullish"][0]["tactical_state"] == "READY"
     assert out["bullish"][0]["tactical_trigger"] == pytest.approx(101.2)
+
+
+
+def test_tactical_overlay_cannot_resurrect_symbol_removed_from_current_scout_lane():
+    base = {
+        "label": "EARLY MOVE · RESEARCH / SHADOW",
+        "bullish": [], "bearish": [],
+        "scout_bullish": [], "scout_bearish": [],
+        "counts": {"bullish": 0, "bearish": 0, "displayed": 0},
+    }
+    stale_ready = {
+        "candidates": [{
+            "symbol": "MATURED", "direction": "Bullish", "state": "READY",
+            "setup": "MICRO_BREAKOUT", "trigger": 110.0, "invalidation": 108.0,
+            "candidate_pressure": 90.0, "candidate_runway": 1.0,
+        }]
+    }
+    out = overlay_tactical_radar(base, stale_ready)
+    assert out["bullish"] == []
