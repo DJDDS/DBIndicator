@@ -11,6 +11,7 @@ from app.index_option_stage3b import (
     split_summary,
     summarize_friction,
     validate_proxy_ledger,
+    write_stage3b_artifacts,
 )
 
 
@@ -207,3 +208,21 @@ def test_stage3b_alignment_uses_five_deterministic_sessions():
     assert out["matched_minutes"] == 10
     assert out["mean_abs_spot_difference_points"] == 0.0
     assert out["selection_method"] == "5 evenly spaced common sessions; no cherry-picking"
+
+
+
+def test_stage3b_write_artifacts_returns_decision_object_not_path(tmp_path):
+    frame = _ledger(val=4.0, hold=4.0)
+    out = write_stage3b_artifacts(
+        tmp_path,
+        proxy_ledger=frame,
+        friction_log=None,
+        banknifty_replication=None,
+        expiry_calendar=None,
+    )
+    assert isinstance(out["decision"], dict)
+    assert isinstance(out["refinement"], dict)
+    assert out["decision_path"].name == "stage3b_decision.json"
+    assert out["refinement_path"].name == "stage3b_refinement_expiry_exclusion.json"
+    assert out["decision_path"].exists()
+    assert out["refinement_path"].exists()
