@@ -60,6 +60,20 @@
   <nav><a href="/">&larr; Dashboard</a></nav>
 </header>
 <div class="wrap">
+<div id="v122b-current-research" class="card" style="display:block!important;border-color:#0f7b61;">
+  <h2>Current Research &amp; Validation</h2>
+  <p><strong>V12.2B Tactical Stock-Option Execution Engine</strong>: 15m discovery → bounded 3m structural trigger → futures depth/basis witness → DTE/option friction gate → fast structural/time exit. <strong>INTERIM / NOT VALIDATED.</strong></p>
+  <p><strong>Trial 25 remains LOCKED</strong>; V12 stock-option recording and V12.1 NIFTY index-volatility recording remain separate and untouched.</p>
+  <p class="hint"><strong>Engineering checkpoint:</strong> first 25–30 independent tactical events. <strong>Evidence checkpoint:</strong> around 60 independent events. Historical V6–V11 controls remain preserved below for audit/reproducibility but are hidden from the working page so they cannot be casually retuned.</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+    <a class="btn" href="/api/v122b-tactical-state/export">Export V12.2B state</a>
+    <a class="btn" href="/api/v122b-tactical-events/export">Export V12.2B events</a>
+    <a class="btn" href="/api/v12-option-snapshots/export">V12 option snapshots</a>
+    <a class="btn" href="/api/v12-earnings-ledger/export">Earnings ledger</a>
+    <a class="btn" href="/api/v121-index-micro/export">V12.1 NIFTY micro</a>
+  </div>
+</div>
+<div id="legacy-backtest-ui" style="display:none!important" aria-hidden="true">
 
   {% if not logged_in %}
   <div class="msg-err">Log in to Kite on the dashboard first - the backtest needs a live Kite session to pull historical data.</div>
@@ -403,6 +417,7 @@
     <p class="hint">Use <strong>Run V9.4 Measurement Lab</strong> above. <span style="display:none">Run V9.3 Anticipation Lab</span> This avoids repeatedly slicing a negative baseline with correlated confirmation filters.</p>
   </div>
 
+</div>
 </div>
 
 <script>

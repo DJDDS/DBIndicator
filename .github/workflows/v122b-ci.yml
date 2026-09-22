@@ -1,0 +1,68 @@
+name: V12.2B CI
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Compile
+        run: python -m compileall -q app
+      - name: V12.2B focused tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: pytest -q tests/test_v122b_tactical.py tests/test_v122a_interim_tactical_radar.py tests/test_v121_index_recorder.py
+      - name: Regression delta vs production main
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set +e
+          pytest --import-mode=importlib -q > branch-regression.log 2>&1
+          BRANCH_RC=$?
+          grep -E '^(FAILED|ERROR) ' branch-regression.log | awk '{print $2}' | sort -u > branch-failures.txt
+          git fetch origin main
+          git worktree add ../production-main origin/main
+          (
+            cd ../production-main
+            PYTHONPATH="$PWD" pytest --import-mode=importlib -q > ../production-main-regression.log 2>&1
+            echo $? > ../production-main-rc.txt
+          )
+          BASE_RC=$(cat ../production-main-rc.txt)
+          grep -E '^(FAILED|ERROR) ' ../production-main-regression.log | awk '{print $2}' | sort -u > main-failures.txt
+          echo "Production-main pytest exit: $BASE_RC"
+          echo "Branch pytest exit: $BRANCH_RC"
+          echo "Production-main failing/error node IDs: $(wc -l < main-failures.txt)"
+          echo "Branch failing/error node IDs: $(wc -l < branch-failures.txt)"
+          if [ "$BASE_RC" -ne 0 ] && [ ! -s main-failures.txt ]; then
+            echo "Production-main regression command failed before producing normal pytest node IDs:"
+            tail -160 ../production-main-regression.log
+            exit 2
+          fi
+          comm -23 branch-failures.txt main-failures.txt > new-failures.txt
+          if [ -s new-failures.txt ]; then
+            echo "NEW regressions introduced by V12.2B:"
+            cat new-failures.txt
+            echo "--- branch tail ---"
+            tail -160 branch-regression.log
+            echo "--- production main tail ---"
+            tail -160 ../production-main-regression.log
+            exit 1
+          fi
+          echo "No new full-suite regression versus production main."
+          if [ "$BRANCH_RC" -ne 0 ]; then
+            echo "Production-main pre-existing failing/error nodes also present on branch:"
+            cat branch-failures.txt
+          fi

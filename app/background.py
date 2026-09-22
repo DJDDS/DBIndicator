@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1348,6 +1348,14 @@ _state = {
     "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
     "trial25_shadow": {"status": "PREREGISTERED_WAITING_EVENTS", "completed": 0, "target": 40},
     "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
+    "v122b_candidates": [],
+    "v122b_tactical": {
+        "status": "WAITING",
+        "validation_label": "INTERIM / NOT VALIDATED",
+        "candidate_count": 0,
+        "candidates": [],
+        "counts": {},
+    },
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1839,6 +1847,12 @@ def _run_loop():
                             market_breadth=breadth,
                         )
                         swing_snapshot = oi_view.swing_research_console(radar_snapshot)
+                        # V12.2B is a separate interim execution-assist lane.
+                        # It consumes the existing 15m radar but cannot change
+                        # Trial-25, V12/V12.1 recorders, frozen tests or alerts.
+                        tactical_pool = v122b_tactical.select_tactical_pool(
+                            radar_snapshot, results, max_pool=v122b_tactical.TACTICAL_POOL_MAX
+                        )
                         v12_snapshot = _run_v12_live(
                             kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
                         )
@@ -1861,6 +1875,7 @@ def _run_loop():
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
                             _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                             _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
+                            _state["v122b_candidates"] = tactical_pool
                         wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
                             alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
@@ -1935,6 +1950,8 @@ def _run_loop():
 
 
 _v121_stream_started = False
+_v122b_stream_started = False
+_v122b_stream_service = None
 
 
 def _run_v121_postclose_backup(now):
@@ -1975,6 +1992,45 @@ def start_v121_index_stream_once():
     _v121_stream_started = True
 
 
+def _v122b_candidate_provider():
+    with _state_lock:
+        return [dict(row) for row in (_state.get("v122b_candidates") or [])]
+
+
+def _v122b_publish(payload):
+    with _state_lock:
+        _state["v122b_tactical"] = dict(payload or {})
+
+
+def _make_v122b_stream_service():
+    return v122b_stream.TacticalStockStreamService(
+        candidate_provider=_v122b_candidate_provider,
+        publish_callback=_v122b_publish,
+        access_token_getter=kite_auth.get_access_token,
+        kite_client_getter=kite_auth.get_kite_client,
+        api_key=config.KITE_API_KEY,
+        earnings_state_file=config.V12_EARNINGS_STATE_FILE,
+        state_file=config.V122B_TACTICAL_STATE_FILE,
+        event_file=config.V122B_TACTICAL_EVENT_FILE,
+        now_provider=now_ist,
+        stale_seconds=config.V122B_TACTICAL_STALE_SECONDS,
+    )
+
+
+def start_v122b_tactical_stream_once():
+    global _v122b_stream_started, _v122b_stream_service
+    if _v122b_stream_started:
+        return
+    _v122b_stream_service = _make_v122b_stream_service()
+    thread = threading.Thread(
+        target=_v122b_stream_service.run_forever,
+        daemon=True,
+        name="v122b-tactical-stock-stream",
+    )
+    thread.start()
+    _v122b_stream_started = True
+
+
 def start_background_scanner():
     # Freeze the completed first-ten-day stock-option feasibility sample once.
     # Fail soft: research provenance must never block the live scanner.
@@ -1995,5 +2051,6 @@ def start_background_scanner():
         log.exception("V12 10-day feasibility freeze verification failed")
 
     start_v121_index_stream_once()
+    start_v122b_tactical_stream_once()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()
