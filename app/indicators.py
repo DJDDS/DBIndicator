@@ -1396,6 +1396,26 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     open_val = float(df["open"].iloc[i]) if "open" in df.columns else None
     prev_close_val = float(close.iloc[i - 1]) if i >= 1 else None
 
+    # Interim tactical trigger: the current 15-minute bar is allowed to break
+    # a compact, already-completed two-bar range without waiting for a much
+    # larger 20-day / stock-in-play breakout. This is read-only telemetry for
+    # the shadow trade-assist layer; it never changes signal_confirmed or any
+    # frozen research/recorder state.
+    tactical_trigger_high = tactical_trigger_low = None
+    prev_bar_high = prev_bar_low = None
+    if i >= 1 and {"high", "low"}.issubset(df.columns):
+        try:
+            prev_bar_high = float(df["high"].iloc[i - 1])
+            prev_bar_low = float(df["low"].iloc[i - 1])
+            start_pos = max(0, i - 2)
+            prior_slice = df.iloc[start_pos:i]
+            if len(prior_slice):
+                tactical_trigger_high = float(prior_slice["high"].max())
+                tactical_trigger_low = float(prior_slice["low"].min())
+        except (TypeError, ValueError):
+            tactical_trigger_high = tactical_trigger_low = None
+            prev_bar_high = prev_bar_low = None
+
     # V6 price-location context. Use only PRIOR completed sessions so a new
     # intraday high cannot improve its own historical-location score.
     prior_high_20d = prior_low_20d = prior_high_50d = prior_low_50d = None
@@ -1419,6 +1439,10 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
     return {
         "open": round(open_val, 2) if open_val is not None else None,
         "prev_close": round(prev_close_val, 2) if prev_close_val is not None else None,
+        "prev_bar_high": round(prev_bar_high, 2) if prev_bar_high is not None else None,
+        "prev_bar_low": round(prev_bar_low, 2) if prev_bar_low is not None else None,
+        "tactical_trigger_high": round(tactical_trigger_high, 2) if tactical_trigger_high is not None else None,
+        "tactical_trigger_low": round(tactical_trigger_low, 2) if tactical_trigger_low is not None else None,
         "prior_high_20d": round(prior_high_20d, 2) if prior_high_20d is not None else None,
         "prior_low_20d": round(prior_low_20d, 2) if prior_low_20d is not None else None,
         "prior_high_50d": round(prior_high_50d, 2) if prior_high_50d is not None else None,
