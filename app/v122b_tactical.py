@@ -21,6 +21,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .early_onset import assess_early_onset, derive_price_move_60m_atr
+
 IST_OFFSET = dt.timedelta(hours=5, minutes=30)
 
 TACTICAL_POOL_MAX = 8
@@ -121,13 +123,88 @@ def _candidate_rank_tuple(row: dict) -> tuple:
     return (phase_rank, stage_rank, pressure, runway, str(row.get("symbol") or ""))
 
 
+def _structural_direction(row: dict) -> str | None:
+    """Infer a tactical side from observable futures positioning when the
+    legacy indicator direction is absent.
+
+    This is candidate-pool routing only.  A 3-minute price structure must
+    still trigger before an option can become tradeable.
+    """
+    direct = _candidate_direction(row)
+    if direct:
+        return direct
+    structure = str(row.get("oi_structure") or "")
+    return {
+        "Long Buildup": "Bullish",
+        "Short Covering": "Bullish",
+        "Short Buildup": "Bearish",
+        "Long Unwinding": "Bearish",
+    }.get(structure)
+
+
+def _supplement_candidate(row: dict, direction: str) -> dict | None:
+    """Create a broader 15m tactical candidate without requiring the old
+    radar's visibility cutoff.
+
+    The pool is intentionally permissive because it is NOT an entry signal:
+    live 3m structure, stale-data guards and option economics remain hard
+    downstream checks.  This avoids the old failure mode where no 3m engine
+    ever ran simply because a stock missed an arbitrary radar score.
+    """
+    travel = derive_price_move_60m_atr(row)
+    if travel is not None and abs(float(travel)) > 1.25:
+        return None
+
+    oi15 = _f(row.get("oi_chg_15m_pct"))
+    oi30 = _f(row.get("oi_chg_30m_pct"))
+    tod = _f(row.get("tod_rvol"), _f(row.get("vol_multiple")))
+    compression = _f(row.get("compression_score"))
+    relative = _f(row.get("rs_pct"), _f(row.get("relative_strength_pct")))
+    has_live_pressure = bool(
+        (oi15 is not None and oi15 > 0)
+        or (oi30 is not None and oi30 > 0)
+        or (tod is not None and tod >= 1.0)
+        or (compression is not None and compression >= 65.0)
+        or (relative is not None and abs(relative) >= 0.40)
+    )
+    if not has_live_pressure:
+        return None
+
+    merged = dict(row)
+    merged["direction"] = direction
+    onset = assess_early_onset(merged, direction, fallback_score=0.0)
+    merged.update({
+        "phase": onset.get("phase") or merged.get("phase"),
+        "action_stage": onset.get("action_stage") or merged.get("action_stage"),
+        "pressure": onset.get("pressure") if onset.get("pressure") is not None else merged.get("pressure"),
+        "runway": onset.get("runway") if onset.get("runway") is not None else merged.get("runway"),
+        "price_move_60m_atr": onset.get("price_move_60m_atr"),
+        "trigger_level": onset.get("trigger_level") or merged.get("trigger_level"),
+        "trigger_distance_atr": onset.get("trigger_distance_atr"),
+        "tactical_source": "DIRECT_15M",
+    })
+    if str(merged.get("phase") or "") in ("EXTENDED", "FADING"):
+        return None
+    return merged
+
+
 def select_tactical_pool(radar: dict, results: Iterable[dict], *, max_pool: int = TACTICAL_POOL_MAX) -> list[dict]:
-    """Return a two-sided bounded pool without turning rank into an entry gate."""
-    by_symbol = {str(r.get("symbol")): r for r in (results or []) if r.get("symbol") and not r.get("error")}
+    """Return a two-sided bounded resource pool, not a trade score shortlist.
+
+    The existing radar gets first priority, but each side is supplemented
+    directly from live 15m F&O rows when the radar is sparse.  This is the
+    bridge that lets the 3m engine actually look for trades instead of being
+    starved by older score/visibility cutoffs.
+    """
+    result_rows = [r for r in (results or []) if r.get("symbol") and not r.get("error")]
+    by_symbol = {str(r.get("symbol")): r for r in result_rows}
     per_side = max(1, min(TACTICAL_POOL_PER_SIDE, int(max_pool) // 2 or 1))
     out: list[dict] = []
+
     for key, direction in (("bullish", "Bullish"), ("bearish", "Bearish")):
-        rows = []
+        rows: list[dict] = []
+        seen: set[str] = set()
+
         for item in list((radar or {}).get(key) or []):
             symbol = str(item.get("symbol") or "")
             base = by_symbol.get(symbol)
@@ -136,9 +213,22 @@ def select_tactical_pool(radar: dict, results: Iterable[dict], *, max_pool: int 
             merged = dict(base)
             merged.update(item)
             merged["direction"] = direction
+            merged["tactical_source"] = "EARLY_RADAR"
             if str(merged.get("phase") or "") in ("EXTENDED", "FADING"):
                 continue
             rows.append(merged)
+            seen.add(symbol)
+
+        if len(rows) < per_side:
+            for base in result_rows:
+                symbol = str(base.get("symbol") or "")
+                if symbol in seen or _structural_direction(base) != direction:
+                    continue
+                extra = _supplement_candidate(base, direction)
+                if extra is not None:
+                    rows.append(extra)
+                    seen.add(symbol)
+
         rows.sort(key=_candidate_rank_tuple, reverse=True)
         out.extend(rows[:per_side])
     return out[:max_pool]
