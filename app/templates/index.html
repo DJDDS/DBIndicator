@@ -500,6 +500,22 @@
     </div>
   </div>
 
+  {% set tctl = v122b_tactical|default({}) %}
+  <section id="v122b-tactical-console" class="card v12-card" style="border-color:#0f7b61;" aria-label="V12.2B tactical stock option execution engine">
+    <div class="v12-head">
+      <div>
+        <div class="v12-kicker">V12.2B · FAST STOCK-OPTION EXECUTION · 15m FIND → 3m TRIGGER</div>
+        <h2>Tactical Option Console <span class="sub">micro breakout · pullback-reclaim · opening drive · direct DTE/option route</span></h2>
+      </div>
+      <div id="v122b-status" class="v12-lock">{{ tctl.get('status') or 'WAITING' }} · INTERIM / NOT VALIDATED</div>
+    </div>
+    <div class="v12-note"><strong>Result-first:</strong> READY defines the exact stock trigger before the move; TRADEABLE means that trigger fired and the selected option passed the DTE/liquidity/friction gate. TIME_EXIT, STALE, CANCELLED and OPTION NOT TRADEABLE are hard warnings. No order is placed automatically.</div>
+    <div id="v122b-list" class="v12-list" style="margin-top:10px;">
+      <div class="v8-empty">Waiting for the bounded tactical pool…</div>
+    </div>
+    <div class="v12-links"><a href="/api/v122b-tactical-state/export">Export tactical state</a><a href="/api/v122b-tactical-events/export">Export lifecycle events</a></div>
+  </section>
+
   <section id="v12-trade-console" class="card v12-card" aria-label="V12 live trade opportunity console">
     <div class="v12-head">
       <div><div class="v12-kicker">V12 · TODAY'S OPPORTUNITY ENGINE</div>
@@ -756,7 +772,7 @@
   </div>
   {% endif %}
 
-  <div class="card table-card">
+  <div class="card table-card" style="display:none" aria-hidden="true">
     <div class="table-card-head">
       <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Watchlist</h2>
       <span class="footer-note">Click a header to sort &middot; use the filter row to narrow &middot; click a row to open its chart</span>
@@ -1312,6 +1328,62 @@
       .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   }
 
+  function renderV122BTactical(data) {
+    data = data || {};
+    var box = document.getElementById('v122b-list');
+    var status = document.getElementById('v122b-status');
+    if (status) status.textContent = (data.status || 'WAITING') + ' · INTERIM / NOT VALIDATED';
+    if (!box) return;
+    var rows = Array.isArray(data.candidates) ? data.candidates : [];
+    if (!rows.length) {
+      box.innerHTML = '<div class="v8-empty">No bounded 15m candidate is ready for 3m execution yet.</div>';
+      return;
+    }
+    function num(v, d, suffix) {
+      var n = Number(v); return Number.isFinite(n) ? n.toFixed(d) + (suffix || '') : '—';
+    }
+    function pctSigned(v, d) {
+      var n = Number(v); return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(d) + '%' : '—';
+    }
+    box.innerHTML = rows.map(function (row) {
+      row = row || {};
+      var state = String(row.state || 'FORMING').toUpperCase();
+      var cls = ['TRADEABLE','PROFIT_PROTECT'].indexOf(state) >= 0 ? 'exec' :
+        (['READY','TRIGGERED','FORMING'].indexOf(state) >= 0 ? 'setup' : 'watch');
+      var route = row.option_route || {};
+      var contract = route.contract || {};
+      var event = row.earnings || {};
+      var depth = row.depth || {};
+      var basis = row.basis || {};
+      var risk = row.one_lot_risk || {};
+      var friction = Number(contract.friction_to_expected_move);
+      var eventText = event.confidence === 'CONFIRMED' && event.days_to_result != null ?
+        ' · Result T' + (Number(event.days_to_result) >= 0 ? '-' + event.days_to_result : event.days_to_result) : '';
+      var optionText = contract.symbol ?
+        '<strong>' + v12Esc(contract.symbol) + '</strong> · DTE ' + v12Esc(contract.dte) +
+        ' · spread ' + num(contract.spread_pct, 2, '%') +
+        ' · friction/use ' + (Number.isFinite(friction) ? (friction * 100).toFixed(0) + '%' : '—') :
+        '<strong>OPTION WAIT</strong>';
+      var nextMonth = route.pre_result_next_month ? ' · PRE-RESULT → NEXT MONTH' : '';
+      return '<div class="v12-row ' + cls + '">' +
+        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' +
+        v12Esc(row.direction || '') + ' · ' + v12Esc(row.setup || '3m forming') + eventText + '</div>' +
+        '<div class="state ' + cls + '">' + v12Esc(state) + '</div>' +
+        '<div class="detail">Stock ' + num(row.live_price, 2, '') +
+        ' · trigger <strong>' + num(row.trigger, 2, '') + '</strong>' +
+        ' · invalidate <strong>' + num(row.invalidation, 2, '') + '</strong>' +
+        ' · 3m RVOL ' + num(row.rvol_3m, 2, 'x') +
+        ' · Rel/Nifty ' + pctSigned(row.relative_3m_vs_nifty_pct, 2) +
+        ' · depth support ' + num(Number(depth.support_fraction) * 100, 0, '%') +
+        ' · basis Δ60s ' + pctSigned(basis.basis_change_60s_pct_points, 4) +
+        '<br>' + optionText + nextMonth +
+        (risk.premium_outlay != null ? ' · 1-lot outlay ₹' + num(risk.premium_outlay, 0, '') + ' · est. invalidation risk ₹' + num(risk.estimated_loss_at_invalidation, 0, '') : '') +
+        '<br><strong>' + v12Esc(row.reason || '') + '</strong>' +
+        (row.trailing_invalidation != null ? ' · trail ' + num(row.trailing_invalidation, 2, '') : '') +
+        '</div></div>';
+    }).join('');
+  }
+
   function renderV12TradeConsole(consoleData) {
     consoleData = consoleData || {};
     function num(value, digits, suffix) {
@@ -1473,6 +1545,7 @@
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
       renderOpportunityForward(state.opportunity_forward);
+      renderV122BTactical(state.v122b_tactical);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
       renderTrial25Shadow(state.trial25_shadow);
