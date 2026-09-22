@@ -1874,6 +1874,9 @@ def _run_loop():
                             kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
                         )
                         with _state_lock:
+                            tactical_snapshot = dict(_state.get("v122b_tactical") or {})
+                        _update_v122d_event_evidence(radar_snapshot, tactical_snapshot, scan_now)
+                        with _state_lock:
                             _state["results"] = results
                             _state["index_direction"] = index_direction
                             _state["index_close"] = index_close
@@ -2020,21 +2023,25 @@ def _v122b_candidate_provider():
         return [dict(row) for row in (_state.get("v122b_candidates") or [])]
 
 
+def _update_v122d_event_evidence(base_radar, tactical, now):
+    with _state_lock:
+        forward_state = _state.get("v122d_forward") or v122d_forward.empty_state()
+    event_radar = oi_view.event_driven_early_radar(base_radar or {}, tactical or {}, limit=10)
+    forward_state = v122d_forward.process(forward_state, event_radar, now=now)
+    forward_summary = v122d_forward.summarize(forward_state)
+    with _state_lock:
+        _state["event_early_radar"] = event_radar
+        _state["v122d_forward"] = forward_state
+        _state["v122d_forward_summary"] = forward_summary
+    return event_radar
+
+
 def _v122b_publish(payload):
     now = now_ist()
     with _state_lock:
         _state["v122b_tactical"] = dict(payload or {})
         base_radar = dict(_state.get("opportunity_radar") or {})
-        forward_state = _state.get("v122d_forward") or v122d_forward.empty_state()
-
-    event_radar = oi_view.event_driven_early_radar(base_radar, payload or {}, limit=10)
-    forward_state = v122d_forward.process(forward_state, event_radar, now=now)
-    forward_summary = v122d_forward.summarize(forward_state)
-
-    with _state_lock:
-        _state["event_early_radar"] = event_radar
-        _state["v122d_forward"] = forward_state
-        _state["v122d_forward_summary"] = forward_summary
+    _update_v122d_event_evidence(base_radar, payload or {}, now)
 
 
 def _make_v122b_stream_service():
