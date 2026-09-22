@@ -38,12 +38,14 @@ jobs:
           app/index_option_fees.py
           app/index_option_historical_sources.py
           app/index_option_stage3b.py
+          app/index_option_stage3b_friction.py
           scripts/run_index_option_stage1.py
           scripts/run_index_option_stage2.py
           scripts/run_index_option_stage3.py
           scripts/fetch_index_option_historical_proxy.py
           scripts/run_index_option_stage3b.py
           scripts/run_index_option_stage3b_alignment.py
+          scripts/run_index_option_stage3b_friction.py
           tests/test_index_option_research.py
           tests/test_index_option_history.py
           tests/test_index_option_stage2.py
@@ -51,6 +53,7 @@ jobs:
           tests/test_index_option_stage3.py
           tests/test_index_option_historical_sources.py
           tests/test_index_option_stage3b.py
+          tests/test_index_option_stage3b_friction.py
       - name: Run research tests
         run: >
           pytest -q
