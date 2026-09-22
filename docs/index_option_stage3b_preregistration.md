@@ -177,3 +177,54 @@ Stage 3B:
 - does not alter the frozen Stage-3 specification.
 
 Any later pilot or production action requires a separate explicit approval.
+
+
+## Kill-first execution order
+
+The implementation order is deliberately asymmetric so a clean failure can stop work early:
+
+1. **Run the existing 355-trade Stage-3 proxy ledger through Stage 3B first.**
+   No additional historical download is required for this first decision.
+   If ITM1 gross mean over 2024-01-01..2026-08-31 is <= +1.50 points, Stage 3B returns **KILL** and the historical efficacy branch stops.
+2. If the early kill does not fire, run the **five-session Dhan/Kite alignment audit**.
+3. The Sep-Dec 2021 Dhan extension is optional descriptive evidence and is written to a separate directory. It never replaces or mutates the completed Stage-3 ledger.
+4. Continue forward executable friction logging until at least 20 ITM1 observations exist.
+5. Run zero-retune BANK NIFTY replication.
+6. Apply the frozen Pilot/Park/Kill decision.
+7. The one permitted expiry-day exclusion is a separate sensitivity result and can never overwrite the base decision.
+
+### Existing 355-trade kill-test command
+
+```bash
+PYTHONPATH=. /app/.venv/bin/python scripts/run_index_option_stage3b.py \
+  --stage3-proxy-ledger /data/index_option_research/stage3_historical_proxy/dhan_proxy_ledger.csv \
+  --output /data/index_option_research/stage3b_killtest
+```
+
+### Five-session alignment command
+
+This uses the already-saved Stage-1 Kite NIFTY minute bars and fetches only five deterministic ATM Dhan sessions.
+
+```bash
+PYTHONPATH=. /app/.venv/bin/python scripts/run_index_option_stage3b_alignment.py \
+  --kite-nifty-bars /data/index_option_research/stage1/primary/nifty_1m.csv \
+  --output /data/index_option_research/stage3b_killtest/alignment
+```
+
+The Dhan token must already exist in the Railway shell/environment. It must never be printed or pasted into chat.
+
+### Optional Sep-Dec 2021 extension
+
+```bash
+PYTHONPATH=. /app/.venv/bin/python scripts/fetch_index_option_historical_proxy.py \
+  --stage2-primary-trades /data/index_option_research/stage2/primary/stage2_trades.csv \
+  --start 2021-09-22 \
+  --end 2021-12-31 \
+  --output /data/index_option_research/stage3b_2021_extension
+```
+
+Then pass:
+
+`--stage3b-2021-extension-ledger /data/index_option_research/stage3b_2021_extension/dhan_proxy_ledger.csv`
+
+to the Stage-3B runner. This extension is descriptive only and does not change the 2024-2026 decision thresholds.
