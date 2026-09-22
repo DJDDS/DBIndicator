@@ -58,8 +58,8 @@ def test_live_three_minute_ready_overrides_static_scout():
             "symbol": "ABC", "direction": "Bullish", "state": "READY",
             "setup": "MICRO_BREAKOUT", "trigger": 101.2, "invalidation": 99.8,
             "rvol_3m": 1.6, "relative_3m_vs_nifty_pct": 0.2,
-            "depth": {"support_fraction": 0.62},
-            "basis": {"basis_change_60s_pct_points": 0.02},
+            "depth": {"support_fraction": 0.62, "count": 5},
+            "basis": {"valid": True, "basis_change_60s_pct_points": 0.02},
         }]
     }
     row = event_driven_early_radar(radar, tactical)["rows"][0]
