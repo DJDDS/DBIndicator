@@ -43,6 +43,7 @@ jobs:
           scripts/run_index_option_stage3.py
           scripts/fetch_index_option_historical_proxy.py
           scripts/run_index_option_stage3b.py
+          scripts/run_index_option_stage3b_alignment.py
           tests/test_index_option_research.py
           tests/test_index_option_history.py
           tests/test_index_option_stage2.py
