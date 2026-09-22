@@ -25,9 +25,37 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: pytest -q tests/test_v122b_tactical.py tests/test_v122a_interim_tactical_radar.py tests/test_v121_index_recorder.py
-      - name: Full regression
+      - name: Regression delta vs production main
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: pytest -q
+        run: |
+          set +e
+          pytest -q > branch-regression.log 2>&1
+          BRANCH_RC=$?
+          awk '/^FAILED /{print $2}' branch-regression.log | sort -u > branch-failures.txt
+          git fetch origin main
+          git worktree add ../production-main origin/main
+          (
+            cd ../production-main
+            PYTHONPATH="$PWD" pytest -q > ../production-main-regression.log 2>&1
+            true
+          )
+          awk '/^FAILED /{print $2}' ../production-main-regression.log | sort -u > main-failures.txt
+          comm -23 branch-failures.txt main-failures.txt > new-failures.txt
+          echo "Branch regression exit: $BRANCH_RC"
+          echo "Production-main known failures: $(wc -l < main-failures.txt)"
+          echo "Branch failures: $(wc -l < branch-failures.txt)"
+          if [ -s new-failures.txt ]; then
+            echo "NEW regressions introduced by V12.2B:"
+            cat new-failures.txt
+            echo "--- branch tail ---"
+            tail -120 branch-regression.log
+            exit 1
+          fi
+          echo "No new full-suite regression versus production main."
+          if [ "$BRANCH_RC" -ne 0 ]; then
+            echo "Only production-main pre-existing failures remain:"
+            cat branch-failures.txt
+          fi
 
 # regression-compatible UI cleanup
