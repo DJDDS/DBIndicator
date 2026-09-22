@@ -866,13 +866,14 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
             or (basis_valid and basis_change is not None and sign * basis_change > 0)
         )
 
-        # Event gate: fresh participation plus at least one independent
-        # directional witness.  OI is sponsorship, not a compulsory trigger,
-        # because waiting for a 60m OI confirmation was one cause of lateness.
-        pressure_shift = bool(
-            participation_shift
-            and (oi_shift or relative_shift or microstructure_shift)
-        )
+        # Evidence gate derived from the audit's strongest finding (C1), but
+        # without hard-coding its synthetic 60m-OI rule into live timing.
+        # The fast event must have fresh participation AND at least one
+        # independent directional witness.  Fresh OI is sponsorship; relative
+        # acceleration or persistent futures microstructure can substitute when
+        # OI has not yet had time to accumulate.
+        evidence_count = sum(bool(x) for x in (oi_shift, relative_shift, microstructure_shift))
+        pressure_shift = bool(participation_shift and evidence_count >= 1)
 
         early_state = str(row.get("early_state") or "")
         event_state = "SCOUT"
@@ -891,20 +892,32 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
             event_state = "FOLLOW_THROUGH"
             reason = "the move proved itself after the trigger; protect profit"
         elif tstate in ("TRADEABLE", "TRIGGERED"):
-            event_state = "BREAK_ACCEPTED"
-            reason = str(trow.get("reason") or "3m structure broke with live confirmation")
+            if pressure_shift:
+                event_state = "BREAK_ACCEPTED"
+                reason = "3m structure broke while fresh participation and an independent directional witness were still present"
+            else:
+                event_state = "BREAK_WATCH"
+                reason = "price crossed the level but live evidence did not confirm acceptance yet"
         elif tstate == "READY":
-            event_state = "READY"
-            reason = str(trow.get("reason") or "exact 3m trigger is defined and close")
+            if pressure_shift:
+                event_state = "READY"
+                reason = "exact 3m trigger is defined and live pressure is active"
+            else:
+                event_state = "SCOUT"
+                reason = "3m level is defined but live pressure has not arrived yet"
         elif early_state == "READY":
-            event_state = "READY"
-            reason = "15m scout is at its decision level; 3m trigger is being watched"
+            if pressure_shift:
+                event_state = "READY"
+                reason = "15m scout is at its decision level and fresh pressure is active"
+            else:
+                event_state = "SCOUT"
+                reason = "decision level is nearby; waiting for fresh pressure before calling it ready"
         elif pressure_shift:
             event_state = "PRESSURE_SHIFT"
             reason = "fresh participation changed together with an independent directional witness"
         elif early_state == "FRESH_BREAK":
             event_state = "BREAK_WATCH"
-            reason = "fresh break seen; waiting for 3m acceptance rather than chasing the first print"
+            reason = "fresh break seen; waiting for live evidence of acceptance rather than chasing the first print"
 
         # Never surface a mature name as an early event.
         if early_state in ("LATE", "FADING") or row.get("early_eligible") is False and row.get("scout_eligible") is False:
@@ -930,6 +943,7 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
             "participation_shift": participation_shift,
             "relative_shift": relative_shift,
             "microstructure_shift": microstructure_shift,
+            "independent_evidence_count": evidence_count,
             "move_since_first_scout_atr": row.get("move_since_first_scout_atr"),
             "first_scout_age_min": row.get("first_scout_age_min"),
             "maturity": row.get("maturity"),
