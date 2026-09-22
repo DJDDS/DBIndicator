@@ -29,3 +29,5 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: pytest -q
+
+# regression-compatible UI cleanup
