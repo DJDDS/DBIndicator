@@ -226,6 +226,60 @@ def _relative_axis(row: dict, direction: str) -> float | None:
     return _weighted_axis(((0.55, rel_score), (0.30, rs_score), (0.15, accel_score)))
 
 
+def _extension_atr(row: dict) -> float | None:
+    for key in (
+        "breakout_extension_atr",
+        "retained_breakout_extension_atr",
+        "failed_breakout_extension_atr",
+    ):
+        value = _num(row.get(key))
+        if value is not None:
+            return abs(value)
+    return None
+
+
+def _day_move_atr(row: dict) -> float | None:
+    pct = _num(row.get("price_chg_today_pct"))
+    close = _num(row.get("close"))
+    atr = _num(row.get("atr"))
+    if pct is None or close is None or atr is None or close <= 0 or atr <= 0:
+        return None
+    atr_pct = atr / close * 100.0
+    if atr_pct <= 0:
+        return None
+    return abs(pct) / atr_pct
+
+
+def _fresh_participation(row: dict) -> tuple[bool, bool]:
+    tod = _num(row.get("tod_rvol"))
+    tod_accel = _num(row.get("tod_rvol_accel"))
+    rising = row.get("vol_rising")
+    active = bool(
+        (tod is not None and tod >= 1.15)
+        or (tod_accel is not None and tod_accel > 0.15)
+        or rising is True
+    )
+    accelerating = bool(
+        (tod_accel is not None and tod_accel > 0)
+        or (tod is not None and tod >= 1.35)
+        or rising is True
+    )
+    return active, accelerating
+
+
+def _fresh_oi(row: dict) -> tuple[bool, bool]:
+    oi15 = _num(row.get("oi_chg_15m_pct"))
+    accel = _num(row.get("oi_acceleration"))
+    label = str(row.get("oi_accel_label") or "").lower()
+    building = oi15 is not None and oi15 > 0
+    accelerating = bool(
+        (accel is not None and accel > 0)
+        or "strong acceleration" in label
+        or "moderate acceleration" in label
+    )
+    return building, accelerating
+
+
 def _trigger_axis(row: dict) -> float | None:
     bars = _num(row.get("entry_trigger_bars_ago"))
     cross = row.get("rsi_cross")
@@ -245,11 +299,20 @@ def _trigger_axis(row: dict) -> float | None:
 
 
 def assess_early_onset(row: dict, direction: str, *, fallback_score: float | None = None) -> dict:
-    """Return pressure/runway/phase telemetry for one already-directed live row."""
+    """Return early-move telemetry for one directed live row.
+
+    V12.2C principle: this function is not allowed to call a mature move
+    "IGNITION" merely because fresh OI appears again after price has already
+    travelled.  The radar has one job: surface FORMING / READY / very-fresh
+    break states.  Mature continuation belongs downstream in the 3-minute
+    tactical engine, not in the early radar.
+    """
     trigger = _trigger_level(row, direction)
     trigger_distance = _trigger_distance_atr(row, direction, trigger)
     crossed = _trigger_crossed(row, direction, trigger)
     travel = derive_price_move_60m_atr(row)
+    extension = _extension_atr(row)
+    day_move = _day_move_atr(row)
     runway, runway_label = _runway_multiplier(travel)
 
     axes = [
@@ -266,88 +329,137 @@ def assess_early_onset(row: dict, direction: str, *, fallback_score: float | Non
     weighted = sum(weight * score for _, weight, score in axes if score is not None)
     pressure = weighted / available_weight if available_weight > 0 else None
     coverage = available_weight / 100.0
-
     fallback = _clip(fallback_score or 0.0)
-    if pressure is None or coverage < 0.40:
-        return {
-            "usable": False,
-            "coverage": round(coverage, 3),
-            "pressure": None,
-            "score": fallback,
-            "phase": "FALLBACK",
-            "runway": runway,
-            "runway_label": runway_label,
-            "price_move_60m_atr": travel,
-            "trigger_level": trigger,
-            "trigger_distance_atr": trigger_distance,
-            "trigger_crossed": crossed,
-            "oi_concentration_pct": _concentration_axis(row),
-            "fresh_oi_15m_pct": _num(row.get("oi_chg_15m_pct")),
-            "fresh_oi_30m_pct": _num(row.get("oi_chg_30m_pct")),
-            "action_stage": "OBSERVE",
-            "axis_scores": {name: score for name, _, score in axes},
-        }
 
-    score = _clip(pressure * runway)
-    spent = abs(travel) if travel is not None else None
-    oi15 = _num(row.get("oi_chg_15m_pct"))
-    accel = _num(row.get("oi_acceleration"))
-    tod = _num(row.get("tod_rvol"))
+    oi_building, oi_accelerating = _fresh_oi(row)
+    participation_active, participation_accelerating = _fresh_participation(row)
     compression = _num(row.get("compression_score"))
-    fresh_build = oi15 is not None and oi15 > 0
-    active_participation = tod is not None and tod >= 1.15
-    near_trigger = trigger_distance is not None and -0.10 <= trigger_distance <= 0.35
-    coiled = compression is not None and compression >= 55.0
+    coiled = compression is not None and compression >= 50.0
+    spent_60 = abs(travel) if travel is not None else None
+    overshoot = max(0.0, -trigger_distance) if trigger_distance is not None else None
+
+    late_reasons = []
+    # A very large trigger overshoot is the exact failure visible in the live
+    # screenshot: several ATR past the trigger can never remain "TRIGGERED".
+    if overshoot is not None and overshoot > 0.35:
+        late_reasons.append(f"{overshoot:.2f} ATR past trigger")
+    # Early radar is intentionally stricter than a continuation model.
+    if spent_60 is not None and spent_60 > 0.85:
+        late_reasons.append(f"{spent_60:.2f} ATR moved in 60m")
+    if extension is not None and extension > 0.90:
+        late_reasons.append(f"{extension:.2f} ATR breakout extension")
+    # Large same-day displacement is only a veto when the current hour has
+    # also moved meaningfully, so an opening gap alone does not kill the lane.
+    if day_move is not None and day_move > 2.0 and spent_60 is not None and spent_60 > 0.50:
+        late_reasons.append(f"{day_move:.2f} ATR moved today")
+
     fading = bool(
-        (accel is not None and accel < 0 and oi15 is not None and oi15 <= 0)
+        (_num(row.get("oi_acceleration")) is not None and _num(row.get("oi_acceleration")) < 0
+         and _num(row.get("oi_chg_15m_pct")) is not None and _num(row.get("oi_chg_15m_pct")) <= 0)
         or str(row.get("oi_accel_label") or "").lower().startswith("decel")
     )
 
+    early_state = "OBSERVE"
+    maturity = "UNCONFIRMED"
+    phase = "QUIET"
     if fading:
+        early_state = "FADING"
+        maturity = "FADING"
         phase = "FADING"
-    elif spent is not None and spent > 1.25:
+    elif late_reasons:
+        early_state = "LATE"
+        maturity = "MISSED"
         phase = "EXTENDED"
-    elif spent is not None and spent > 0.75:
-        phase = "UNDERWAY"
-    elif fresh_build and active_participation and (spent is None or spent <= 0.40) and (coiled or near_trigger):
-        phase = "PRE-IGNITION"
-    elif (
-        spent is not None
-        and spent <= 0.75
-        and fresh_build
-        and (active_participation or _num(row.get("vol_multiple"), 0.0) >= 1.0)
-        and (crossed is True or _num(row.get("entry_trigger_bars_ago"), 99.0) <= 1.0)
-    ):
-        phase = "IGNITION"
     else:
-        phase = "QUIET"
+        # Very fresh break: crossed only slightly, while fresh positioning and
+        # participation are still present.  A break 0.36 ATR+ beyond the level
+        # is already too mature for this panel.
+        if (
+            crossed is True
+            and overshoot is not None and overshoot <= 0.20
+            and oi_building
+            and participation_active
+            and (oi_accelerating or participation_accelerating)
+        ):
+            early_state = "FRESH_BREAK"
+            maturity = "JUST BROKE"
+            phase = "IGNITION"
+        # READY is deliberately pre-break.  This is the most actionable early
+        # state for the downstream 3m engine.
+        elif (
+            trigger_distance is not None
+            and 0.0 <= trigger_distance <= 0.30
+            and oi_building
+            and (oi_accelerating or participation_accelerating)
+            and (participation_active or coiled)
+        ):
+            early_state = "READY"
+            maturity = "AT TRIGGER"
+            phase = "PRE-IGNITION"
+        # FORMING can exist without a useful long-horizon trigger.  That allows
+        # V12.2B to receive a genuinely early candidate and construct its own
+        # compact 3m micro trigger instead of waiting for a distant 20-day high.
+        elif (
+            oi_building
+            and oi_accelerating
+            and (participation_active or participation_accelerating)
+            and (spent_60 is None or spent_60 <= 0.40)
+            and (
+                coiled
+                or trigger_distance is None
+                or (0.30 < trigger_distance <= 0.80)
+            )
+        ):
+            early_state = "FORMING"
+            maturity = "EARLY"
+            phase = "PRE-IGNITION"
 
-    if phase == "FADING":
-        action_stage = "FADING"
-    elif phase in ("UNDERWAY", "EXTENDED"):
+    early_eligible = early_state in ("FORMING", "READY", "FRESH_BREAK")
+    if early_state == "FRESH_BREAK":
+        action_stage = "TRIGGERED"
+    elif early_state == "READY":
+        action_stage = "ARMED"
+    elif early_state == "FORMING":
+        action_stage = "FORMING"
+    elif early_state == "LATE":
         action_stage = "LATE"
-    elif phase == "IGNITION":
-        action_stage = "TRIGGERED" if crossed is True else "ARMED"
-    elif phase == "PRE-IGNITION":
-        action_stage = "ARMED" if near_trigger and fresh_build and active_participation else "FORMING"
     else:
-        action_stage = "OBSERVE"
+        action_stage = early_state
+
+    if pressure is None or coverage < 0.40:
+        usable = False
+        score = fallback
+    else:
+        usable = True
+        # Ranking remains secondary. Eligibility is determined by the concrete
+        # state machine above; score can only order candidates within a state.
+        score = _clip(pressure * runway)
 
     return {
-        "usable": True,
+        "usable": usable,
         "coverage": round(coverage, 3),
-        "pressure": round(pressure, 1),
+        "pressure": round(pressure, 1) if pressure is not None else None,
         "score": round(score, 1),
-        "phase": phase,
+        "phase": phase if usable else "FALLBACK",
+        "early_state": early_state,
+        "early_eligible": bool(early_eligible and usable),
+        "maturity": maturity,
+        "late_reasons": late_reasons,
         "runway": round(runway, 2),
         "runway_label": runway_label,
         "price_move_60m_atr": travel,
+        "day_move_atr": round(day_move, 3) if day_move is not None else None,
+        "extension_atr": round(extension, 3) if extension is not None else None,
         "trigger_level": trigger,
         "trigger_distance_atr": round(trigger_distance, 3) if trigger_distance is not None else None,
+        "trigger_overshoot_atr": round(overshoot, 3) if overshoot is not None else None,
         "trigger_crossed": crossed,
         "oi_concentration_pct": round(_concentration_axis(row), 1) if _concentration_axis(row) is not None else None,
-        "fresh_oi_15m_pct": oi15,
+        "fresh_oi_15m_pct": _num(row.get("oi_chg_15m_pct")),
         "fresh_oi_30m_pct": _num(row.get("oi_chg_30m_pct")),
+        "oi_accelerating_now": oi_accelerating,
+        "participation_active_now": participation_active,
+        "participation_accelerating_now": participation_accelerating,
         "action_stage": action_stage,
-        "axis_scores": {name: (round(score, 1) if score is not None else None) for name, _, score in axes},
+        "axis_scores": {name: (round(axis_score, 1) if axis_score is not None else None) for name, _, axis_score in axes},
     }
