@@ -6,6 +6,11 @@
   },
   "deploy": {
     "startCommand": "MALLOC_ARENA_MAX=2 MALLOC_TRIM_THRESHOLD_=65536 gunicorn -w 1 --worker-class gthread --threads 4 --timeout 600 --graceful-timeout 60 -b 0.0.0.0:$PORT run:app",
-    "restartPolicyType": "ALWAYS"
+    "restartPolicyType": "ALWAYS",
+    "multiRegionConfig": {
+      "asia-southeast1-eqsg3a": {
+        "numReplicas": 1
+      }
+    }
   }
 }
