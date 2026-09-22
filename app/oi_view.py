@@ -408,6 +408,19 @@ def _early_lifecycle(item, row, lifecycle_state, now):
         elif cooldown.tzinfo is None and now.tzinfo is not None:
             cooldown = cooldown.replace(tzinfo=now.tzinfo)
 
+    if cooldown is not None and now < cooldown and state and not state.get("active", True):
+        item["early_eligible"] = False
+        item["scout_eligible"] = False
+        item["early_state"] = "LATE"
+        item["action_stage"] = "LATE"
+        item["phase"] = "EXTENDED"
+        item["maturity"] = "COOLDOWN"
+        reasons = list(item.get("late_reasons") or [])
+        reasons.append("cooldown after consumed move")
+        item["late_reasons"] = reasons
+        lifecycle_state[key] = state
+        return item
+
     # Start the maturity clock at hidden SCOUT, not at the visible alert.
     # That makes the system measure how much of the move was already consumed
     # before the user ever sees READY/FRESH_BREAK.
