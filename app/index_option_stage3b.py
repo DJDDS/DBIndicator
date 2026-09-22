@@ -430,7 +430,19 @@ def apply_expiry_day_refinement(
         raise ValueError(f"expiry calendar missing columns: {missing}")
     cal = expiry_calendar.copy()
     cal["session"] = pd.to_datetime(cal["session"], errors="coerce").dt.normalize()
-    cal["is_expiry_day"] = cal["is_expiry_day"].astype(bool)
+    raw_expiry = cal["is_expiry_day"]
+    if raw_expiry.dtype == bool:
+        parsed_expiry = raw_expiry
+    else:
+        normalized = raw_expiry.astype(str).str.strip().str.lower()
+        mapping = {
+            "true": True, "1": True, "yes": True, "y": True,
+            "false": False, "0": False, "no": False, "n": False,
+        }
+        parsed_expiry = normalized.map(mapping)
+        if parsed_expiry.isna().any():
+            raise ValueError("expiry calendar contains unparseable is_expiry_day values")
+    cal["is_expiry_day"] = parsed_expiry.astype(bool)
     work = frame.merge(cal[["session", "is_expiry_day"]], on="session", how="left")
     if work["is_expiry_day"].isna().any():
         return {
