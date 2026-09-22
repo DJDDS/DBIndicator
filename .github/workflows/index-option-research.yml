@@ -48,6 +48,7 @@ jobs:
           scripts/run_index_option_stage3b_alignment.py
           scripts/run_index_option_stage3b_friction.py
           scripts/run_index_option_stage3b_banknifty.py
+          scripts/run_index_option_stage3b_finish.py
           tests/test_index_option_research.py
           tests/test_index_option_history.py
           tests/test_index_option_stage2.py
