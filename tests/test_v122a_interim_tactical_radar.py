@@ -187,6 +187,8 @@ def test_3m_ready_overlay_can_surface_hidden_scout_immediately():
     base = {
         "label": "EARLY MOVE · RESEARCH / SHADOW",
         "bullish": [], "bearish": [],
+        "scout_bullish": [{"symbol": "FAST", "direction": "Bullish"}],
+        "scout_bearish": [],
         "counts": {"bullish": 0, "bearish": 0, "displayed": 0},
     }
     tactical = {
