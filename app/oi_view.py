@@ -930,7 +930,7 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
             "event_state": event_state,
             "reason": reason,
             "setup": trow.get("setup"),
-            "live_price": trow.get("live_price"),
+            "live_price": trow.get("live_price") if trow.get("live_price") is not None else row.get("close"),
             "trigger": trow.get("trigger") if trow.get("trigger") is not None else row.get("trigger_level"),
             "invalidation": trow.get("invalidation"),
             "rvol_3m": rvol3,
@@ -952,6 +952,7 @@ def event_driven_early_radar(radar, tactical, *, limit=10):
             "option_spread_pct": contract.get("spread_pct"),
             "tradeable": bool(trow.get("tradeable")),
             "tactical_state": tstate,
+            "event_source": "3M_LIVE" if trow else "15M_SCOUT",
         }
         out.append(item)
 
