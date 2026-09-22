@@ -704,6 +704,16 @@ def overlay_tactical_radar(radar, tactical, *, limit=5):
         for row in rows:
             by_key[(str(row.get("symbol")), direction)] = row
 
+    # Tactical promotion is allowed only for symbols that the latest 15m
+    # maturity engine still considers an active hidden scout.  This prevents a
+    # stale 3m READY state from resurrecting a stock the early radar has already
+    # marked LATE after its runway was consumed.
+    scout_keys = set()
+    for row in list(base.get("scout_bullish") or []):
+        scout_keys.add((str(row.get("symbol") or ""), "Bullish"))
+    for row in list(base.get("scout_bearish") or []):
+        scout_keys.add((str(row.get("symbol") or ""), "Bearish"))
+
     promote_states = {"READY", "TRIGGERED", "TRADEABLE"}
     for trow in list((tactical or {}).get("candidates") or []):
         direction = str(trow.get("direction") or "")
@@ -714,7 +724,7 @@ def overlay_tactical_radar(radar, tactical, *, limit=5):
 
         key = (symbol, direction)
         existing = by_key.get(key)
-        if existing is None and state in promote_states:
+        if existing is None and state in promote_states and key in scout_keys:
             existing = {
                 "symbol": symbol,
                 "direction": direction,
