@@ -579,6 +579,7 @@ def live_opportunity_radar(
         item = {
             "symbol": str(row.get("symbol")),
             "direction": direction,
+            "close": _num(row.get("close")),
             "score": onset.get("score"),
             "status": onset.get("action_stage"),
             "phase": onset.get("phase"),
