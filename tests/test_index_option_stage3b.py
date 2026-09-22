@@ -4,6 +4,7 @@ import pytest
 from app.index_option_stage3b import (
     EARLY_KILL_GROSS_FLOOR_POINTS,
     PRIMARY_EXPRESSION,
+    alignment_check,
     apply_expiry_day_refinement,
     decision_report,
     paired_atm_itm1,
@@ -182,3 +183,27 @@ def test_stage3b_expiry_calendar_parses_string_false_safely():
         },
     )
     assert out["status"] == "COMPLETE"
+
+
+
+def test_stage3b_alignment_uses_five_deterministic_sessions():
+    sessions = pd.date_range("2024-01-01", periods=10, freq="D")
+    dhan_rows = []
+    kite_rows = []
+    for day in sessions:
+        for minute in (15, 16):
+            ts = pd.Timestamp(day.date().isoformat() + f" 09:{minute}:00+05:30")
+            px = 22000.0 + float(day.day)
+            dhan_rows.append({"timestamp": ts, "spot": px})
+            kite_rows.append({"timestamp": ts, "close": px})
+
+    out = alignment_check(
+        pd.DataFrame(dhan_rows),
+        pd.DataFrame(kite_rows),
+        sessions=5,
+    )
+    assert out["status"] == "COMPLETE"
+    assert len(out["sessions"]) == 5
+    assert out["matched_minutes"] == 10
+    assert out["mean_abs_spot_difference_points"] == 0.0
+    assert out["selection_method"] == "5 evenly spaced common sessions; no cherry-picking"
