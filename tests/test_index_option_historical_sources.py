@@ -81,10 +81,23 @@ def test_dhan_fetch_uses_official_rolling_endpoint_and_near_weekly_expiry():
     assert captured["json"]["exchangeSegment"] == "NSE_FNO"
     assert captured["json"]["instrument"] == "OPTIDX"
     assert captured["json"]["expiryFlag"] == "WEEK"
-    assert captured["json"]["expiryCode"] == 0
+    assert captured["json"]["expiryCode"] == 1
     assert captured["json"]["strike"] == "ATM"
     assert captured["json"]["drvOptionType"] == "CALL"
     assert captured["json"]["interval"] == "1"
+
+
+def test_dhan_fetch_rejects_generic_annexure_zero_for_rolling_endpoint():
+    with pytest.raises(ValueError, match="1, 2, or 3"):
+        fetch_dhan_expired_options(
+            access_token="secret",
+            from_date="2024-01-01",
+            to_date="2024-01-02",
+            option_type="CALL",
+            expression="ATM",
+            expiry_code=0,
+            transport=lambda *args, **kwargs: _dhan_payload(),
+        )
 
 
 def test_dhan_fetch_rejects_more_than_30_calendar_days():
