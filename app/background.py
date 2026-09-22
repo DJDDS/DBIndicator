@@ -22,7 +22,7 @@ from .scanner import (
 
 log = logging.getLogger(__name__)
 
-LIVE_RELIABILITY_BUILD_ID = "2026-09-22-V12.2B-TACTICAL-STOCK-OPTION"
+LIVE_RELIABILITY_BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.2-LIVE-RELIABILITY-HOTFIX"
 
 # How far back (in minutes) to keep OI samples per symbol.
 # compute_oi_acceleration needs up to 120 minutes of history (its
