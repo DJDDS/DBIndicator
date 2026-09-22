@@ -1373,6 +1373,7 @@
         ' · trigger <strong>' + num(row.trigger, 2, '') + '</strong>' +
         ' · invalidate <strong>' + num(row.invalidation, 2, '') + '</strong>' +
         ' · 3m RVOL ' + num(row.rvol_3m, 2, 'x') +
+        ' (Δ ' + num(row.rvol_3m_accel, 2, 'x') + ')' +
         ' · Rel/Nifty ' + pctSigned(row.relative_3m_vs_nifty_pct, 2) +
         ' · depth support ' + num(Number(depth.support_fraction) * 100, 0, '%') +
         ' · basis Δ60s ' + pctSigned(basis.basis_change_60s_pct_points, 4) +
