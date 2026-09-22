@@ -32,30 +32,37 @@ jobs:
           set +e
           pytest -q > branch-regression.log 2>&1
           BRANCH_RC=$?
-          awk '/^FAILED /{print $2}' branch-regression.log | sort -u > branch-failures.txt
+          grep -E '^(FAILED|ERROR) ' branch-regression.log | awk '{print $2}' | sort -u > branch-failures.txt
           git fetch origin main
           git worktree add ../production-main origin/main
           (
             cd ../production-main
             PYTHONPATH="$PWD" pytest -q > ../production-main-regression.log 2>&1
-            true
+            echo $? > ../production-main-rc.txt
           )
-          awk '/^FAILED /{print $2}' ../production-main-regression.log | sort -u > main-failures.txt
+          BASE_RC=$(cat ../production-main-rc.txt)
+          grep -E '^(FAILED|ERROR) ' ../production-main-regression.log | awk '{print $2}' | sort -u > main-failures.txt
+          echo "Production-main pytest exit: $BASE_RC"
+          echo "Branch pytest exit: $BRANCH_RC"
+          echo "Production-main failing/error node IDs: $(wc -l < main-failures.txt)"
+          echo "Branch failing/error node IDs: $(wc -l < branch-failures.txt)"
+          if [ "$BASE_RC" -ne 0 ] && [ ! -s main-failures.txt ]; then
+            echo "Production-main regression command failed before producing normal pytest node IDs:"
+            tail -160 ../production-main-regression.log
+            exit 2
+          fi
           comm -23 branch-failures.txt main-failures.txt > new-failures.txt
-          echo "Branch regression exit: $BRANCH_RC"
-          echo "Production-main known failures: $(wc -l < main-failures.txt)"
-          echo "Branch failures: $(wc -l < branch-failures.txt)"
           if [ -s new-failures.txt ]; then
             echo "NEW regressions introduced by V12.2B:"
             cat new-failures.txt
             echo "--- branch tail ---"
-            tail -120 branch-regression.log
+            tail -160 branch-regression.log
+            echo "--- production main tail ---"
+            tail -160 ../production-main-regression.log
             exit 1
           fi
           echo "No new full-suite regression versus production main."
           if [ "$BRANCH_RC" -ne 0 ]; then
-            echo "Only production-main pre-existing failures remain:"
+            echo "Production-main pre-existing failing/error nodes also present on branch:"
             cat branch-failures.txt
           fi
-
-# regression-compatible UI cleanup
