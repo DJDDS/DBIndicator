@@ -169,7 +169,13 @@ class TacticalStockStreamService:
             fn()
 
     def _candidate_signature(self, candidates):
-        return tuple(sorted((str(x.get("symbol")), str(x.get("direction"))) for x in candidates if x.get("symbol")))
+        # Include the latest 15m spot anchor so option strikes are refreshed
+        # when a continuing candidate moves materially; historical 3m seeding
+        # remains one-shot and therefore this does not multiply REST history.
+        return tuple(sorted(
+            (str(x.get("symbol")), str(x.get("direction")), round(_f(x.get("close"), 0.0), 2))
+            for x in candidates if x.get("symbol")
+        ))
 
     def _seed_three_minute(self, kite, symbol, token, now):
         if symbol in self._seeded:
@@ -356,6 +362,34 @@ class TacticalStockStreamService:
         current["basis_change_60s_pct_points"] = round(accel, 6) if accel is not None else None
         return current
 
+    def _rvol_3m(self, symbol, current, now):
+        slot = f"{now.hour:02d}:{(now.minute // 3) * 3:02d}"
+        baseline = self._tod_baseline.get(symbol, {}).get(slot)
+        current_rvol = v122b_tactical.projected_three_minute_rvol(current, baseline, now)
+
+        previous_rvol = None
+        with self._lock:
+            bars = list(self._bars.get(symbol) or [])
+        if bars:
+            prev = bars[-1]
+            pts = _dt(prev.get("ts"))
+            if pts is not None:
+                pslot = f"{pts.hour:02d}:{(pts.minute // 3) * 3:02d}"
+                pbase = _f(self._tod_baseline.get(symbol, {}).get(pslot))
+                pvol = _f(prev.get("volume"))
+                if pbase is not None and pbase > 0 and pvol is not None:
+                    previous_rvol = pvol / pbase
+
+        accel = None
+        if current_rvol is not None and previous_rvol is not None:
+            accel = current_rvol - previous_rvol
+        return (
+            current_rvol,
+            round(accel, 3) if accel is not None else None,
+            round(previous_rvol, 3) if previous_rvol is not None else None,
+        )
+
+
     def _relative_3m(self, symbol):
         with self._lock:
             sb = list(self._bars.get(symbol) or [])
@@ -494,9 +528,7 @@ class TacticalStockStreamService:
 
             state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
             basis = self._basis(symbol, now)
-            slot = f"{now.hour:02d}:{(now.minute // 3) * 3:02d}"
-            baseline = self._tod_baseline.get(symbol, {}).get(slot)
-            rvol3 = v122b_tactical.projected_three_minute_rvol(current, baseline, now)
+            rvol3, rvol3_accel, rvol3_prev = self._rvol_3m(symbol, current, now)
             option_route = route or {}
             risk = v122b_tactical.one_lot_risk_preview(
                 option_route.get("contract"),
@@ -523,6 +555,8 @@ class TacticalStockStreamService:
                 "depth": persistence,
                 "basis": basis,
                 "rvol_3m": rvol3,
+                "rvol_3m_accel": rvol3_accel,
+                "rvol_3m_previous": rvol3_prev,
                 "relative_3m_vs_nifty_pct": self._relative_3m(symbol),
                 "fast_veto": fast,
                 "earnings": event,
