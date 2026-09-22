@@ -662,8 +662,8 @@
     <div id="live-opportunity-radar" class="live-opportunity-radar" aria-label="Live opportunity radar research shadow">
       <div class="lor-head">
         <div>
-          <div class="lor-kicker">LIVE OPPORTUNITY RADAR · RESEARCH / SHADOW</div>
-          <div class="lor-sub">Ranks stocks needing attention now from live price + OI + acceleration + participation + relative strength/weakness + VWAP, with multi-factor market regime used as context only. This is not a validated trade signal.</div>
+          <div class="lor-kicker">EARLY MOVE RADAR · 15m SCOUT → 3m CONFIRM · RESEARCH / SHADOW</div>
+          <div class="lor-sub">Only FORMING, READY and very-fresh breaks are shown. Mature moves are hard-excluded, while a hidden scout lane starts 3-minute price/depth observation before the visible alert. This is decision support, not a validated trade signal.</div>
         </div>
         <div class="lor-bias" id="lor-market-bias">Market bias —</div>
       </div>
@@ -677,7 +677,7 @@
           <div id="lor-bearish" class="lor-list"><div class="v8-empty">Waiting for live bearish evidence…</div></div>
         </section>
       </div>
-      <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
+      <div class="lor-note"><strong>Important:</strong> this panel is now maturity-gated rather than score-led. A stock several ATR beyond its trigger cannot remain an early opportunity. READY/FRESH BREAK may be upgraded in real time by the separate 3-minute tactical stream; no automatic order is placed.</div>
       <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.3.0 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
     </div>
     <div id="swing-research-console" class="live-opportunity-radar" aria-label="Swing Research Shadow 1D 2D">
@@ -1604,32 +1604,43 @@
       return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(digits == null ? 1 : digits) + '%' : '—';
     }
     function card(row, rank, side) {
-      var phase = String(row.phase || 'FALLBACK');
-      var action = String(row.action_stage || row.status || 'OBSERVE');
-      var statusClass = action === 'TRIGGERED' ? 'high' : ((action === 'ARMED' || action === 'FORMING') ? 'building' : 'early');
-      var chase = row.chase_guard === 'EXTENDED' ? ' · EXTENDED' : '';
+      var early = String(row.early_state || row.action_stage || 'FORMING').toUpperCase();
+      var tactical = String(row.tactical_state || '').toUpperCase();
+      var headline = tactical === 'TRADEABLE' ? 'TRADEABLE' :
+        (tactical === 'TRIGGERED' ? '3M TRIGGER' :
+        (tactical === 'READY' ? '3M READY' : early));
+      var statusClass = ['TRADEABLE','3M TRIGGER'].indexOf(headline) >= 0 ? 'high' :
+        (['3M READY','READY','FORMING','FRESH_BREAK'].indexOf(headline) >= 0 ? 'building' : 'early');
       var reasons = (row.reasons || []).slice(0, 5).map(function (reason) {
-        var warn = String(reason).indexOf('do not chase') >= 0 ? ' warn' : '';
-        return '<span class="lor-reason' + warn + '">' + v8Esc(reason) + '</span>';
+        return '<span class="lor-reason">' + v8Esc(reason) + '</span>';
       }).join('');
-      var rvol = row.tod_rvol != null ? Number(row.tod_rvol) : Number(row.vol_multiple);
       var oi15 = Number(row.oi_15m_chg_pct);
       var dist = Number(row.trigger_distance_atr);
-      var runway = Number(row.runway);
+      var scoutMove = Number(row.move_since_first_scout_atr);
+      var rvol3 = Number(row.tactical_rvol_3m);
+      var depth = Number(row.tactical_depth_support);
+      var trig = Number(row.tactical_trigger != null ? row.tactical_trigger : row.trigger_level);
+      var invalid = Number(row.tactical_invalidation);
+      var setup = row.tactical_setup ? (' · ' + v8Esc(row.tactical_setup)) : '';
+      var option = row.tactical_option_contract ? (' · ' + v8Esc(row.tactical_option_contract)) : '';
       return '<article class="lor-card ' + side + '">' +
         '<div class="lor-rank">#' + rank + '</div>' +
-        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(phase) + ' · ' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
-        '<div class="lor-score"><strong style="font-size:10px;line-height:1.15;">' + v8Esc(action) + '</strong><span class="' + statusClass + '">' + v8Esc(phase) + '</span></div>' +
+        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' +
+          v8Esc(row.maturity || early) + ' · ' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + setup + option + '</small></div>' +
+        '<div class="lor-score"><strong style="font-size:10px;line-height:1.15;">' + v8Esc(headline) + '</strong><span class="' + statusClass + '">' + v8Esc(early) + '</span></div>' +
         '<div class="lor-evidence"><div class="lor-metrics">' +
           '<span>OI15 ' + (Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—') + '</span>' +
-          '<span>RVOL ' + (Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—') + '</span>' +
-          '<span>Trigger Δ ' + (Number.isFinite(dist) ? dist.toFixed(2) + ' ATR' : '—') + '</span>' +
-          '<span>Runway ' + (Number.isFinite(runway) ? runway.toFixed(2) : '—') + '</span>' +
+          '<span>To trigger ' + (Number.isFinite(dist) ? dist.toFixed(2) + ' ATR' : '3m scout') + '</span>' +
+          '<span>Since scout ' + (Number.isFinite(scoutMove) ? scoutMove.toFixed(2) + ' ATR' : '—') + '</span>' +
+          '<span>3m RVOL ' + (Number.isFinite(rvol3) ? rvol3.toFixed(2) + 'x' : '—') + '</span>' +
+          '<span>Depth ' + (Number.isFinite(depth) ? Math.round(depth * 100) + '%' : '—') + '</span>' +
+          '<span>Trigger ' + (Number.isFinite(trig) ? trig.toFixed(2) : '—') + '</span>' +
+          '<span>Invalid ' + (Number.isFinite(invalid) ? invalid.toFixed(2) : '—') + '</span>' +
         '</div><div class="lor-reasons">' + reasons + '</div></div>' +
       '</article>';
     }
-    if (bullBox) bullBox.innerHTML = bulls.length ? bulls.map(function (r,i) { return card(r, i+1, 'bull'); }).join('') : '<div class="v8-empty">No bullish attention name clears the live research floor right now.</div>';
-    if (bearBox) bearBox.innerHTML = bears.length ? bears.map(function (r,i) { return card(r, i+1, 'bear'); }).join('') : '<div class="v8-empty">No bearish attention name clears the live research floor right now.</div>';
+    if (bullBox) bullBox.innerHTML = bulls.length ? bulls.map(function (r,i) { return card(r, i+1, 'bull'); }).join('') : '<div class="v8-empty">No bullish stock is still early enough right now. Mature moves are intentionally hidden.</div>';
+    if (bearBox) bearBox.innerHTML = bears.length ? bears.map(function (r,i) { return card(r, i+1, 'bear'); }).join('') : '<div class="v8-empty">No bearish stock is still early enough right now. Mature moves are intentionally hidden.</div>';
   }
 
   function renderV82Option(row) {
