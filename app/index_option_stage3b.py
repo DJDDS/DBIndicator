@@ -623,5 +623,6 @@ def write_stage3b_artifacts(
         "manifest_path": manifest_path,
         "decision": decision,
         "refinement": refinement,
-        **files,
+        "artifact_paths": files,
+        **{f"{name}_path": path for name, path in files.items()},
     }
