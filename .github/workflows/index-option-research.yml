@@ -39,6 +39,7 @@ jobs:
           app/index_option_historical_sources.py
           app/index_option_stage3b.py
           app/index_option_stage3b_friction.py
+          app/index_option_stage3b_banknifty.py
           scripts/run_index_option_stage1.py
           scripts/run_index_option_stage2.py
           scripts/run_index_option_stage3.py
@@ -46,6 +47,7 @@ jobs:
           scripts/run_index_option_stage3b.py
           scripts/run_index_option_stage3b_alignment.py
           scripts/run_index_option_stage3b_friction.py
+          scripts/run_index_option_stage3b_banknifty.py
           tests/test_index_option_research.py
           tests/test_index_option_history.py
           tests/test_index_option_stage2.py
@@ -54,6 +56,7 @@ jobs:
           tests/test_index_option_historical_sources.py
           tests/test_index_option_stage3b.py
           tests/test_index_option_stage3b_friction.py
+          tests/test_index_option_stage3b_banknifty.py
       - name: Run research tests
         run: >
           pytest -q
