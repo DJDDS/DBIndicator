@@ -415,6 +415,38 @@ def assess_early_onset(row: dict, direction: str, *, fallback_score: float | Non
             phase = "PRE-IGNITION"
 
     early_eligible = early_state in ("FORMING", "READY", "FRESH_BREAK")
+
+    # Hidden scout lane: deliberately wider than the visible radar so the
+    # bounded V12.2B 3-minute/depth engine can start observing a symbol before
+    # the 15-minute evidence is mature enough to show to the user.  This is
+    # resource routing, never an entry signal.
+    relative = _num(row.get("v8_relative"))
+    rs_accel = _num(row.get("rs_acceleration"))
+    direction_sign = 1.0 if direction == "Bullish" else -1.0
+    relative_building = bool(
+        (relative is not None and relative >= 60.0)
+        or (rs_accel is not None and direction_sign * rs_accel > 0)
+    )
+    scout_eligible = bool(
+        not fading
+        and not late_reasons
+        and (
+            early_eligible
+            or (
+                (spent_60 is None or spent_60 <= 0.50)
+                and (
+                    (oi_building and (oi_accelerating or participation_accelerating))
+                    or (coiled and participation_accelerating)
+                    or (
+                        trigger_distance is not None
+                        and -0.05 <= trigger_distance <= 0.65
+                        and participation_active
+                    )
+                    or (relative_building and participation_accelerating and oi_building)
+                )
+            )
+        )
+    )
     if early_state == "FRESH_BREAK":
         action_stage = "TRIGGERED"
     elif early_state == "READY":
@@ -443,6 +475,7 @@ def assess_early_onset(row: dict, direction: str, *, fallback_score: float | Non
         "phase": phase if usable else "FALLBACK",
         "early_state": early_state,
         "early_eligible": bool(early_eligible and usable),
+        "scout_eligible": bool(scout_eligible),
         "maturity": maturity,
         "late_reasons": late_reasons,
         "runway": round(runway, 2),
