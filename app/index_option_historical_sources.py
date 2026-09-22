@@ -115,7 +115,18 @@ def normalize_dhan_rolling_response(
 
 def _requests_transport(url, *, headers, json, timeout):
     response = requests.post(url, headers=headers, json=json, timeout=timeout)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        # Preserve Dhan's safe JSON error detail (for example DH-905) without
+        # logging request headers or the access token.
+        detail = (response.text or "").strip()
+        if len(detail) > 800:
+            detail = detail[:800] + "..."
+        raise requests.HTTPError(
+            f"{exc}; Dhan response={detail or '<empty>'}",
+            response=response,
+        ) from exc
     return response.json()
 
 
@@ -127,7 +138,7 @@ def fetch_dhan_expired_options(
     option_type: str,
     expression: str,
     expiry_flag: str = "WEEK",
-    expiry_code: int = 0,
+    expiry_code: int = 1,
     security_id: int = DHAN_NIFTY_SECURITY_ID,
     interval: int = 1,
     transport: Callable = _requests_transport,
@@ -154,8 +165,13 @@ def fetch_dhan_expired_options(
     expiry_flag = str(expiry_flag).upper()
     if expiry_flag not in {"WEEK", "MONTH"}:
         raise ValueError("expiry_flag must be WEEK or MONTH")
-    if int(expiry_code) not in {0, 1, 2}:
-        raise ValueError("expiry_code must be 0, 1, or 2")
+    # Dhan's rolling expired-options endpoint uses a special mapping:
+    # 1=near/current, 2=next, 3=far. This differs from the generic annexure
+    # used by some other Dhan endpoints, where 0/1/2 is documented.
+    if int(expiry_code) not in {1, 2, 3}:
+        raise ValueError(
+            "expiry_code must be 1, 2, or 3 for Dhan rolling expired options"
+        )
     if int(interval) not in {1, 5, 15, 25, 60}:
         raise ValueError("interval must be 1, 5, 15, 25, or 60")
 
