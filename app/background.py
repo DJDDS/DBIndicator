@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1358,6 +1358,9 @@ _state = {
         "candidates": [],
         "counts": {},
     },
+    "event_early_radar": {"label": "EVENT-DRIVEN EARLY DETECTION · RESEARCH / SHADOW", "rows": [], "counts": {}},
+    "v122d_forward": v122d_forward.empty_state(),
+    "v122d_forward_summary": v122d_forward.summarize(v122d_forward.empty_state()),
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1597,6 +1600,9 @@ def _load_persisted_state():
                 _state["v12_earnings"] = saved.get("v12_earnings") or _state["v12_earnings"]
                 _state["trial25_shadow"] = saved.get("trial25_shadow") or _state["trial25_shadow"]
                 _state["v12_trial25_status"] = saved.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
+                _state["event_early_radar"] = saved.get("event_early_radar") or _state["event_early_radar"]
+                _state["v122d_forward"] = saved.get("v122d_forward") or v122d_forward.empty_state()
+                _state["v122d_forward_summary"] = v122d_forward.summarize(_state["v122d_forward"])
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
         # master is temporarily unavailable after restart, the price scan can
@@ -1634,6 +1640,8 @@ def _save_persisted_state():
             "v12_earnings": _state.get("v12_earnings") or {},
             "trial25_shadow": _state.get("trial25_shadow") or {},
             "v12_trial25_status": _state.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS,
+            "event_early_radar": _state.get("event_early_radar") or {},
+            "v122d_forward": _state.get("v122d_forward") or v122d_forward.empty_state(),
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -1866,6 +1874,9 @@ def _run_loop():
                             kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
                         )
                         with _state_lock:
+                            tactical_snapshot = dict(_state.get("v122b_tactical") or {})
+                        _update_v122d_event_evidence(radar_snapshot, tactical_snapshot, scan_now)
+                        with _state_lock:
                             _state["results"] = results
                             _state["index_direction"] = index_direction
                             _state["index_close"] = index_close
@@ -2012,9 +2023,25 @@ def _v122b_candidate_provider():
         return [dict(row) for row in (_state.get("v122b_candidates") or [])]
 
 
+def _update_v122d_event_evidence(base_radar, tactical, now):
+    with _state_lock:
+        forward_state = _state.get("v122d_forward") or v122d_forward.empty_state()
+    event_radar = oi_view.event_driven_early_radar(base_radar or {}, tactical or {}, limit=10)
+    forward_state = v122d_forward.process(forward_state, event_radar, now=now)
+    forward_summary = v122d_forward.summarize(forward_state)
+    with _state_lock:
+        _state["event_early_radar"] = event_radar
+        _state["v122d_forward"] = forward_state
+        _state["v122d_forward_summary"] = forward_summary
+    return event_radar
+
+
 def _v122b_publish(payload):
+    now = now_ist()
     with _state_lock:
         _state["v122b_tactical"] = dict(payload or {})
+        base_radar = dict(_state.get("opportunity_radar") or {})
+    _update_v122d_event_evidence(base_radar, payload or {}, now)
 
 
 def _make_v122b_stream_service():

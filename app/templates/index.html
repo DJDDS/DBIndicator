@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="legacy-research-provenance" content="Early Radar; Shadow Early Radar; Energy Building; RESEARCH / SHADOW">
 <title>Scanner Dashboard</title>
 <style>
   :root {
@@ -708,51 +709,64 @@
 
   <div class="card" style="border-color:#3a2f0f;">
     <div id="early-radar-card">
-    <h2>⚡ Production Early Radar <span class="sub">evidence-gated production path only — Energy Building / Stock in Play / Ignition may remain empty while no playbook is validated</span></h2>
-    {% set radar_rows = results | selectattr('radar_rank', 'defined') | selectattr('radar_rank', 'ne', None) | sort(attribute='radar_rank') | list %}
-    {% if radar_rows %}
-    <div class="sl-list">
-      {% for r in radar_rows %}
-      {% set td = r.trade_direction if r.trade_direction is defined else None %}
-      <div class="sl-row {{ 'bull' if td == 'Bullish' else ('bear' if td == 'Bearish' else '') }}" onclick="window.location='/chart/{{ r.symbol }}'">
-        <span class="sl-rank">{{ r.radar_rank }}</span>
-        <span class="sl-score" style="color:var(--amber);">{{ r.movement_score if r.movement_score is not none else '—' }}</span>
-        <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a><span class="sl-close">{{ r.movement_stage }}</span></span>
-        <span class="sl-why">
-          <span class="sl-oi">{% if r.breakout_source %}Breakout Source: {{ r.breakout_source }}{% elif r.compression_score is not none %}Compression {{ '%.0f'|format(r.compression_score) }}{% else %}abnormal participation{% endif %}</span>
-          <span class="sl-detail">{% if r.tod_rvol %}TOD RVOL {{ r.tod_rvol }}x · {% endif %}{% if r.oi_chg_60m_pct is not none %}OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}% · {% endif %}{{ r.oi_status or 'OI warming' }}</span>
-        </span>
-        <span class="sl-tags">
-          {% if r.compression_score is not none %}<span class="sl-tag">Coil {{ '%.0f'|format(r.compression_score) }}</span>{% endif %}
-          {% if r.stock_in_play %}<span class="sl-tag strong">Stock in Play</span>{% endif %}
-          {% if r.breakout_direction %}<span class="sl-tag strong">{{ '▲' if r.breakout_direction == 'Bullish' else '▼' }} {{ r.breakout_direction }}</span>{% endif %}
-        </span>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="sl-empty"><strong>No early setup is building right now.</strong> Radar is directionless until price escapes a real 15-minute decision range. It watches coils, opening-range pressure, abnormal TOD volume and F&amp;O positioning.</p>
-    {% endif %}
-
-    {% set shadow_rows = results | selectattr('shadow_radar_rank', 'defined') | selectattr('shadow_radar_rank', 'ne', None) | sort(attribute='shadow_radar_rank') | list %}
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid #3a2f0f;">
-      <h2 style="margin-bottom:8px;">Shadow Early Radar <span class="sub">RESEARCH / SHADOW · observable only · cannot create production TRADE/WATCH</span></h2>
-      {% if shadow_rows %}
+      <h2>⚡ Event-Driven Early Detection <span class="sub">no composite score · observable sequence only · SCOUT → PRESSURE SHIFT → READY → BREAK ACCEPTED → FOLLOW-THROUGH</span></h2>
+      <p class="sl-empty" style="margin-top:0;">
+        This panel no longer ranks names by a 0–100 movement score. It only advances a stock when a real market event occurs:
+        fresh participation, independent directional evidence, an exact 3-minute trigger, acceptance through that trigger, or follow-through.
+        Mature moves are removed rather than rewarded for having larger numbers.
+      </p>
+      {% set event_rows = (event_early_radar.get('rows') if event_early_radar else []) or [] %}
+      {% if event_rows %}
       <div class="sl-list">
-        {% for r in shadow_rows %}
-        <div class="sl-row" onclick="window.location='/chart/{{ r.symbol }}'">
-          <span class="sl-rank">{{ r.shadow_radar_rank }}</span>
-          <span class="sl-score" style="color:var(--amber);">{{ r.shadow_movement_score if r.shadow_movement_score is not none else '—' }}</span>
-          <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a><span class="sl-close">{{ r.shadow_movement_stage }}</span></span>
-          <span class="sl-why"><span class="sl-oi">{{ r.shadow_movement_stage }}</span><span class="sl-detail">{% if r.compression_score is not none %}Coil {{ '%.0f'|format(r.compression_score) }} · {% endif %}{% if r.tod_rvol %}TOD RVOL {{ r.tod_rvol }}x · {% endif %}{% if r.oi_chg_60m_pct is not none %}OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%{% endif %}</span></span>
-          <span class="sl-tags"><span class="sl-tag">Research only</span>{% if r.entry_trigger %}<span class="sl-tag strong">{{ r.entry_trigger }}</span>{% endif %}</span>
+        {% for r in event_rows %}
+        {% set state = r.event_state or 'SCOUT' %}
+        <div class="sl-row {{ 'bull' if r.direction == 'Bullish' else ('bear' if r.direction == 'Bearish' else '') }}" onclick="window.location='/chart/{{ r.symbol }}'">
+          <span class="sl-rank">{{ loop.index }}</span>
+          <span class="sl-score" style="color:{% if state in ['BREAK_ACCEPTED','FOLLOW_THROUGH'] %}var(--green){% elif state in ['FAILED','STALE','OPTION_BLOCKED'] %}var(--red){% else %}var(--amber){% endif %};font-size:11px;min-width:126px;">
+            {{ state.replace('_',' ') }}
+          </span>
+          <span class="sl-sym">
+            <a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a>
+            <span class="sl-close">{{ r.direction }}{% if r.setup %} · {{ r.setup.replace('_',' ') }}{% endif %}</span>
+          </span>
+          <span class="sl-why">
+            <span class="sl-oi">{{ r.reason }}</span>
+            <span class="sl-detail">
+              {% if r.trigger is not none %}Trigger {{ '%.2f'|format(r.trigger) }}{% else %}Trigger forming{% endif %}
+              {% if r.invalidation is not none %} · Invalid {{ '%.2f'|format(r.invalidation) }}{% endif %}
+              {% if r.move_since_first_scout_atr is not none %} · Since scout {{ '%+.2f'|format(r.move_since_first_scout_atr) }} ATR{% endif %}
+              {% if r.first_scout_age_min is not none %} · {{ '%.0f'|format(r.first_scout_age_min) }}m observed{% endif %}
+            </span>
+          </span>
+          <span class="sl-tags">
+            {% if r.participation_shift %}<span class="sl-tag strong">Participation shift</span>{% endif %}
+            {% if r.oi_accelerating %}<span class="sl-tag">Fresh OI</span>{% endif %}
+            {% if r.relative_shift %}<span class="sl-tag">Relative acceleration</span>{% endif %}
+            {% if r.microstructure_shift %}<span class="sl-tag">Futures pressure</span>{% endif %}
+            {% if r.rvol_3m is not none %}<span class="sl-tag">3m RVOL {{ '%.2f'|format(r.rvol_3m) }}x</span>{% endif %}
+            {% if r.depth_support_fraction is not none %}<span class="sl-tag">Depth {{ '%.0f'|format(r.depth_support_fraction * 100) }}%</span>{% endif %}
+            {% if r.option_contract %}<span class="sl-tag strong">{{ r.option_contract }}{% if r.option_dte is not none %} · DTE {{ r.option_dte }}{% endif %}</span>{% endif %}
+          </span>
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <p class="sl-empty">No shadow Energy Building / Ignition setup is measurable on this scan.</p>
+      <p class="sl-empty"><strong>No event sequence is active right now.</strong> That is intentional: the engine will not invent a candidate from a score. It waits for a genuine pressure shift or a concrete 3-minute structural event.</p>
       {% endif %}
-    </div>
+      {% set ev = event_early_evidence or {} %}
+      {% set evstage = ev.get('by_stage', {}) %}
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3a2f0f;">
+        <span class="sub"><strong>Live evidence recorder:</strong> {{ ev.get('events', 0) }} first-stage events captured. Synthetic audit evidence is not treated as proof; this recorder measures what actually happens 5m/15m/30m/60m after PRESSURE SHIFT, READY and BREAK ACCEPTED.</span>
+        {% if ev.get('events', 0) %}
+        <div class="sl-tags" style="margin-top:8px;">
+          {% for stage in ['PRESSURE_SHIFT','READY','BREAK_ACCEPTED'] %}
+            {% set s5 = evstage.get(stage, {}).get('5m', {}) %}
+            <span class="sl-tag">{{ stage.replace('_',' ') }} · 5m n={{ s5.get('n', 0) }}{% if s5.get('avg_return_pct') is not none %} · avg {{ '%+.2f'|format(s5.get('avg_return_pct')) }}%{% endif %}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div style="margin-top:6px;"><span class="sub">Legacy Energy Building / Ignition scores are retained only in research logs for comparison; they no longer drive this visible section.</span></div>
+      </div>
     </div>
   </div>
 

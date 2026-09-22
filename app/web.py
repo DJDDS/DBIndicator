@@ -9,7 +9,7 @@ from . import alerts, backtest, background, config, delivery, early_signal, indi
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
-from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar
+from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar, event_driven_early_radar
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,10 @@ def dashboard():
     opportunity_radar = overlay_tactical_radar(
         base_opportunity_radar, state.get("v122b_tactical") or {}
     )
+    event_early_radar = state.get("event_early_radar") or event_driven_early_radar(
+        state.get("opportunity_radar") or base_opportunity_radar,
+        state.get("v122b_tactical") or {},
+    )
     forward_validation = opportunity_forward.summarize(state.get("opportunity_forward"))
     research_state = backtest.get_early_research_state()
     v12_recorder = dict(state.get("v12_option_recorder") or {})
@@ -125,6 +129,8 @@ def dashboard():
         scan_failures=scan_failures,
         market_state=market_state,
         opportunity_radar=opportunity_radar,
+        event_early_radar=event_early_radar,
+        event_early_evidence=state.get("v122d_forward_summary") or {},
         forward_validation=forward_validation,
         v12_trade_console=state.get("v12_trade_console") or {},
         v122b_tactical=state.get("v122b_tactical") or {},
@@ -235,6 +241,14 @@ def api_dashboard_state():
             ),
             state.get("v122b_tactical") or {},
         ),
+        "event_early_radar": state.get("event_early_radar") or event_driven_early_radar(
+            state.get("opportunity_radar") or live_opportunity_radar(
+                rows, index_direction=state.get("index_direction"),
+                index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+            ),
+            state.get("v122b_tactical") or {},
+        ),
+        "event_early_evidence": state.get("v122d_forward_summary") or {},
         "swing_research": swing_research_console(
             state.get("opportunity_radar") or live_opportunity_radar(
                 rows, index_direction=state.get("index_direction"),
@@ -279,6 +293,10 @@ def api_v8_dashboard():
     payload["opportunity_radar"] = overlay_tactical_radar(
         base_radar, state.get("v122b_tactical") or {}
     )
+    payload["event_early_radar"] = state.get("event_early_radar") or event_driven_early_radar(
+        base_radar, state.get("v122b_tactical") or {}
+    )
+    payload["event_early_evidence"] = state.get("v122d_forward_summary") or {}
     payload["swing_research"] = swing_research_console(base_radar)
     payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
