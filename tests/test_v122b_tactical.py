@@ -142,3 +142,26 @@ def test_state_machine_never_calls_failed_break_tradeable_in_v1():
     )
     assert state["state"] == "RESEARCH_ONLY"
     assert state["tradeable"] is False
+
+
+def test_tactical_pool_is_not_starved_by_empty_legacy_radar():
+    rows = [
+        {
+            "symbol": "DIRECTBULL", "close": 100.0, "atr": 2.0,
+            "oi_structure": "Long Buildup", "oi_chg_15m_pct": 0.45,
+            "oi_chg_30m_pct": 0.7, "tod_rvol": 1.15,
+            "price_chg_60m_pct": 0.2, "compression_score": 70.0,
+        },
+        {
+            "symbol": "DIRECTBEAR", "close": 200.0, "atr": 4.0,
+            "oi_structure": "Short Buildup", "oi_chg_15m_pct": 0.35,
+            "oi_chg_30m_pct": 0.6, "tod_rvol": 1.1,
+            "price_chg_60m_pct": -0.2, "compression_score": 68.0,
+        },
+    ]
+    pool = t.select_tactical_pool({"bullish": [], "bearish": []}, rows)
+    by_symbol = {x["symbol"]: x for x in pool}
+    assert {"DIRECTBULL", "DIRECTBEAR"} <= set(by_symbol)
+    assert by_symbol["DIRECTBULL"]["direction"] == "Bullish"
+    assert by_symbol["DIRECTBEAR"]["direction"] == "Bearish"
+    assert by_symbol["DIRECTBULL"]["tactical_source"] == "DIRECT_15M"
