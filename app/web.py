@@ -124,6 +124,7 @@ def dashboard():
         opportunity_radar=opportunity_radar,
         forward_validation=forward_validation,
         v12_trade_console=state.get("v12_trade_console") or {},
+        v122b_tactical=state.get("v122b_tactical") or {},
         v12_option_recorder=v12_recorder,
         v12_feasibility=state.get("v12_feasibility") or {},
         v12_earnings=state.get("v12_earnings") or {},
@@ -234,6 +235,7 @@ def api_dashboard_state():
         )),
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
         "v12_trade_console": state.get("v12_trade_console") or {},
+        "v122b_tactical": state.get("v122b_tactical") or {},
         "v12_option_recorder": v12_recorder,
         "v12_feasibility": state.get("v12_feasibility") or {},
         "v12_earnings": state.get("v12_earnings") or {},
@@ -310,6 +312,18 @@ def api_v12_recorder_health():
         now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
     )
     return jsonify(health)
+
+
+@app.route("/api/v122b-tactical-state/export")
+@require_dashboard_password
+def api_v122b_tactical_state_export():
+    return _v12_export(config.V122B_TACTICAL_STATE_FILE, "v122b_tactical_state.json", "application/json")
+
+
+@app.route("/api/v122b-tactical-events/export")
+@require_dashboard_password
+def api_v122b_tactical_events_export():
+    return _v12_export(config.V122B_TACTICAL_EVENT_FILE, "v122b_tactical_events.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v12-option-state/export")
