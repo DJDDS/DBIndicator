@@ -5,222 +5,76 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scanner Settings</title>
 <style>
-  :root {
-    --navy: #1f3864; --accent: #2e74b5; --green: #1e7b34; --red: #c00000;
-    --bg: #f7f8fa; --card: #ffffff; --border: #e2e5ea; --text: #1a1d23; --muted: #6b7280;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
-  header { background: var(--navy); color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center; }
-  header h1 { margin: 0; font-size: 20px; }
-  header nav a { color: #fff; text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.15); padding: 8px 14px; border-radius: 6px; }
-  header nav a:hover { background: rgba(255,255,255,0.28); }
-  .wrap { max-width: 760px; margin: 24px auto; padding: 0 16px 60px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px 26px; margin-bottom: 20px; }
-  .card h2 { margin: 0 0 14px; font-size: 15px; color: var(--navy); }
-  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
-  input[type=text], input[type=number], select, textarea {
-    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-family: inherit;
-  }
-  textarea { min-height: 90px; resize: vertical; }
-  .row2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
-  .row3 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .count-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
-  .count-tile { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
-  .count-value { font-size:24px; font-weight:750; color:var(--navy); }
-  .count-label { font-size:11px; color:var(--muted); margin-top:3px; }
-  .scan-health-note { margin:-8px 0 20px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:12px; color:var(--muted); background:var(--card); }
-  .scan-health-note.warn { border-color:#f0b7b7; color:var(--red); }
-  .scan-health-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:11px; }
-  .scan-health-table th, .scan-health-table td { text-align:left; border-top:1px solid var(--border); padding:6px 4px; vertical-align:top; }
-  @media (max-width:680px){ .count-grid{grid-template-columns:1fr;} }
-  .btn { display: inline-block; background: var(--accent); color: #fff; border: none; text-decoration: none;
-         padding: 10px 20px; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
-  .btn.secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
-  .actions { margin-top: 22px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  .msg-ok { background: #e6f4ea; border: 1px solid #bfe4cb; color: var(--green); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
-  .msg-err { background: #fbe7e7; border: 1px solid #f0b7b7; color: var(--red); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
-  .msg-err ul { margin: 4px 0 0; padding-left: 18px; }
-  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-top: 6px; }
-  details.card > summary { cursor: pointer; font-size: 15px; color: var(--navy); list-style: none; }
-  details.card > summary::-webkit-details-marker { display: none; }
-  details.card > summary::before { content: "\25B8 "; color: var(--muted); }
-  details.card[open] > summary::before { content: "\25BE "; }
-  details.card > summary:hover { color: var(--accent); }
-  legend { font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 6px; }
+:root{--navy:#1f3864;--accent:#2e74b5;--green:#1e7b34;--red:#b42318;--amber:#a15c00;--bg:#f7f8fa;--card:#fff;--border:#e2e5ea;--text:#1a1d23;--muted:#6b7280}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+header{background:var(--navy);color:#fff;padding:18px 28px;display:flex;justify-content:space-between;align-items:center}header h1{margin:0;font-size:19px}header nav a{color:#fff;text-decoration:none;background:rgba(255,255,255,.14);padding:8px 13px;border-radius:6px;font-size:13px}
+.wrap{max-width:900px;margin:24px auto;padding:0 16px 60px}.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px 22px;margin-bottom:18px}
+h2{margin:0 0 12px;font-size:15px;color:var(--navy)}p{line-height:1.55}.muted{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.tile{border:1px solid var(--border);border-radius:8px;padding:13px;background:#fbfcfe}.tile span{display:block;color:var(--muted);font-size:11px}.tile strong{display:block;margin-top:4px;font-size:18px}
+.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.btn{display:inline-block;text-decoration:none;background:var(--accent);color:white;padding:9px 14px;border-radius:6px;font-size:13px;font-weight:650;border:0;cursor:pointer}.btn.secondary{background:white;color:var(--accent);border:1px solid var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:7px 5px;border-top:1px solid var(--border);vertical-align:top}
+@media(max-width:720px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-{% macro gate(field, checked, label, hint) %}
-        <div>
-          <label style="margin-top:0;">
-            <input type="checkbox" id="{{ field }}" name="{{ field }}" {% if checked %}checked{% endif %} style="width:auto; display:inline-block; vertical-align:middle; margin-right:6px;">
-            {{ label }}
-          </label>
-          <div class="hint">{{ hint }}</div>
-        </div>
-{% endmacro %}
-
-<header>
-  <h1>Scanner Settings</h1>
-  <nav><a href="/">← Dashboard</a></nav>
-</header>
+<header><h1>Scanner Settings &amp; Health</h1><nav><a href="/">← Dashboard</a></nav></header>
 <div class="wrap">
-
-  {% if saved %}
-  <div class="msg-ok">Settings saved. The next scan (within {{ s.SCAN_INTERVAL_SECONDS }}s) will use them - no restart needed.</div>
-  {% endif %}
-  {% if errors %}
-  <div class="msg-err">Please fix the following:<ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
-  {% endif %}
-  {% if fno_error %}
-  <div class="msg-err">Log in to Kite on the dashboard first, then come back here to load the live F&amp;O list.</div>
-  {% endif %}
-
-  <div class="count-grid">
-    <div class="count-tile"><div class="count-value" id="live-fno-count">{{ live_fno_count if live_fno_count is not none else '—' }}</div><div class="count-label">F&amp;O master universe</div></div>
-    <div class="count-tile"><div class="count-value"><span id="valid-live-scan-count">{{ valid_live_scan_count }}</span> / <span id="last-scan-count">{{ last_scan_count }}</span></div><div class="count-label">Valid live symbols{% if settings_last_scan %} · {{ settings_last_scan }}{% endif %}</div></div>
-    <div class="count-tile"><div class="count-value" id="research-watchlist-count">{{ research_watchlist_count }}</div><div class="count-label">Research universe</div></div>
-  </div>
-  <div class="scan-health-note {{ 'warn' if scan_error_count else '' }}">
-    <strong>Scan health:</strong> {{ valid_live_scan_count }} / {{ last_scan_count }} successful · {{ scan_error_count }} failed.
-    {% if scan_failures %}
-    <table class="scan-health-table" aria-label="Current scan failures">
-      <thead><tr><th>Symbol</th><th>Failure stage</th><th>Error</th><th>Last success</th></tr></thead>
-      <tbody>{% for f in scan_failures %}<tr><td><strong>{{ f.symbol }}</strong></td><td>{{ f.stage }}</td><td>{{ f.error }}</td><td>{{ f.last_success or 'No successful scan recorded yet' }}</td></tr>{% endfor %}</tbody>
-    </table>
-    {% endif %}
+  <div class="card">
+    <h2>Live System</h2>
+    <div class="grid">
+      <div class="tile"><span>Kite</span><strong class="{{ 'ok' if logged_in else 'bad' }}">{{ 'CONNECTED' if logged_in else 'LOGIN REQUIRED' }}</strong></div>
+      <div class="tile"><span>F&amp;O universe</span><strong>{{ live_fno_count if live_fno_count is not none else '—' }}</strong></div>
+      <div class="tile"><span>Last scan</span><strong style="font-size:13px">{{ settings_last_scan or 'WAITING' }}</strong></div>
+      <div class="tile"><span>Valid symbols</span><strong>{{ valid_live_scan_count }} / {{ last_scan_count }}</strong></div>
+      <div class="tile"><span>Scan errors</span><strong class="{{ 'bad' if scan_error_count else 'ok' }}">{{ scan_error_count }}</strong></div>
+      <div class="tile"><span>Tactical engine</span><strong class="warn">V12.2B · INTERIM</strong></div>
+    </div>
+    <p class="muted">The live stock universe is taken from Kite. Manual watchlists and live threshold tuning are intentionally removed from this page so the interim engine cannot be “improved” by changing parameters after seeing outcomes.</p>
   </div>
 
-  <form method="post" action="/settings">
-
-    <div class="card">
-      <h2>Watchlist <span class="hint">({{ research_watchlist_count }} symbols)</span></h2>
-      <label for="watchlist">NSE trading symbols (comma or newline separated)</label>
-      <textarea id="watchlist" name="watchlist">{{ s.WATCHLIST | join(', ') }}</textarea>
-      <div class="hint">Live Best Entries ignores a stale manual list and refreshes the current NSE stock-F&amp;O universe from Kite each trading day. This list remains available for research/backtests.</div>
-      <div class="actions">
-        <button class="btn secondary" type="submit" formaction="/settings/load-fno-list" {% if not logged_in %}disabled title="Log in to Kite first"{% endif %}>
-          Load current F&amp;O list from Kite
-        </button>
-        <span class="hint">Replaces the list above with the exact, live set of NSE stocks currently eligible for F&amp;O trading, straight from Kite's own instrument list.</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Live Early-Movement Engine</h2>
-      <p style="margin-top:-4px;">V6 is a 15-minute NSE stock-F&amp;O Stock-in-Play / Recent-Range screen with bounded 5-minute execution checks. <strong>OI is sponsorship, not a universal hard gate</strong>: volume plus an expanding futures basis can substitute when OI is unavailable or unhelpful. Legacy momentum indicators remain chart diagnostics only.</p>
-      <div class="row2">
-        <div>
-          <label for="compression_radar_score">Compression radar score</label>
-          <input type="number" id="compression_radar_score" name="compression_radar_score" min="0" max="100" step="5" value="{{ s.COMPRESSION_RADAR_SCORE }}">
-          <div class="hint">Default 60. Directionless radar threshold for BB/ATR/range compression. Higher = fewer, tighter coils.</div>
-        </div>
-        <div>
-          <label for="tod_rvol_min">Minimum time-of-day RVOL</label>
-          <input type="number" id="tod_rvol_min" name="tod_rvol_min" min="0.5" max="5" step="0.05" value="{{ s.TOD_RVOL_MIN }}">
-          <div class="hint">Default 1.30x. Participation confirmation after price actually breaks the range.</div>
-        </div>
-        <div>
-          <label for="tod_rvol_strong_no_oi">Strong TOD RVOL when OI unavailable</label>
-          <input type="number" id="tod_rvol_strong_no_oi" name="tod_rvol_strong_no_oi" min="0.5" max="8" step="0.05" value="{{ s.TOD_RVOL_STRONG_NO_OI }}">
-          <div class="hint">Default 1.60x. Missing OI never passes freely; this is only part of the stricter fallback sponsorship path.</div>
-        </div>
-        <div>
-          <label for="max_entry_extension_atr">Maximum breakout extension (ATR)</label>
-          <input type="number" id="max_entry_extension_atr" name="max_entry_extension_atr" min="0.25" max="1.25" step="0.05" value="{{ s.MAX_ENTRY_EXTENSION_ATR }}">
-          <div class="hint">V9.3.0 anti-chase ceiling: 1.25 ATR. You may tighten it, but the live scanner will not allow a looser value.</div>
-        </div>
-        <div>
-          <label for="shortlist_max">Maximum Best Entries</label>
-          <input type="number" id="shortlist_max" name="shortlist_max" min="1" max="10" step="1" value="{{ s.SHORTLIST_MAX }}">
-          <div class="hint">A ceiling, not a target. Zero is a valid result.</div>
-        </div>
-        <div>
-          <label for="scan_interval_seconds">Scan interval (seconds)</label>
-          <input type="number" id="scan_interval_seconds" name="scan_interval_seconds" min="60" max="900" step="30" value="{{ s.SCAN_INTERVAL_SECONDS }}">
-          <div class="hint">180 seconds is responsive while staying respectful of Kite historical-data limits.</div>
-        </div>
-      </div>
-    </div>
-
-    <details class="card">
-      <summary><strong>Legacy / research-only parameters</strong></summary>
-      <p class="hint" style="margin-top:10px;">Candlestick patterns, strong-close, big-candle, delivery %, breadth, generic ADX-regime volume no longer drive Best Entries. They remain in the code only so old charts and backtests can still reproduce historical experiments.</p>
-    </details>
-
-    <details class="card">
-      <summary><strong>Risk &amp; position sizing</strong> &mdash; does not affect which stocks appear</summary>
-      <p class="hint" style="margin-top:10px;">This app never touches your funds, positions or orders. Account capital and risk-per-trade are used only to turn the ATR stop into a suggested quantity.</p>
-      <div class="row2" style="margin-top:12px;">
-        <div>
-          <label for="account_capital">Account capital (₹)</label>
-          <input type="number" id="account_capital" name="account_capital" min="1" step="1" value="{{ s.ACCOUNT_CAPITAL }}">
-        </div>
-        <div>
-          <label for="risk_per_trade_pct">Risk per trade (%)</label>
-          <input type="number" id="risk_per_trade_pct" name="risk_per_trade_pct" min="0.1" max="100" step="0.1" value="{{ s.RISK_PER_TRADE_PCT }}">
-          <div class="hint">1-2% is the typical F&amp;O starting point.</div>
-        </div>
-      </div>
-    </details>
-
-
+  <div class="card">
+    <h2>Fixed operating design</h2>
+    <p><strong>15m discovery → bounded 3m tactical pool → futures depth/basis witness → DTE/option friction gate → structural/time exit.</strong></p>
+    <p class="muted">V12.2B is decision support only. It does not place orders and it does not modify Trial-25, V12 stock-option recording, or V12.1 NIFTY index recording. Proposed operating priors are code-versioned and evaluated through forward evidence rather than tuned here.</p>
     <div class="actions">
-      <button class="btn" type="submit">Save settings</button>
-      <span class="hint">Applies immediately, no server restart needed.</span>
+      <a class="btn secondary" href="/backtest">Current research status</a>
+      <a class="btn secondary" href="/api/v122b-tactical-state/export">Export V12.2B state</a>
+      <a class="btn secondary" href="/api/v122b-tactical-events/export">Export V12.2B events</a>
     </div>
-  </form>
+  </div>
+
+  {% if scan_failures %}
+  <div class="card">
+    <h2>Current scan failures</h2>
+    <table><thead><tr><th>Symbol</th><th>Stage</th><th>Error</th><th>Last success</th></tr></thead>
+    <tbody>{% for f in scan_failures %}<tr><td><strong>{{ f.symbol }}</strong></td><td>{{ f.stage }}</td><td>{{ f.error }}</td><td>{{ f.last_success or '—' }}</td></tr>{% endfor %}</tbody></table>
+  </div>
+  {% endif %}
 
   <div class="card">
     <h2>Alerts</h2>
     {% if telegram_enabled %}
-    <p class="hint" style="color:var(--green); font-weight:600;">Telegram is configured ✓ — you'll get a message the moment a Bullish/Bearish signal fires on any watchlist symbol.</p>
-    <div class="actions">
-      <button class="btn secondary" type="button" id="test-alert-btn">Send test alert</button>
-      <span class="hint" id="test-alert-result"></span>
-    </div>
+      <p class="ok"><strong>Telegram configured.</strong></p>
+      <div class="actions"><button class="btn secondary" type="button" id="test-alert-btn">Send test alert</button><span class="muted" id="test-alert-result"></span></div>
     {% else %}
-    <p class="hint">Not set up yet. Alerts still show as an in-page banner + sound whenever the dashboard tab is open, but to get a push notification on your phone even when the app is closed, set up a free Telegram bot:</p>
-    <ol class="hint" style="padding-left:18px; line-height:1.7;">
-      <li>On Telegram, message <strong>@BotFather</strong>, send <code>/newbot</code>, and follow the prompts. You'll get a token like <code>123456:ABC-...</code> — put that in <code>.env</code> as <code>TELEGRAM_BOT_TOKEN</code>, then restart the app.</li>
-      <li>Send any message (e.g. "hi") to your new bot on Telegram.</li>
-      <li>Come back here and click "Find my chat ID" below — copy the number it shows into <code>.env</code> as <code>TELEGRAM_CHAT_ID</code>, then restart the app once more.</li>
-    </ol>
-    <div class="actions">
-      <button class="btn secondary" type="button" id="find-chat-id-btn" {% if not telegram_token_set %}disabled title="Set TELEGRAM_BOT_TOKEN in .env and restart first"{% endif %}>Find my chat ID</button>
-      <span class="hint" id="chat-id-result"></span>
-    </div>
+      <p class="muted">Telegram is not configured. Dashboard alerts remain available while the page is open.</p>
+      <div class="actions"><button class="btn secondary" type="button" id="find-chat-id-btn" {% if not telegram_token_set %}disabled{% endif %}>Find my chat ID</button><span class="muted" id="chat-id-result"></span></div>
     {% endif %}
   </div>
 </div>
 <script>
-  function wireButton(btnId, resultId, url, method) {
-    var btn = document.getElementById(btnId);
-    var out = document.getElementById(resultId);
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      btn.disabled = true;
-      out.textContent = 'Working…';
-      fetch(url, { method: method || 'GET' }).then(function (r) { return r.json(); }).then(function (data) {
-        btn.disabled = false;
-        if (data.ok) { out.textContent = 'Sent — check Telegram.'; return; }
-        if (data.chat_ids) {
-          out.innerHTML = 'Found: ' + data.chat_ids.map(function (c) {
-            return '<code>' + c.chat_id + '</code> (' + c.from + ')';
-          }).join(', ');
-          return;
-        }
-        out.textContent = data.error || 'Something went wrong.';
-      }).catch(function () {
-        btn.disabled = false;
-        out.textContent = 'Could not reach the server.';
-      });
-    });
-  }
-  wireButton('test-alert-btn', 'test-alert-result', '/api/alerts/test', 'POST');
-  wireButton('find-chat-id-btn', 'chat-id-result', '/api/alerts/discover-chat-id', 'GET');
+function wireButton(btnId,resultId,url,method){
+  var btn=document.getElementById(btnId),out=document.getElementById(resultId); if(!btn||!out)return;
+  btn.addEventListener('click',function(){btn.disabled=true;out.textContent='Working…';
+    fetch(url,{method:method||'GET'}).then(function(r){return r.json()}).then(function(data){
+      btn.disabled=false;
+      if(data.ok){out.textContent='Sent — check Telegram.';return;}
+      if(data.chat_ids){out.textContent='Found: '+data.chat_ids.map(function(c){return c.chat_id}).join(', ');return;}
+      out.textContent=data.error||'Something went wrong.';
+    }).catch(function(){btn.disabled=false;out.textContent='Could not reach server.';});
+  });
+}
+wireButton('test-alert-btn','test-alert-result','/api/alerts/test','POST');
+wireButton('find-chat-id-btn','chat-id-result','/api/alerts/discover-chat-id','GET');
 </script>
-</body>
-</html>
+</body></html>
