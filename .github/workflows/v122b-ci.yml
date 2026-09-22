@@ -22,6 +22,10 @@ jobs:
       - name: Compile
         run: python -m compileall -q app
       - name: V12.2B focused tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: pytest -q tests/test_v122b_tactical.py tests/test_v122a_interim_tactical_radar.py tests/test_v121_index_recorder.py
       - name: Full regression
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: pytest -q
