@@ -160,3 +160,25 @@ def test_stage3b_expiry_refinement_is_the_only_separate_round():
     assert out["refinement"] == "EXCLUDE_EXPIRY_DAY"
     assert out["refinement_round"] == 1
     assert out["cannot_overwrite_base_decision"] is True
+
+
+
+def test_stage3b_expiry_calendar_parses_string_false_safely():
+    frame = _ledger(val=4.0, hold=4.0)
+    sessions = frame["session"].drop_duplicates().astype(str).tolist()
+    cal = pd.DataFrame(
+        {
+            "session": sessions,
+            "is_expiry_day": ["false"] * len(sessions),
+        }
+    )
+    out = apply_expiry_day_refinement(
+        frame,
+        cal,
+        friction_log=_friction(value=2.0),
+        banknifty_replication={
+            "status": "READY",
+            "mean_120m_points": 1.0,
+        },
+    )
+    assert out["status"] == "COMPLETE"
