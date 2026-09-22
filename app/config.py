@@ -147,6 +147,18 @@ V12_EARNINGS_STATE_FILE = _V12_STORAGE["earnings_state"]
 V12_SNAPSHOT_GRACE_MINUTES = int(os.getenv("V12_SNAPSHOT_GRACE_MINUTES", "7"))
 V12_DEEP_SYMBOL_LIMIT = int(os.getenv("V12_DEEP_SYMBOL_LIMIT", "40"))
 
+# V12.2B interim tactical stock-option execution state.  These files are
+# intentionally separate from every frozen V12/Trial-25 artifact.
+V122B_TACTICAL_STATE_FILE = os.getenv(
+    "V122B_TACTICAL_STATE_FILE",
+    os.path.join(V12_STORAGE_ROOT, "v122b_tactical_state.json"),
+)
+V122B_TACTICAL_EVENT_FILE = os.getenv(
+    "V122B_TACTICAL_EVENT_FILE",
+    os.path.join(V12_STORAGE_ROOT, "v122b_tactical_events.jsonl"),
+)
+V122B_TACTICAL_STALE_SECONDS = float(os.getenv("V122B_TACTICAL_STALE_SECONDS", "8"))
+
 # Trial 25 forward earnings-volatility shadow recorder. All files live under
 # the same persistent V12 Railway volume and are research-only.
 TRIAL25_ROOT = _V12_STORAGE["trial25_root"]
