@@ -175,6 +175,7 @@ def fetch_banknifty_history(
         resumed = path.exists() and path.stat().st_size > 0
         if resumed:
             frame = pd.read_csv(path, parse_dates=["timestamp"]).set_index("timestamp")
+            frame.index = pd.to_datetime(frame.index, utc=True).tz_convert("Asia/Kolkata")
         else:
             frame = fetch_banknifty_intraday_chunk(
                 access_token=access_token,
@@ -201,7 +202,9 @@ def fetch_banknifty_history(
     if not frames:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
-    bars = pd.concat(frames).sort_index()
+    bars = pd.concat(frames)
+    bars.index = pd.to_datetime(bars.index, utc=True).tz_convert("Asia/Kolkata")
+    bars = bars.sort_index()
     bars = bars[~bars.index.duplicated(keep="last")]
     local_idx = pd.to_datetime(bars.index)
     # CSV resume can yield fixed-offset tz; compare via naive local wall time.
