@@ -228,3 +228,36 @@ Then pass:
 `--stage3b-2021-extension-ledger /data/index_option_research/stage3b_2021_extension/dhan_proxy_ledger.csv`
 
 to the Stage-3B runner. This extension is descriptive only and does not change the 2024-2026 decision thresholds.
+
+
+## Live ITM1 friction implementation
+
+Stage 3B reuses the existing V12.1 NIFTY 5-second micro recorder. It does not create a second quote stream and does not change the recorder.
+
+For each frozen Stage-3 signal, only **ITM1** is counted toward the preregistered friction sample. The exact same contract is held from entry to the fixed +120-minute exit.
+
+A row is decision-eligible only when the parent Stage-3 executable mapper has already passed:
+- entry at recorded best ask;
+- exit at recorded best bid;
+- same absolute contract;
+- one-lot top quantity available;
+- locked quote-freshness limit;
+- +120-minute exit.
+
+The primary live top-of-book friction in premium points per option unit is:
+
+`entry half-spread + exit half-spread + one-lot modeled charges / lot size`
+
+Evidence class: **LIVE_EXECUTABLE_TOP_OF_BOOK**.
+
+This is the primary preregistered 20-observation friction measure. It is deliberately more conservative than pretending midpoint execution and does not fabricate historical bid/ask.
+
+If real one-lot fill prices are later supplied for the same session and contract, the row is upgraded to **LIVE_ACTUAL_FILL** and friction becomes:
+
+`entry fill - entry mid + exit mid - exit fill + actual-fill charges / lot size`
+
+The row then also reports entry and exit slippage versus the contemporaneous displayed ask/bid.
+
+Both evidence classes remain research/shadow only. No order is ever placed by Stage 3B code.
+
+The friction extractor rewrites its ledger deterministically from the accumulated V12.1 micro files, so it is restart-safe and does not need a second always-on Railway process.
