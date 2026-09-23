@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 # periodic scan snapshot so live Focus-Desk lifecycle transitions survive a
 # redeploy even when they occur between normal scanner saves.
 _v123_focus_store = v123_state.FocusStateStore(config.V123_FOCUS_STATE_FILE)
+_v123_forensic_recorder = v123_state.ForensicFlightRecorder(config.V123_FORENSIC_ROOT)
 
 LIVE_RELIABILITY_BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.2-LIVE-RELIABILITY-HOTFIX"
 
@@ -2086,6 +2087,15 @@ def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, n
             _state["v123_focus_state"] = focus_state
             _state["v123_focus_desk"] = desk
             _state["v122b_candidates"] = candidates
+
+        # Append-only forensic flight recorder.  This is observability only:
+        # it does not feed anything back into discovery, Focus, tactical or
+        # option routing.  Important movers are written on stage changes and
+        # at most once per minute while they remain important.
+        try:
+            _v123_forensic_recorder.record(observer_now, focus_state, now=now)
+        except Exception:
+            log.exception("Failed to persist V12.3 forensic flight recorder")
 
         # Atomic and signature-gated: writes only when the meaningful Focus
         # lifecycle/membership/vehicle state changes, not on every price tick.
