@@ -73,6 +73,7 @@ def empty_state():
         "recent": [],
         "missed": {},
         "last_update": None,
+        "trade_date": None,
     }
 
 
@@ -85,6 +86,7 @@ def _normalise(state):
     out.setdefault("recent", [])
     out.setdefault("missed", {})
     out.setdefault("last_update", None)
+    out.setdefault("trade_date", None)
     return out
 
 
@@ -399,6 +401,12 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
     """Update persistent focus state from all live evidence sources."""
     now = now or dt.datetime.now()
     state = _normalise(state)
+    today = now.date().isoformat()
+    if state.get("trade_date") not in (None, today):
+        # Focus is a session workspace. Never carry yesterday's live thesis
+        # into a new trading day; research ledgers remain separate.
+        state = empty_state()
+    state["trade_date"] = today
     scans = _scan_map(scan_rows)
     candidates = _event_candidates(observer, event_radar)
     event_by_key = {_candidate_key(row): row for row in candidates}
