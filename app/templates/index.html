@@ -427,7 +427,7 @@
 /* V12.3 main trading surface: one persistent underlying-first workspace.
    Legacy decision panels remain in the DOM/backend for research, but are not
    competing trading screens anymore. */
-#v122b-tactical-console, #v12-trade-console, #v8-decision-console,
+#v122b-tactical-console, #v12-trade-console, #v8-decision-console, #swing-research-console,
 div.card:has(> #early-radar-card) { display:none !important; }
 .focus-desk{border:1px solid #2d536b;background:linear-gradient(180deg,rgba(58,142,180,.07),rgba(10,13,18,0) 65%);border-radius:10px;margin:14px 0 18px;overflow:hidden}
 .focus-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:15px 17px;border-bottom:1px solid #263747}
@@ -597,7 +597,22 @@ div.card:has(> #early-radar-card) { display:none !important; }
         <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses stay here instead of disappearing.</div></div>
       </div>
     </div>
-    <div class="focus-note"><strong>Interpretation:</strong> UNDERLYING THESIS and EXECUTION VEHICLE are separate. OPTION BLOCKED can coexist with BULLISH/BEARISH ACTIVE; cash/future routing remains visible. Direction does not flip from one scan to the next without invalidation. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+    <div class="focus-note"><strong>Interpretation:</strong> UNDERLYING THESIS and EXECUTION VEHICLE are separate. OPTION BLOCKED can coexist with BULLISH/BEARISH ACTIVE; cash/future routing remains visible. A profitable fast entry can become PROVEN MOVER instead of disappearing. Direction does not flip without thesis invalidation. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+  </section>
+
+  <section id="v123-swing-desk" class="focus-desk" aria-label="V12.3 1D swing focus desk">
+    <div class="focus-head">
+      <div>
+        <div class="focus-kicker">V12.3 · 1D SWING FOCUS · SLOW MEMBERSHIP</div>
+        <h2>3–5 stocks to carry into the next session</h2>
+        <div class="focus-sub">This desk does not rotate every 3 minutes. Membership is reviewed only around 09:45, 12:30 and 14:30 IST; the 14:30 set freezes into the close unless the underlying thesis invalidates. It uses 20-session range structure, 4H context, sector-relative behavior, participation and futures-OI context. Option suitability remains downstream.</div>
+      </div>
+      <div id="v123-swing-status" class="focus-status">WAITING · 0 focus</div>
+    </div>
+    <div class="focus-pane">
+      <div id="v123-swing-list" class="focus-list"><div class="focus-empty">Waiting for the next 1D selection checkpoint…</div></div>
+    </div>
+    <div class="focus-note"><strong>Runway:</strong> GOOD means the day has not consumed much ATR; CAUTION means prefer a retest; EXTENDED means do not chase and wait for a pullback. This is a separate slower decision-support desk, not the old 1D/2D score tab.</div>
   </section>
 
   {% set tctl = v122b_tactical|default({}) %}
@@ -1456,6 +1471,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
         'READY':'READY — wait for trigger',
         'ACTIVE':'ACTIVE — underlying thesis accepted',
         'MANAGE':'FOLLOW-THROUGH — manage the same thesis',
+        'PROVEN_MOVER':'FIRST MOVE WORKED — keep thesis, wait for continuation',
         'PULLBACK':'DO NOT CHASE — wait for continuation/reclaim',
         'REENTRY_READY':'RE-ENTRY READY — same thesis, new structure',
         'WEAKENING':'WAIT — thesis weakening, not flipped',
@@ -1485,9 +1501,13 @@ div.card:has(> #early-radar-card) { display:none !important; }
           (row.invalidation!=null?' · Invalid '+n(row.invalidation,2):'')+
           (row.day_change_pct!=null?' · Day '+s(row.day_change_pct,2)+'%':'')+
           (row.relative_5m_vs_nifty_pct!=null?' · Rel/Nifty '+s(row.relative_5m_vs_nifty_pct,2)+'%':'')+
+          (row.entry_episode_no?' · Entry #'+v12Esc(row.entry_episode_no):'')+
           ' · Focus '+n(row.focus_age_min,0)+'m</div>' +
         '<div class="focus-vehicles">'+vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
           '<span class="focus-vehicle">Best available '+v12Esc(v.preferred_available_vehicle||'WAIT')+opt+'</span></div>' +
+        (row.locked_option_contract?'<div class="focus-meta"><strong>Contract lock:</strong> '+v12Esc(row.locked_option_contract)+
+          (row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
+          (row.contract_reroute_reason?' · Re-route: '+v12Esc(row.contract_reroute_reason):'')+'</div>':'') +
         optionReason +
         (h?'<div class="focus-history">'+h+'</div>':'') +
       '</div>';
@@ -1516,6 +1536,32 @@ div.card:has(> #early-radar-card) { display:none !important; }
       missed.innerHTML=m.length?m.map(function(x){
         return '<div class="focus-miss"><strong>'+v12Esc(x.symbol||'—')+'</strong><span class="move">'+s(x.day_change_pct,2)+'%</span><span>'+v12Esc(String(x.reason||'').replaceAll('_',' '))+'</span></div>';
       }).join(''):'<div class="focus-empty">No important missed mover recorded yet.</div>';
+    }
+
+    var swing=desk.swing_1d||{}, swingRows=Object.values(swing.selected||{});
+    var swingStatus=document.getElementById('v123-swing-status');
+    if(swingStatus) swingStatus.textContent=(swing.phase||'WAITING')+' · '+swingRows.length+' focus';
+    var swingList=document.getElementById('v123-swing-list');
+    if(swingList){
+      swingRows.sort(function(a,b){return String(a.selected_at||'').localeCompare(String(b.selected_at||''));});
+      swingList.innerHTML=swingRows.length?swingRows.map(function(row){
+        var dir=String(row.direction||'').toLowerCase();
+        return '<div class="focus-row '+dir+'"><div class="focus-top">'+
+          '<span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>'+
+          '<span class="focus-direction '+dir+'">'+v12Esc(row.direction||'')+'</span>'+
+          '<span class="focus-life">'+v12Esc(row.runway||'')+' RUNWAY</span></div>'+
+          '<div class="focus-action">'+v12Esc(row.action||'1D FOCUS')+'</div>'+
+          '<div class="focus-meta">'+v12Esc(String(row.family||'').replaceAll('_',' '))+
+            ' · CMP '+n(row.live_price,2)+(row.trigger!=null?' · Trigger '+n(row.trigger,2):'')+
+            (row.invalidation!=null?' · Thesis invalid '+n(row.invalidation,2):'')+
+            (row.day_change_pct!=null?' · Day '+s(row.day_change_pct,2)+'%':'')+
+            (row.move_consumed_atr!=null?' · Used '+n(row.move_consumed_atr,2)+' ATR':'')+
+            (row.htf_direction?' · 4H '+v12Esc(row.htf_direction):'')+'</div>'+
+          '<div class="focus-meta">Selected '+v12Esc(row.selected_slot||'')+
+            (row.oi_structure?' · OI '+v12Esc(row.oi_structure):'')+
+            (row.stock_sector_lead_pct!=null?' · Sector lead '+s(row.stock_sector_lead_pct,2)+'%':'')+'</div>'+
+        '</div>';
+      }).join(''):'<div class="focus-empty">No 1D focus yet. Membership is only added at the scheduled checkpoints.</div>';
     }
   }
 
