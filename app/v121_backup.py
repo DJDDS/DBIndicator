@@ -4,7 +4,9 @@ from __future__ import annotations
 import datetime as dt
 import gzip
 import json
+import os
 import shutil
+import tempfile
 from pathlib import Path
 
 
@@ -23,6 +25,14 @@ def _save(path,data):
     tmp.replace(path)
 
 
+def _unique_archive_temp(dst):
+    """Allocate a collision-free staging file beside dst for atomic replace."""
+    dst=Path(dst)
+    fd,name=tempfile.mkstemp(prefix=f'.{dst.name}.',suffix='.tmp',dir=str(dst.parent))
+    os.close(fd)
+    return Path(name)
+
+
 def compress_completed_day(root, day):
     root=Path(root); day=day if isinstance(day,dt.date) else dt.date.fromisoformat(str(day)[:10])
     out=[]
@@ -32,11 +42,15 @@ def compress_completed_day(root, day):
         if not src.exists():
             if dst.exists(): out.append(dst)
             continue
-        tmp=Path(str(dst)+'.tmp')
-        with src.open('rb') as fin, gzip.open(tmp,'wb') as fout:
-            shutil.copyfileobj(fin,fout)
-        tmp.replace(dst)
-        src.unlink()
+        tmp=_unique_archive_temp(dst)
+        try:
+            with src.open('rb') as fin, gzip.open(tmp,'wb') as fout:
+                shutil.copyfileobj(fin,fout)
+            tmp.replace(dst)
+            src.unlink(missing_ok=True)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
         out.append(dst)
     return out
 

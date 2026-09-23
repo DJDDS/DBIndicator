@@ -4,7 +4,10 @@ Kept free of Flask/Kite imports so the ranking rules can be regression-tested
 without a live broker session.
 """
 
+import datetime as dt
 import math
+
+from .early_onset import assess_early_onset
 
 
 def _num(value, default=None):
@@ -365,18 +368,160 @@ def _scaled_positive(value, full_scale, points):
     return min(1.0, value / float(full_scale)) * float(points)
 
 
-def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_pct=None, market_breadth=None):
-    """Rank live Bull/Bear *attention* names without promoting a trade model.
+def _parse_dt(value):
+    if isinstance(value, dt.datetime):
+        return value
+    if value is None:
+        return None
+    try:
+        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
-    This layer is deliberately independent of ``ACTIVE_PLAYBOOKS``. It uses
-    point-in-time facts already present in the live scan (price/OI direction,
-    recent OI change, acceleration, participation, relative strength/weakness,
-    VWAP acceptance and anti-chase distance) to answer a different question:
-    "which F&O stocks deserve attention right now?"
 
-    The returned score is an attention/ranking score, not a win probability and
-    not a backtest-validated entry signal. The production V9 evidence gate stays
-    untouched.
+def _early_lifecycle(item, row, lifecycle_state, now):
+    """Attach persistent first-scout maturity so a mature move cannot reset.
+
+    The old radar could become "early" again after a large move paused for an
+    hour because only rolling 60-minute travel was observed.  This state keeps
+    the first scout price/time across scans and blocks re-entry into the early
+    lane once meaningful runway has already been consumed.
+    """
+    if lifecycle_state is None or now is None:
+        return item
+
+    symbol = str(item.get("symbol") or "")
+    direction = str(item.get("direction") or "")
+    if not symbol or direction not in ("Bullish", "Bearish"):
+        return item
+
+    key = f"{symbol}|{direction}"
+    close = _num(row.get("close"))
+    atr = _num(row.get("atr"))
+    state = dict(lifecycle_state.get(key) or {})
+    first_seen = _parse_dt(state.get("first_seen_at"))
+    cooldown = _parse_dt(state.get("cooldown_until"))
+
+    if cooldown is not None:
+        if cooldown.tzinfo is not None and now.tzinfo is None:
+            cooldown = cooldown.replace(tzinfo=None)
+        elif cooldown.tzinfo is None and now.tzinfo is not None:
+            cooldown = cooldown.replace(tzinfo=now.tzinfo)
+
+    if cooldown is not None and now < cooldown and state and not state.get("active", True):
+        item["early_eligible"] = False
+        item["scout_eligible"] = False
+        item["early_state"] = "LATE"
+        item["action_stage"] = "LATE"
+        item["phase"] = "EXTENDED"
+        item["maturity"] = "COOLDOWN"
+        reasons = list(item.get("late_reasons") or [])
+        reasons.append("cooldown after consumed move")
+        item["late_reasons"] = reasons
+        lifecycle_state[key] = state
+        return item
+
+    # Start the maturity clock at hidden SCOUT, not at the visible alert.
+    # That makes the system measure how much of the move was already consumed
+    # before the user ever sees READY/FRESH_BREAK.
+    if item.get("scout_eligible") and close is not None and atr is not None and atr > 0:
+        if first_seen is None or (cooldown is not None and now >= cooldown and not state.get("active", True)):
+            state = {
+                "first_seen_at": now.isoformat(timespec="seconds"),
+                "first_seen_price": close,
+                "atr_at_first_seen": atr,
+                "direction": direction,
+                "active": True,
+                "last_seen_at": now.isoformat(timespec="seconds"),
+            }
+            first_seen = now
+        else:
+            state["last_seen_at"] = now.isoformat(timespec="seconds")
+            state["active"] = True
+
+    anchor = _num(state.get("first_seen_price"))
+    anchor_atr = _num(state.get("atr_at_first_seen"), atr)
+    signed = None
+    if close is not None and anchor is not None and anchor_atr is not None and anchor_atr > 0:
+        sign = 1.0 if direction == "Bullish" else -1.0
+        signed = sign * (close - anchor) / anchor_atr
+        item["move_since_first_scout_atr"] = round(signed, 3)
+
+    if first_seen is not None:
+        if first_seen.tzinfo is not None and now.tzinfo is None:
+            first_seen = first_seen.replace(tzinfo=None)
+        elif first_seen.tzinfo is None and now.tzinfo is not None:
+            first_seen = first_seen.replace(tzinfo=now.tzinfo)
+        try:
+            item["first_scout_age_min"] = round(max(0.0, (now - first_seen).total_seconds() / 60.0), 1)
+        except TypeError:
+            pass
+        item["first_scout_at"] = state.get("first_seen_at")
+
+    # Hard maturity guard.  This is intentionally about consumed opportunity,
+    # not a score penalty.  Once the first scout has already delivered a large
+    # favourable displacement, the stock leaves this EARLY radar.  A later
+    # pullback/reclaim may still be traded by the separate 3m tactical engine.
+    if signed is not None and signed > 0.75:
+        item["early_eligible"] = False
+        item["early_state"] = "LATE"
+        item["action_stage"] = "LATE"
+        item["phase"] = "EXTENDED"
+        item["maturity"] = "MISSED"
+        reasons = list(item.get("late_reasons") or [])
+        reasons.append(f"{signed:.2f} ATR since first scout")
+        item["late_reasons"] = reasons
+        state["active"] = False
+        state["matured_at"] = now.isoformat(timespec="seconds")
+        state["cooldown_until"] = (now + dt.timedelta(minutes=45)).isoformat(timespec="seconds")
+
+    # A scout that immediately goes materially the wrong way is no longer a
+    # useful early-direction candidate; downstream 3m reversal logic can find a
+    # fresh opposite setup independently.
+    if signed is not None and signed < -0.45:
+        item["early_eligible"] = False
+        item["scout_eligible"] = False
+        item["early_state"] = "FADING"
+        item["action_stage"] = "FADING"
+        item["phase"] = "FADING"
+        item["maturity"] = "FAILED"
+        state["active"] = False
+        state["cooldown_until"] = (now + dt.timedelta(minutes=20)).isoformat(timespec="seconds")
+
+    lifecycle_state[key] = state
+    return item
+
+
+def _cleanup_early_lifecycle(lifecycle_state, now):
+    if lifecycle_state is None or now is None:
+        return
+    cutoff = now - dt.timedelta(hours=3)
+    for key in list(lifecycle_state):
+        last = _parse_dt((lifecycle_state.get(key) or {}).get("last_seen_at"))
+        if last is None:
+            continue
+        if last.tzinfo is not None and cutoff.tzinfo is None:
+            last = last.replace(tzinfo=None)
+        elif last.tzinfo is None and cutoff.tzinfo is not None:
+            last = last.replace(tzinfo=cutoff.tzinfo)
+        if last < cutoff:
+            lifecycle_state.pop(key, None)
+
+
+def live_opportunity_radar(
+    results, *, limit=5, index_direction=None, index_chg_pct=None,
+    market_breadth=None, lifecycle_state=None, now=None,
+):
+    """Concrete EARLY-move radar; not a generic ranking of already-moving stocks.
+
+    Visible rows must be FORMING, READY or a very fresh break.  A wider hidden
+    SCOUT lane feeds the bounded V12.2B 3-minute/depth engine before the visible
+    bar is mature enough to show.  Large trigger overshoots, extended hourly
+    travel and persistent first-scout maturity are hard exclusions rather than
+    score penalties.
+
+    The radar is still research/shadow: it surfaces evidence and exact maturity
+    states but does not place orders or promote any frozen playbook.
     """
     rows = [r for r in (results or []) if not r.get("error") and r.get("symbol")]
     market = live_market_state(
@@ -386,158 +531,145 @@ def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_
     market_bias = market.get("bias")
     market_bias_strength = _num(market.get("bias_strength_pct"), 0.0)
     buckets = {"Bullish": [], "Bearish": []}
+    scouts = {"Bullish": [], "Bearish": []}
+    hidden_mature = 0
+    hidden_fading = 0
 
     for row in rows:
-        direction, score = _opportunity_direction(row)
+        direction, _ = _opportunity_direction(row)
         if direction not in buckets:
             continue
 
-        reasons = []
+        # Legacy score survives only as a fallback field for old consumers.
+        # It does not decide visibility in V12.2C.
+        legacy_score = 0.0
         structure = row.get("oi_structure")
-        if structure:
-            reasons.append(str(structure))
+        if structure in ("Long Buildup", "Short Buildup"):
+            legacy_score += 20.0
+        elif structure in ("Short Covering", "Long Unwinding"):
+            legacy_score += 8.0
 
-        price = _num(row.get("price_chg_today_pct"))
-        price_aligned = price is not None and ((direction == "Bullish" and price > 0) or (direction == "Bearish" and price < 0))
-        if price_aligned:
-            score += _scaled_positive(abs(price), 2.0, 10.0)
-            reasons.append(f"Price {price:+.2f}%")
-        elif price is not None and price != 0:
-            score -= min(8.0, abs(price) * 4.0)
-            reasons.append(f"Price conflicts {price:+.2f}%")
+        onset = assess_early_onset(row, direction, fallback_score=legacy_score)
+        early_state = str(onset.get("early_state") or "OBSERVE")
+        scout_eligible = bool(onset.get("scout_eligible"))
+        early_eligible = bool(onset.get("early_eligible"))
 
-        day_oi = _num(row.get("oi_day_chg_pct"))
-        if day_oi is not None and day_oi > 0:
-            score += _scaled_positive(day_oi, 8.0, 15.0)
-            reasons.append(f"Day OI {day_oi:+.1f}%")
-
-        recent_values = [
-            _num(row.get("oi_chg_15m_pct")),
-            _num(row.get("oi_chg_30m_pct")),
-            _num(row.get("oi_chg_60m_pct")),
-        ]
-        recent_positive = max([v for v in recent_values if v is not None] or [0.0])
-        if recent_positive > 0:
-            score += _scaled_positive(recent_positive, 4.0, 15.0)
-            reasons.append(f"Recent OI +{recent_positive:.1f}%")
-
-        accel_label = str(row.get("oi_accel_label") or "")
-        if accel_label == "Strong acceleration":
-            score += 10.0
-            reasons.append("Strong OI acceleration")
-        elif accel_label == "Moderate acceleration":
-            score += 6.0
-            reasons.append("Moderate OI acceleration")
-        else:
-            accel = _num(row.get("oi_acceleration"))
-            if accel is not None and accel > 0:
-                score += min(5.0, accel * 2.5)
-
-        vol_candidates = [_num(row.get("vol_multiple")), _num(row.get("tod_rvol"))]
-        vol = max([v for v in vol_candidates if v is not None] or [0.0])
-        if vol > 0:
-            score += min(10.0, vol / 2.0 * 10.0)
-            if vol >= 1.0:
-                reasons.append(f"RVOL {vol:.2f}x")
-
-        relative = _num(row.get("v8_relative"))
-        if relative is not None:
-            score += max(0.0, min(100.0, relative)) / 100.0 * 10.0
-            if relative >= 75.0:
-                reasons.append("Relative laggard" if direction == "Bearish" else "Relative leader")
-
-        participation = _num(row.get("v8_participation"))
-        if participation is not None:
-            score += max(0.0, min(100.0, participation)) / 100.0 * 8.0
-            if participation >= 75.0:
-                reasons.append("High participation")
-
-        technical = _num(row.get("v8_structure"))
-        if technical is not None:
-            score += max(0.0, min(100.0, technical)) / 100.0 * 7.0
-
-        vwap_agrees = _opportunity_vwap_agrees(row, direction)
-        if vwap_agrees is True:
-            score += 5.0
-            reasons.append("Below VWAP" if direction == "Bearish" else "Above VWAP")
-        elif vwap_agrees is False:
-            score -= 3.0
-
-        htf_direction = row.get("htf_direction")
-        if htf_direction == direction:
-            score += 4.0
-            reasons.append("4H context agrees")
-        elif htf_direction in ("Bullish", "Bearish"):
-            score -= 2.0
-            reasons.append("4H context conflicts — not a veto")
-
-        if market_bias == direction:
-            # Regime is context, never a veto.  Stronger multi-factor
-            # agreement earns a little more ranking lift, capped so it can
-            # never overwhelm the stock's own price/OI evidence.
-            score += 3.0 + min(4.0, market_bias_strength / 25.0)
-            reasons.append(f"Market regime {market_bias.lower()} {market_bias_strength:.0f}%")
-
-        extension = _opportunity_extension(row)
-        chase_guard = "OK"
-        if extension is not None and extension > 1.25:
-            score -= 15.0
-            chase_guard = "EXTENDED"
-            reasons.insert(0, "Extended >1.25 ATR — do not chase")
-
-        score = round(max(0.0, min(100.0, score)), 1)
-        status = "HIGH ATTENTION" if score >= 70.0 else ("BUILDING" if score >= 55.0 else "EARLY")
-        if score < 40.0:
-            continue
+        reasons = []
+        oi15 = _num(onset.get("fresh_oi_15m_pct"))
+        if oi15 is not None:
+            reasons.append(f"OI15 {oi15:+.2f}%")
+        if onset.get("oi_accelerating_now"):
+            reasons.append("OI accelerating now")
+        if onset.get("participation_accelerating_now"):
+            reasons.append("Participation accelerating")
+        elif onset.get("participation_active_now"):
+            reasons.append("Participation active")
+        compression = _num(row.get("compression_score"))
+        if compression is not None and compression >= 50:
+            reasons.append("Compressed / coiled")
+        dist = _num(onset.get("trigger_distance_atr"))
+        if dist is not None:
+            if dist >= 0:
+                reasons.append(f"{dist:.2f} ATR to trigger")
+            else:
+                reasons.append(f"{abs(dist):.2f} ATR past trigger")
+        if market_bias == direction and market_bias_strength >= 55:
+            reasons.append(f"Market context agrees {market_bias_strength:.0f}%")
 
         item = {
             "symbol": str(row.get("symbol")),
             "direction": direction,
-            "score": score,
-            "status": status,
-            "reasons": reasons[:10],
-            "oi_structure": structure,
-            "price_chg_pct": price,
-            "oi_day_chg_pct": day_oi,
-            "oi_30m_chg_pct": _num(row.get("oi_chg_30m_pct")),
-            "oi_60m_chg_pct": _num(row.get("oi_chg_60m_pct")),
+            "close": _num(row.get("close")),
+            "score": onset.get("score"),
+            "status": onset.get("action_stage"),
+            "phase": onset.get("phase"),
+            "early_state": early_state,
+            "early_eligible": early_eligible,
+            "scout_eligible": scout_eligible,
+            "maturity": onset.get("maturity"),
+            "late_reasons": list(onset.get("late_reasons") or []),
+            "action_stage": onset.get("action_stage"),
+            "pressure": onset.get("pressure"),
+            "onset_coverage": onset.get("coverage"),
+            "runway": onset.get("runway"),
+            "runway_label": onset.get("runway_label"),
+            "price_move_60m_atr": onset.get("price_move_60m_atr"),
+            "day_move_atr": onset.get("day_move_atr"),
+            "extension_atr": onset.get("extension_atr"),
+            "trigger_level": onset.get("trigger_level"),
+            "trigger_distance_atr": onset.get("trigger_distance_atr"),
+            "trigger_overshoot_atr": onset.get("trigger_overshoot_atr"),
+            "trigger_crossed": onset.get("trigger_crossed"),
+            "oi_concentration_pct": onset.get("oi_concentration_pct"),
+            "oi_15m_chg_pct": onset.get("fresh_oi_15m_pct"),
+            "oi_30m_chg_pct": onset.get("fresh_oi_30m_pct"),
             "oi_acceleration": _num(row.get("oi_acceleration")),
             "oi_accel_label": row.get("oi_accel_label"),
-            "vol_multiple": _num(row.get("vol_multiple")),
+            "oi_accelerating_now": bool(onset.get("oi_accelerating_now")),
+            "participation_active_now": bool(onset.get("participation_active_now")),
+            "participation_accelerating_now": bool(onset.get("participation_accelerating_now")),
+            "oi_structure": structure,
             "tod_rvol": _num(row.get("tod_rvol")),
-            "relative": relative,
-            "participation": participation,
-            "technical": technical,
-            "htf_direction": htf_direction,
-            "vwap_agrees": vwap_agrees,
-            "extension_atr": extension,
-            "chase_guard": chase_guard,
-            # V9.3 research-only horizon routing inputs.  These are copied
-            # through unchanged so the Swing Research Console can distinguish
-            # an active ignition from a quieter positioning/compression build.
-            "compression_score": _num(row.get("compression_score")),
+            "vol_multiple": _num(row.get("vol_multiple")),
+            "relative": _num(row.get("v8_relative")),
+            "participation": _num(row.get("v8_participation")),
+            "technical": _num(row.get("v8_structure")),
+            "htf_direction": row.get("htf_direction"),
+            "vwap_agrees": _opportunity_vwap_agrees(row, direction),
+            "compression_score": compression,
             "shadow_movement_stage": row.get("shadow_movement_stage"),
             "oi_z": _num(row.get("oi_z")),
-            "price_move_60m_atr": _num(row.get("price_move_60m_atr")),
+            "reasons": reasons[:8],
         }
-        buckets[direction].append(item)
+        item = _early_lifecycle(item, row, lifecycle_state, now)
 
-    def order(items):
+        if item.get("early_state") == "LATE":
+            hidden_mature += 1
+        elif item.get("early_state") == "FADING":
+            hidden_fading += 1
+
+        # Hidden SCOUT is wider than what the user sees; it starts 3m/depth
+        # observation before the 15m bar has fully earned READY status.
+        if item.get("scout_eligible") and item.get("early_state") not in ("LATE", "FADING"):
+            scouts[direction].append(dict(item))
+
+        # Visible radar has a hard maturity contract.
+        if item.get("early_eligible") and item.get("early_state") in ("FORMING", "READY", "FRESH_BREAK"):
+            buckets[direction].append(item)
+
+    _cleanup_early_lifecycle(lifecycle_state, now)
+
+    def order_visible(items):
+        state_priority = {"READY": 4, "FRESH_BREAK": 3, "FORMING": 2}
         items.sort(
             key=lambda item: (
-                float(item.get("score") or 0.0),
-                abs(float(item.get("oi_day_chg_pct") or 0.0)),
-                abs(float(item.get("price_chg_pct") or 0.0)),
-                item.get("symbol") or "",
+                state_priority.get(str(item.get("early_state") or ""), 0),
+                float(item.get("pressure") or 0.0),
+                float(item.get("runway") or 0.0),
+                -abs(float(item.get("trigger_distance_atr") or 0.0)),
             ),
             reverse=True,
         )
         return items[:max(0, int(limit))]
 
-    bullish = order(buckets["Bullish"])
-    bearish = order(buckets["Bearish"])
+    def order_scout(items):
+        state_priority = {"READY": 5, "FRESH_BREAK": 4, "FORMING": 3, "OBSERVE": 1}
+        items.sort(
+            key=lambda item: (
+                state_priority.get(str(item.get("early_state") or ""), 1),
+                float(item.get("pressure") or 0.0),
+                float(item.get("runway") or 0.0),
+            ),
+            reverse=True,
+        )
+        return items[:max(8, int(limit) * 2)]
+
+    bullish = order_visible(buckets["Bullish"])
+    bearish = order_visible(buckets["Bearish"])
+    scout_bullish = order_scout(scouts["Bullish"])
+    scout_bearish = order_scout(scouts["Bearish"])
     return {
-        "label": "RESEARCH / SHADOW",
+        "label": "EARLY MOVE · RESEARCH / SHADOW",
         "is_trade_signal": False,
         "market_bias": market_bias,
         "market_bias_strength_pct": market.get("bias_strength_pct"),
@@ -545,13 +677,314 @@ def live_opportunity_radar(results, *, limit=5, index_direction=None, index_chg_
         "market_regime_factors": market.get("regime_factors"),
         "bullish": bullish,
         "bearish": bearish,
+        # Internal feeder lanes. UI ignores them; V12.2B consumes them.
+        "scout_bullish": scout_bullish,
+        "scout_bearish": scout_bearish,
         "counts": {
             "bullish": len(buckets["Bullish"]),
             "bearish": len(buckets["Bearish"]),
             "displayed": len(bullish) + len(bearish),
+            "scout": len(scouts["Bullish"]) + len(scouts["Bearish"]),
+            "hidden_mature": hidden_mature,
+            "hidden_fading": hidden_fading,
         },
     }
 
+
+def overlay_tactical_radar(radar, tactical, *, limit=5):
+    """Fuse live 3m/depth states into the visible early radar.
+
+    This is a presentation overlay only.  The underlying 15m radar still feeds
+    research/forward logging unchanged.  A hidden scout that reaches a concrete
+    3m READY/TRADEABLE state can surface immediately instead of waiting for the
+    next 15m scan cycle.
+    """
+    base = dict(radar or {})
+    bulls = [dict(x) for x in (base.get("bullish") or [])]
+    bears = [dict(x) for x in (base.get("bearish") or [])]
+    buckets = {"Bullish": bulls, "Bearish": bears}
+    by_key = {}
+    for direction, rows in buckets.items():
+        for row in rows:
+            by_key[(str(row.get("symbol")), direction)] = row
+
+    # Tactical promotion is allowed only for symbols that the latest 15m
+    # maturity engine still considers an active hidden scout.  This prevents a
+    # stale 3m READY state from resurrecting a stock the early radar has already
+    # marked LATE after its runway was consumed.
+    scout_keys = set()
+    for row in list(base.get("scout_bullish") or []):
+        scout_keys.add((str(row.get("symbol") or ""), "Bullish"))
+    for row in list(base.get("scout_bearish") or []):
+        scout_keys.add((str(row.get("symbol") or ""), "Bearish"))
+
+    promote_states = {"READY", "TRIGGERED", "TRADEABLE"}
+    for trow in list((tactical or {}).get("candidates") or []):
+        direction = str(trow.get("direction") or "")
+        symbol = str(trow.get("symbol") or "")
+        state = str(trow.get("state") or "")
+        if direction not in buckets or not symbol:
+            continue
+
+        key = (symbol, direction)
+        existing = by_key.get(key)
+        if existing is None and state in promote_states and key in scout_keys:
+            existing = {
+                "symbol": symbol,
+                "direction": direction,
+                "early_state": "READY" if state == "READY" else "FRESH_BREAK",
+                "early_eligible": True,
+                "scout_eligible": True,
+                "maturity": "3M CONFIRMED",
+                "phase": "PRE-IGNITION" if state == "READY" else "IGNITION",
+                "action_stage": "ARMED" if state == "READY" else "TRIGGERED",
+                "pressure": trow.get("candidate_pressure"),
+                "runway": trow.get("candidate_runway"),
+                "reasons": ["3m tactical structure active"],
+            }
+            buckets[direction].append(existing)
+            by_key[key] = existing
+
+        if existing is None:
+            continue
+        existing["tactical_state"] = state
+        existing["tactical_setup"] = trow.get("setup")
+        existing["tactical_trigger"] = trow.get("trigger")
+        existing["tactical_invalidation"] = trow.get("invalidation")
+        existing["tactical_live_price"] = trow.get("live_price")
+        existing["tactical_rvol_3m"] = trow.get("rvol_3m")
+        existing["tactical_relative_3m"] = trow.get("relative_3m_vs_nifty_pct")
+        existing["tactical_depth_support"] = ((trow.get("depth") or {}).get("support_fraction"))
+        existing["tactical_basis_change"] = ((trow.get("basis") or {}).get("basis_change_60s_pct_points"))
+        existing["tactical_reason"] = trow.get("reason")
+        contract = ((trow.get("option_route") or {}).get("contract") or {})
+        existing["tactical_option_contract"] = contract.get("symbol")
+        existing["tactical_option_dte"] = contract.get("dte")
+        existing["tactical_option_spread_pct"] = contract.get("spread_pct")
+        existing["tactical_tradeable"] = bool(trow.get("tradeable"))
+
+    tactical_priority = {"TRADEABLE": 6, "TRIGGERED": 5, "READY": 4}
+    early_priority = {"READY": 4, "FRESH_BREAK": 3, "FORMING": 2}
+    for direction in ("Bullish", "Bearish"):
+        buckets[direction].sort(
+            key=lambda row: (
+                tactical_priority.get(str(row.get("tactical_state") or ""), 0),
+                early_priority.get(str(row.get("early_state") or ""), 0),
+                float(row.get("pressure") or 0.0),
+            ),
+            reverse=True,
+        )
+        buckets[direction] = buckets[direction][:max(0, int(limit))]
+
+    base["bullish"] = buckets["Bullish"]
+    base["bearish"] = buckets["Bearish"]
+    counts = dict(base.get("counts") or {})
+    counts["displayed"] = len(base["bullish"]) + len(base["bearish"])
+    counts["bullish"] = len(base["bullish"])
+    counts["bearish"] = len(base["bearish"])
+    base["counts"] = counts
+    return base
+
+
+def event_driven_early_radar(radar, tactical, *, limit=10):
+    """Build an event-sequence radar with no composite opportunity score.
+
+    This is intentionally different from the legacy Early Movement score.
+    A row progresses only when observable market events occur:
+
+      SCOUT -> PRESSURE_SHIFT -> READY -> BREAK_ACCEPTED -> FOLLOW_THROUGH
+
+    Failure/staleness/option friction are terminal or blocking states.  The
+    state machine uses independent evidence classes rather than summing points:
+    fresh participation, F&O positioning, stock-vs-index acceleration and live
+    futures microstructure.  Order-book evidence is treated as short-lived and
+    only used while the dedicated V12.2B stream is fresh.
+
+    The function is read-only decision support.  It cannot place an order or
+    modify Trial-25 / V12 / V12.1 research artifacts.
+    """
+    base = dict(radar or {})
+    tactical_rows = {
+        (str(x.get("symbol") or ""), str(x.get("direction") or "")): dict(x)
+        for x in list((tactical or {}).get("candidates") or [])
+        if x.get("symbol") and x.get("direction") in ("Bullish", "Bearish")
+    }
+
+    source = []
+    seen = set()
+    for key, direction in (("scout_bullish", "Bullish"), ("scout_bearish", "Bearish")):
+        for row in list(base.get(key) or []):
+            item = dict(row)
+            item["direction"] = direction
+            k = (str(item.get("symbol") or ""), direction)
+            if k not in seen:
+                source.append(item)
+                seen.add(k)
+    # Visible early rows are included even if the scout list was trimmed.
+    for key, direction in (("bullish", "Bullish"), ("bearish", "Bearish")):
+        for row in list(base.get(key) or []):
+            k = (str(row.get("symbol") or ""), direction)
+            if k in seen:
+                continue
+            item = dict(row)
+            item["direction"] = direction
+            source.append(item)
+            seen.add(k)
+
+    out = []
+    for row in source:
+        symbol = str(row.get("symbol") or "")
+        direction = str(row.get("direction") or "")
+        sign = 1.0 if direction == "Bullish" else -1.0
+        trow = tactical_rows.get((symbol, direction)) or {}
+        tstate = str(trow.get("state") or "")
+
+        # Independent evidence classes. These are binary witnesses, not score
+        # components. Participation is mandatory for PRESSURE_SHIFT because a
+        # directional idea without fresh participation is not an event.
+        oi_shift = bool(row.get("oi_accelerating_now")) or (
+            _num(row.get("oi_acceleration")) is not None
+            and _num(row.get("oi_acceleration")) > 0
+        )
+        participation_shift = bool(row.get("participation_accelerating_now"))
+        rvol3 = _num(trow.get("rvol_3m"))
+        rvol3_accel = _num(trow.get("rvol_3m_accel"))
+        # A transition matters more than an already-high static RVOL reading.
+        if rvol3_accel is not None and rvol3_accel > 0.15:
+            participation_shift = True
+
+        rel3 = _num(trow.get("relative_3m_vs_nifty_pct"))
+        relative_shift = rel3 is not None and sign * rel3 > 0.10
+
+        depth = trow.get("depth") or {}
+        depth_support = _num(depth.get("support_fraction"))
+        depth_count = int(_num(depth.get("count"), 0) or 0)
+        basis = trow.get("basis") or {}
+        basis_change = _num(basis.get("basis_change_60s_pct_points"))
+        basis_valid = bool(basis.get("valid"))
+        microstructure_shift = bool(
+            (depth_count >= 3 and depth_support is not None and depth_support >= 0.60)
+            or (basis_valid and basis_change is not None and sign * basis_change > 0)
+        )
+
+        # Evidence gate derived from the audit's strongest finding (C1), but
+        # without hard-coding its synthetic 60m-OI rule into live timing.
+        # The fast event must have fresh participation AND at least one
+        # independent directional witness.  Fresh OI is sponsorship; relative
+        # acceleration or persistent futures microstructure can substitute when
+        # OI has not yet had time to accumulate.
+        evidence_count = sum(bool(x) for x in (oi_shift, relative_shift, microstructure_shift))
+        pressure_shift = bool(participation_shift and evidence_count >= 1)
+
+        early_state = str(row.get("early_state") or "")
+        event_state = "SCOUT"
+        reason = "watching for a fresh change in participation and direction"
+
+        if tstate == "STALE":
+            event_state = "STALE"
+            reason = "live 3m/futures evidence is stale; do not act"
+        elif tstate in ("CANCELLED", "TIME_EXIT", "EXIT"):
+            event_state = "FAILED"
+            reason = str(trow.get("reason") or "the live setup failed")
+        elif tstate == "OPTION_NOT_TRADEABLE":
+            event_state = "OPTION_BLOCKED"
+            reason = str(trow.get("reason") or "underlying event exists but option friction/liquidity failed")
+        elif tstate == "PROFIT_PROTECT":
+            event_state = "FOLLOW_THROUGH"
+            reason = "the move proved itself after the trigger; protect profit"
+        elif tstate in ("TRADEABLE", "TRIGGERED"):
+            if pressure_shift:
+                event_state = "BREAK_ACCEPTED"
+                reason = "3m structure broke while fresh participation and an independent directional witness were still present"
+            else:
+                event_state = "BREAK_WATCH"
+                reason = "price crossed the level but live evidence did not confirm acceptance yet"
+        elif tstate == "READY":
+            if pressure_shift:
+                event_state = "READY"
+                reason = "exact 3m trigger is defined and live pressure is active"
+            else:
+                event_state = "SCOUT"
+                reason = "3m level is defined but live pressure has not arrived yet"
+        elif early_state == "READY":
+            if pressure_shift:
+                event_state = "READY"
+                reason = "15m scout is at its decision level and fresh pressure is active"
+            else:
+                event_state = "SCOUT"
+                reason = "decision level is nearby; waiting for fresh pressure before calling it ready"
+        elif pressure_shift:
+            event_state = "PRESSURE_SHIFT"
+            reason = "fresh participation changed together with an independent directional witness"
+        elif early_state == "FRESH_BREAK":
+            event_state = "BREAK_WATCH"
+            reason = "fresh break seen; waiting for live evidence of acceptance rather than chasing the first print"
+
+        # Never surface a mature name as an early event.
+        if early_state in ("LATE", "FADING") or row.get("early_eligible") is False and row.get("scout_eligible") is False:
+            continue
+
+        contract = ((trow.get("option_route") or {}).get("contract") or {})
+        item = {
+            "symbol": symbol,
+            "direction": direction,
+            "event_state": event_state,
+            "reason": reason,
+            "setup": trow.get("setup"),
+            "live_price": trow.get("live_price") if trow.get("live_price") is not None else row.get("close"),
+            "trigger": trow.get("trigger") if trow.get("trigger") is not None else row.get("trigger_level"),
+            "invalidation": trow.get("invalidation"),
+            "rvol_3m": rvol3,
+            "rvol_3m_accel": rvol3_accel,
+            "relative_3m_vs_nifty_pct": rel3,
+            "depth_support_fraction": depth_support,
+            "depth_sample_count": depth_count,
+            "basis_change_60s_pct_points": basis_change,
+            "oi_accelerating": oi_shift,
+            "participation_shift": participation_shift,
+            "relative_shift": relative_shift,
+            "microstructure_shift": microstructure_shift,
+            "independent_evidence_count": evidence_count,
+            "move_since_first_scout_atr": row.get("move_since_first_scout_atr"),
+            "first_scout_age_min": row.get("first_scout_age_min"),
+            "maturity": row.get("maturity"),
+            "option_contract": contract.get("symbol"),
+            "option_dte": contract.get("dte"),
+            "option_spread_pct": contract.get("spread_pct"),
+            "tradeable": bool(trow.get("tradeable")),
+            "tactical_state": tstate,
+            "event_source": "3M_LIVE" if trow else "15M_SCOUT",
+        }
+        out.append(item)
+
+    priority = {
+        "FOLLOW_THROUGH": 8,
+        "BREAK_ACCEPTED": 7,
+        "READY": 6,
+        "PRESSURE_SHIFT": 5,
+        "BREAK_WATCH": 4,
+        "SCOUT": 3,
+        "OPTION_BLOCKED": 2,
+        "STALE": 1,
+        "FAILED": 0,
+    }
+    out.sort(
+        key=lambda x: (
+            priority.get(str(x.get("event_state") or ""), 0),
+            -abs(_num(x.get("move_since_first_scout_atr"), 0.0)),
+            str(x.get("symbol") or ""),
+        ),
+        reverse=True,
+    )
+    return {
+        "label": "EVENT-DRIVEN EARLY DETECTION · RESEARCH / SHADOW",
+        "is_trade_signal": False,
+        "rows": out[:max(0, int(limit))],
+        "counts": {
+            state: sum(1 for row in out if row.get("event_state") == state)
+            for state in priority
+        },
+    }
 
 def swing_research_console(radar, *, limit=5):
     """Route live opportunity names to a research-only 1D *or* 2D horizon.

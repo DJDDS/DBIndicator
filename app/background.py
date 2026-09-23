@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v121_index_recorder, v121_backup, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1342,11 +1342,25 @@ _state = {
     "market_regime": None,
     "scan_symbol_health": {},
     "opportunity_forward": opportunity_forward.empty_state(),
+    "opportunity_radar": {"label": "EARLY MOVE · RESEARCH / SHADOW", "bullish": [], "bearish": [], "counts": {}},
+    "early_radar_lifecycle": {},
     "v12_trade_console": {"label": "V12 LIVE TRADE OPPORTUNITY CONSOLE", "validation_label": "NOT VALIDATED", "intraday": [], "swing": {"1D": [], "2D": []}, "counts": {}},
     "v12_option_recorder": {"status": "WAITING"},
     "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
     "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
+    "trial25_shadow": {"status": "PREREGISTERED_WAITING_EVENTS", "completed": 0, "target": 40},
     "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
+    "v122b_candidates": [],
+    "v122b_tactical": {
+        "status": "WAITING",
+        "validation_label": "INTERIM / NOT VALIDATED",
+        "candidate_count": 0,
+        "candidates": [],
+        "counts": {},
+    },
+    "event_early_radar": {"label": "EVENT-DRIVEN EARLY DETECTION · RESEARCH / SHADOW", "rows": [], "counts": {}},
+    "v122d_forward": v122d_forward.empty_state(),
+    "v122d_forward_summary": v122d_forward.summarize(v122d_forward.empty_state()),
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1509,6 +1523,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             now=now,
             state_file=config.V12_EARNINGS_STATE_FILE,
             ledger_file=config.V12_EARNINGS_LEDGER_FILE,
+            force=v12_live.trial25_preentry_calendar_refresh_due(now),
         )
     except Exception as exc:  # noqa: BLE001 - auxiliary calendar cannot stop live scanning
         log.exception("V12 earnings calendar refresh failed")
@@ -1524,6 +1539,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             option_snapshot_file=config.V12_OPTION_SNAPSHOT_FILE,
             option_state_file=config.V12_OPTION_STATE_FILE,
             earnings_state_file=config.V12_EARNINGS_STATE_FILE,
+            current_fno_symbols=set(fno_symbols or []),
             deep_symbol_limit=config.V12_DEEP_SYMBOL_LIMIT,
             grace_minutes=config.V12_SNAPSHOT_GRACE_MINUTES,
         )
@@ -1536,6 +1552,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             "recorder": {"status": "ERROR", "error": str(exc)},
             "feasibility": {"status": "UNAVAILABLE", "trial25_locked": True},
             "earnings": {"status": "UNAVAILABLE", "active_count": 0, "upcoming_7d": []},
+            "trial25_shadow": {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40},
             "trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
         }
     out.setdefault("earnings", {})["refresh_status"] = (refresh or {}).get("status") or "UNKNOWN"
@@ -1575,11 +1592,17 @@ def _load_persisted_state():
                 _state["oi_structure_prev"] = saved.get("oi_structure_prev", {})
                 _state["scan_symbol_health"] = saved.get("scan_symbol_health", {})
                 _state["opportunity_forward"] = saved.get("opportunity_forward") or opportunity_forward.empty_state()
+                _state["opportunity_radar"] = saved.get("opportunity_radar") or _state["opportunity_radar"]
+                _state["early_radar_lifecycle"] = saved.get("early_radar_lifecycle") or {}
                 _state["v12_trade_console"] = saved.get("v12_trade_console") or _state["v12_trade_console"]
                 _state["v12_option_recorder"] = saved.get("v12_option_recorder") or _state["v12_option_recorder"]
                 _state["v12_feasibility"] = saved.get("v12_feasibility") or _state["v12_feasibility"]
                 _state["v12_earnings"] = saved.get("v12_earnings") or _state["v12_earnings"]
+                _state["trial25_shadow"] = saved.get("trial25_shadow") or _state["trial25_shadow"]
                 _state["v12_trial25_status"] = saved.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
+                _state["event_early_radar"] = saved.get("event_early_radar") or _state["event_early_radar"]
+                _state["v122d_forward"] = saved.get("v122d_forward") or v122d_forward.empty_state()
+                _state["v122d_forward_summary"] = v122d_forward.summarize(_state["v122d_forward"])
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
         # master is temporarily unavailable after restart, the price scan can
@@ -1609,11 +1632,16 @@ def _save_persisted_state():
             "oi_structure_prev": _state["oi_structure_prev"],
             "scan_symbol_health": _state["scan_symbol_health"],
             "opportunity_forward": _state.get("opportunity_forward") or opportunity_forward.empty_state(),
+            "opportunity_radar": _state.get("opportunity_radar") or {},
+            "early_radar_lifecycle": _state.get("early_radar_lifecycle") or {},
             "v12_trade_console": _state.get("v12_trade_console") or {},
             "v12_option_recorder": _state.get("v12_option_recorder") or {},
             "v12_feasibility": _state.get("v12_feasibility") or {},
             "v12_earnings": _state.get("v12_earnings") or {},
+            "trial25_shadow": _state.get("trial25_shadow") or {},
             "v12_trial25_status": _state.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS,
+            "event_early_radar": _state.get("event_early_radar") or {},
+            "v122d_forward": _state.get("v122d_forward") or v122d_forward.empty_state(),
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -1828,14 +1856,26 @@ def _run_loop():
                             log.exception("V9.4 magnitude shadow registration failed")
                         scan_now = now_ist()
                         scan_ts = scan_now.isoformat(timespec="seconds")
+                        with _state_lock:
+                            early_lifecycle = _state.get("early_radar_lifecycle") or {}
+                            _state["early_radar_lifecycle"] = early_lifecycle
                         radar_snapshot = oi_view.live_opportunity_radar(
                             results, index_direction=index_direction, index_chg_pct=index_chg_pct,
-                            market_breadth=breadth,
+                            market_breadth=breadth, lifecycle_state=early_lifecycle, now=scan_now,
                         )
                         swing_snapshot = oi_view.swing_research_console(radar_snapshot)
+                        # V12.2B is a separate interim execution-assist lane.
+                        # It consumes the existing 15m radar but cannot change
+                        # Trial-25, V12/V12.1 recorders, frozen tests or alerts.
+                        tactical_pool = v122b_tactical.select_tactical_pool(
+                            radar_snapshot, results, max_pool=v122b_tactical.TACTICAL_POOL_MAX
+                        )
                         v12_snapshot = _run_v12_live(
                             kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
                         )
+                        with _state_lock:
+                            tactical_snapshot = dict(_state.get("v122b_tactical") or {})
+                        _update_v122d_event_evidence(radar_snapshot, tactical_snapshot, scan_now)
                         with _state_lock:
                             _state["results"] = results
                             _state["index_direction"] = index_direction
@@ -1849,11 +1889,14 @@ def _run_loop():
                                 _state.get("opportunity_forward"), radar_snapshot, results, now=scan_now,
                                 swing_research=swing_snapshot,
                             )
+                            _state["opportunity_radar"] = radar_snapshot
                             _state["v12_trade_console"] = v12_snapshot.get("trade_console") or {}
                             _state["v12_option_recorder"] = v12_snapshot.get("recorder") or {}
                             _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
+                            _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                             _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
+                            _state["v122b_candidates"] = tactical_pool
                         wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
                             alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
@@ -1887,21 +1930,27 @@ def _run_loop():
                     post_index_direction = _state.get("index_direction")
                     post_index_chg_pct = _state.get("index_chg_pct")
                     post_breadth = _state.get("breadth")
+                with _state_lock:
+                    post_lifecycle = _state.get("early_radar_lifecycle") or {}
+                    _state["early_radar_lifecycle"] = post_lifecycle
                 post_radar = oi_view.live_opportunity_radar(
                     post_results,
                     index_direction=post_index_direction,
                     index_chg_pct=post_index_chg_pct,
                     market_breadth=post_breadth,
+                    lifecycle_state=post_lifecycle, now=post_now,
                 )
                 post_swing = oi_view.swing_research_console(post_radar)
                 post_v12 = _run_v12_live(
                     kite, post_results, post_radar, post_swing, post_symbols, now=post_now
                 )
                 with _state_lock:
+                    _state["opportunity_radar"] = post_radar
                     _state["v12_trade_console"] = post_v12.get("trade_console") or _state.get("v12_trade_console") or {}
                     _state["v12_option_recorder"] = post_v12.get("recorder") or {}
                     _state["v12_feasibility"] = post_v12.get("feasibility") or {}
                     _state["v12_earnings"] = post_v12.get("earnings") or {}
+                    _state["trial25_shadow"] = post_v12.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                     _state["v12_trial25_status"] = post_v12.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                 _save_persisted_state()
                 _set_scan_status("V12-POST-CAS", next_scan_due=_iso_after(20))
@@ -1927,6 +1976,8 @@ def _run_loop():
 
 
 _v121_stream_started = False
+_v122b_stream_started = False
+_v122b_stream_service = None
 
 
 def _run_v121_postclose_backup(now):
@@ -1967,7 +2018,81 @@ def start_v121_index_stream_once():
     _v121_stream_started = True
 
 
+def _v122b_candidate_provider():
+    with _state_lock:
+        return [dict(row) for row in (_state.get("v122b_candidates") or [])]
+
+
+def _update_v122d_event_evidence(base_radar, tactical, now):
+    with _state_lock:
+        forward_state = _state.get("v122d_forward") or v122d_forward.empty_state()
+    event_radar = oi_view.event_driven_early_radar(base_radar or {}, tactical or {}, limit=10)
+    forward_state = v122d_forward.process(forward_state, event_radar, now=now)
+    forward_summary = v122d_forward.summarize(forward_state)
+    with _state_lock:
+        _state["event_early_radar"] = event_radar
+        _state["v122d_forward"] = forward_state
+        _state["v122d_forward_summary"] = forward_summary
+    return event_radar
+
+
+def _v122b_publish(payload):
+    now = now_ist()
+    with _state_lock:
+        _state["v122b_tactical"] = dict(payload or {})
+        base_radar = dict(_state.get("opportunity_radar") or {})
+    _update_v122d_event_evidence(base_radar, payload or {}, now)
+
+
+def _make_v122b_stream_service():
+    return v122b_stream.TacticalStockStreamService(
+        candidate_provider=_v122b_candidate_provider,
+        publish_callback=_v122b_publish,
+        access_token_getter=kite_auth.get_access_token,
+        kite_client_getter=kite_auth.get_kite_client,
+        api_key=config.KITE_API_KEY,
+        earnings_state_file=config.V12_EARNINGS_STATE_FILE,
+        state_file=config.V122B_TACTICAL_STATE_FILE,
+        event_file=config.V122B_TACTICAL_EVENT_FILE,
+        now_provider=now_ist,
+        stale_seconds=config.V122B_TACTICAL_STALE_SECONDS,
+    )
+
+
+def start_v122b_tactical_stream_once():
+    global _v122b_stream_started, _v122b_stream_service
+    if _v122b_stream_started:
+        return
+    _v122b_stream_service = _make_v122b_stream_service()
+    thread = threading.Thread(
+        target=_v122b_stream_service.run_forever,
+        daemon=True,
+        name="v122b-tactical-stock-stream",
+    )
+    thread.start()
+    _v122b_stream_started = True
+
+
 def start_background_scanner():
+    # Freeze the completed first-ten-day stock-option feasibility sample once.
+    # Fail soft: research provenance must never block the live scanner.
+    try:
+        freeze = v12_feasibility_freeze.maybe_freeze_10d(
+            config.V12_OPTION_STATE_FILE,
+            config.V12_STORAGE_ROOT,
+        )
+        if freeze.get("status") in ("CREATED_AND_VERIFIED", "EXISTING_VALID_FREEZE"):
+            log.info(
+                "V12 10-day feasibility freeze %s: %s tradeable symbols",
+                freeze.get("status"),
+                (freeze.get("feasibility") or {}).get("tradeable_symbols"),
+            )
+        elif freeze.get("status") == "NOT_FROZEN":
+            log.info("V12 10-day feasibility freeze not created: %s", freeze.get("reason"))
+    except Exception:
+        log.exception("V12 10-day feasibility freeze verification failed")
+
     start_v121_index_stream_once()
+    start_v122b_tactical_stream_once()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()

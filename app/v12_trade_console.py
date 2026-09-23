@@ -77,39 +77,88 @@ def _route(result: dict) -> str:
 
 
 def _classify(radar_row: dict, result: dict) -> dict:
-    score = _num(radar_row.get("score"), 0.0)
-    chase_guard = str(radar_row.get("chase_guard") or "OK").upper()
-    reference = _structural_reference(result)
-    route = _route(result)
+    """Translate research onset telemetry into a human-usable live state.
 
-    if score < WATCH_MIN_SCORE:
+    The primary path is state/trigger based rather than score based:
+    FORMING -> ARMED -> TRIGGERED, with LATE/FADING kill states.  The legacy
+    score bands remain only as a fail-safe when onset coverage is insufficient.
+    """
+    score = _num(radar_row.get("score"), 0.0)
+    phase = str(radar_row.get("phase") or "")
+    action_stage = str(radar_row.get("action_stage") or "")
+    chase_guard = str(radar_row.get("chase_guard") or "OK").upper()
+    reference = _num(radar_row.get("trigger_level"), _structural_reference(result))
+    route = _route(result)
+    trigger_crossed = radar_row.get("trigger_crossed")
+    trigger_distance = _num(radar_row.get("trigger_distance_atr"))
+    spent_atr = _num(radar_row.get("price_move_60m_atr"))
+    pressure = _num(radar_row.get("pressure"))
+    runway = _num(radar_row.get("runway"))
+
+    if phase == "FADING":
+        state = "FADING"
+        reason = "Pressure is leaving now — remove from active trade attention."
+    elif phase == "EXTENDED" or chase_guard == "EXTENDED":
+        state = "LATE"
+        reason = "The move is already extended beyond the live runway guard — do not chase."
+    elif phase == "UNDERWAY":
+        state = "LATE"
+        reason = "Most of the easy runway has already been spent; wait for a fresh reset."
+    elif phase == "PRE-IGNITION":
+        if action_stage == "ARMED":
+            state = "ARMED"
+            reason = "Fresh positioning + participation are building close to the structural trigger."
+        else:
+            state = "FORMING"
+            reason = "Early pressure is building before price has travelled; keep it on screen, not in the market."
+    elif phase == "IGNITION":
+        if trigger_crossed is True and route != "WAIT":
+            state = "TRIGGERED"
+            reason = f"Underlying trigger has fired while current {route.lower()} liquidity is executable."
+        elif trigger_crossed is True:
+            state = "ARMED"
+            reason = "Underlying trigger fired, but derivative liquidity has not cleared the execution gate."
+        else:
+            state = "ARMED"
+            reason = "Ignition is active; wait for the structural price trigger before entry."
+    elif phase and phase != "FALLBACK":
         state = "OBSERVE"
-        reason = "Attention only; live score has not reached WATCH quality."
-    elif score < SETUP_MIN_SCORE:
-        state = "WATCH"
-        reason = "Quality is building; wait for stronger structure/participation."
-    elif chase_guard == "EXTENDED":
-        state = "WATCH"
-        reason = "Extended >1.25 ATR — do not chase; wait for a reset."
-    elif reference is None:
-        state = "WATCH"
-        reason = "No live structural trigger/invalidation reference is available yet."
-    elif route == "WAIT":
-        state = "SETUP"
-        reason = "Structure is defined, but live derivative liquidity is not executable yet."
+        reason = "No clean onset/trigger sequence is active right now."
     else:
-        state = "EXECUTABLE"
-        reason = f"Setup is defined and current {route.lower()} liquidity clears the operational gate."
+        # Fail-safe compatibility path for rows with insufficient onset coverage.
+        if score < WATCH_MIN_SCORE:
+            state = "OBSERVE"
+            reason = "Fallback attention only; onset inputs are not ready."
+        elif score < SETUP_MIN_SCORE:
+            state = "WATCH"
+            reason = "Fallback watch state; wait for fresher onset evidence."
+        elif chase_guard == "EXTENDED":
+            state = "LATE"
+            reason = "Extended >1.25 ATR — do not chase; wait for a reset."
+        elif reference is None:
+            state = "WATCH"
+            reason = "No live structural trigger/invalidation reference is available yet."
+        elif route == "WAIT":
+            state = "SETUP"
+            reason = "Structure is defined, but live derivative liquidity is not executable yet."
+        else:
+            state = "EXECUTABLE"
+            reason = f"Fallback setup is defined and current {route.lower()} liquidity clears the operational gate."
 
     out = dict(radar_row)
     out.update({
         "trade_state": state,
-        "display_state": "EXECUTABLE CANDIDATE · NOT VALIDATED" if state == "EXECUTABLE" else f"{state} · NOT VALIDATED",
+        "display_state": f"{state} · NOT VALIDATED",
         "validation_label": "NOT VALIDATED",
         "not_validated": True,
         "execution_route": route,
         "trigger_reference": reference,
         "invalidation_reference": reference,
+        "trigger_distance_atr": trigger_distance,
+        "trigger_crossed": trigger_crossed,
+        "spent_atr": spent_atr,
+        "pressure": pressure,
+        "runway": runway,
         "operational_reason": reason,
         "fut_spread_bps": _num(result.get("fut_spread_bps")),
         "fut_price_near": _num(result.get("fut_price_near")),
@@ -122,7 +171,6 @@ def _classify(radar_row: dict, result: dict) -> dict:
     })
     return out
 
-
 def _ordered(rows: list[dict], result_map: dict[str, dict], limit: int) -> list[dict]:
     classified = []
     for row in rows:
@@ -130,7 +178,11 @@ def _ordered(rows: list[dict], result_map: dict[str, dict], limit: int) -> list[
         if not symbol:
             continue
         classified.append(_classify(row, result_map.get(symbol, {})))
-    priority = {"EXECUTABLE": 4, "SETUP": 3, "WATCH": 2, "OBSERVE": 1}
+    priority = {
+        "TRIGGERED": 8, "ARMED": 7, "FORMING": 6,
+        "EXECUTABLE": 5, "SETUP": 4, "WATCH": 3, "OBSERVE": 2,
+        "LATE": 1, "FADING": 0,
+    }
     classified.sort(
         key=lambda row: (
             priority.get(row.get("trade_state"), 0),
@@ -176,7 +228,10 @@ def build_trade_console(radar: dict | None, swing_research: dict | None, results
         "swing": swing,
         "counts": {
             "intraday": len(intraday),
-            "intraday_executable": sum(row.get("trade_state") == "EXECUTABLE" for row in intraday),
+            "intraday_executable": sum(row.get("trade_state") in ("TRIGGERED", "EXECUTABLE") for row in intraday),
+            "intraday_triggered": sum(row.get("trade_state") == "TRIGGERED" for row in intraday),
+            "intraday_armed": sum(row.get("trade_state") == "ARMED" for row in intraday),
+            "intraday_forming": sum(row.get("trade_state") == "FORMING" for row in intraday),
             "swing_1d": len(swing.get("1D") or []),
             "swing_2d": len(swing.get("2D") or []),
         },

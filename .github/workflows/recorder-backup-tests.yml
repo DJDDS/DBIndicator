@@ -1,0 +1,32 @@
+name: Recorder backup verification
+
+on:
+  push:
+    branches: [recorder-backup-fix-clean-20260916, v12-trial25-prereg-freeze-20260921, v12-trial25-freeze-bootstrap-20260921]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Compile
+        run: python -m compileall -q app tests run.py
+      - name: Recorder regression tests
+        run: pytest -q tests/test_v121_backup_race.py tests/test_v121_backup_interruption.py tests/test_v121_backup.py tests/test_recorder_observability.py tests/test_recorder_operational_health_endpoint.py
+      - name: Full suite
+        run: pytest -q

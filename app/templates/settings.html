@@ -93,7 +93,16 @@
     {% endif %}
   </div>
 
-  <form method="post" action="/settings">
+  <div class="card" style="border-color:#0f7b61;">
+  <h2>V12.2B Operating Settings</h2>
+  <p class="hint"><strong>15m discovery → bounded 3m execution → futures microstructure → DTE/option friction gate.</strong> Manual watchlist, scoring and threshold tuning are intentionally hidden during forward evidence collection to prevent after-the-fact adjustment.</p>
+  <div class="actions">
+    <a class="btn secondary" href="/backtest">Current research status</a>
+    <a class="btn secondary" href="/api/v122b-tactical-state/export">Export tactical state</a>
+  </div>
+</div>
+
+<form method="post" action="/settings" style="display:none!important" aria-hidden="true">
 
     <div class="card">
       <h2>Watchlist <span class="hint">({{ research_watchlist_count }} symbols)</span></h2>

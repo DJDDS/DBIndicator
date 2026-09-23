@@ -140,6 +140,16 @@ def _load_fut_contracts_map(kite) -> dict:
     return mapped
 
 
+def get_futures_contracts_map(kite) -> dict:
+    """Public cached stock-futures contract map for bounded tactical layers."""
+    return _load_fut_contracts_map(kite)
+
+
+def get_index_token(kite, tradingsymbol: str = "NIFTY 50"):
+    """Public read-only index-token resolver for bounded live tactical streams."""
+    return _load_index_token(kite, tradingsymbol)
+
+
 def _load_current_fut_map(kite) -> dict:
     """Maps each F&O-eligible stock's underlying name (e.g. "RELIANCE")
     to its nearest-expiry (current month) NFO futures trading symbol

@@ -152,6 +152,11 @@ def _contract_snapshot(contract, q, spot, now):
     }
 
 
+def contract_snapshot(contract, quote, spot, now):
+    """Public single-contract snapshot for bounded live tactical streams."""
+    return _contract_snapshot(contract, quote, spot, now)
+
+
 def analyze_option_quotes(symbol, direction, spot, contracts, quotes, *, now=None, min_dte=0):
     now = now or dt.datetime.now()
     live = [c for c in (contracts or []) if c.get("instrument_type") in ("CE", "PE") and c.get("expiry")]
