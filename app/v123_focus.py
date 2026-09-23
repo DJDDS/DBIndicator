@@ -681,6 +681,8 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
 
         if item.get("lifecycle") == "CONTINUATION_WATCH":
             item["watch_started_at"] = item.get("watch_started_at") or _iso(now)
+            item["watch_reference_price"] = item.get("watch_reference_price") or item.get("live_price")
+            item["watch_reference_family"] = item.get("watch_reference_family") or item.get("event_family")
             item["watch_until"] = _iso(now + dt.timedelta(minutes=CONTINUATION_WATCH_MINUTES))
             item["continuation_reason"] = item.get("tactical_reason") or note or "entry episode ended"
             continuation[symbol] = item
@@ -728,14 +730,14 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             # even when there is no Recent row yet (e.g. profitable exit moved
             # directly from Focus to Continuation).
             if not allowed:
-                prior_price = _f(item.get("live_price"))
+                prior_price = _f(item.get("watch_reference_price"), _f(item.get("live_price")))
                 event_price = _f(same.get("live_price"))
                 atr = _f(scan.get("atr"), _f(item.get("atr")))
                 sign = 1.0 if direction == "Bullish" else -1.0
                 move_atr = None
                 if prior_price is not None and event_price is not None and atr and atr > 0:
                     move_atr = sign * (event_price - prior_price) / atr
-                family_changed = str(same.get("event_family") or "") != str(item.get("event_family") or "")
+                family_changed = str(same.get("event_family") or "") != str(item.get("watch_reference_family") or item.get("event_family") or "")
                 if str(same.get("event_family") or "") == "PULLBACK_RECLAIM" or family_changed or (move_atr is not None and move_atr >= 0.20):
                     allowed = True
                     rearm_reason = "fresh continuation event"
@@ -753,12 +755,13 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
                 promotion_trace.setdefault(symbol, []).append("REARMED_FROM_CONTINUATION")
             elif same and not allowed:
                 promotion_trace.setdefault(symbol, []).append("CONTINUATION_NO_FRESH_REARM_EVENT")
-        continuation[symbol] = item if symbol in continuation else continuation.get(symbol)
+        if symbol in continuation:
+            continuation[symbol] = item
 
     for event in candidates:
         symbol = str(event.get("symbol") or "")
         direction = str(event.get("direction") or "")
-        if not symbol or symbol in focus:
+        if not symbol or symbol in focus or symbol in continuation:
             continue
 
         trow = tactical_by_key.get((symbol, direction))
