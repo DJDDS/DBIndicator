@@ -87,3 +87,33 @@ def test_no_event_when_price_is_not_doing_anything():
     _append(svc, "FLAT", now, 100.03, 1300, high=100.2, low=99.8)
     event = svc._event_for("FLAT", svc._samples["FLAT"][-1], {"prev_close": 100.0, "atr": 1.5}, {"5m": 0.0}, now)
     assert event is None
+
+
+
+def test_mover_diagnostic_explains_why_event_was_missed():
+    svc = _service()
+    now = dt.datetime(2026, 9, 23, 11, 0)
+    _append(svc, "MISS", now-dt.timedelta(minutes=10), 100.0, 1000, high=102.0, prev=100.0)
+    _append(svc, "MISS", now-dt.timedelta(minutes=5), 101.7, 1200, high=102.0, prev=100.0)
+    _append(svc, "MISS", now-dt.timedelta(minutes=2), 101.78, 1280, high=102.0, prev=100.0)
+    _append(svc, "MISS", now-dt.timedelta(minutes=1), 101.82, 1330, high=102.0, prev=100.0)
+    _append(svc, "MISS", now, 101.88, 1370, high=102.0, prev=100.0)
+
+    _append(svc, "NIFTY 50", now-dt.timedelta(minutes=5), 25000, 1)
+    _append(svc, "NIFTY 50", now, 25040, 2)
+    nifty = {"5m": svc._return("NIFTY 50", now, 300)}
+
+    event = svc._event_for(
+        "MISS", svc._samples["MISS"][-1],
+        {"symbol":"MISS","prev_close":100.0,"atr":2.0},
+        nifty, now,
+    )
+    assert event is None
+    diag = svc._event_diagnostic(
+        "MISS", svc._samples["MISS"][-1],
+        {"symbol":"MISS","prev_close":100.0,"atr":2.0},
+        nifty, now, event=event,
+    )
+    assert diag["qualified"] is False
+    assert diag["reason"] == "NO_EVENT_FAMILY_QUALIFIED"
+    assert diag["failed_gates"]
