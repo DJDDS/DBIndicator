@@ -2042,18 +2042,13 @@ def start_v121_index_stream_once():
 
 
 def _v122b_candidate_provider():
-    # V12.3: the deep FULL-mode tactical stream now follows the persistent
-    # Focus Desk rather than a transient top-8 radar rank.
+    # V12.3: the deep FULL-mode tactical stream follows only the persistent
+    # Focus Desk.  There is intentionally no transient top-rank fallback:
+    # if no underlying thesis has earned a Focus slot, the deep stream waits.
     with _state_lock:
         focus_state = dict(_state.get("v123_focus_state") or {})
         results = [dict(row) for row in (_state.get("results") or [])]
-    rows = v123_focus.tactical_candidates(focus_state, results)
-    if rows:
-        return rows
-    # Startup fallback only: keep V12.2B functional until the universe
-    # observer has accumulated enough live samples to form the first focus.
-    with _state_lock:
-        return [dict(row) for row in (_state.get("v122b_candidates") or [])]
+    return v123_focus.tactical_candidates(focus_state, results)
 
 
 def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):
