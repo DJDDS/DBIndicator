@@ -976,7 +976,15 @@ def api_patterns():
         "timeframes": [{"key": tf, "label": chart_patterns.TF_LABEL[tf]} for tf in chart_patterns.TIMEFRAMES],
         "auto_slots": [f"{h:02d}:{m:02d}" for h, m in chart_patterns.AUTO_SLOTS],
         "logged_in": kite_auth.is_logged_in_today(),
+        "forward": chart_patterns.forward_summary(),
     })
+
+
+@app.route("/api/patterns/forward/export")
+@require_dashboard_password
+def api_pattern_forward_export():
+    """Raw forward-validation ledger (every activated breakout and its outcome)."""
+    return jsonify(list(chart_patterns.load_forward().values()))
 
 
 @app.route("/api/patterns/detail")

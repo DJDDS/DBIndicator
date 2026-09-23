@@ -47,7 +47,10 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 TIMEFRAMES = ["week", "day", "4hour", "60minute"]
 TF_LABEL = {"week": "Weekly", "day": "Daily", "4hour": "4H", "60minute": "1H"}
-TF_WEIGHT = {"week": 30, "day": 26, "4hour": 20, "60minute": 16}   # reliability pts /30
+# Timeframe points (/20). Daily is the research anchor (deepest published evidence);
+# Weekly is slower context for a 2-10 session swing; 4H is setup maturation; 1H is
+# mainly an entry-refinement timeframe and does not inherit Daily statistics.
+TF_POINTS = {"week": 18, "day": 20, "4hour": 15, "60minute": 10}
 PIVOT_ORDER = {"week": 3, "day": 5, "4hour": 4, "60minute": 5}
 MIN_BARS = {"week": 10, "day": 15, "4hour": 15, "60minute": 15}
 LOOKBACK_BARS = {"week": 150, "day": 260, "4hour": 200, "60minute": 220}
@@ -61,31 +64,73 @@ FAMILIES = {
     "wedge": {"label": "Wedges", "kind": "reversal"},
     "rectangle": {"label": "Rectangle / Range", "kind": "continuation"},
     "flag": {"label": "Flag / Pennant", "kind": "continuation"},
+    "three_valleys": {"label": "Three Rising Valleys / Falling Peaks", "kind": "reversal"},
+    "vcp": {"label": "VCP / Tight Base", "kind": "continuation"},
 }
 
 # Which pattern family is searched on which timeframe.
 # "primary" = most effective, "ok" = valid but weaker.
 PATTERN_MATRIX = {
-    "head_shoulders": {"week": "primary", "day": "primary"},
+    "head_shoulders": {"week": "ok", "day": "primary", "4hour": "ok"},
     "cup_handle": {"week": "primary", "day": "primary"},
     "triple": {"week": "ok", "day": "primary"},
     "double": {"day": "primary", "4hour": "ok"},
-    "triangle": {"day": "primary", "4hour": "primary", "60minute": "ok"},
+    "three_valleys": {"day": "primary", "4hour": "ok"},
+    "vcp": {"day": "primary", "4hour": "ok"},
+    "rectangle": {"day": "primary", "4hour": "ok"},
+    "flag": {"day": "primary", "4hour": "ok", "60minute": "ok"},
+    "triangle": {"day": "primary", "4hour": "ok", "60minute": "ok"},
     "wedge": {"day": "primary", "4hour": "ok"},
-    "rectangle": {"day": "primary", "60minute": "ok"},
-    "flag": {"day": "primary", "60minute": "primary"},
+}
+
+# Historical-evidence tier per (family, direction). A = strong large-sample
+# documentation, B = meaningful but definition/sample dependent, C = plausible
+# but thin, D = weak/inconsistent. Sources: Bulkowski performance & bust ranks
+# (thepatternsite.com), Lo-Mamaysky-Wang (2000), Savin-Weller-Zvingelis (2007).
+# These rank CANDIDATES only - they are not NSE win rates.
+EVIDENCE = {
+    ("cup_handle", "BULL"): "A", ("cup_handle", "BEAR"): "B",
+    ("rectangle", "BULL"): "B", ("rectangle", "BEAR"): "C",
+    ("double", "BULL"): "B", ("double", "BEAR"): "B",
+    ("triple", "BULL"): "B", ("triple", "BEAR"): "B",
+    ("head_shoulders", "BULL"): "B", ("head_shoulders", "BEAR"): "B",
+    ("three_valleys", "BULL"): "B", ("three_valleys", "BEAR"): "B",
+    ("flag", "BULL"): "B", ("flag", "BEAR"): "C",
+    ("vcp", "BULL"): "C",
+    ("triangle", "BULL"): "C", ("triangle", "BEAR"): "C",
+    ("wedge", "BULL"): "C", ("wedge", "BEAR"): "D",
+}
+# Name-level overrides where one family hides very different evidence.
+EVIDENCE_BY_NAME = {
+    "Symmetrical Triangle (up-break)": "C", "Symmetrical Triangle (down-break)": "D",
+    "Rising Wedge": "D",
+}
+EVIDENCE_POINTS = {"A": 20, "B": 14, "C": 8, "D": 3}
+
+# Typical research holding horizon (sessions of the pattern timeframe's day).
+HORIZON = {
+    "flag": "2-5 sessions", "rectangle": "2-7 sessions", "triangle": "2-7 sessions",
+    "vcp": "2-7 sessions", "double": "3-10 sessions", "three_valleys": "3-10 sessions",
+    "wedge": "3-10 sessions", "triple": "3-10 sessions", "head_shoulders": "5-15 sessions",
+    "cup_handle": "5-20 sessions",
 }
 
 MATRIX_NOTES = {
-    "head_shoulders": "Major reversal - needs weeks of distribution/accumulation. Intraday versions fail often.",
-    "cup_handle": "Cup 7-65 weeks, handle 1-4 weeks. Intraday 'cups' are mostly noise.",
-    "triple": "Three tests of one level; weekly triples mark multi-month floors/ceilings.",
-    "double": "Peaks/troughs should sit 2+ weeks apart; 4H works for swing timing.",
-    "triangle": "Continuation pause - works across timeframes; daily/4H most dependable.",
-    "wedge": "Converging trend exhaustion; needs 3-6 weeks on daily.",
-    "rectangle": "Range breakout - valid on any timeframe with volume.",
-    "flag": "Short pause after a sharp pole - the best pattern for lower timeframes.",
+    "head_shoulders": "Neckline break + prior trend essential. H&S top ranks 9th of 36 (down); Savin et al. found 5-7%/yr risk-adjusted excess returns.",
+    "cup_handle": "Bulkowski rank 3/39, lowest bust rate (10%). Handles shorter than ~22 days performed better.",
+    "triple": "More selective than doubles; triple bottom ranks 12/39 (up).",
+    "double": "Only valid after neckline close. Eve & Eve double bottom ranks 5/39.",
+    "three_valleys": "Rising swing lows = sellers failing; ranks 6/39 (up). Breakout above highest peak.",
+    "vcp": "Impulse + shrinking pullbacks + volume dry-up. Highly codable but no standard academic definition - validate on NSE.",
+    "rectangle": "Objective boundaries; rectangle top ranks 4/39 (up). Down-breaks much weaker.",
+    "flag": "Needs a real pole. Flag gains have decayed across decades (14% -> 6% in 2010s) - keep expectations modest.",
+    "triangle": "Common but mid/low ranked; direction comes only from the break. Symmetrical down-breaks rank 34/36.",
+    "wedge": "Rising wedge is the weakest bearish pattern (rank 36/36, busts 63%) - never short on slope alone.",
 }
+
+FAILED_LOOKBACK = 10      # a breakout that closed back inside within 10 bars = FAILED
+FORWARD_MAX_BARS = 20     # forward-outcome evaluation window (bars of pattern TF)
+SUCCESS_ATR, ADVERSE_ATR = 1.0, 0.75   # DBIndicator goal: +1 ATR before -0.75 ATR
 
 FRESH_BARS = 3
 CHASE_ATR = 1.5
@@ -103,6 +148,9 @@ def _default_results_file():
 
 
 RESULTS_FILE = _default_results_file()
+FORWARD_FILE = os.getenv("PATTERN_FORWARD_FILE") or os.path.join(
+    os.path.dirname(RESULTS_FILE) or ".", "pattern_forward_ledger.json")
+FORWARD_MAX_EVENTS = 5000
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +263,14 @@ def _status(fr: Frame, line, from_i, stop):
         if dist <= FORMING_ATR:
             return {"status": "FORMING", "dist_atr": round(dist, 2), "break_i": None}
         return None
-    if last - j >= FRESH_BARS or c[last] <= line(last):
-        return None   # stale, or failed back inside the pattern
+    if c[last] <= line(last):
+        # Breakout closed back inside the pattern. Recorded (not deleted): a busted
+        # pattern is a trap and often precedes a move the other way.
+        if last - j <= FAILED_LOOKBACK:
+            return {"status": "FAILED", "dist_atr": round((line(last) - c[last]) / a, 2), "break_i": j}
+        return None
+    if last - j >= FRESH_BARS:
+        return None   # stale breakout
     ext = (c[last] - line(last)) / a
     return {"status": "EXTENDED" if ext > CHASE_ATR else "BREAKOUT",
             "dist_atr": round(-ext, 2), "break_i": j}
@@ -509,12 +563,109 @@ def detect_flag(fr: Frame, piv, tf):
     return None
 
 
+def detect_three_valleys(fr: Frame, piv, tf):
+    """Three rising valleys (bull) / three falling peaks (bear via mirror).
+    Three swing lows, each clearly higher, breakout on a close above the
+    highest peak between them (Bulkowski's confirmation)."""
+    a = float(fr.atr[-1])
+    cands = [p for p in piv if p[0] >= fr.n - LOOKBACK_BARS[tf]]
+    for e in range(len(cands) - 1, 3, -1):
+        seq = cands[e - 4:e + 1]
+        if [p[2] for p in seq] != ["L", "H", "L", "H", "L"]:
+            continue
+        v1, h1, v2, h2, v3 = seq
+        if not (v2[1] >= v1[1] + 0.3 * a and v3[1] >= v2[1] + 0.3 * a):
+            continue
+        sp1, sp2 = v2[0] - v1[0], v3[0] - v2[0]
+        if sp1 < 5 or sp2 < 5 or v3[0] - v1[0] < MIN_BARS[tf]:
+            continue
+        top = max(h1[1], h2[1])
+        height = top - v1[1]
+        if height < 2 * a or v3[1] > top - 0.8 * a:
+            continue
+        if fr.l[v3[0]:].min() < v2[1]:
+            continue   # structure broken: price undercut the middle valley
+        pre = fr.h[max(0, v1[0] - (v3[0] - v1[0])):v1[0] + 1]
+        if pre.size == 0 or pre.max() < top:
+            continue   # a bottom reversal needs a prior decline from above the breakout level
+        trig = Line(0, top, 1, top)
+        stop = v3[1] - 0.25 * a
+        st = _status(fr, trig, v3[0] + 1, stop)
+        if not st:
+            continue
+        even = 1 - min(1.0, abs(math.log(sp2 / sp1)) / math.log(3))
+        vol_ok = _mean(fr.v[v3[0] - 2:v3[0] + 3]) < _mean(fr.v[v1[0] - 2:v1[0] + 3])
+        fit = 0.45 * even + 0.35 * min(1.0, (v3[1] - v1[1]) / (1.5 * a)) + (0.2 if vol_ok else 0)
+        return {
+            "key": "three_valleys", "bull": "Three Rising Valleys", "bear": "Three Falling Peaks",
+            "line": trig, "stop": stop, "height": height, "start_i": v1[0], "fit": fit, **st,
+            "points": [(v1[0], v1[1], "V1"), (v2[0], v2[1], "V2"), (v3[0], v3[1], "V3")],
+            "segments": [[(p[0], p[1]) for p in seq]],
+            "trigger_line": trig, "trigger_from": v1[0],
+        }
+    return None
+
+
+def detect_vcp(fr: Frame, piv, tf):
+    """Volatility-contraction / tight base (bullish only): a prior advance, then
+    2+ pullbacks that each get shallower, with flat-to-rising highs. Trigger is
+    the high of the last contraction."""
+    if fr.sign != 1:
+        return None
+    a = float(fr.atr[-1])
+    win = {"day": 80, "4hour": 100}.get(tf, 80)
+    pv = [p for p in piv if p[0] >= fr.n - win]
+    pairs = [(pv[i], pv[i + 1]) for i in range(len(pv) - 1) if pv[i][2] == "H" and pv[i + 1][2] == "L"]
+    if len(pairs) < 2 or fr.n - 1 - pairs[-1][1][0] > 25:
+        return None
+    depths = [h[1] - l[1] for h, l in pairs]
+    m = 1
+    for k in range(len(depths) - 1, 0, -1):
+        if depths[k] <= 0.85 * depths[k - 1]:
+            m += 1
+        else:
+            break
+    m = min(m, 4)
+    if m < 2:
+        return None
+    use = pairs[-m:]
+    d = depths[-m:]
+    if d[-1] > 0.6 * d[0] or d[-1] > 3 * a or d[0] < 2 * a:
+        return None
+    first_h = use[0][0]
+    if any(h[1] < first_h[1] - 1.0 * a for h, _ in use):
+        return None   # descending highs = distribution, not a base
+    pre_i = max(0, first_h[0] - 40)
+    if fr.c[first_h[0]] - fr.c[pre_i] < 2 * a:
+        return None   # needs a prior advance (impulse before the contraction)
+    last_h, last_l = use[-1]
+    top = last_h[1]
+    trig = Line(0, top, 1, top)
+    stop = last_l[1] - 0.25 * a
+    st = _status(fr, trig, last_l[0] + 1, stop)
+    if not st:
+        return None
+    vol_ok = _mean(fr.v[last_h[0]:last_l[0] + 1]) < _mean(fr.v[first_h[0]:use[0][1][0] + 1])
+    fit = 0.4 * (1 - d[-1] / d[0]) + 0.3 * min(1.0, m / 3) + (0.3 if vol_ok else 0)
+    pts = []
+    for h, l in use:
+        pts += [(h[0], h[1], ""), (l[0], l[1], "")]
+    return {
+        "key": "vcp", "bull": "VCP / Tight Base", "bear": "VCP / Tight Base",
+        "line": trig, "stop": stop, "height": d[0], "start_i": first_h[0], "fit": fit, **st,
+        "points": pts, "segments": [[(i, p) for i, p, _ in pts]],
+        "trigger_line": trig, "trigger_from": first_h[0],
+    }
+
+
 DETECTORS = {
     "head_shoulders": detect_inverse_hs,
     "double": lambda fr, pv, tf: detect_double_triple(fr, pv, tf, "double"),
     "triple": lambda fr, pv, tf: detect_double_triple(fr, pv, tf, "triple"),
     "cup_handle": detect_cup_handle,
     "flag": detect_flag,
+    "three_valleys": detect_three_valleys,
+    "vcp": detect_vcp,
 }
 LINE_FAMILIES = {"triangle", "wedge", "rectangle"}
 
@@ -538,6 +689,17 @@ def _grade(score):
     return "A" if score >= 75 else "B" if score >= 60 else "C"
 
 
+def _prior_trend(fr: Frame, start_i, height, kind):
+    """ATR/height-normalised move INTO the pattern (oriented frame).
+    Reversals need a prior move against the breakout; continuations need one with it."""
+    w = 40 if start_i >= 40 else start_i
+    if w < 5 or height <= 0:
+        return 0.0
+    move = fr.c[start_i] - fr.c[start_i - w]
+    prior = -move if kind == "reversal" else move
+    return float(prior / height)
+
+
 def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     s = fr.sign
     bull = s == 1
@@ -545,13 +707,14 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     last = fr.n - 1
     line = raw["line"]
     bi = raw.get("break_i")
+    status = raw["status"]
     trig_level = line(bi) if bi is not None else line(last)
-    entry = fr.c[last] if bi is not None else trig_level
+    entry = fr.c[last] if status in ("BREAKOUT", "EXTENDED") else trig_level
     target = trig_level + raw["height"]
     stop = raw["stop"]
     risk = entry - stop
     rr = (target - entry) / risk if risk > 0 else 0.0
-    if rr <= 0:
+    if rr <= 0 and status != "FAILED":
         return None
 
     # volume confirmation
@@ -567,29 +730,54 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     fam = raw["key"]
     kind = FAMILIES[fam]["kind"]
     direction = "BULL" if bull else "BEAR"
+    name = raw["bull"] if bull else raw["bear"]
     aligned = (htf_trend == "UP" and bull) or (htf_trend == "DOWN" and not bull)
     opposed = (htf_trend == "UP" and not bull) or (htf_trend == "DOWN" and bull)
+    evidence = EVIDENCE_BY_NAME.get(name) or EVIDENCE.get((fam, direction), "C")
 
-    tf_pts = TF_WEIGHT[tf] * (1.0 if matrix_level == "primary" else 0.85)
-    fit_pts = 25 * max(0.0, min(1.0, raw["fit"]))
+    ev_pts = EVIDENCE_POINTS[evidence]
+    tf_pts = TF_POINTS[tf] * (1.0 if matrix_level == "primary" else 0.8)
+    fit_pts = 20 * max(0.0, min(1.0, raw["fit"]))
     if vol_ratio is None:
-        vol_pts, vol_note = 7, "n/a"
-    elif bi is not None:
-        vol_pts = 15 if vol_ratio >= 1.5 else 9 if vol_ratio >= 1.2 else 3
+        vol_pts, vol_note = 6, "n/a"
+    elif bi is not None and status != "FAILED":
+        vol_pts = 12 if vol_ratio >= 1.5 else 7 if vol_ratio >= 1.2 else 2
         vol_note = "confirmed" if vol_ratio >= 1.5 else "weak" if vol_ratio >= 1.2 else "unconfirmed"
     else:
-        vol_pts = 10 if vol_ratio <= 0.8 else 6 if vol_ratio <= 1.0 else 3
+        vol_pts = 8 if vol_ratio <= 0.8 else 5 if vol_ratio <= 1.0 else 2
         vol_note = "drying up" if vol_ratio <= 0.8 else "normal" if vol_ratio <= 1.0 else "elevated"
     if kind == "continuation":
-        trend_pts = 15 if aligned else 0 if opposed else 8
+        trend_pts = 8 if aligned else 0 if opposed else 4
     else:
-        trend_pts = 15 if aligned else 5 if opposed else 10
-    rr_pts = 10 * min(rr / 3.0, 1.0)
+        trend_pts = 8 if aligned else 3 if opposed else 6
+    prior = _prior_trend(fr, raw["start_i"], raw["height"], kind)
+    prior_pts = 5 if prior >= 1.0 else 3 if prior >= 0.5 else 1 if prior > 0 else 0
+    rr_pts = 10 * min(max(rr, 0.0) / 3.0, 1.0)
     bars = last - raw["start_i"]
     len_pts = 5 if bars >= MIN_BARS[tf] * 1.5 else 3
-    score = round(tf_pts + fit_pts + vol_pts + trend_pts + rr_pts + len_pts)
-    if raw["status"] == "EXTENDED":
+    score = round(ev_pts + tf_pts + fit_pts + vol_pts + trend_pts + prior_pts + rr_pts + len_pts)
+    if status == "EXTENDED":
         score -= 5
+    score = int(max(0, min(100, score)))
+    grade = _grade(score)
+    caps = []
+
+    def cap(to, why):
+        nonlocal grade
+        if grade < to:          # "A" < "B" < "C": only ever downgrade
+            grade = to
+        caps.append(why)
+
+    if status == "FORMING" and grade == "A":
+        cap("B", "forming - not activated until a breakout close")
+    if tf == "60minute" and not aligned:
+        cap("C", "1H pattern without Daily trend support")
+    if evidence == "C":
+        cap("B", "thin historical evidence - needs NSE validation")
+    if evidence == "D":
+        cap("C", "weak historical evidence")
+    if status == "FAILED":
+        cap("C", "failed breakout - trap; watch the opposite side")
 
     def P(x):
         return round(float(x) * s, 2)
@@ -604,13 +792,14 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     segments = [[{"time": int(fr.t[i]), "value": P(p)} for i, p in seg] for seg in raw["segments"]]
     points = [{"time": int(fr.t[i]), "price": P(p), "label": lab} for i, p, lab in raw["points"]]
 
-    name = raw["bull"] if bull else raw["bear"]
     return {
         "id": f"{symbol}|{tf}|{fam}|{direction}",
         "symbol": symbol, "timeframe": tf, "tf_label": TF_LABEL[tf],
         "family": fam, "family_label": FAMILIES[fam]["label"], "kind": kind,
-        "pattern": name, "direction": direction, "status": raw["status"],
-        "score": int(max(0, min(100, score))), "grade": _grade(score),
+        "pattern": name, "direction": direction, "status": status,
+        "score": score, "grade": grade, "grade_caps": caps,
+        "evidence": evidence, "horizon": HORIZON.get(fam, ""),
+        "prior_trend": round(prior, 2),
         "matrix_level": matrix_level,
         "ltp": P(fr.c[last]), "trigger": P(trig_level), "stop": P(stop), "target": P(target),
         "rr": round(rr, 2), "dist_atr": raw["dist_atr"], "atr": round(a, 2),
@@ -619,8 +808,11 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
         "fit": round(max(0.0, min(1.0, raw["fit"])), 2),
         "bar_time": int(fr.t[last]),
         "breakout_time": int(fr.t[bi]) if bi is not None else None,
-        "breakdown": {"timeframe": round(tf_pts, 1), "fit": round(fit_pts, 1), "volume": vol_pts,
-                      "trend": trend_pts, "rr": round(rr_pts, 1), "length": len_pts},
+        "breakout_close": P(fr.c[bi]) if bi is not None else None,
+        "breakout_atr": round(float(fr.atr[bi]), 4) if bi is not None else None,
+        "breakdown": {"evidence": ev_pts, "timeframe": round(tf_pts, 1), "fit": round(fit_pts, 1),
+                      "volume": vol_pts, "trend": trend_pts, "prior": prior_pts,
+                      "rr": round(rr_pts, 1), "length": len_pts},
         "candles": candles, "segments": segments, "points": points,
     }
 
@@ -700,6 +892,138 @@ def _to_df(rows):
     return df[~df.index.duplicated(keep="last")].sort_index()
 
 
+# ---------------------------------------------------------------------------
+# Forward validation ledger - builds NSE-specific evidence from live breakouts.
+# Only ACTIVATED patterns (breakout close) are recorded; detection alone is not
+# a signal. Each event is re-evaluated from raw candles on every scan, so the
+# result never depends on stale intermediate state.
+# ---------------------------------------------------------------------------
+def load_forward(path=None):
+    try:
+        with open(path or FORWARD_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_forward(ledger, path=None):
+    path = path or FORWARD_FILE
+    if len(ledger) > FORWARD_MAX_EVENTS:
+        keep = sorted(ledger.values(), key=lambda e: e.get("breakout_time") or 0)[-FORWARD_MAX_EVENTS:]
+        ledger = {e["key"]: e for e in keep}
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(ledger, fh, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def record_breakouts(ledger, rows, now_iso=None):
+    """Add newly activated breakouts (BREAKOUT/EXTENDED) to the ledger once."""
+    added = 0
+    for r in rows:
+        if r.get("status") not in ("BREAKOUT", "EXTENDED") or not r.get("breakout_time"):
+            continue
+        key = f"{r['id']}|{r['breakout_time']}"
+        if key in ledger:
+            continue
+        ledger[key] = {
+            "key": key, "id": r["id"], "symbol": r["symbol"], "timeframe": r["timeframe"],
+            "tf_label": r["tf_label"], "family": r["family"], "pattern": r["pattern"],
+            "direction": r["direction"], "evidence": r.get("evidence"), "score": r["score"],
+            "grade": r["grade"], "breakout_time": r["breakout_time"],
+            "entry": r.get("breakout_close"), "atr": r.get("breakout_atr"),
+            "trigger": r["trigger"], "stop": r["stop"], "target": r["target"],
+            "recorded_at": now_iso, "outcome": "OPEN", "bars_seen": 0,
+        }
+        added += 1
+    return added
+
+
+def evaluate_event(ev, fr: Frame):
+    """Re-evaluate one ledger event against real-price candles (fr.sign == 1)."""
+    if fr is None or not ev.get("entry") or not ev.get("atr"):
+        return ev
+    idx = int(np.searchsorted(fr.t, ev["breakout_time"]))
+    if idx >= fr.n or int(fr.t[idx]) != int(ev["breakout_time"]):
+        return ev
+    bull = ev["direction"] == "BULL"
+    entry, atr = float(ev["entry"]), float(ev["atr"])
+    end = min(fr.n - 1, idx + FORWARD_MAX_BARS)
+    mfe = mae = 0.0
+    outcome, outcome_bar, target_hit, stop_hit = "OPEN", None, None, None
+    for i in range(idx + 1, end + 1):
+        fav = (fr.h[i] - entry) if bull else (entry - fr.l[i])
+        adv = (entry - fr.l[i]) if bull else (fr.h[i] - entry)
+        mfe, mae = max(mfe, fav / atr), max(mae, adv / atr)
+        if outcome == "OPEN":
+            if adv >= ADVERSE_ATR * atr:          # adverse checked first = conservative
+                outcome, outcome_bar = "FAIL", i - idx
+            elif fav >= SUCCESS_ATR * atr:
+                outcome, outcome_bar = "SUCCESS", i - idx
+        hit_stop = fr.l[i] <= ev["stop"] if bull else fr.h[i] >= ev["stop"]
+        hit_tgt = fr.h[i] >= ev["target"] if bull else fr.l[i] <= ev["target"]
+        if stop_hit is None and hit_stop:
+            stop_hit = i - idx
+        if target_hit is None and hit_tgt and stop_hit is None:
+            target_hit = i - idx
+    seen = end - idx
+    if outcome == "OPEN" and seen >= FORWARD_MAX_BARS:
+        outcome = "TIMEOUT"
+    rets = {}
+    for k in (1, 3, 5, 10):
+        if idx + k <= fr.n - 1:
+            rets[f"ret_{k}"] = round((fr.c[idx + k] - entry) / entry * 100 * (1 if bull else -1), 2)
+    ev.update(bars_seen=int(seen), mfe_atr=round(mfe, 2), mae_atr=round(mae, 2), outcome=outcome,
+              outcome_bar=outcome_bar, target_hit_bar=target_hit, stop_hit_bar=stop_hit, **rets)
+    return ev
+
+
+def update_forward(ledger, symbol, frames):
+    for ev in ledger.values():
+        if ev.get("symbol") == symbol and (ev.get("bars_seen", 0) < FORWARD_MAX_BARS):
+            try:
+                evaluate_event(ev, frames.get(ev["timeframe"]))
+            except Exception:  # noqa: BLE001
+                log.exception("forward evaluation failed for %s", ev.get("key"))
+
+
+def forward_summary(ledger=None):
+    """Per pattern x direction x timeframe - long and short never pooled."""
+    ledger = load_forward() if ledger is None else ledger
+    groups = {}
+    for ev in ledger.values():
+        g = groups.setdefault((ev["pattern"], ev["direction"], ev["tf_label"]), [])
+        g.append(ev)
+    rows = []
+    for (pattern, direction, tf), evs in groups.items():
+        done = [e for e in evs if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+        wins = sum(1 for e in done if e["outcome"] == "SUCCESS")
+        seen = [e for e in evs if e.get("bars_seen", 0) > 0]
+
+        def avg(key, src):
+            vals = [e[key] for e in src if e.get(key) is not None]
+            return round(sum(vals) / len(vals), 2) if vals else None
+        rows.append({
+            "pattern": pattern, "direction": direction, "tf_label": tf,
+            "events": len(evs), "resolved": len(done),
+            "success_pct": round(100 * wins / len(done), 1) if done else None,
+            "avg_mfe_atr": avg("mfe_atr", seen), "avg_mae_atr": avg("mae_atr", seen),
+            "avg_ret_5": avg("ret_5", evs),
+        })
+    rows.sort(key=lambda r: (-r["events"], r["pattern"]))
+    total = [e for e in ledger.values() if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    wins = sum(1 for e in total if e["outcome"] == "SUCCESS")
+    return {
+        "rows": rows, "events": len(ledger), "resolved": len(total),
+        "success_pct": round(100 * wins / len(total), 1) if total else None,
+        "rule": f"+{SUCCESS_ATR:g} ATR before -{ADVERSE_ATR:g} ATR within {FORWARD_MAX_BARS} bars (breakeven 42.9%)",
+    }
+
+
 _state_lock = threading.Lock()
 _state = {"running": False, "done": 0, "total": 0, "started_at": None, "finished_at": None,
           "error": None, "trigger": None}
@@ -738,6 +1062,7 @@ def run_scan(kite, trigger="manual"):
                       started_at=scanner.now_ist().isoformat(timespec="seconds"), finished_at=None)
     t0 = time.time()
     results, errors = [], 0
+    ledger = load_forward()
     try:
         symbols = list(scanner.get_fno_stock_list(kite))
         inst = scanner._load_instrument_map(kite)
@@ -759,13 +1084,20 @@ def run_scan(kite, trigger="manual"):
                     kite, tok, now - dt.timedelta(days=150), now, "60minute"))
                 time.sleep(throttle)
                 frames = build_frames(daily, hourly)
-                results.extend(detect_all(sym, frames))
+                hits = detect_all(sym, frames)
+                results.extend(hits)
+                record_breakouts(ledger, hits, now.isoformat(timespec="seconds"))
+                update_forward(ledger, sym, frames)
             except Exception:  # noqa: BLE001
                 errors += 1
                 log.exception("pattern scan failed for %s", sym)
             with _state_lock:
                 _state["done"] += 1
         results.sort(key=lambda r: (r["status"] != "BREAKOUT", -r["score"]))
+        try:
+            save_forward(ledger)
+        except OSError:
+            log.exception("could not save pattern forward ledger")
         _save_results({
             "results": results, "scanned_at": scanner.now_ist().isoformat(timespec="seconds"),
             "symbols": len(universe), "errors": errors, "duration_s": round(time.time() - t0, 1),
@@ -837,6 +1169,8 @@ def public_rows(payload):
 def matrix_for_ui():
     return [
         {"family": fam, "label": FAMILIES[fam]["label"], "kind": FAMILIES[fam]["kind"],
-         "levels": {tf: PATTERN_MATRIX[fam].get(tf) for tf in TIMEFRAMES}, "note": MATRIX_NOTES[fam]}
+         "levels": {tf: PATTERN_MATRIX[fam].get(tf) for tf in TIMEFRAMES}, "note": MATRIX_NOTES[fam],
+         "evidence_bull": EVIDENCE.get((fam, "BULL")), "evidence_bear": EVIDENCE.get((fam, "BEAR")),
+         "horizon": HORIZON.get(fam, "")}
         for fam in PATTERN_MATRIX
     ]

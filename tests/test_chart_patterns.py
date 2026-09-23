@@ -125,3 +125,75 @@ def test_public_rows_strips_chart_payload():
 def test_matrix_for_ui_covers_every_family():
     fams = {m["family"] for m in cp.matrix_for_ui()}
     assert fams == set(cp.PATTERN_MATRIX)
+
+
+# --- evidence-based upgrade (evidence tiers, 3RV, VCP, FAILED, forward ledger) ---
+
+def test_three_rising_valleys_and_mirror():
+    anchors = [(0, 140), (20, 100), (32, 115), (45, 104), (58, 116), (72, 108), (86, 115.6)]
+    hits = _hits(_series(anchors, noise=0.05))
+    got = [h for h in hits if h["family"] == "three_valleys"]
+    assert got and got[0]["pattern"] == "Three Rising Valleys", [h["pattern"] for h in hits]
+    hits_b = _hits(_mirror_df(_series(anchors, noise=0.05)))
+    got_b = [h for h in hits_b if h["family"] == "three_valleys"]
+    assert got_b and got_b[0]["pattern"] == "Three Falling Peaks"
+
+
+def test_vcp_tight_base_bullish_only():
+    anchors = [(0, 70), (40, 100), (50, 88), (60, 100.5), (68, 94), (76, 100.8), (81, 97.6), (86, 100.3)]
+    hits = _hits(_series(anchors, noise=0.05))
+    got = [h for h in hits if h["family"] == "vcp"]
+    assert got, [h["pattern"] for h in hits]
+    assert got[0]["direction"] == "BULL"
+    assert not [h for h in _hits(_mirror_df(_series(anchors, noise=0.05))) if h["family"] == "vcp"]
+
+
+def test_failed_breakout_is_recorded_not_dropped():
+    anchors = [(0, 80), (20, 100), (30, 90), (40, 100), (50, 93), (60, 100), (70, 96), (80, 100),
+               (83, 103), (86, 98)]
+    hits = _hits(_series(anchors, noise=0.05))
+    failed = [h for h in hits if h["status"] == "FAILED"]
+    assert failed, [(h["pattern"], h["status"]) for h in hits]
+    assert all(h["grade"] == "C" for h in failed)
+
+
+def test_every_hit_has_evidence_horizon_and_caps():
+    for h in _hits(_series(INV_HS)):
+        assert h["evidence"] in "ABCD"
+        assert h["horizon"]
+        if h["evidence"] == "D":
+            assert h["grade"] == "C"
+        if h["evidence"] == "C":
+            assert h["grade"] != "A"
+        if h["status"] == "FORMING":
+            assert h["grade"] != "A"
+
+
+def test_forward_ledger_records_and_scores_breakout(tmp_path):
+    df = _series(INV_HS)
+    fr = cp.make_frame(df)
+    hits = cp.detect_all("TEST", {"day": fr}, tfs=["day"])
+    brk = [h for h in hits if h["status"] in ("BREAKOUT", "EXTENDED")]
+    assert brk
+    ledger = {}
+    assert cp.record_breakouts(ledger, brk) == len(brk)
+    assert cp.record_breakouts(ledger, brk) == 0            # recorded once only
+    # extend the series: strong follow-through after the breakout
+    more = _series(INV_HS + [(150, 125), (160, 130)])
+    frames = {"day": cp.make_frame(more)}
+    cp.update_forward(ledger, "TEST", frames)
+    ev = next(iter(ledger.values()))
+    assert ev["outcome"] in ("SUCCESS", "FAIL", "OPEN", "TIMEOUT")
+    assert ev["bars_seen"] > 0 and ev["mfe_atr"] >= 0
+    path = tmp_path / "fwd.json"
+    cp.save_forward(ledger, str(path))
+    summ = cp.forward_summary(cp.load_forward(str(path)))
+    assert summ["events"] == len(ledger) and summ["rows"]
+    assert all(r["direction"] in ("BULL", "BEAR") for r in summ["rows"])
+
+
+def test_one_hour_patterns_graded_c_without_daily_support():
+    anchors = [(0, 100), (40, 101), (50, 125), (60, 120), (63, 121), (66, 127)]
+    fr = cp.make_frame(_series(anchors, noise=0.05))
+    for h in cp.detect_all("X", {"60minute": fr}, tfs=["60minute"]):   # no daily frame -> NEUTRAL
+        assert h["grade"] == "C"
