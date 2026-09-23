@@ -551,10 +551,18 @@ def _continuation_rearm_decision(item, event, trow, scan, now):
 
     relative = _f(event.get("relative_5m_vs_nifty_pct"))
     ret5 = _f(event.get("ret_5m_pct"))
+    family_changed = bool(family and prior_family and family != prior_family)
+    pullback_reclaim = family == "PULLBACK_RECLAIM"
+
+    # First protect against the exact ABB-style repeated callback loop.  A
+    # genuinely different event family may still re-arm quickly.
+    if age_s is not None and age_s < STALE_REARM_BLOCK_SECONDS and not family_changed and not pullback_reclaim:
+        return False, "STALE_CALLBACK_GUARD"
+
     reasons = []
-    if family == "PULLBACK_RECLAIM":
+    if pullback_reclaim:
         reasons.append("fresh pullback-reclaim")
-    if family and prior_family and family != prior_family:
+    if family_changed:
         reasons.append("event family changed")
     if move_atr is not None and move_atr >= 0.20:
         reasons.append("price renewed >=0.20 ATR from watch reference")
@@ -565,8 +573,6 @@ def _continuation_rearm_decision(item, event, trow, scan, now):
 
     if reasons:
         return True, "; ".join(reasons)
-    if age_s is not None and age_s < STALE_REARM_BLOCK_SECONDS:
-        return False, "STALE_CALLBACK_GUARD"
     return False, "CONTINUATION_NO_FRESH_REARM_EVENT"
 
 
