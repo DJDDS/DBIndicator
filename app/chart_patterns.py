@@ -1,30 +1,22 @@
-"""
-Chart Pattern Scanner - timeframe-matched classical pattern detection.
+"""Fast Swing Chart Pattern Scanner.
 
-Principle (see the Timeframe Guide on the /patterns page): a pattern's
-reliability comes from how long it took to form, so each pattern is only
-searched on the timeframes where it is dependable:
+Purpose: underlying-price swing discovery for the next 1-5 trading sessions.
 
-    Reversal patterns (H&S, cup & handle, triple)  -> Weekly, Daily
-    Double top / bottom                            -> Daily, 4H
-    Triangles                                      -> Daily, 4H, 1H
-    Wedges                                         -> Daily, 4H
-    Rectangles, flags & pennants                   -> Daily, 1H
+Production pattern engine:
+    Daily completed candles only.
+Context:
+    Last completed Weekly structure/trend.
+Core structures:
+    VCP/Tight Base, Rectangle/Flat Base, Flag/Pennant,
+    Ascending/Descending Triangle, Double Top/Bottom,
+    Three Rising Valleys/Falling Peaks.
 
-Every detector is written once, in its BULLISH orientation (inverse H&S,
-double bottom, cup & handle, ascending triangle, falling wedge, bull flag,
-upside rectangle/symmetrical break). Bearish twins are found by running the
-same detector on a price-mirrored frame (high -> -low, low -> -high), which
-guarantees the bull and bear rules are exactly symmetric.
+Evidence is deliberately separated:
+    1) Global research basis = descriptive provenance only (Direct / Mechanism / Limited).
+    2) NSE evidence = this scanner's own D1-D5 forward outcomes, with sample maturity.
 
-Each hit is scored 0-100 from: timeframe reliability, geometric fit, volume
-confirmation, higher-timeframe trend alignment, reward:risk and pattern
-length. Status is one of:
-    FORMING   - structure complete, price within 1 ATR of the trigger
-    BREAKOUT  - closed through the trigger within the last 3 bars
-    EXTENDED  - fresh breakout but already > 1.5 ATR past trigger (chase guard)
-
-This module only spots and ranks patterns. It never places orders.
+Neither global research labels nor NSE outcome percentages are added to the live
+pattern-quality score. This module only spots and ranks patterns; it never places orders.
 """
 from __future__ import annotations
 
@@ -81,29 +73,40 @@ PATTERN_MATRIX = {
     "triangle": {"day": "primary"},
 }
 
-# Historical-evidence tier per (family, direction). A = strong large-sample
-# documentation, B = meaningful but definition/sample dependent, C = plausible
-# but thin, D = weak/inconsistent. Sources: Bulkowski performance & bust ranks
-# (thepatternsite.com), Lo-Mamaysky-Wang (2000), Savin-Weller-Zvingelis (2007).
-# These rank CANDIDATES only - they are not NSE win rates.
-EVIDENCE = {
-    ("cup_handle", "BULL"): "A", ("cup_handle", "BEAR"): "B",
-    ("rectangle", "BULL"): "B", ("rectangle", "BEAR"): "C",
-    ("double", "BULL"): "B", ("double", "BEAR"): "B",
-    ("triple", "BULL"): "B", ("triple", "BEAR"): "B",
-    ("head_shoulders", "BULL"): "B", ("head_shoulders", "BEAR"): "B",
-    ("three_valleys", "BULL"): "B", ("three_valleys", "BEAR"): "B",
-    ("flag", "BULL"): "B", ("flag", "BEAR"): "C",
-    ("vcp", "BULL"): "C",
-    ("triangle", "BULL"): "C", ("triangle", "BEAR"): "C",
-    ("wedge", "BULL"): "C", ("wedge", "BEAR"): "D",
+# Global research basis. These are provenance labels, NOT grades, win rates or score inputs.
+# DIRECT = published work tests the named structure or a very close rule.
+# MECHANISM = strong evidence exists for the underlying behaviour (momentum/level breakout/
+# compression), but not enough clean evidence for the exact textbook name.
+# LIMITED = direct peer-reviewed support is comparatively thin; NSE data must carry the weight.
+RESEARCH_BASIS = {
+    "flag": {
+        "label": "DIRECT",
+        "note": "Named flag-pattern studies across US/Europe/China; continuation mechanism also supported by momentum research.",
+    },
+    "rectangle": {
+        "label": "DIRECT",
+        "note": "Trading-range breakout and support/resistance research directly support level-break behaviour.",
+    },
+    "double": {
+        "label": "DIRECT",
+        "note": "Classical-pattern research includes double tops/bottoms; activation requires neckline confirmation.",
+    },
+    "vcp": {
+        "label": "MECHANISM",
+        "note": "Exact VCP evidence is limited; momentum + contraction + resistance-break mechanisms are well supported.",
+    },
+    "triangle": {
+        "label": "MECHANISM",
+        "note": "Repeated-level pressure and breakout mechanisms are supported; exact triangle labels are less directly studied.",
+    },
+    "three_valleys": {
+        "label": "LIMITED",
+        "note": "Useful progressive swing structure, but direct peer-reviewed evidence is thinner than for flags/range breakouts.",
+    },
 }
-# Name-level overrides where one family hides very different evidence.
-EVIDENCE_BY_NAME = {
-    "Symmetrical Triangle (up-break)": "C", "Symmetrical Triangle (down-break)": "D",
-    "Rising Wedge": "D",
-}
-EVIDENCE_POINTS = {"A": 20, "B": 14, "C": 8, "D": 3}
+
+NSE_EVIDENCE_EARLY = 30
+NSE_EVIDENCE_MATURE = 100
 
 # Production holding objective: fast underlying-price swing after confirmed activation.
 HORIZON = {
@@ -742,9 +745,9 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     name = raw["bull"] if bull else raw["bear"]
     aligned = (htf_trend == "UP" and bull) or (htf_trend == "DOWN" and not bull)
     opposed = (htf_trend == "UP" and not bull) or (htf_trend == "DOWN" and bull)
-    evidence = EVIDENCE_BY_NAME.get(name) or EVIDENCE.get((fam, direction), "C")
+    research = RESEARCH_BASIS.get(fam, {"label": "LIMITED", "note": "NSE validation required."})
 
-    # Historical evidence is displayed, never used to manufacture an NSE score.
+    # Global research basis and NSE outcomes are never used to manufacture the live score.
     # Quality is based only on the current underlying-price structure and context.
     fit_pts = 25 * max(0.0, min(1.0, raw["fit"]))
     if vol_ratio is None:
@@ -805,14 +808,17 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
         "family": fam, "family_label": FAMILIES[fam]["label"], "kind": kind,
         "pattern": name, "direction": direction, "status": status,
         "score": score, "grade": grade, "grade_caps": caps,
-        "evidence": evidence, "horizon": HORIZON.get(fam, ""),
+        "research_basis": research["label"], "research_note": research["note"],
+        "horizon": HORIZON.get(fam, ""),
         "prior_trend": round(prior, 2),
         "matrix_level": matrix_level,
         "ltp": P(fr.c[last]), "trigger": P(trig_level), "stop": P(stop), "target": P(target),
         "rr": round(rr, 2), "dist_atr": raw["dist_atr"], "atr": round(a, 2),
         "vol_ratio": round(vol_ratio, 2) if vol_ratio is not None else None, "vol_note": vol_note,
         "htf_trend": htf_trend, "htf_aligned": aligned, "bars": int(bars),
+        "formation_sessions": int(bars + 1), "pattern_timeframe": TF_LABEL[tf],
         "fit": round(max(0.0, min(1.0, raw["fit"])), 2),
+        "formation_start_time": int(fr.t[raw["start_i"]]),
         "bar_time": int(fr.t[last]),
         "breakout_time": int(fr.t[bi]) if bi is not None else None,
         "retest_time": int(fr.t[raw["retest_i"]]) if raw.get("retest_i") is not None else None,
@@ -957,7 +963,7 @@ def record_breakouts(ledger, rows, now_iso=None):
         ledger[key] = {
             "key": key, "id": r["id"], "symbol": r["symbol"], "timeframe": r["timeframe"],
             "tf_label": r["tf_label"], "family": r["family"], "pattern": r["pattern"],
-            "direction": r["direction"], "evidence": r.get("evidence"), "score": r["score"],
+            "direction": r["direction"], "research_basis": r.get("research_basis"), "score": r["score"],
             "grade": r["grade"], "breakout_time": r["breakout_time"],
             "activation_state": r.get("status"), "latest_state": r.get("status"),
             "retest_time": r.get("retest_time"), "trigger": r["trigger"],
@@ -1244,17 +1250,59 @@ def start_scheduler_once():
     threading.Thread(target=_scheduler_loop, daemon=True).start()
 
 
-def public_rows(payload):
-    """Results without the heavy chart arrays, for the table."""
+def _nse_evidence_map(ledger=None):
+    """Current NSE D1-D5 evidence keyed by (pattern, direction)."""
+    summary = forward_summary(load_forward() if ledger is None else ledger)
+    out = {}
+    for row in summary["rows"]:
+        resolved = int(row.get("resolved") or 0)
+        if resolved < NSE_EVIDENCE_EARLY:
+            stage = "BUILDING"
+        elif resolved < NSE_EVIDENCE_MATURE:
+            stage = "EARLY"
+        else:
+            stage = "MATURE"
+        out[(row["pattern"], row["direction"])] = {
+            "stage": stage,
+            "events": int(row.get("events") or 0),
+            "resolved": resolved,
+            "fast_success_pct": row.get("fast_success_pct"),
+            "swing_success_pct": row.get("success_pct"),
+            "median_ret_d5": row.get("median_ret_d5"),
+            "median_mae_d5": row.get("median_mae_d5"),
+        }
+    return out
+
+
+def nse_evidence_for(pattern, direction, ledger=None):
+    return _nse_evidence_map(ledger).get((pattern, direction), {
+        "stage": "BUILDING", "events": 0, "resolved": 0,
+        "fast_success_pct": None, "swing_success_pct": None,
+        "median_ret_d5": None, "median_mae_d5": None,
+    })
+
+
+def public_rows(payload, ledger=None):
+    """Results without chart payload, enriched with our own NSE evidence."""
     heavy = {"candles", "segments", "points"}
-    return [{k: v for k, v in r.items() if k not in heavy} for r in payload.get("results", [])]
+    nse = _nse_evidence_map(ledger)
+    rows = []
+    for r in payload.get("results", []):
+        row = {k: v for k, v in r.items() if k not in heavy}
+        row["nse_evidence"] = nse.get((r.get("pattern"), r.get("direction"))) or nse_evidence_for(
+            r.get("pattern"), r.get("direction"), ledger
+        )
+        rows.append(row)
+    return rows
 
 
 def matrix_for_ui():
     return [
         {"family": fam, "label": FAMILIES[fam]["label"], "kind": FAMILIES[fam]["kind"],
-         "levels": {tf: PATTERN_MATRIX[fam].get(tf) for tf in TIMEFRAMES}, "note": MATRIX_NOTES[fam],
-         "evidence_bull": EVIDENCE.get((fam, "BULL")), "evidence_bear": EVIDENCE.get((fam, "BEAR")),
+         "levels": {tf: PATTERN_MATRIX[fam].get(tf) for tf in TIMEFRAMES},
+         "note": MATRIX_NOTES[fam],
+         "research_basis": RESEARCH_BASIS[fam]["label"],
+         "research_note": RESEARCH_BASIS[fam]["note"],
          "horizon": HORIZON.get(fam, "")}
         for fam in PATTERN_MATRIX
     ]

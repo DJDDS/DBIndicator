@@ -89,9 +89,14 @@
   .chip.EXTENDED { background: rgba(167,139,250,.14); color: var(--violet); }
   .chip.RETEST_HOLD { background: rgba(59,130,246,.16); color: #93c5fd; }
   .chip.FAILED { background: rgba(239,68,68,.14); color: var(--red); }
-  .ev { display: inline-block; min-width: 22px; text-align: center; padding: 3px 6px; border-radius: 6px; font-size: 11px; font-weight: 800; }
-  .ev.A { background: rgba(46,204,113,.16); color: var(--green); } .ev.B { background: rgba(59,130,246,.16); color: #93c5fd; }
-  .ev.C { background: rgba(245,165,36,.14); color: var(--amber); } .ev.D { background: rgba(239,68,68,.14); color: var(--red); }
+  .ev { display: inline-block; min-width: 62px; text-align: center; padding: 3px 7px; border-radius: 6px; font-size: 10.5px; font-weight: 800; white-space: nowrap; }
+  .ev.BUILDING { background: rgba(148,163,184,.14); color: #cbd5e1; }
+  .ev.EARLY { background: rgba(245,165,36,.14); color: var(--amber); }
+  .ev.MATURE { background: rgba(46,204,113,.16); color: var(--green); }
+  .basis { display:inline-block; padding:3px 7px; border-radius:6px; font-size:10.5px; font-weight:800; white-space:nowrap; }
+  .basis.DIRECT { background:rgba(46,204,113,.12); color:var(--green); }
+  .basis.MECHANISM { background:rgba(59,130,246,.14); color:#93c5fd; }
+  .basis.LIMITED { background:rgba(148,163,184,.14); color:#cbd5e1; }
   .fwd { margin-top: 14px; }
   .fwd-head { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
   .fwd-head h3 { margin: 0; font-size: 15px; }
@@ -112,7 +117,13 @@
   .panel-head { padding: 14px 16px; border-bottom: 1px solid var(--border); }
   .panel-head h2 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .panel-head .sub { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
-  #mini { height: 300px; }
+  .chart-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid var(--border); background:var(--card2); }
+  .chart-toolbar button { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:5px 9px; font-size:11px; font-weight:700; cursor:pointer; }
+  .chart-toolbar button:hover, .chart-toolbar button.on { color:#fff; border-color:var(--accent); background:rgba(59,130,246,.12); }
+  .chart-toolbar .spacer { flex:1; }
+  .ohlc { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #mini { height: 360px; position:relative; }
+  .chart-hint { padding:5px 10px 8px; font-size:10.5px; color:var(--muted); background:var(--card2); border-top:1px solid var(--border); }
   .levels { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
   .levels div { padding: 10px 12px; border-right: 1px solid var(--border); }
   .levels div:last-child { border-right: 0; }
@@ -167,7 +178,7 @@
     <summary>Core swing structures - why these six are kept</summary>
     <div class="guide-body">
       <p><b>Daily is the only pattern engine.</b> Weekly is context only. The scanner keeps six fast-swing structures: VCP/Tight Base, Rectangle/Flat Base, Flag/Pennant, Ascending/Descending Triangle, Double Top/Bottom, and Three Rising Valleys/Falling Peaks.</p>
-      <p>Historical evidence is shown only as context; it does <b>not</b> add points to the quality score. NSE D1-D5 forward outcomes are the evidence that matters.</p>
+      <p><b>Pattern timeframe is Daily.</b> Weekly is context only. <b>Global research basis</b> describes outside research support; <b>NSE evidence</b> is built only from our own next-session-open D1-D5 outcomes. Neither changes the live quality score.</p>
       <table class="matrix" id="matrix"></table>
     </div>
   </details>
@@ -187,8 +198,8 @@
       <div class="table-scroll">
         <table class="res">
           <thead><tr>
-            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th>
-            <th data-k="direction">Dir</th><th data-k="status">State</th><th data-k="score">Quality</th><th data-k="evidence" title="Historical evidence only; not part of score">Ev.</th>
+            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th><th data-k="timeframe">TF</th><th data-k="formation_sessions">Formed</th>
+            <th data-k="direction">Dir</th><th data-k="status">State</th><th data-k="score">Quality</th><th title="Our own D1-D5 NSE sample">NSE Evidence</th>
             <th data-k="ltp" class="num">LTP</th><th data-k="trigger" class="num">Trigger</th><th data-k="dist_atr" class="num">Dist</th>
             <th data-k="stop" class="num">Invalidation</th><th data-k="target" class="num">Pattern target</th><th data-k="rr" class="num">R:R</th>
             <th data-k="vol_ratio" class="num">Vol×</th><th data-k="htf_trend">Weekly</th>
@@ -206,7 +217,18 @@
           <h2><span id="p-sym"></span> <span class="chip" id="p-dir"></span> <span class="chip" id="p-status"></span></h2>
           <div class="sub" id="p-sub"></div>
         </div>
+        <div class="chart-toolbar">
+          <button type="button" id="zoom-pattern" class="on">Pattern</button>
+          <button type="button" id="zoom-30">30D</button>
+          <button type="button" id="zoom-60">60D</button>
+          <button type="button" id="zoom-all">All</button>
+          <button type="button" id="toggle-lines" class="on">Pattern lines</button>
+          <button type="button" id="toggle-levels" class="on">Levels</button>
+          <span class="spacer"></span>
+          <span class="ohlc" id="chart-ohlc">Hover candle for OHLC</span>
+        </div>
         <div id="mini"></div>
+        <div class="chart-hint">Mouse-wheel / pinch to zoom · drag to pan · Pattern view focuses the detected formation automatically.</div>
         <div class="levels">
           <div><span>Trigger</span><b id="p-trig"></b></div>
           <div><span>Stop</span><b class="red" id="p-stop"></b></div>
@@ -215,7 +237,7 @@
         </div>
         <ul class="checks" id="p-checks"></ul>
         <div class="breakdown" id="p-breakdown"></div>
-        <div class="note">Daily underlying-price structure only. Target = measured move; invalidation = structural failure. Historical evidence is informational only. The D1-D5 table below is the live NSE validation layer.</div>
+        <div class="note">Pattern TF = Daily. Formation length = completed trading sessions used by the detected structure. Weekly is context only. NSE D1-D5 outcomes are the evidence layer.</div>
         <div class="panel-foot"><a id="p-chart" href="#">Open full chart →</a></div>
       </div>
     </div>
@@ -277,11 +299,12 @@ function renderForward(f) {
 }
 
 function renderMatrix(tfs) {
-  const evc = (x) => x ? '<span class="ev ' + x + '">' + x + '</span>' : '<span class="muted">-</span>';
-  const head = '<tr><th>Pattern</th>' + tfs.map((t) => '<th>' + esc(t.label) + '</th>').join('') + '<th>Evidence (bull / bear)</th><th>Horizon</th><th>Why</th></tr>';
+  const basis = (x) => '<span class="basis ' + x + '">' + x + '</span>';
+  const head = '<tr><th>Pattern</th><th>Pattern TF</th><th>Global research basis</th><th>Horizon</th><th>Why</th></tr>';
   const body = state.matrix.map((m) => '<tr><td><b>' + esc(m.label) + '</b><span class="kind">' + esc(m.kind) + '</span></td>' +
-    tfs.map((t) => '<td><span class="dot ' + (m.levels[t.key] || 'none') + '"></span></td>').join('') +
-    '<td>' + evc(m.evidence_bull) + ' / ' + evc(m.evidence_bear) + '</td><td style="white-space:nowrap">' + esc(m.horizon) + '</td>' +
+    '<td><b>Daily</b></td>' +
+    '<td title="' + esc(m.research_note || '') + '">' + basis(m.research_basis || 'LIMITED') + '</td>' +
+    '<td style="white-space:nowrap">' + esc(m.horizon) + '</td>' +
     '<td>' + esc(m.note) + '</td></tr>').join('');
   $('matrix').innerHTML = head + body;
 }
@@ -300,6 +323,14 @@ function filtered() {
     (st ? r.status === st : r.status !== 'FAILED') &&
     (!fam || r.family === fam) &&
     (!g || (g === 'A' ? r.grade === 'A' : r.grade !== 'C')));
+}
+
+function nseEvidenceCell(r) {
+  const e = r.nse_evidence || { stage: 'BUILDING', resolved: 0, swing_success_pct: null };
+  const sample = e.stage === 'BUILDING' ? (e.resolved + '/30') :
+    e.stage === 'EARLY' ? (e.resolved + '/100') : String(e.resolved);
+  const pct = e.swing_success_pct === null || e.swing_success_pct === undefined ? '' : ' · ' + fmt(e.swing_success_pct, 1) + '% D5';
+  return '<span class="ev ' + e.stage + '" title="Resolved NSE activations">' + e.stage + ' ' + sample + pct + '</span>';
 }
 
 function render() {
@@ -334,10 +365,12 @@ function render() {
     return '<tr data-id="' + esc(r.id) + '" class="' + (state.sel === r.id ? 'sel' : '') + '">' +
       '<td class="sym">' + esc(r.symbol) + '</td>' +
       '<td class="pat">' + esc(r.pattern) + '</td>' +
+      '<td><span class="chip tf primary">' + esc(r.pattern_timeframe || r.tf_label || 'Daily') + '</span></td>' +
+      '<td class="num">' + (r.formation_sessions || (r.bars + 1)) + ' sessions</td>' +
       '<td><span class="chip ' + r.direction + '">' + (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
       '<td><span class="chip ' + r.status + '">' + r.status + '</span></td>' +
       '<td><div class="score"><span class="grade g' + r.grade + '">' + r.grade + '</span><span class="bar"><i style="width:' + r.score + '%;background:' + col + '"></i></span>' + r.score + '</div></td>' +
-      '<td><span class="ev ' + r.evidence + '">' + r.evidence + '</span></td>' +
+      '<td>' + nseEvidenceCell(r) + '</td>' +
       '<td class="num">' + fmt(r.ltp) + '</td><td class="num">' + fmt(r.trigger) + '</td>' +
       '<td class="num">' + (r.dist_atr > 0 ? fmt(r.dist_atr, 2) + ' away' : fmt(-r.dist_atr, 2) + ' past') + '</td>' +
       '<td class="num red">' + fmt(r.stop) + '</td><td class="num green">' + fmt(r.target) + '</td>' +
@@ -348,6 +381,11 @@ function render() {
 }
 
 let chart = null;
+const chartUi = {
+  data: null, candleSeries: null, patternSeries: [], levelLines: [],
+  linesVisible: true, levelsVisible: true, resizeObserver: null
+};
+
 async function select(id) {
   state.sel = id; render();
   const r = await fetch('/api/patterns/detail?id=' + encodeURIComponent(id));
@@ -357,12 +395,20 @@ async function select(id) {
   $('p-sym').textContent = d.symbol + ' · ' + d.pattern;
   $('p-dir').className = 'chip ' + d.direction; $('p-dir').textContent = d.direction === 'BULL' ? '▲ Bull' : '▼ Bear';
   $('p-status').className = 'chip ' + d.status; $('p-status').textContent = d.status;
-  $('p-sub').textContent = 'Daily · ' + d.kind + ' · ' + d.bars + ' bars in pattern · 1–5 day objective · quality ' + d.score + ' (' + d.grade + ')' +
+  $('p-sub').textContent = 'Pattern TF: ' + (d.pattern_timeframe || d.tf_label || 'Daily') +
+    ' · formed over ' + (d.formation_sessions || (d.bars + 1)) + ' trading sessions' +
+    ' · Weekly context: ' + d.htf_trend +
+    ' · objective D1-D5 · quality ' + d.score + ' (' + d.grade + ')' +
     ((d.grade_caps || []).length ? ' · capped: ' + d.grade_caps.join('; ') : '');
   $('p-trig').textContent = fmt(d.trigger); $('p-stop').textContent = fmt(d.stop); $('p-tgt').textContent = fmt(d.target); $('p-rr').textContent = fmt(d.rr, 1);
   const volCls = d.vol_ratio === null ? 'ok-m' : (d.status === 'FORMING' ? (d.vol_ratio <= 1 ? 'ok-y' : 'ok-m') : (d.vol_ratio >= 1.5 ? 'ok-y' : d.vol_ratio >= 1.2 ? 'ok-m' : 'ok-n'));
+  const ne = d.nse_evidence || { stage: 'BUILDING', resolved: 0, swing_success_pct: null };
+  const nseText = ne.stage + ' · ' + ne.resolved + ' resolved' +
+    (ne.swing_success_pct === null || ne.swing_success_pct === undefined ? '' : ' · ' + fmt(ne.swing_success_pct, 1) + '% D5');
   const checks = [
-    ['Historical evidence', { A: 'ok-y', B: 'ok-y', C: 'ok-m', D: 'ok-n' }[d.evidence], 'Tier ' + d.evidence + ' for ' + d.pattern],
+    ['Pattern timeframe', 'ok-y', (d.pattern_timeframe || d.tf_label || 'Daily') + ' · ' + (d.formation_sessions || (d.bars + 1)) + ' trading sessions'],
+    ['Global research basis', d.research_basis === 'DIRECT' ? 'ok-y' : 'ok-m', (d.research_basis || 'LIMITED') + ' · ' + (d.research_note || '')],
+    ['NSE D1-D5 evidence', ne.stage === 'MATURE' ? 'ok-y' : 'ok-m', nseText],
     ['Prior trend', d.prior_trend >= 1 ? 'ok-y' : d.prior_trend >= 0.5 ? 'ok-m' : 'ok-n', fmt(d.prior_trend, 2) + '× pattern height ' + (d.kind === 'reversal' ? 'against' : 'with') + ' the break'],
     ['Volume', volCls, (d.vol_ratio === null ? 'n/a (index)' : fmt(d.vol_ratio, 2) + '× avg') + ' · ' + d.vol_note],
     ['Weekly context', d.htf_aligned ? 'ok-y' : (d.htf_trend === 'NEUTRAL' ? 'ok-m' : 'ok-n'), d.htf_trend + (d.htf_aligned ? ' - aligned' : '')],
@@ -377,39 +423,143 @@ async function select(id) {
   drawChart(d);
 }
 
+function _chartButtonGroup(active) {
+  ['zoom-pattern', 'zoom-30', 'zoom-60', 'zoom-all'].forEach((id) => $(id).classList.toggle('on', id === active));
+}
+
+function setChartWindow(mode) {
+  if (!chart || !chartUi.data || !chartUi.data.candles || !chartUi.data.candles.length) return;
+  const candles = chartUi.data.candles;
+  _chartButtonGroup('zoom-' + mode);
+  if (mode === 'all') {
+    chart.timeScale().fitContent();
+    return;
+  }
+  let start = 0;
+  if (mode === '30' || mode === '60') {
+    start = Math.max(0, candles.length - Number(mode));
+  } else {
+    const t0 = Number(chartUi.data.formation_start_time || candles[0].time);
+    const hit = candles.findIndex((c) => Number(c.time) >= t0);
+    start = Math.max(0, (hit < 0 ? 0 : hit) - 6);
+  }
+  const end = candles.length - 1;
+  chart.timeScale().setVisibleRange({ from: candles[start].time, to: candles[end].time });
+}
+
+function setPatternLinesVisible(on) {
+  chartUi.linesVisible = on;
+  chartUi.patternSeries.forEach((ls) => ls.applyOptions({ visible: on }));
+  $('toggle-lines').classList.toggle('on', on);
+}
+
+function setLevelsVisible(on) {
+  chartUi.levelsVisible = on;
+  chartUi.levelLines.forEach((pl) => pl.applyOptions({ lineVisible: on, axisLabelVisible: on }));
+  $('toggle-levels').classList.toggle('on', on);
+}
+
 function drawChart(d) {
   const el = $('mini');
+  if (chartUi.resizeObserver) { chartUi.resizeObserver.disconnect(); chartUi.resizeObserver = null; }
   if (chart) { chart.remove(); chart = null; }
+
+  chartUi.data = d;
+  chartUi.patternSeries = [];
+  chartUi.levelLines = [];
+  chartUi.linesVisible = true;
+  chartUi.levelsVisible = true;
+  $('toggle-lines').classList.add('on');
+  $('toggle-levels').classList.add('on');
+  $('chart-ohlc').textContent = 'Hover candle for OHLC';
+
   chart = LightweightCharts.createChart(el, {
-    width: el.clientWidth, height: 300,
+    width: el.clientWidth, height: 360,
     layout: { background: { color: '#12151f' }, textColor: '#8b93a7', fontSize: 11 },
     grid: { vertLines: { color: '#1a1e2b' }, horzLines: { color: '#1a1e2b' } },
-    rightPriceScale: { borderColor: '#232838' },
-    timeScale: { borderColor: '#232838', timeVisible: d.timeframe === '60minute' || d.timeframe === '4hour' },
+    rightPriceScale: { borderColor: '#232838', scaleMargins: { top: 0.08, bottom: 0.08 } },
+    timeScale: { borderColor: '#232838', timeVisible: false, rightOffset: 3, barSpacing: 8, minBarSpacing: 3 },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     localization: { locale: 'en-IN' },
   });
-  const cs = chart.addCandlestickSeries({ upColor: '#2ecc71', downColor: '#ef4444', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ef4444' });
-  cs.setData(d.candles);
+
+  const cs = chart.addCandlestickSeries({
+    upColor: '#2ecc71', downColor: '#ef4444', borderVisible: false,
+    wickUpColor: '#2ecc71', wickDownColor: '#ef4444',
+    priceLineVisible: true, lastValueVisible: true
+  });
+  chartUi.candleSeries = cs;
+  cs.setData(d.candles || []);
+
   const lineCol = d.direction === 'BULL' ? '#3b82f6' : '#f5a524';
   (d.segments || []).forEach((seg) => {
     const pts = []; const seen = new Set();
     seg.forEach((p) => { if (!seen.has(p.time)) { seen.add(p.time); pts.push(p); } });
     pts.sort((a, b) => a.time - b.time);
     if (pts.length < 2) return;
-    const ls = chart.addLineSeries({ color: lineCol, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    const ls = chart.addLineSeries({
+      color: lineCol, lineWidth: 2, priceLineVisible: false,
+      lastValueVisible: false, crosshairMarkerVisible: false
+    });
     ls.setData(pts);
+    chartUi.patternSeries.push(ls);
   });
-  cs.createPriceLine({ price: d.trigger, color: '#3b82f6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Trigger' });
-  cs.createPriceLine({ price: d.stop, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Stop' });
-  cs.createPriceLine({ price: d.target, color: '#2ecc71', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Target' });
-  const markers = (d.points || []).filter((p) => p.label).map((p) => ({ time: p.time, position: 'aboveBar', color: '#a78bfa', shape: 'circle', text: p.label }));
-  if (d.breakout_time) markers.push({ time: d.breakout_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar', color: d.direction === 'BULL' ? '#2ecc71' : '#ef4444', shape: d.direction === 'BULL' ? 'arrowUp' : 'arrowDown', text: 'Break' });
+
+  chartUi.levelLines = [
+    cs.createPriceLine({ price: d.trigger, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Trigger' }),
+    cs.createPriceLine({ price: d.stop, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Invalidation' }),
+    cs.createPriceLine({ price: d.target, color: '#2ecc71', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Target' }),
+  ];
+
+  const markers = (d.points || []).filter((p) => p.label).map((p) => ({
+    time: p.time, position: 'aboveBar', color: '#a78bfa', shape: 'circle', text: p.label
+  }));
+  if (d.formation_start_time) markers.push({
+    time: d.formation_start_time, position: 'belowBar', color: '#8b93a7', shape: 'circle', text: 'Formation'
+  });
+  if (d.breakout_time) markers.push({
+    time: d.breakout_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar',
+    color: d.direction === 'BULL' ? '#2ecc71' : '#ef4444',
+    shape: d.direction === 'BULL' ? 'arrowUp' : 'arrowDown', text: 'Break'
+  });
+  if (d.retest_time) markers.push({
+    time: d.retest_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar',
+    color: '#3b82f6', shape: 'circle', text: 'Retest'
+  });
   markers.sort((a, b) => a.time - b.time);
   cs.setMarkers(markers);
-  chart.timeScale().fitContent();
+
+  chart.subscribeCrosshairMove((param) => {
+    if (!param || !param.time || !param.seriesData) {
+      $('chart-ohlc').textContent = 'Hover candle for OHLC';
+      return;
+    }
+    const bar = param.seriesData.get(cs);
+    if (!bar || bar.open === undefined) return;
+    const stamp = typeof param.time === 'number'
+      ? new Date(param.time * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
+      : String(param.time);
+    $('chart-ohlc').textContent = stamp + ' · O ' + fmt(bar.open) + ' H ' + fmt(bar.high) + ' L ' + fmt(bar.low) + ' C ' + fmt(bar.close);
+  });
+
+  $('zoom-pattern').onclick = () => setChartWindow('pattern');
+  $('zoom-30').onclick = () => setChartWindow('30');
+  $('zoom-60').onclick = () => setChartWindow('60');
+  $('zoom-all').onclick = () => setChartWindow('all');
+  $('toggle-lines').onclick = () => setPatternLinesVisible(!chartUi.linesVisible);
+  $('toggle-levels').onclick = () => setLevelsVisible(!chartUi.levelsVisible);
+
+  setChartWindow('pattern');
+
+  chartUi.resizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      if (chart && entry.contentRect.width > 0) chart.applyOptions({ width: entry.contentRect.width });
+    }
+  });
+  chartUi.resizeObserver.observe(el);
 }
-window.addEventListener('resize', () => { if (chart) chart.applyOptions({ width: $('mini').clientWidth }); });
 
 function renderProgress(p) {
   const running = !!p.running;

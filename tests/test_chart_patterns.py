@@ -89,18 +89,28 @@ def test_random_walk_does_not_crash_and_is_bounded():
                 assert h["rr"] > 0
 
 
-def test_public_rows_strips_chart_payload():
-    rows = cp.public_rows({"results": [{"symbol": "X", "candles": [1], "segments": [], "points": []}]})
-    assert rows == [{"symbol": "X"}]
+def test_public_rows_strips_chart_payload_and_adds_nse_evidence():
+    rows = cp.public_rows(
+        {"results": [{"symbol": "X", "pattern": "Bull Flag", "direction": "BULL",
+                      "candles": [1], "segments": [], "points": []}]},
+        ledger={},
+    )
+    assert len(rows) == 1
+    assert "candles" not in rows[0] and "segments" not in rows[0] and "points" not in rows[0]
+    assert rows[0]["nse_evidence"]["stage"] == "BUILDING"
+    assert rows[0]["nse_evidence"]["resolved"] == 0
 
 
 def test_matrix_for_ui_is_the_crisp_fast_swing_universe():
-    fams = {m["family"] for m in cp.matrix_for_ui()}
+    rows = cp.matrix_for_ui()
+    fams = {m["family"] for m in rows}
     assert fams == {"vcp", "rectangle", "flag", "triangle", "double", "three_valleys"}
     assert cp.TIMEFRAMES == ["day"]
+    assert all(m["research_basis"] in {"DIRECT", "MECHANISM", "LIMITED"} for m in rows)
+    assert all("evidence_bull" not in m and "evidence_bear" not in m for m in rows)
 
 
-# --- evidence-based upgrade (evidence tiers, 3RV, VCP, FAILED, forward ledger) ---
+# --- research-basis + NSE D1-D5 evidence, 3RV, VCP, FAILED, forward ledger ---
 
 def test_three_rising_valleys_and_mirror():
     anchors = [(0, 140), (20, 100), (32, 115), (45, 104), (58, 116), (72, 108), (86, 115.6)]
@@ -132,27 +142,31 @@ def test_failed_breakout_is_recorded_not_dropped():
     assert all(h["grade"] == "C" for h in failed)
 
 
-def test_every_hit_has_context_but_evidence_is_not_a_score_gate():
+def test_every_hit_has_research_basis_and_explicit_daily_formation_window():
     anchors = [(0, 80), (20, 100), (30, 90), (40, 100), (50, 93), (60, 100), (70, 96), (80, 100), (84, 103)]
     for h in _hits(_series(anchors, noise=0.05)):
-        assert h["evidence"] in "ABCD"
+        assert h["research_basis"] in {"DIRECT", "MECHANISM", "LIMITED"}
+        assert "evidence" not in h
         assert h["horizon"] == "1-5 trading days"
-        assert "evidence" not in h["breakdown"]
+        assert h["pattern_timeframe"] == "Daily"
+        assert h["formation_sessions"] == h["bars"] + 1
+        assert h["formation_start_time"] <= h["bar_time"]
         if h["status"] == "FORMING":
             assert h["grade"] != "A"
 
 
 def test_forward_ledger_records_and_scores_breakout(tmp_path):
-    df = _series(INV_HS)
+    anchors = [(0, 100), (40, 101), (50, 125), (60, 120), (63, 121), (66, 127)]
+    df = _series(anchors, noise=0.05)
     fr = cp.make_frame(df)
     hits = cp.detect_all("TEST", {"day": fr}, tfs=["day"])
-    brk = [h for h in hits if h["status"] in ("BREAKOUT", "EXTENDED")]
+    brk = [h for h in hits if h["status"] in ("BREAKOUT", "RETEST_HOLD", "EXTENDED")]
     assert brk
     ledger = {}
     assert cp.record_breakouts(ledger, brk) == len(brk)
     assert cp.record_breakouts(ledger, brk) == 0            # recorded once only
     # extend the series: strong follow-through after the breakout
-    more = _series(INV_HS + [(150, 125), (160, 130)])
+    more = _series(anchors + [(72, 132), (78, 136)])
     frames = {"day": cp.make_frame(more)}
     cp.update_forward(ledger, "TEST", frames)
     ev = next(iter(ledger.values()))
