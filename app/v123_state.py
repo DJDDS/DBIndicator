@@ -22,6 +22,8 @@ OBSERVER_SCHEMA_VERSION = 1
 OBSERVER_KEEP_MINUTES = 15
 OBSERVER_CHECKPOINT_SECONDS = 30
 OBSERVER_DOWNSAMPLE_SECONDS = 15
+FORENSIC_SNAPSHOT_SECONDS = 60
+FORENSIC_KEEP_SESSIONS = 2
 
 _lock = threading.RLock()
 
@@ -277,3 +279,130 @@ def load_observer_checkpoint(path: str, *, now=None):
     if not _same_day(payload.get("saved_at"), now):
         return None
     return payload
+
+
+class ForensicFlightRecorder:
+    """Append-only, two-session V12.3 mover flight recorder.
+
+    This is observability only. It never feeds values back into discovery,
+    Focus, tactical, option-routing or research logic. Important movers are
+    snapshotted when their pipeline state changes and at most once per minute
+    while they remain important, so later post-mortems do not depend on the
+    15-minute observer checkpoint.
+    """
+
+    def __init__(self, root_dir: str, *, snapshot_seconds=FORENSIC_SNAPSHOT_SECONDS,
+                 keep_sessions=FORENSIC_KEEP_SESSIONS):
+        self.root_dir = root_dir
+        self.snapshot_seconds = max(1, int(snapshot_seconds))
+        self.keep_sessions = max(2, int(keep_sessions))
+        self._last_signature = {}
+        self._last_write_at = {}
+
+    def _session_path(self, now):
+        return os.path.join(
+            self.root_dir,
+            "v123_forensic_%s.jsonl" % now.date().isoformat(),
+        )
+
+    def _cleanup(self):
+        try:
+            names = sorted(
+                name for name in os.listdir(self.root_dir)
+                if name.startswith("v123_forensic_") and name.endswith(".jsonl")
+            )
+        except OSError:
+            return
+        for name in names[:-self.keep_sessions]:
+            try:
+                os.unlink(os.path.join(self.root_dir, name))
+            except OSError:
+                pass
+
+    @staticmethod
+    def _important_rows(observer):
+        seen = set()
+        rows = []
+        for mover in list((observer or {}).get("leaders") or []) + list((observer or {}).get("laggards") or []):
+            symbol = str(mover.get("symbol") or "")
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            try:
+                day = float(mover.get("day_change_pct"))
+            except (TypeError, ValueError):
+                continue
+            if abs(day) < 0.75:
+                continue
+            rows.append((symbol, day, mover))
+        return rows
+
+    def record(self, observer: dict, focus_state: dict, *, now=None) -> int:
+        now = now or dt.datetime.now()
+        forensics = (focus_state or {}).get("forensics") or {}
+        out = []
+        for symbol, day, mover in self._important_rows(observer):
+            forensic = dict(forensics.get(symbol) or {})
+            stage = forensic.get("stage") or "UNCLASSIFIED"
+            reason = forensic.get("reason") or mover.get("discovery_reason") or "NO_FORENSIC_STAGE_YET"
+            failed = list(
+                forensic.get("discovery_failed_gates")
+                or mover.get("discovery_failed_gates")
+                or []
+            )
+            signature = (
+                stage,
+                str(reason),
+                forensic.get("event_family"),
+                forensic.get("tactical_state"),
+                forensic.get("option_reason"),
+                tuple(str(x) for x in failed[:5]),
+                bool(mover.get("discovery_qualified")),
+            )
+            prior_sig = self._last_signature.get(symbol)
+            prior_ts = self._last_write_at.get(symbol)
+            due = prior_ts is None or (now - prior_ts).total_seconds() >= self.snapshot_seconds
+            if signature == prior_sig and not due:
+                continue
+
+            row = {
+                "ts": _now_iso(now),
+                "trade_date": now.date().isoformat(),
+                "symbol": symbol,
+                "direction": forensic.get("direction") or ("Bullish" if day > 0 else "Bearish"),
+                "live_price": mover.get("live_price"),
+                "day_change_pct": round(day, 4),
+                "ret_3m_pct": mover.get("ret_3m_pct"),
+                "ret_5m_pct": mover.get("ret_5m_pct"),
+                "ret_10m_pct": mover.get("ret_10m_pct"),
+                "relative_5m_vs_nifty_pct": mover.get("relative_5m_vs_nifty_pct"),
+                "volume_rate_accel": mover.get("volume_rate_accel"),
+                "near_session_extreme": mover.get("near_session_extreme"),
+                "discovery_qualified": mover.get("discovery_qualified"),
+                "discovery_reason": mover.get("discovery_reason"),
+                "discovery_failed_gates": failed[:5],
+                "stage": stage,
+                "reason": reason,
+                "event_family": forensic.get("event_family"),
+                "tactical_state": forensic.get("tactical_state"),
+                "option_reason": forensic.get("option_reason"),
+                "focus_count": forensic.get("focus_count"),
+                "continuation_count": forensic.get("continuation_count"),
+            }
+            out.append(row)
+            self._last_signature[symbol] = signature
+            self._last_write_at[symbol] = now
+
+        if not out:
+            return 0
+
+        os.makedirs(self.root_dir, exist_ok=True)
+        path = self._session_path(now)
+        with _lock:
+            with open(path, "a", encoding="utf-8") as fh:
+                for row in out:
+                    fh.write(json.dumps(row, separators=(",", ":"), default=str) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            self._cleanup()
+        return len(out)
