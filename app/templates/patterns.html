@@ -381,6 +381,11 @@ function render() {
 }
 
 let chart = null;
+const chartUi = {
+  data: null, candleSeries: null, patternSeries: [], levelLines: [],
+  linesVisible: true, levelsVisible: true, resizeObserver: null
+};
+
 async function select(id) {
   state.sel = id; render();
   const r = await fetch('/api/patterns/detail?id=' + encodeURIComponent(id));
@@ -402,8 +407,8 @@ async function select(id) {
     (ne.swing_success_pct === null || ne.swing_success_pct === undefined ? '' : ' · ' + fmt(ne.swing_success_pct, 1) + '% D5');
   const checks = [
     ['Pattern timeframe', 'ok-y', (d.pattern_timeframe || d.tf_label || 'Daily') + ' · ' + (d.formation_sessions || (d.bars + 1)) + ' trading sessions'],
-    ['Global research basis', d.research_basis === 'DIRECT' ? 'ok-y' : d.research_basis === 'MECHANISM' ? 'ok-m' : 'ok-m', (d.research_basis || 'LIMITED') + ' · ' + (d.research_note || '')],
-    ['NSE D1-D5 evidence', ne.stage === 'MATURE' ? 'ok-y' : ne.stage === 'EARLY' ? 'ok-m' : 'ok-m', nseText],
+    ['Global research basis', d.research_basis === 'DIRECT' ? 'ok-y' : 'ok-m', (d.research_basis || 'LIMITED') + ' · ' + (d.research_note || '')],
+    ['NSE D1-D5 evidence', ne.stage === 'MATURE' ? 'ok-y' : 'ok-m', nseText],
     ['Prior trend', d.prior_trend >= 1 ? 'ok-y' : d.prior_trend >= 0.5 ? 'ok-m' : 'ok-n', fmt(d.prior_trend, 2) + '× pattern height ' + (d.kind === 'reversal' ? 'against' : 'with') + ' the break'],
     ['Volume', volCls, (d.vol_ratio === null ? 'n/a (index)' : fmt(d.vol_ratio, 2) + '× avg') + ' · ' + d.vol_note],
     ['Weekly context', d.htf_aligned ? 'ok-y' : (d.htf_trend === 'NEUTRAL' ? 'ok-m' : 'ok-n'), d.htf_trend + (d.htf_aligned ? ' - aligned' : '')],
@@ -418,39 +423,143 @@ async function select(id) {
   drawChart(d);
 }
 
+function _chartButtonGroup(active) {
+  ['zoom-pattern', 'zoom-30', 'zoom-60', 'zoom-all'].forEach((id) => $(id).classList.toggle('on', id === active));
+}
+
+function setChartWindow(mode) {
+  if (!chart || !chartUi.data || !chartUi.data.candles || !chartUi.data.candles.length) return;
+  const candles = chartUi.data.candles;
+  _chartButtonGroup('zoom-' + mode);
+  if (mode === 'all') {
+    chart.timeScale().fitContent();
+    return;
+  }
+  let start = 0;
+  if (mode === '30' || mode === '60') {
+    start = Math.max(0, candles.length - Number(mode));
+  } else {
+    const t0 = Number(chartUi.data.formation_start_time || candles[0].time);
+    const hit = candles.findIndex((c) => Number(c.time) >= t0);
+    start = Math.max(0, (hit < 0 ? 0 : hit) - 6);
+  }
+  const end = candles.length - 1;
+  chart.timeScale().setVisibleRange({ from: candles[start].time, to: candles[end].time });
+}
+
+function setPatternLinesVisible(on) {
+  chartUi.linesVisible = on;
+  chartUi.patternSeries.forEach((ls) => ls.applyOptions({ visible: on }));
+  $('toggle-lines').classList.toggle('on', on);
+}
+
+function setLevelsVisible(on) {
+  chartUi.levelsVisible = on;
+  chartUi.levelLines.forEach((pl) => pl.applyOptions({ lineVisible: on, axisLabelVisible: on }));
+  $('toggle-levels').classList.toggle('on', on);
+}
+
 function drawChart(d) {
   const el = $('mini');
+  if (chartUi.resizeObserver) { chartUi.resizeObserver.disconnect(); chartUi.resizeObserver = null; }
   if (chart) { chart.remove(); chart = null; }
+
+  chartUi.data = d;
+  chartUi.patternSeries = [];
+  chartUi.levelLines = [];
+  chartUi.linesVisible = true;
+  chartUi.levelsVisible = true;
+  $('toggle-lines').classList.add('on');
+  $('toggle-levels').classList.add('on');
+  $('chart-ohlc').textContent = 'Hover candle for OHLC';
+
   chart = LightweightCharts.createChart(el, {
-    width: el.clientWidth, height: 300,
+    width: el.clientWidth, height: 360,
     layout: { background: { color: '#12151f' }, textColor: '#8b93a7', fontSize: 11 },
     grid: { vertLines: { color: '#1a1e2b' }, horzLines: { color: '#1a1e2b' } },
-    rightPriceScale: { borderColor: '#232838' },
-    timeScale: { borderColor: '#232838', timeVisible: d.timeframe === '60minute' || d.timeframe === '4hour' },
+    rightPriceScale: { borderColor: '#232838', scaleMargins: { top: 0.08, bottom: 0.08 } },
+    timeScale: { borderColor: '#232838', timeVisible: false, rightOffset: 3, barSpacing: 8, minBarSpacing: 3 },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     localization: { locale: 'en-IN' },
   });
-  const cs = chart.addCandlestickSeries({ upColor: '#2ecc71', downColor: '#ef4444', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ef4444' });
-  cs.setData(d.candles);
+
+  const cs = chart.addCandlestickSeries({
+    upColor: '#2ecc71', downColor: '#ef4444', borderVisible: false,
+    wickUpColor: '#2ecc71', wickDownColor: '#ef4444',
+    priceLineVisible: true, lastValueVisible: true
+  });
+  chartUi.candleSeries = cs;
+  cs.setData(d.candles || []);
+
   const lineCol = d.direction === 'BULL' ? '#3b82f6' : '#f5a524';
   (d.segments || []).forEach((seg) => {
     const pts = []; const seen = new Set();
     seg.forEach((p) => { if (!seen.has(p.time)) { seen.add(p.time); pts.push(p); } });
     pts.sort((a, b) => a.time - b.time);
     if (pts.length < 2) return;
-    const ls = chart.addLineSeries({ color: lineCol, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    const ls = chart.addLineSeries({
+      color: lineCol, lineWidth: 2, priceLineVisible: false,
+      lastValueVisible: false, crosshairMarkerVisible: false
+    });
     ls.setData(pts);
+    chartUi.patternSeries.push(ls);
   });
-  cs.createPriceLine({ price: d.trigger, color: '#3b82f6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Trigger' });
-  cs.createPriceLine({ price: d.stop, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Stop' });
-  cs.createPriceLine({ price: d.target, color: '#2ecc71', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Target' });
-  const markers = (d.points || []).filter((p) => p.label).map((p) => ({ time: p.time, position: 'aboveBar', color: '#a78bfa', shape: 'circle', text: p.label }));
-  if (d.breakout_time) markers.push({ time: d.breakout_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar', color: d.direction === 'BULL' ? '#2ecc71' : '#ef4444', shape: d.direction === 'BULL' ? 'arrowUp' : 'arrowDown', text: 'Break' });
+
+  chartUi.levelLines = [
+    cs.createPriceLine({ price: d.trigger, color: '#3b82f6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Trigger' }),
+    cs.createPriceLine({ price: d.stop, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Invalidation' }),
+    cs.createPriceLine({ price: d.target, color: '#2ecc71', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Target' }),
+  ];
+
+  const markers = (d.points || []).filter((p) => p.label).map((p) => ({
+    time: p.time, position: 'aboveBar', color: '#a78bfa', shape: 'circle', text: p.label
+  }));
+  if (d.formation_start_time) markers.push({
+    time: d.formation_start_time, position: 'belowBar', color: '#8b93a7', shape: 'circle', text: 'Formation'
+  });
+  if (d.breakout_time) markers.push({
+    time: d.breakout_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar',
+    color: d.direction === 'BULL' ? '#2ecc71' : '#ef4444',
+    shape: d.direction === 'BULL' ? 'arrowUp' : 'arrowDown', text: 'Break'
+  });
+  if (d.retest_time) markers.push({
+    time: d.retest_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar',
+    color: '#3b82f6', shape: 'circle', text: 'Retest'
+  });
   markers.sort((a, b) => a.time - b.time);
   cs.setMarkers(markers);
-  chart.timeScale().fitContent();
+
+  chart.subscribeCrosshairMove((param) => {
+    if (!param || !param.time || !param.seriesData) {
+      $('chart-ohlc').textContent = 'Hover candle for OHLC';
+      return;
+    }
+    const bar = param.seriesData.get(cs);
+    if (!bar || bar.open === undefined) return;
+    const stamp = typeof param.time === 'number'
+      ? new Date(param.time * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
+      : String(param.time);
+    $('chart-ohlc').textContent = stamp + ' · O ' + fmt(bar.open) + ' H ' + fmt(bar.high) + ' L ' + fmt(bar.low) + ' C ' + fmt(bar.close);
+  });
+
+  $('zoom-pattern').onclick = () => setChartWindow('pattern');
+  $('zoom-30').onclick = () => setChartWindow('30');
+  $('zoom-60').onclick = () => setChartWindow('60');
+  $('zoom-all').onclick = () => setChartWindow('all');
+  $('toggle-lines').onclick = () => setPatternLinesVisible(!chartUi.linesVisible);
+  $('toggle-levels').onclick = () => setLevelsVisible(!chartUi.levelsVisible);
+
+  setChartWindow('pattern');
+
+  chartUi.resizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      if (chart && entry.contentRect.width > 0) chart.applyOptions({ width: entry.contentRect.width });
+    }
+  });
+  chartUi.resizeObserver.observe(el);
 }
-window.addEventListener('resize', () => { if (chart) chart.applyOptions({ width: $('mini').clientWidth }); });
 
 function renderProgress(p) {
   const running = !!p.running;
