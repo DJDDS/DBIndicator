@@ -1499,7 +1499,16 @@ div.card:has(> #early-radar-card) { display:none !important; }
     }
     fill('v123-focus-active',desk.active_now,'No actionable Focus-Desk stock yet. The system will not invent one.');
     fill('v123-focus-building',desk.building_next,'No developing focus name right now.');
-    fill('v123-focus-recent',desk.recent,'No completed/invalidated focus thesis yet.');
+    // Defensive UI dedupe: backend already keeps one recent thesis per
+    // symbol+direction, but never render historical duplicated persisted rows
+    // as repeated cards after a hotfix/restart.
+    var recentSeen={};
+    var recentRows=(Array.isArray(desk.recent)?desk.recent:[]).filter(function(row){
+      var key=String((row||{}).symbol||'')+'|'+String((row||{}).direction||'');
+      if(!key||recentSeen[key]) return false;
+      recentSeen[key]=true; return true;
+    });
+    fill('v123-focus-recent',recentRows,'No completed/invalidated focus thesis yet.');
 
     var missed=document.getElementById('v123-focus-missed');
     if(missed){
