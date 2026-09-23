@@ -525,7 +525,11 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         elif symbol not in scan_map:
             stage, reason = "METADATA", "SCAN_METADATA_MISSING"
         elif event is None:
-            stage, reason = "DISCOVERY", "MOVE_WITHOUT_QUALIFYING_LIVE_EVENT"
+            stage = "DISCOVERY"
+            failed = list(mover.get("discovery_failed_gates") or [])
+            reason = str(mover.get("discovery_reason") or "MOVE_WITHOUT_QUALIFYING_LIVE_EVENT")
+            if failed:
+                reason += " · " + "; ".join(str(x) for x in failed[:4])
         elif trow and str(trow.get("state") or "") == "OPTION_NOT_TRADEABLE":
             stage, reason = "OPTION_ROUTE", str(trow.get("reason") or "OPTION_NOT_TRADEABLE")
         elif trace:
@@ -544,7 +548,12 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
             "symbol": symbol,
             "direction": direction,
             "day_change_pct": round(day, 3),
+            "ret_3m_pct": mover.get("ret_3m_pct"),
             "ret_5m_pct": mover.get("ret_5m_pct"),
+            "ret_10m_pct": mover.get("ret_10m_pct"),
+            "relative_5m_vs_nifty_pct": mover.get("relative_5m_vs_nifty_pct"),
+            "volume_rate_accel": mover.get("volume_rate_accel"),
+            "discovery_failed_gates": mover.get("discovery_failed_gates"),
             "stage": stage,
             "reason": reason,
             "event_family": (event or {}).get("event_family"),
