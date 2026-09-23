@@ -27,7 +27,7 @@ import time
 from collections import defaultdict, deque
 from typing import Callable
 
-from . import scanner
+from . import scanner, v123_state
 
 
 SAMPLE_SECONDS = 5
@@ -112,6 +112,7 @@ class UniverseMomentumStreamService:
         now_provider=None,
         sleep_fn=time.sleep,
         reactor_getter=None,
+        checkpoint_path=None,
     ):
         self.publish_callback = publish_callback
         self.metadata_provider = metadata_provider
@@ -122,6 +123,7 @@ class UniverseMomentumStreamService:
         self.now_provider = now_provider or scanner.now_ist
         self.sleep_fn = sleep_fn
         self.reactor_getter = reactor_getter or _reactor_getter
+        self.checkpoint_path = checkpoint_path
 
         self._lock = threading.RLock()
         self._ticker = None
@@ -133,6 +135,8 @@ class UniverseMomentumStreamService:
         self._latest = {}
         self._last_sample_at = {}
         self._last_publish_at = None
+        self._last_checkpoint_at = None
+        self._checkpoint_restored = False
         self._last_error = None
         self._snapshot = {
             "status": "WAITING",
@@ -146,6 +150,64 @@ class UniverseMomentumStreamService:
     def snapshot(self):
         with self._lock:
             return json.loads(json.dumps(self._snapshot, default=str))
+
+    def _restore_checkpoint(self, now):
+        if self._checkpoint_restored:
+            return
+        self._checkpoint_restored = True
+        if not self.checkpoint_path:
+            return
+        payload = v123_state.load_observer_checkpoint(self.checkpoint_path, now=now)
+        if not payload:
+            return
+
+        restored = 0
+        with self._lock:
+            for symbol, rows in (payload.get("symbols") or {}).items():
+                bucket = self._samples[symbol]
+                for row in rows or []:
+                    ts = _dt(row.get("ts"))
+                    if ts is None:
+                        continue
+                    bucket.append({
+                        "ts": ts,
+                        "price": _f(row.get("price")),
+                        "volume": _f(row.get("volume")),
+                        "open": None,
+                        "high": _f(row.get("high")),
+                        "low": _f(row.get("low")),
+                        "prev_close": _f(row.get("prev_close")),
+                    })
+                    restored += 1
+                if bucket:
+                    self._last_sample_at[symbol] = bucket[-1]["ts"]
+
+            for symbol, tick in (payload.get("latest") or {}).items():
+                if isinstance(tick, dict):
+                    self._latest[symbol] = dict(tick)
+
+        if restored:
+            self._snapshot["checkpoint_restored_samples"] = restored
+            self._snapshot["checkpoint_saved_at"] = payload.get("saved_at")
+
+    def _maybe_checkpoint(self, now, force=False):
+        if not self.checkpoint_path:
+            return
+        if not force and self._last_checkpoint_at is not None:
+            if (now - self._last_checkpoint_at).total_seconds() < v123_state.OBSERVER_CHECKPOINT_SECONDS:
+                return
+        with self._lock:
+            samples = {symbol: list(rows) for symbol, rows in self._samples.items() if rows}
+            latest = {symbol: dict(tick) for symbol, tick in self._latest.items()}
+        try:
+            v123_state.save_observer_checkpoint(
+                self.checkpoint_path, samples, latest, now=now
+            )
+            self._last_checkpoint_at = now
+        except Exception as exc:
+            # Checkpointing is operational safety; it must never stop ticks.
+            with self._lock:
+                self._last_error = "observer checkpoint failed: %s" % exc
 
     def _dispatch(self, fn):
         reactor = self.reactor_getter()
@@ -467,9 +529,11 @@ class UniverseMomentumStreamService:
     def _maybe_publish(self, now, force=False):
         if not force and self._last_publish_at is not None:
             if (now - self._last_publish_at).total_seconds() < PUBLISH_SECONDS:
+                self._maybe_checkpoint(now)
                 return
         self._last_publish_at = now
         self._publish(self._build_snapshot(now))
+        self._maybe_checkpoint(now, force=force)
 
     def _handle_ticks(self, ticks, now):
         with self._lock:
@@ -557,10 +621,15 @@ class UniverseMomentumStreamService:
             self._connected = False
         if ticker is not None:
             self._dispatch(lambda: ticker.close())
+        try:
+            self._maybe_checkpoint(self.now_provider(), force=True)
+        except Exception:
+            pass
 
     def run_forever(self):
         while True:
             now = self.now_provider()
+            self._restore_checkpoint(now)
             try:
                 if not _market_open(now):
                     if self._active:
