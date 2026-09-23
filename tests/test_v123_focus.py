@@ -208,3 +208,58 @@ def test_recent_cleanup_collapses_duplicate_cards_for_same_symbol_direction():
     cleaned = v123_focus._recent_cleanup(rows, now)
     assert len(cleaned) == 1
     assert cleaned[0]["completed_at"] == "2026-09-23T11:32:05"
+
+
+
+def test_profitable_fast_exit_becomes_proven_mover_not_invalidated():
+    t0 = dt.datetime(2026, 9, 23, 10, 0)
+    observer = {"events": [_observer_event("JINDALSTEL")], "leaders": [], "laggards": []}
+    trade = {"candidates": [{
+        "symbol": "JINDALSTEL", "direction": "Bullish", "state": "TRADEABLE",
+        "live_price": 1150.0, "trigger": 1148.0, "invalidation": 1140.0,
+        "entry_episode_no": 1, "entry_episode_open": True,
+        "locked_option_contract": "JINDALSTEL1160CE",
+        "locked_option_strike": 1160.0, "locked_option_delta": 0.54,
+        "option_route": {"tradeable": True, "contract": {"symbol": "JINDALSTEL1160CE"}},
+    }]}
+    state = v123_focus.update_focus(None, observer, {"rows": []}, trade, [_scan("JINDALSTEL", 1150.0)], now=t0)
+    assert state["focus"]["JINDALSTEL"]["lifecycle"] == "ACTIVE"
+
+    exited = {"candidates": [{
+        "symbol": "JINDALSTEL", "direction": "Bullish", "state": "EXIT",
+        "reason": "3m profit-protection structure lost",
+        "live_price": 1160.0, "trigger": 1148.0, "invalidation": 1140.0,
+        "entry_episode_no": 1, "entry_episode_open": False,
+        "entry_episode_result": "PROVEN_MOVE",
+        "locked_option_contract": "JINDALSTEL1160CE",
+        "locked_option_strike": 1160.0, "locked_option_delta": 0.58,
+        "option_route": {"tradeable": True, "contract": {"symbol": "JINDALSTEL1160CE"}},
+    }]}
+    state = v123_focus.update_focus(
+        state, observer, {"rows": []}, exited, [_scan("JINDALSTEL", 1160.0)],
+        now=t0 + dt.timedelta(minutes=6)
+    )
+    row = state["focus"]["JINDALSTEL"]
+    assert row["lifecycle"] == "PROVEN_MOVER"
+    assert row["locked_option_contract"] == "JINDALSTEL1160CE"
+    assert row["entry_episode_result"] == "PROVEN_MOVE"
+
+
+def test_structural_exit_still_invalidates_underlying_thesis():
+    t0 = dt.datetime(2026, 9, 23, 10, 0)
+    state = v123_focus.update_focus(
+        None, {"events": [_observer_event("ABC")], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{"symbol":"ABC","direction":"Bullish","state":"TRADEABLE","live_price":101.0,"trigger":100.5,"invalidation":99.5}]},
+        [_scan("ABC")], now=t0
+    )
+    exited = {"candidates": [{
+        "symbol":"ABC","direction":"Bullish","state":"EXIT",
+        "reason":"underlying structural invalidation hit",
+        "live_price":99.4,"trigger":100.5,"invalidation":99.5,
+    }]}
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []},
+        {"rows": []}, exited, [_scan("ABC",99.4)], now=t0+dt.timedelta(minutes=5)
+    )
+    assert "ABC" not in state["focus"]

@@ -24,7 +24,7 @@ jobs:
       - name: V12.3 focused tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: pytest -q tests/test_v123_state.py tests/test_v123_focus.py tests/test_v123_market_stream.py tests/test_v122d_event_radar.py tests/test_v122b_tactical.py tests/test_v122a_interim_tactical_radar.py tests/test_v121_index_recorder.py
+        run: pytest -q tests/test_v123_state.py tests/test_v123_focus.py tests/test_v123_swing.py tests/test_v123_market_stream.py tests/test_v122d_event_radar.py tests/test_v122b_tactical.py tests/test_v122a_interim_tactical_radar.py tests/test_v121_index_recorder.py
       - name: Regression delta vs production main
         env:
           PYTHONPATH: ${{ github.workspace }}

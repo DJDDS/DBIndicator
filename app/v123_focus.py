@@ -34,7 +34,8 @@ LIFECYCLE_PRIORITY = {
     "REENTRY_READY": 9,
     "READY": 8,
     "ACTIVE": 7,
-    "MANAGE": 6,
+    "MANAGE": 7,
+    "PROVEN_MOVER": 6,
     "PULLBACK": 5,
     "BUILDING": 4,
     "DISCOVERED": 3,
@@ -75,6 +76,7 @@ def empty_state():
         "missed": {},
         "last_update": None,
         "trade_date": None,
+        "swing_1d": {},
     }
 
 
@@ -88,6 +90,7 @@ def _normalise(state):
     out.setdefault("missed", {})
     out.setdefault("last_update", None)
     out.setdefault("trade_date", None)
+    out.setdefault("swing_1d", {})
     return out
 
 
@@ -206,6 +209,7 @@ def _vehicle_state(item, trow):
 
     route = (trow or {}).get("option_route") or {}
     contract = route.get("contract") or {}
+    locked_symbol = (trow or {}).get("locked_option_contract") or item.get("locked_option_contract")
     if route.get("tradeable"):
         option = "ELIGIBLE"
         option_reason = None
@@ -230,7 +234,7 @@ def _vehicle_state(item, trow):
         "future": future,
         "option": option,
         "option_reason": option_reason,
-        "option_contract": contract.get("symbol"),
+        "option_contract": locked_symbol or contract.get("symbol"),
         "option_dte": contract.get("dte"),
         "option_spread_pct": contract.get("spread_pct"),
         "preferred_available_vehicle": preferred,
@@ -275,7 +279,17 @@ def _derive_lifecycle(item, event, trow, now):
             return "WEAKENING", (trow or {}).get("reason") or "fast execution premise weakened"
 
     if tstate == "EXIT":
-        return "INVALIDATED", (trow or {}).get("reason") or "structural exit"
+        reason = (trow or {}).get("reason") or "entry exit"
+        episode_result = str((trow or {}).get("entry_episode_result") or "")
+        # A fast entry can close profitably while the larger underlying thesis
+        # remains alive.  Only a true underlying structural invalidation kills
+        # the thesis; profit-protection exits become PROVEN_MOVER so the same
+        # stock stays on the desk for continuation/re-entry.
+        if "underlying structural invalidation" in reason.lower():
+            return "INVALIDATED", reason
+        if episode_result == "PROVEN_MOVE" or "profit-protection" in reason.lower():
+            return "PROVEN_MOVER", "entry closed after a proved move; keep same underlying thesis for continuation"
+        return "WEAKENING", reason
 
     if event:
         if prior in ("ACTIVE", "MANAGE") and family in ("MOMENTUM_CONTINUATION", "RELATIVE_SEPARATION"):
@@ -292,6 +306,8 @@ def _derive_lifecycle(item, event, trow, now):
         return prior, "setup retained; waiting for trigger or invalidation"
     if prior in ("ACTIVE", "MANAGE"):
         return "PULLBACK", "no fresh expansion; keep thesis and wait for continuation"
+    if prior == "PROVEN_MOVER":
+        return "PROVEN_MOVER", "successful first move retained; wait for next valid continuation structure"
     return prior, None
 
 
@@ -531,6 +547,19 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["setup"] = trow.get("setup")
             item["tactical_state"] = trow.get("state")
             item["tactical_reason"] = trow.get("reason")
+            item["entry_episode_no"] = trow.get("entry_episode_no")
+            item["entry_episode_open"] = trow.get("entry_episode_open")
+            item["entry_episode_result"] = trow.get("entry_episode_result")
+            item["entry_episode_exit_reason"] = trow.get("entry_episode_exit_reason")
+            item["entry_episode_started_at"] = trow.get("entry_episode_started_at")
+            item["entry_episode_closed_at"] = trow.get("entry_episode_closed_at")
+            if trow.get("locked_option_contract"):
+                item["locked_option_contract"] = trow.get("locked_option_contract")
+                item["locked_option_strike"] = trow.get("locked_option_strike")
+                item["locked_option_delta"] = trow.get("locked_option_delta")
+                item["locked_option_expiry"] = trow.get("locked_option_expiry")
+                item["contract_selection_reason"] = trow.get("contract_selection_reason")
+                item["contract_reroute_reason"] = trow.get("contract_reroute_reason")
             if trow.get("trigger") is not None:
                 item["trigger"] = trow.get("trigger")
             if trow.get("invalidation") is not None:
@@ -553,7 +582,7 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         ):
             _history(item, "COMPLETED", now, "focus observation expired without an actionable structure")
         elif (
-            item.get("lifecycle") in ("PULLBACK", "WEAKENING")
+            item.get("lifecycle") in ("PULLBACK", "WEAKENING", "PROVEN_MOVER")
             and item["focus_age_min"] >= 90.0
             and since_seen is not None and since_seen >= 30.0
             and not same
@@ -654,6 +683,8 @@ def tactical_candidates(state, scan_rows):
         base["focus_lifecycle"] = item.get("lifecycle")
         base["focus_selected_at"] = item.get("selected_at")
         base["focus_event_family"] = item.get("event_family")
+        base["locked_option_contract"] = item.get("locked_option_contract")
+        base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
     rows.sort(
         key=lambda r: (
@@ -677,7 +708,7 @@ def dashboard(state):
     )
 
     building = [x for x in focus if x.get("lifecycle") in ("DISCOVERED", "BUILDING")]
-    active = [x for x in focus if x.get("lifecycle") in ("READY", "REENTRY_READY", "ACTIVE", "MANAGE", "PULLBACK", "WEAKENING")]
+    active = [x for x in focus if x.get("lifecycle") in ("READY", "REENTRY_READY", "ACTIVE", "MANAGE", "PROVEN_MOVER", "PULLBACK", "WEAKENING")]
     recent = list(reversed(state.get("recent") or []))[:12]
     missed = sorted(
         [dict(x) for x in (state.get("missed") or {}).values()],
@@ -695,6 +726,7 @@ def dashboard(state):
         "missed_movers": missed,
         "all_focus": focus,
         "last_update": state.get("last_update"),
+        "swing_1d": state.get("swing_1d") or {},
         "rules": {
             "max_focus": MAX_FOCUS,
             "minimum_observation_minutes": MIN_FOCUS_MINUTES,

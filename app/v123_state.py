@@ -97,6 +97,12 @@ def _focus_signature(state: dict) -> tuple:
             (row.get("vehicles") or {}).get("cash"),
             (row.get("vehicles") or {}).get("future"),
             (row.get("vehicles") or {}).get("option"),
+            row.get("entry_episode_no"),
+            row.get("entry_episode_open"),
+            row.get("entry_episode_result"),
+            row.get("locked_option_contract"),
+            row.get("locked_option_strike"),
+            row.get("locked_option_delta"),
         ))
     recent_sig = [
         (
@@ -105,7 +111,24 @@ def _focus_signature(state: dict) -> tuple:
         )
         for row in recent[-30:]
     ]
-    return (state.get("trade_date"), tuple(focus_sig), tuple(recent_sig))
+    swing = state.get("swing_1d") or {}
+    swing_sig = (
+        swing.get("trade_date"),
+        swing.get("phase"),
+        swing.get("last_refresh_slot"),
+        tuple(sorted(
+            (
+                symbol,
+                row.get("direction"),
+                row.get("status"),
+                row.get("trigger"),
+                row.get("invalidation"),
+                row.get("selected_slot"),
+            )
+            for symbol, row in (swing.get("selected") or {}).items()
+        )),
+    )
+    return (state.get("trade_date"), tuple(focus_sig), tuple(recent_sig), swing_sig)
 
 
 class FocusStateStore:

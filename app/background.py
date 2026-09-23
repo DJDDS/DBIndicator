@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_state, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_state, v123_swing, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1908,6 +1908,7 @@ def _run_loop():
                             results=results,
                             now=scan_now,
                         )
+                        _update_v123_swing(results, now=scan_now)
                         with _state_lock:
                             _state["results"] = results
                             _state["index_direction"] = index_direction
@@ -2093,6 +2094,33 @@ def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, n
         except Exception:
             log.exception("Failed to persist V12.3 Focus state")
         return desk
+
+
+def _update_v123_swing(results, now=None):
+    """Refresh the slow 1D desk only from the normal scan cycle.
+
+    Live WebSocket callbacks may update intraday Focus every few seconds, but
+    they must never churn the 1D membership between its scheduled checkpoints.
+    """
+    with _v123_focus_lock:
+        now = now or now_ist()
+        with _state_lock:
+            focus_state = dict(_state.get("v123_focus_state") or v123_focus.empty_state())
+        swing_state = v123_swing.update(
+            focus_state.get("swing_1d") or v123_swing.empty_state(),
+            results or [],
+            now=now,
+        )
+        focus_state["swing_1d"] = swing_state
+        desk = v123_focus.dashboard(focus_state)
+        with _state_lock:
+            _state["v123_focus_state"] = focus_state
+            _state["v123_focus_desk"] = desk
+        try:
+            _v123_focus_store.save_if_changed(focus_state, now=now)
+        except Exception:
+            log.exception("Failed to persist V12.3 1D Swing Focus state")
+        return v123_swing.dashboard(swing_state)
 
 
 def _v123_market_publish(payload):
