@@ -73,3 +73,11 @@ def test_75minute_nse_chart_uses_five_equal_session_bars(monkeypatch):
         sum(1000 + i for i in range(15, 20)),
         sum(1000 + i for i in range(20, 25)),
     ]
+
+
+def test_chart_template_compiles_in_flask_jinja_environment():
+    # Regression for production 500: compact CSS beginning with "{#" is
+    # parsed by Jinja as an unterminated comment unless the template itself
+    # is compiled during CI.
+    template = web.app.jinja_env.get_template("chart.html")
+    assert template is not None
