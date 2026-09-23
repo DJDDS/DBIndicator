@@ -117,7 +117,13 @@
   .panel-head { padding: 14px 16px; border-bottom: 1px solid var(--border); }
   .panel-head h2 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .panel-head .sub { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
-  #mini { height: 300px; }
+  .chart-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid var(--border); background:var(--card2); }
+  .chart-toolbar button { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:5px 9px; font-size:11px; font-weight:700; cursor:pointer; }
+  .chart-toolbar button:hover, .chart-toolbar button.on { color:#fff; border-color:var(--accent); background:rgba(59,130,246,.12); }
+  .chart-toolbar .spacer { flex:1; }
+  .ohlc { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #mini { height: 360px; position:relative; }
+  .chart-hint { padding:5px 10px 8px; font-size:10.5px; color:var(--muted); background:var(--card2); border-top:1px solid var(--border); }
   .levels { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
   .levels div { padding: 10px 12px; border-right: 1px solid var(--border); }
   .levels div:last-child { border-right: 0; }
@@ -211,7 +217,18 @@
           <h2><span id="p-sym"></span> <span class="chip" id="p-dir"></span> <span class="chip" id="p-status"></span></h2>
           <div class="sub" id="p-sub"></div>
         </div>
+        <div class="chart-toolbar">
+          <button type="button" id="zoom-pattern" class="on">Pattern</button>
+          <button type="button" id="zoom-30">30D</button>
+          <button type="button" id="zoom-60">60D</button>
+          <button type="button" id="zoom-all">All</button>
+          <button type="button" id="toggle-lines" class="on">Pattern lines</button>
+          <button type="button" id="toggle-levels" class="on">Levels</button>
+          <span class="spacer"></span>
+          <span class="ohlc" id="chart-ohlc">Hover candle for OHLC</span>
+        </div>
         <div id="mini"></div>
+        <div class="chart-hint">Mouse-wheel / pinch to zoom · drag to pan · Pattern view focuses the detected formation automatically.</div>
         <div class="levels">
           <div><span>Trigger</span><b id="p-trig"></b></div>
           <div><span>Stop</span><b class="red" id="p-stop"></b></div>
