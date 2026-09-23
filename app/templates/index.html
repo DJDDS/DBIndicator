@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="legacy-research-provenance" content="Early Radar; Shadow Early Radar; Energy Building; RESEARCH / SHADOW">
 <title>Scanner Dashboard</title>
 <style>
   :root {
@@ -115,6 +116,38 @@
   .sl-cov { color: var(--dim); }
   .sl-empty { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 4px 0 0; }
   .sl-empty strong { color: var(--text); }
+
+  /* Event-Driven Early Detection: presentation-only hierarchy.
+     Keep event logic/state transitions untouched; make the live sequence scannable at speed. */
+  #early-radar-card > h2 { font-size:15px; line-height:1.35; letter-spacing:.045em; }
+  #early-radar-card > h2 .sub { display:inline; margin-left:10px; font-size:11px; line-height:1.45; font-weight:500; color:var(--dim); letter-spacing:.015em; }
+  #early-radar-card > .sl-empty { max-width:1180px; margin-top:5px !important; font-size:12.5px; line-height:1.55; color:var(--muted); }
+  #early-radar-card .sl-list { gap:8px; margin-top:12px; }
+  #early-radar-card .sl-row { grid-template-columns:24px minmax(150px,.72fr) minmax(108px,.46fr) minmax(260px,1.55fr) minmax(260px,1.15fr); gap:14px; padding:14px 14px; min-height:76px; }
+  #early-radar-card .sl-rank { font-family:var(--sans); font-size:11px; font-weight:500; color:var(--dim); opacity:.55; }
+  #early-radar-card .sl-sym { gap:5px; }
+  #early-radar-card .sl-name { font-family:var(--sans); font-size:17px; line-height:1.1; font-weight:750; letter-spacing:.01em; }
+  #early-radar-card .sl-close { font-family:var(--sans); font-size:11.5px; line-height:1.35; font-weight:550; color:var(--muted); }
+  #early-radar-card .sl-score { min-width:0 !important; text-align:left; font-family:var(--sans); font-size:10.5px !important; line-height:1.2; font-weight:800; letter-spacing:.065em; text-transform:uppercase; white-space:normal; }
+  #early-radar-card .sl-why { gap:5px; font-family:var(--sans); }
+  #early-radar-card .sl-oi { font-size:13.5px; line-height:1.35; font-weight:650; color:var(--text); }
+  #early-radar-card .sl-detail { font-family:var(--mono); font-size:10.5px; line-height:1.45; font-weight:500; color:var(--muted); white-space:normal; overflow:visible; text-overflow:clip; }
+  #early-radar-card .sl-tags { justify-content:flex-end; align-content:center; flex-wrap:wrap; gap:5px; font-family:var(--sans); font-size:10px; }
+  #early-radar-card .sl-tag { padding:3px 7px; line-height:1.25; font-weight:600; color:var(--muted); border:1px solid #252d3a; }
+  #early-radar-card .sl-tag.strong { color:#b9cff5; border-color:#33445e; background:#111a27; }
+  #early-radar-card .event-evidence { margin-top:14px; padding-top:11px; border-top:1px solid #3a2f0f; }
+  #early-radar-card .event-evidence > .sub { font-size:11.5px; line-height:1.5; color:var(--muted); }
+  @media (max-width:1000px) {
+    #early-radar-card .sl-row { grid-template-columns:22px minmax(135px,.8fr) minmax(100px,.55fr) minmax(0,1.65fr); }
+    #early-radar-card .sl-tags { grid-column:2 / -1; justify-content:flex-start; }
+  }
+  @media (max-width:680px) {
+    #early-radar-card > h2 .sub { display:block; margin:5px 0 0; }
+    #early-radar-card .sl-row { grid-template-columns:20px minmax(0,1fr) auto; gap:9px 10px; padding:12px 10px; }
+    #early-radar-card .sl-why, #early-radar-card .sl-tags { grid-column:2 / -1; }
+    #early-radar-card .sl-name { font-size:16px; }
+    #early-radar-card .sl-oi { font-size:13px; }
+  }
   .btst-list { display: flex; flex-direction: column; gap: 10px; }
   .btst-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel2); }
   .btst-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -415,7 +448,7 @@
       </button>
     </div>
     {% endif %}
-    <nav><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+    <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
   </div>
 </header>
 <div class="wrap">
@@ -500,6 +533,22 @@
     </div>
   </div>
 
+  {% set tctl = v122b_tactical|default({}) %}
+  <section id="v122b-tactical-console" class="card v12-card" style="border-color:#0f7b61;" aria-label="V12.2B tactical stock option execution engine">
+    <div class="v12-head">
+      <div>
+        <div class="v12-kicker">V12.2B · FAST STOCK-OPTION EXECUTION · 15m FIND → 3m TRIGGER</div>
+        <h2>Tactical Option Console <span class="sub">micro breakout · pullback-reclaim · opening drive · direct DTE/option route</span></h2>
+      </div>
+      <div id="v122b-status" class="v12-lock">{{ tctl.get('status') or 'WAITING' }} · INTERIM / NOT VALIDATED</div>
+    </div>
+    <div class="v12-note"><strong>Result-first:</strong> READY defines the exact stock trigger before the move; TRADEABLE means that trigger fired and the selected option passed the DTE/liquidity/friction gate. TIME_EXIT, STALE, CANCELLED and OPTION NOT TRADEABLE are hard warnings. No order is placed automatically.</div>
+    <div id="v122b-list" class="v12-list" style="margin-top:10px;">
+      <div class="v8-empty">Waiting for the bounded tactical pool…</div>
+    </div>
+    <div class="v12-links"><a href="/api/v122b-tactical-state/export">Export tactical state</a><a href="/api/v122b-tactical-events/export">Export lifecycle events</a></div>
+  </section>
+
   <section id="v12-trade-console" class="card v12-card" aria-label="V12 live trade opportunity console">
     <div class="v12-head">
       <div><div class="v12-kicker">V12 · TODAY'S OPPORTUNITY ENGINE</div>
@@ -507,11 +556,11 @@
       <div class="v12-lock">EXECUTABLE CANDIDATE · NOT VALIDATED</div>
     </div>
     <div class="v12-grid">
-      <div class="v12-panel"><h3>Intraday · OBSERVE → WATCH → SETUP → EXECUTABLE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for V12 live candidates…</div></div></div>
+      <div class="v12-panel"><h3>Intraday · FORMING → ARMED → TRIGGERED · LATE/FADE</h3><div id="v12-intraday-list" class="v12-list"><div class="v8-empty">Waiting for early-onset candidates…</div></div></div>
       <div class="v12-panel"><h3>1D swing attention</h3><div id="v12-swing-1d-list" class="v12-list"><div class="v8-empty">Waiting for 1D candidates…</div></div></div>
       <div class="v12-panel"><h3>2D swing attention</h3><div id="v12-swing-2d-list" class="v12-list"><div class="v8-empty">Waiting for 2D candidates…</div></div></div>
     </div>
-    <div class="v12-note"><strong>Use:</strong> this card helps you decide what deserves live attention now. EXECUTABLE means the setup has a defined structural reference and the current futures/option spread clears the operational liquidity gate. It does <strong>not</strong> mean independently validated profitability.</div>
+    <div class="v12-note"><strong>Use:</strong> result first. FORMING means pressure is building before the move, ARMED means it is close to a structural trigger, TRIGGERED means the underlying trigger fired while derivative liquidity is executable, and LATE/FADING means do not chase. This remains <strong>NOT VALIDATED</strong> and does not touch the option recorder or Trial-25 research.</div>
   </section>
 
   {% set v12f = v12_feasibility|default({}) %}
@@ -548,6 +597,39 @@
     </div>
     <div class="v12-note">First 10 distinct trading days are <strong>recording only</strong>. The stock-option route becomes practically testable only if at least 20 symbols maintain ≥70% two-sided ATM coverage and ≤4% median executable straddle spread. No efficacy conclusion and no Trial 25 can be generated here.</div>
     <div class="v12-links"><a href="/api/v12-option-snapshots/export">Export option snapshots</a><a href="/api/v12-option-state/export">Export option state</a><a href="/api/v12-earnings-ledger/export">Export earnings ledger</a><a href="/api/v12-earnings-state/export">Export earnings state</a></div>
+  </section>
+
+  {% set t25 = trial25_shadow|default({}) %}
+  {% set t25stale = t25.get('stale_audit') or {} %}
+  <section id="trial25-stage-d" class="card v12-card" aria-label="Trial 25 earnings volatility Stage D shadow recorder">
+    <div class="v12-head">
+      <div><div class="v12-kicker">TRIAL 25 · EARNINGS VOLATILITY · STAGE D</div>
+      <h2>Shadow Event Recorder <span class="sub">defined-risk iron butterfly · 15:10 entry · 09:30 post-event exit · no efficacy peeking</span></h2></div>
+      <div id="trial25-status" class="v12-lock">{{ t25.get('status') or 'PREREGISTERED_WAITING_EVENTS' }}</div>
+    </div>
+    <div class="v12-metrics">
+      <div class="v12-metric"><span>Stage-D completed</span><strong id="trial25-completed">{{ t25.get('completed', 0) }}/{{ t25.get('target', 40) }}</strong></div>
+      <div class="v12-metric"><span>Frozen eligible universe</span><strong id="trial25-frozen-universe">{{ t25.get('frozen_cohort_size', 195) }}</strong></div>
+      <div class="v12-metric"><span>Current F&amp;O overlap</span><strong id="trial25-current-overlap">{{ t25.get('cohort_a_live', t25.get('current_fno_overlap', 0)) }}</strong></div>
+      <div class="v12-metric"><span>New F&amp;O · onboarding only</span><strong id="trial25-new-fno">{{ t25.get('new_fno_onboarding', 0) }}</strong></div>
+      <div class="v12-metric"><span>Frozen names without live contracts</span><strong id="trial25-fno-missing">{{ t25.get('cohort_a_missing_contracts', 0) }}</strong></div>
+      <div class="v12-metric"><span>Events discovered</span><strong id="trial25-events-total">{{ t25.get('events_total', 0) }}</strong></div>
+      <div class="v12-metric"><span>Entries captured</span><strong id="trial25-entries">{{ t25.get('entry_captured', 0) }}</strong></div>
+      <div class="v12-metric"><span>Executable book + old last trade</span><strong id="trial25-stale-old-trade">{{ t25stale.get('live_book_old_trade_legs', 0) }}</strong></div>
+      <div class="v12-metric"><span>Calibration</span><strong id="trial25-calibration">{{ t25.get('calibration_status') or 'WAITING_FOR_40' }}</strong></div>
+      <div class="v12-metric"><span>Stage-C required N</span><strong id="trial25-stage-c-n">{{ t25.get('stage_c_required_n') if t25.get('stage_c_required_n') is not none else 'LOCKED' }}</strong></div>
+    </div>
+    <div class="v12-panel">
+      <h3>Point-in-time event queue</h3>
+      <div id="trial25-event-queue" class="v12-list">
+        {% for event in t25.get('event_queue', [])[:8] %}
+        <div class="v8-empty"><strong>{{ event.get('symbol') or '—' }}</strong> · meeting {{ event.get('meeting_date') or '—' }} · entry {{ event.get('entry_date') or '—' }} · exit {{ event.get('exit_date') or '—' }} · {{ event.get('status') or '—' }}</div>
+        {% else %}
+        <div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="v12-note"><strong>Research integrity:</strong> no Trial-25 P&amp;L, mean return, win rate, profit factor or t-statistic is shown while Stage D accumulates. Stocks added to NSE F&amp;O after the frozen feasibility sample are tracked as onboarding-only and cannot enter the primary cohort; frozen names remain eligible only while actual live stock-option contracts exist.</div>
   </section>
 
   {% set v121i = v121_index_vol|default({}) %}
@@ -613,8 +695,8 @@
     <div id="live-opportunity-radar" class="live-opportunity-radar" aria-label="Live opportunity radar research shadow">
       <div class="lor-head">
         <div>
-          <div class="lor-kicker">LIVE OPPORTUNITY RADAR · RESEARCH / SHADOW</div>
-          <div class="lor-sub">Ranks stocks needing attention now from live price + OI + acceleration + participation + relative strength/weakness + VWAP, with multi-factor market regime used as context only. This is not a validated trade signal.</div>
+          <div class="lor-kicker">EARLY MOVE RADAR · 15m SCOUT → 3m CONFIRM · RESEARCH / SHADOW</div>
+          <div class="lor-sub">Only FORMING, READY and very-fresh breaks are shown. Mature moves are hard-excluded, while a hidden scout lane starts 3-minute price/depth observation before the visible alert. This is decision support, not a validated trade signal.</div>
         </div>
         <div class="lor-bias" id="lor-market-bias">Market bias —</div>
       </div>
@@ -628,7 +710,7 @@
           <div id="lor-bearish" class="lor-list"><div class="v8-empty">Waiting for live bearish evidence…</div></div>
         </section>
       </div>
-      <div class="lor-note"><strong>Important:</strong> Opportunity Score is a live ranking/attention score, not probability of profit. A rejected V9 playbook remains rejected; this layer never sends production TRADE/WATCH alerts.</div>
+      <div class="lor-note"><strong>Important:</strong> this panel is now maturity-gated rather than score-led. A stock several ATR beyond its trigger cannot remain an early opportunity. READY/FRESH BREAK may be upgraded in real time by the separate 3-minute tactical stream; no automatic order is placed.</div>
       <div id="opportunity-forward" class="lor-forward"><strong>Forward validation:</strong> <span id="opportunity-forward-summary">waiting for first V9.3.0 live capture…</span><a href="/api/opportunity-forward/export">Export raw events</a></div>
     </div>
     <div id="swing-research-console" class="live-opportunity-radar" aria-label="Swing Research Shadow 1D 2D">
@@ -659,51 +741,64 @@
 
   <div class="card" style="border-color:#3a2f0f;">
     <div id="early-radar-card">
-    <h2>⚡ Production Early Radar <span class="sub">evidence-gated production path only — Energy Building / Stock in Play / Ignition may remain empty while no playbook is validated</span></h2>
-    {% set radar_rows = results | selectattr('radar_rank', 'defined') | selectattr('radar_rank', 'ne', None) | sort(attribute='radar_rank') | list %}
-    {% if radar_rows %}
-    <div class="sl-list">
-      {% for r in radar_rows %}
-      {% set td = r.trade_direction if r.trade_direction is defined else None %}
-      <div class="sl-row {{ 'bull' if td == 'Bullish' else ('bear' if td == 'Bearish' else '') }}" onclick="window.location='/chart/{{ r.symbol }}'">
-        <span class="sl-rank">{{ r.radar_rank }}</span>
-        <span class="sl-score" style="color:var(--amber);">{{ r.movement_score if r.movement_score is not none else '—' }}</span>
-        <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a><span class="sl-close">{{ r.movement_stage }}</span></span>
-        <span class="sl-why">
-          <span class="sl-oi">{% if r.breakout_source %}Breakout Source: {{ r.breakout_source }}{% elif r.compression_score is not none %}Compression {{ '%.0f'|format(r.compression_score) }}{% else %}abnormal participation{% endif %}</span>
-          <span class="sl-detail">{% if r.tod_rvol %}TOD RVOL {{ r.tod_rvol }}x · {% endif %}{% if r.oi_chg_60m_pct is not none %}OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}% · {% endif %}{{ r.oi_status or 'OI warming' }}</span>
-        </span>
-        <span class="sl-tags">
-          {% if r.compression_score is not none %}<span class="sl-tag">Coil {{ '%.0f'|format(r.compression_score) }}</span>{% endif %}
-          {% if r.stock_in_play %}<span class="sl-tag strong">Stock in Play</span>{% endif %}
-          {% if r.breakout_direction %}<span class="sl-tag strong">{{ '▲' if r.breakout_direction == 'Bullish' else '▼' }} {{ r.breakout_direction }}</span>{% endif %}
-        </span>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="sl-empty"><strong>No early setup is building right now.</strong> Radar is directionless until price escapes a real 15-minute decision range. It watches coils, opening-range pressure, abnormal TOD volume and F&amp;O positioning.</p>
-    {% endif %}
-
-    {% set shadow_rows = results | selectattr('shadow_radar_rank', 'defined') | selectattr('shadow_radar_rank', 'ne', None) | sort(attribute='shadow_radar_rank') | list %}
-    <div style="margin-top:16px;padding-top:14px;border-top:1px solid #3a2f0f;">
-      <h2 style="margin-bottom:8px;">Shadow Early Radar <span class="sub">RESEARCH / SHADOW · observable only · cannot create production TRADE/WATCH</span></h2>
-      {% if shadow_rows %}
+      <h2>⚡ Event-Driven Early Detection <span class="sub">no composite score · observable sequence only · SCOUT → PRESSURE SHIFT → READY → BREAK ACCEPTED → FOLLOW-THROUGH</span></h2>
+      <p class="sl-empty" style="margin-top:0;">
+        This panel no longer ranks names by a 0–100 movement score. It only advances a stock when a real market event occurs:
+        fresh participation, independent directional evidence, an exact 3-minute trigger, acceptance through that trigger, or follow-through.
+        Mature moves are removed rather than rewarded for having larger numbers.
+      </p>
+      {% set event_rows = (event_early_radar.get('rows') if event_early_radar else []) or [] %}
+      {% if event_rows %}
       <div class="sl-list">
-        {% for r in shadow_rows %}
-        <div class="sl-row" onclick="window.location='/chart/{{ r.symbol }}'">
-          <span class="sl-rank">{{ r.shadow_radar_rank }}</span>
-          <span class="sl-score" style="color:var(--amber);">{{ r.shadow_movement_score if r.shadow_movement_score is not none else '—' }}</span>
-          <span class="sl-sym"><a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a><span class="sl-close">{{ r.shadow_movement_stage }}</span></span>
-          <span class="sl-why"><span class="sl-oi">{{ r.shadow_movement_stage }}</span><span class="sl-detail">{% if r.compression_score is not none %}Coil {{ '%.0f'|format(r.compression_score) }} · {% endif %}{% if r.tod_rvol %}TOD RVOL {{ r.tod_rvol }}x · {% endif %}{% if r.oi_chg_60m_pct is not none %}OI 60m {{ '%+.1f'|format(r.oi_chg_60m_pct) }}%{% endif %}</span></span>
-          <span class="sl-tags"><span class="sl-tag">Research only</span>{% if r.entry_trigger %}<span class="sl-tag strong">{{ r.entry_trigger }}</span>{% endif %}</span>
+        {% for r in event_rows %}
+        {% set state = r.event_state or 'SCOUT' %}
+        <div class="sl-row {{ 'bull' if r.direction == 'Bullish' else ('bear' if r.direction == 'Bearish' else '') }}" onclick="window.location='/chart/{{ r.symbol }}'">
+          <span class="sl-rank">{{ loop.index }}</span>
+          <span class="sl-sym">
+            <a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a>
+            <span class="sl-close">{{ r.direction }}{% if r.setup %} · {{ r.setup.replace('_',' ') }}{% endif %}</span>
+          </span>
+          <span class="sl-score" style="color:{% if state in ['BREAK_ACCEPTED','FOLLOW_THROUGH'] %}var(--green){% elif state in ['FAILED','STALE','OPTION_BLOCKED'] %}var(--red){% else %}var(--amber){% endif %};">
+            {{ state.replace('_',' ') }}
+          </span>
+          <span class="sl-why">
+            <span class="sl-oi">{{ r.reason }}</span>
+            <span class="sl-detail">
+              {% if r.trigger is not none %}Trigger {{ '%.2f'|format(r.trigger) }}{% else %}Trigger forming{% endif %}
+              {% if r.invalidation is not none %} · Invalid {{ '%.2f'|format(r.invalidation) }}{% endif %}
+              {% if r.move_since_first_scout_atr is not none %} · Since scout {{ '%+.2f'|format(r.move_since_first_scout_atr) }} ATR{% endif %}
+              {% if r.first_scout_age_min is not none %} · {{ '%.0f'|format(r.first_scout_age_min) }}m observed{% endif %}
+            </span>
+          </span>
+          <span class="sl-tags">
+            {% if r.participation_shift %}<span class="sl-tag strong">Participation shift</span>{% endif %}
+            {% if r.oi_accelerating %}<span class="sl-tag">Fresh OI</span>{% endif %}
+            {% if r.relative_shift %}<span class="sl-tag">Relative acceleration</span>{% endif %}
+            {% if r.microstructure_shift %}<span class="sl-tag">Futures pressure</span>{% endif %}
+            {% if r.rvol_3m is not none %}<span class="sl-tag">3m RVOL {{ '%.2f'|format(r.rvol_3m) }}x</span>{% endif %}
+            {% if r.depth_support_fraction is not none %}<span class="sl-tag">Depth {{ '%.0f'|format(r.depth_support_fraction * 100) }}%</span>{% endif %}
+            {% if r.option_contract %}<span class="sl-tag strong">{{ r.option_contract }}{% if r.option_dte is not none %} · DTE {{ r.option_dte }}{% endif %}</span>{% endif %}
+          </span>
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <p class="sl-empty">No shadow Energy Building / Ignition setup is measurable on this scan.</p>
+      <p class="sl-empty"><strong>No event sequence is active right now.</strong> That is intentional: the engine will not invent a candidate from a score. It waits for a genuine pressure shift or a concrete 3-minute structural event.</p>
       {% endif %}
-    </div>
+      {% set ev = event_early_evidence or {} %}
+      {% set evstage = ev.get('by_stage', {}) %}
+      <div class="event-evidence">
+        <span class="sub"><strong>Live evidence recorder:</strong> {{ ev.get('events', 0) }} first-stage events captured. Synthetic audit evidence is not treated as proof; this recorder measures what actually happens 5m/15m/30m/60m after PRESSURE SHIFT, READY and BREAK ACCEPTED.</span>
+        {% if ev.get('events', 0) %}
+        <div class="sl-tags" style="margin-top:8px;">
+          {% for stage in ['PRESSURE_SHIFT','READY','BREAK_ACCEPTED'] %}
+            {% set s5 = evstage.get(stage, {}).get('5m', {}) %}
+            <span class="sl-tag">{{ stage.replace('_',' ') }} · 5m n={{ s5.get('n', 0) }}{% if s5.get('avg_return_pct') is not none %} · avg {{ '%+.2f'|format(s5.get('avg_return_pct')) }}%{% endif %}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div style="margin-top:6px;"><span class="sub">Legacy Energy Building / Ignition scores are retained only in research logs for comparison; they no longer drive this visible section.</span></div>
+      </div>
     </div>
   </div>
 
@@ -723,12 +818,12 @@
   </div>
   {% endif %}
 
-  <div class="card table-card">
+  <div class="card table-card" style="display:none" aria-hidden="true">
     <div class="table-card-head">
       <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Watchlist</h2>
       <span class="footer-note">Click a header to sort &middot; use the filter row to narrow &middot; click a row to open its chart</span>
     </div>
-    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar or validated production eligibility.</div>
+    <div class="footer-note" style="margin:8px 0 10px;"><strong>Diagnostics only:</strong> Legacy Align / Legacy Signal / Stock ADX Regime / Legacy Score do not drive the Live Opportunity Radar · EARLY ONSET or validated production eligibility.</div>
     <div class="table-scroll">
     <table id="main-table">
       <thead>
@@ -1279,6 +1374,63 @@
       .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   }
 
+  function renderV122BTactical(data) {
+    data = data || {};
+    var box = document.getElementById('v122b-list');
+    var status = document.getElementById('v122b-status');
+    if (status) status.textContent = (data.status || 'WAITING') + ' · INTERIM / NOT VALIDATED';
+    if (!box) return;
+    var rows = Array.isArray(data.candidates) ? data.candidates : [];
+    if (!rows.length) {
+      box.innerHTML = '<div class="v8-empty">No bounded 15m candidate is ready for 3m execution yet.</div>';
+      return;
+    }
+    function num(v, d, suffix) {
+      var n = Number(v); return Number.isFinite(n) ? n.toFixed(d) + (suffix || '') : '—';
+    }
+    function pctSigned(v, d) {
+      var n = Number(v); return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(d) + '%' : '—';
+    }
+    box.innerHTML = rows.map(function (row) {
+      row = row || {};
+      var state = String(row.state || 'FORMING').toUpperCase();
+      var cls = ['TRADEABLE','PROFIT_PROTECT'].indexOf(state) >= 0 ? 'exec' :
+        (['READY','TRIGGERED','FORMING'].indexOf(state) >= 0 ? 'setup' : 'watch');
+      var route = row.option_route || {};
+      var contract = route.contract || {};
+      var event = row.earnings || {};
+      var depth = row.depth || {};
+      var basis = row.basis || {};
+      var risk = row.one_lot_risk || {};
+      var friction = Number(contract.friction_to_expected_move);
+      var eventText = event.confidence === 'CONFIRMED' && event.days_to_result != null ?
+        ' · Result T' + (Number(event.days_to_result) >= 0 ? '-' + event.days_to_result : event.days_to_result) : '';
+      var optionText = contract.symbol ?
+        '<strong>' + v12Esc(contract.symbol) + '</strong> · DTE ' + v12Esc(contract.dte) +
+        ' · spread ' + num(contract.spread_pct, 2, '%') +
+        ' · friction/use ' + (Number.isFinite(friction) ? (friction * 100).toFixed(0) + '%' : '—') :
+        '<strong>OPTION WAIT</strong>';
+      var nextMonth = route.pre_result_next_month ? ' · PRE-RESULT → NEXT MONTH' : '';
+      return '<div class="v12-row ' + cls + '">' +
+        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' +
+        v12Esc(row.direction || '') + ' · ' + v12Esc(row.setup || '3m forming') + eventText + '</div>' +
+        '<div class="state ' + cls + '">' + v12Esc(state) + '</div>' +
+        '<div class="detail">Stock ' + num(row.live_price, 2, '') +
+        ' · trigger <strong>' + num(row.trigger, 2, '') + '</strong>' +
+        ' · invalidate <strong>' + num(row.invalidation, 2, '') + '</strong>' +
+        ' · 3m RVOL ' + num(row.rvol_3m, 2, 'x') +
+        ' (Δ ' + num(row.rvol_3m_accel, 2, 'x') + ')' +
+        ' · Rel/Nifty ' + pctSigned(row.relative_3m_vs_nifty_pct, 2) +
+        ' · depth support ' + num(Number(depth.support_fraction) * 100, 0, '%') +
+        ' · basis Δ60s ' + pctSigned(basis.basis_change_60s_pct_points, 4) +
+        '<br>' + optionText + nextMonth +
+        (risk.premium_outlay != null ? ' · 1-lot outlay ₹' + num(risk.premium_outlay, 0, '') + ' · est. invalidation risk ₹' + num(risk.estimated_loss_at_invalidation, 0, '') : '') +
+        '<br><strong>' + v12Esc(row.reason || '') + '</strong>' +
+        (row.trailing_invalidation != null ? ' · trail ' + num(row.trailing_invalidation, 2, '') : '') +
+        '</div></div>';
+    }).join('');
+  }
+
   function renderV12TradeConsole(consoleData) {
     consoleData = consoleData || {};
     function num(value, digits, suffix) {
@@ -1287,23 +1439,30 @@
     function rowCard(row) {
       row = row || {};
       var state = String(row.trade_state || 'OBSERVE').toUpperCase();
-      var cls = state === 'EXECUTABLE' ? 'exec' : (state === 'SETUP' ? 'setup' : 'watch');
-      var score = Number(row.horizon_score != null ? row.horizon_score : row.score);
-      var scoreText = Number.isFinite(score) ? Math.round(score) : '—';
+      var phase = String(row.phase || '').toUpperCase();
+      var cls = state === 'TRIGGERED' || state === 'EXECUTABLE' ? 'exec' : ((state === 'ARMED' || state === 'FORMING' || state === 'SETUP') ? 'setup' : 'watch');
       var trigger = num(row.trigger_reference, 2, '');
-      var fut = num(row.fut_spread_bps, 1, 'bp');
-      var opt = num(row.option_spread_pct, 1, '%');
+      var distance = Number(row.trigger_distance_atr);
+      var distanceText = Number.isFinite(distance) ? distance.toFixed(2) + ' ATR' : '—';
+      var spent = Number(row.spent_atr);
+      var spentText = Number.isFinite(spent) ? Math.abs(spent).toFixed(2) + ' ATR spent' : '—';
+      var oi15 = Number(row.oi_15m_chg_pct);
+      var oi15Text = Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—';
+      var rvol = Number(row.tod_rvol != null ? row.tod_rvol : row.vol_multiple);
+      var rvolText = Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—';
       return '<div class="v12-row ' + cls + '">' +
-        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + ' · score ' + scoreText + '</div>' +
+        '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' + v12Esc(row.direction || '') + (phase ? ' · ' + v12Esc(phase) : '') + '</div>' +
         '<div class="state ' + cls + '">' + v12Esc(state + ' · NOT VALIDATED') + '</div>' +
-        '<div class="detail">Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong> · Trigger/invalidation ref ' + trigger + ' · FUT spread ' + fut + ' · Option spread ' + opt + '<br>' + v12Esc(row.operational_reason || '') + '</div></div>';
+        '<div class="detail">Trigger <strong>' + trigger + '</strong> · distance ' + distanceText + ' · ' + spentText +
+        ' · OI15 ' + oi15Text + ' · RVOL ' + rvolText + ' · Route <strong>' + v12Esc(row.execution_route || 'WAIT') + '</strong><br>' +
+        v12Esc(row.operational_reason || '') + '</div></div>';
     }
     function fill(id, rows, empty) {
       var el = document.getElementById(id); if (!el) return;
       rows = Array.isArray(rows) ? rows : [];
       el.innerHTML = rows.length ? rows.map(rowCard).join('') : '<div class="v8-empty">' + v12Esc(empty) + '</div>';
     }
-    fill('v12-intraday-list', consoleData.intraday, 'No V12 intraday candidate currently clears OBSERVE quality.');
+    fill('v12-intraday-list', consoleData.intraday, 'No clean early-onset/trigger sequence is active right now.');
     var swing = consoleData.swing || {};
     fill('v12-swing-1d-list', swing['1D'], 'No 1D candidate currently.');
     fill('v12-swing-2d-list', swing['2D'], 'No 2D candidate currently.');
@@ -1336,6 +1495,38 @@
     text('v12-earnings-count', Array.isArray(earnings.upcoming_7d) ? earnings.upcoming_7d.length : 0);
     text('v12-term-coverage', pct(feasibility.term_structure_coverage_pct));
     text('v12-trial25-status', trial25Status || 'TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.');
+  }
+
+  function renderTrial25Shadow(shadow) {
+    shadow = shadow || {};
+    function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
+    var target = Number(shadow.target || 40);
+    text('trial25-status', shadow.status || 'PREREGISTERED_WAITING_EVENTS');
+    text('trial25-completed', String(shadow.completed || 0) + '/' + target);
+    text('trial25-frozen-universe', shadow.frozen_cohort_size == null ? 195 : shadow.frozen_cohort_size);
+    text('trial25-current-overlap', shadow.cohort_a_live == null ? (shadow.current_fno_overlap || 0) : shadow.cohort_a_live);
+    text('trial25-new-fno', shadow.new_fno_onboarding || 0);
+    text('trial25-fno-missing', shadow.cohort_a_missing_contracts || 0);
+    text('trial25-events-total', shadow.events_total || 0);
+    text('trial25-entries', shadow.entry_captured || 0);
+    var stale = shadow.stale_audit || {};
+    text('trial25-stale-old-trade', stale.live_book_old_trade_legs || 0);
+    text('trial25-calibration', shadow.calibration_status || 'WAITING_FOR_40');
+    text('trial25-stage-c-n', shadow.stage_c_required_n == null ? 'LOCKED' : shadow.stage_c_required_n);
+    var queueBox = document.getElementById('trial25-event-queue');
+    var queue = Array.isArray(shadow.event_queue) ? shadow.event_queue.slice(0, 8) : [];
+    if (queueBox) {
+      function esc(value) {
+        return String(value == null ? '—' : value)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      }
+      queueBox.innerHTML = queue.length ? queue.map(function (event) {
+        return '<div class="v8-empty"><strong>' + esc(event.symbol) + '</strong> · meeting ' +
+          esc(event.meeting_date) + ' · entry ' + esc(event.entry_date) + ' · exit ' +
+          esc(event.exit_date) + ' · ' + esc(event.status) + '</div>';
+      }).join('') : '<div class="v8-empty">Waiting for the first point-in-time eligible earnings event…</div>';
+    }
   }
 
   function renderV121IndexVol(indexVol, backup, development) {
@@ -1401,8 +1592,10 @@
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
       renderOpportunityForward(state.opportunity_forward);
+      renderV122BTactical(state.v122b_tactical);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
+      renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
@@ -1457,29 +1650,43 @@
       return Number.isFinite(n) ? (n >= 0 ? '+' : '') + n.toFixed(digits == null ? 1 : digits) + '%' : '—';
     }
     function card(row, rank, side) {
-      var status = row.status || 'EARLY';
-      var statusClass = status === 'HIGH ATTENTION' ? 'high' : (status === 'BUILDING' ? 'building' : 'early');
-      var chase = row.chase_guard === 'EXTENDED' ? ' · EXTENDED' : '';
-      var reasons = (row.reasons || []).slice(0, 6).map(function (reason) {
-        var warn = String(reason).indexOf('do not chase') >= 0 ? ' warn' : '';
-        return '<span class="lor-reason' + warn + '">' + v8Esc(reason) + '</span>';
+      var early = String(row.early_state || row.action_stage || 'FORMING').toUpperCase();
+      var tactical = String(row.tactical_state || '').toUpperCase();
+      var headline = tactical === 'TRADEABLE' ? 'TRADEABLE' :
+        (tactical === 'TRIGGERED' ? '3M TRIGGER' :
+        (tactical === 'READY' ? '3M READY' : early));
+      var statusClass = ['TRADEABLE','3M TRIGGER'].indexOf(headline) >= 0 ? 'high' :
+        (['3M READY','READY','FORMING','FRESH_BREAK'].indexOf(headline) >= 0 ? 'building' : 'early');
+      var reasons = (row.reasons || []).slice(0, 5).map(function (reason) {
+        return '<span class="lor-reason">' + v8Esc(reason) + '</span>';
       }).join('');
-      var rvol = row.tod_rvol != null ? Number(row.tod_rvol) : Number(row.vol_multiple);
+      var oi15 = Number(row.oi_15m_chg_pct);
+      var dist = Number(row.trigger_distance_atr);
+      var scoutMove = Number(row.move_since_first_scout_atr);
+      var rvol3 = Number(row.tactical_rvol_3m);
+      var depth = Number(row.tactical_depth_support);
+      var trig = Number(row.tactical_trigger != null ? row.tactical_trigger : row.trigger_level);
+      var invalid = Number(row.tactical_invalidation);
+      var setup = row.tactical_setup ? (' · ' + v8Esc(row.tactical_setup)) : '';
+      var option = row.tactical_option_contract ? (' · ' + v8Esc(row.tactical_option_contract)) : '';
       return '<article class="lor-card ' + side + '">' +
         '<div class="lor-rank">#' + rank + '</div>' +
-        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + chase + '</small></div>' +
-        '<div class="lor-score"><strong>' + v8Num(row.score, 0) + '</strong><span class="' + statusClass + '">' + v8Esc(status) + '</span></div>' +
+        '<div class="lor-symbol"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v8Esc(row.symbol || '—') + '</a><small>' +
+          v8Esc(row.maturity || early) + ' · ' + v8Esc(row.oi_structure || row.direction || 'Directional evidence') + setup + option + '</small></div>' +
+        '<div class="lor-score"><strong style="font-size:10px;line-height:1.15;">' + v8Esc(headline) + '</strong><span class="' + statusClass + '">' + v8Esc(early) + '</span></div>' +
         '<div class="lor-evidence"><div class="lor-metrics">' +
-          '<span>Price ' + signed(row.price_chg_pct, 2) + '</span>' +
-          '<span>Day OI ' + signed(row.oi_day_chg_pct, 1) + '</span>' +
-          '<span>OI30 ' + signed(row.oi_30m_chg_pct, 1) + '</span>' +
-          '<span>RVOL ' + (Number.isFinite(rvol) ? rvol.toFixed(2) + 'x' : '—') + '</span>' +
-          '<span>Rel ' + v8Num(row.relative, 0) + '</span>' +
+          '<span>OI15 ' + (Number.isFinite(oi15) ? (oi15 >= 0 ? '+' : '') + oi15.toFixed(2) + '%' : '—') + '</span>' +
+          '<span>To trigger ' + (Number.isFinite(dist) ? dist.toFixed(2) + ' ATR' : '3m scout') + '</span>' +
+          '<span>Since scout ' + (Number.isFinite(scoutMove) ? scoutMove.toFixed(2) + ' ATR' : '—') + '</span>' +
+          '<span>3m RVOL ' + (Number.isFinite(rvol3) ? rvol3.toFixed(2) + 'x' : '—') + '</span>' +
+          '<span>Depth ' + (Number.isFinite(depth) ? Math.round(depth * 100) + '%' : '—') + '</span>' +
+          '<span>Trigger ' + (Number.isFinite(trig) ? trig.toFixed(2) : '—') + '</span>' +
+          '<span>Invalid ' + (Number.isFinite(invalid) ? invalid.toFixed(2) : '—') + '</span>' +
         '</div><div class="lor-reasons">' + reasons + '</div></div>' +
       '</article>';
     }
-    if (bullBox) bullBox.innerHTML = bulls.length ? bulls.map(function (r,i) { return card(r, i+1, 'bull'); }).join('') : '<div class="v8-empty">No bullish attention name clears the live research floor right now.</div>';
-    if (bearBox) bearBox.innerHTML = bears.length ? bears.map(function (r,i) { return card(r, i+1, 'bear'); }).join('') : '<div class="v8-empty">No bearish attention name clears the live research floor right now.</div>';
+    if (bullBox) bullBox.innerHTML = bulls.length ? bulls.map(function (r,i) { return card(r, i+1, 'bull'); }).join('') : '<div class="v8-empty">No bullish stock is still early enough right now. Mature moves are intentionally hidden.</div>';
+    if (bearBox) bearBox.innerHTML = bears.length ? bears.map(function (r,i) { return card(r, i+1, 'bear'); }).join('') : '<div class="v8-empty">No bearish stock is still early enough right now. Mature moves are intentionally hidden.</div>';
   }
 
   function renderV82Option(row) {

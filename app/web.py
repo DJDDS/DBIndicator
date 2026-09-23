@@ -5,11 +5,11 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
-from . import alerts, backtest, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development
+from . import alerts, backtest, chart_patterns, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
-from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console
+from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar, event_driven_early_radar
 
 log = logging.getLogger(__name__)
 
@@ -98,9 +98,16 @@ def dashboard():
         all_results, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
-    opportunity_radar = live_opportunity_radar(
+    base_opportunity_radar = state.get("opportunity_radar") or live_opportunity_radar(
         all_results, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+    )
+    opportunity_radar = overlay_tactical_radar(
+        base_opportunity_radar, state.get("v122b_tactical") or {}
+    )
+    event_early_radar = state.get("event_early_radar") or event_driven_early_radar(
+        state.get("opportunity_radar") or base_opportunity_radar,
+        state.get("v122b_tactical") or {},
     )
     forward_validation = opportunity_forward.summarize(state.get("opportunity_forward"))
     research_state = backtest.get_early_research_state()
@@ -122,11 +129,15 @@ def dashboard():
         scan_failures=scan_failures,
         market_state=market_state,
         opportunity_radar=opportunity_radar,
+        event_early_radar=event_early_radar,
+        event_early_evidence=state.get("v122d_forward_summary") or {},
         forward_validation=forward_validation,
         v12_trade_console=state.get("v12_trade_console") or {},
+        v122b_tactical=state.get("v122b_tactical") or {},
         v12_option_recorder=v12_recorder,
         v12_feasibility=state.get("v12_feasibility") or {},
         v12_earnings=state.get("v12_earnings") or {},
+        trial25_shadow=state.get("trial25_shadow") or {},
         v12_trial25_status=state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
         v121_index_vol=v121_health,
         v121_backup=v121_backup_state,
@@ -223,19 +234,34 @@ def api_dashboard_state():
             rows, index_direction=state.get("index_direction"),
             index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
         ),
-        "opportunity_radar": live_opportunity_radar(
-            rows, index_direction=state.get("index_direction"),
-            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+        "opportunity_radar": overlay_tactical_radar(
+            state.get("opportunity_radar") or live_opportunity_radar(
+                rows, index_direction=state.get("index_direction"),
+                index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+            ),
+            state.get("v122b_tactical") or {},
         ),
-        "swing_research": swing_research_console(live_opportunity_radar(
-            rows, index_direction=state.get("index_direction"),
-            index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
-        )),
+        "event_early_radar": state.get("event_early_radar") or event_driven_early_radar(
+            state.get("opportunity_radar") or live_opportunity_radar(
+                rows, index_direction=state.get("index_direction"),
+                index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+            ),
+            state.get("v122b_tactical") or {},
+        ),
+        "event_early_evidence": state.get("v122d_forward_summary") or {},
+        "swing_research": swing_research_console(
+            state.get("opportunity_radar") or live_opportunity_radar(
+                rows, index_direction=state.get("index_direction"),
+                index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
+            )
+        ),
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
         "v12_trade_console": state.get("v12_trade_console") or {},
+        "v122b_tactical": state.get("v122b_tactical") or {},
         "v12_option_recorder": v12_recorder,
         "v12_feasibility": state.get("v12_feasibility") or {},
         "v12_earnings": state.get("v12_earnings") or {},
+        "trial25_shadow": state.get("trial25_shadow") or {},
         "v12_trial25_status": state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
         "v121_index_vol": v121_health,
         "v121_backup": v121_backup_state,
@@ -260,11 +286,18 @@ def api_v8_dashboard():
         rows, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
-    payload["opportunity_radar"] = live_opportunity_radar(
+    base_radar = state.get("opportunity_radar") or live_opportunity_radar(
         rows, index_direction=state.get("index_direction"),
         index_chg_pct=state.get("index_chg_pct"), market_breadth=state.get("breadth"),
     )
-    payload["swing_research"] = swing_research_console(payload["opportunity_radar"])
+    payload["opportunity_radar"] = overlay_tactical_radar(
+        base_radar, state.get("v122b_tactical") or {}
+    )
+    payload["event_early_radar"] = state.get("event_early_radar") or event_driven_early_radar(
+        base_radar, state.get("v122b_tactical") or {}
+    )
+    payload["event_early_evidence"] = state.get("v122d_forward_summary") or {}
+    payload["swing_research"] = swing_research_console(base_radar)
     payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
     payload["option_forward"] = derivative_intelligence.get_shadow_stats()
@@ -308,6 +341,18 @@ def api_v12_recorder_health():
         now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
     )
     return jsonify(health)
+
+
+@app.route("/api/v122b-tactical-state/export")
+@require_dashboard_password
+def api_v122b_tactical_state_export():
+    return _v12_export(config.V122B_TACTICAL_STATE_FILE, "v122b_tactical_state.json", "application/json")
+
+
+@app.route("/api/v122b-tactical-events/export")
+@require_dashboard_password
+def api_v122b_tactical_events_export():
+    return _v12_export(config.V122B_TACTICAL_EVENT_FILE, "v122b_tactical_events.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v12-option-state/export")
@@ -889,5 +934,54 @@ def api_early_research_status():
     return jsonify(backtest.get_early_research_state())
 
 
+# ---------------------------------------------------------------------------
+# Chart Pattern Scanner (timeframe-matched classical patterns)
+# ---------------------------------------------------------------------------
+@app.route("/patterns")
+@require_dashboard_password
+def patterns_page():
+    return render_template("patterns.html", logged_in=kite_auth.is_logged_in_today())
+
+
+@app.route("/api/patterns")
+@require_dashboard_password
+def api_patterns():
+    payload = chart_patterns.load_results()
+    return jsonify({
+        "results": chart_patterns.public_rows(payload),
+        "scanned_at": payload.get("scanned_at"),
+        "symbols": payload.get("symbols", 0),
+        "errors": payload.get("errors", 0),
+        "duration_s": payload.get("duration_s"),
+        "trigger": payload.get("trigger"),
+        "progress": chart_patterns.get_progress(),
+        "matrix": chart_patterns.matrix_for_ui(),
+        "timeframes": [{"key": tf, "label": chart_patterns.TF_LABEL[tf]} for tf in chart_patterns.TIMEFRAMES],
+        "auto_slots": [f"{h:02d}:{m:02d}" for h, m in chart_patterns.AUTO_SLOTS],
+        "logged_in": kite_auth.is_logged_in_today(),
+    })
+
+
+@app.route("/api/patterns/detail")
+@require_dashboard_password
+def api_pattern_detail():
+    pid = request.args.get("id", "")
+    for row in chart_patterns.load_results().get("results", []):
+        if row.get("id") == pid:
+            return jsonify(row)
+    return jsonify({"error": "pattern not found - rescan may have replaced it"}), 404
+
+
+@app.route("/api/patterns/scan", methods=["POST"])
+@require_dashboard_password
+def api_pattern_scan():
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"ok": False, "error": "Not logged in to Kite today."}), 400
+    started = chart_patterns.start_scan_async(kite, trigger="manual")
+    return jsonify({"ok": True, "started": started, "progress": chart_patterns.get_progress()})
+
+
 def create_app():
+    chart_patterns.start_scheduler_once()
     return app

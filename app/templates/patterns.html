@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chart Pattern Scanner</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0b0e14; --card: #12151f; --card2: #171b28; --border: #232838; --text: #e6e9ef; --muted: #8b93a7;
+    --green: #2ecc71; --red: #ef4444; --accent: #3b82f6; --amber: #f5a524; --violet: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  a { color: inherit; }
+  header { background: #10131c; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; position: sticky; top: 0; z-index: 20; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .01em; }
+  header p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); }
+  header nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  header nav a { text-decoration: none; font-size: 13px; background: rgba(255,255,255,0.06); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border); }
+  header nav a.active { border-color: var(--accent); color: #fff; background: rgba(59,130,246,.15); }
+  @media (max-width: 700px) { header { position: static; } .panel { position: static; } }
+  .wrap { max-width: 1600px; margin: 18px auto; padding: 0 16px 48px; }
+
+  .statusbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; font-size: 13px; }
+  .statusbar .meta { color: var(--muted); }
+  .statusbar .meta b { color: var(--text); font-weight: 600; }
+  .spacer { flex: 1; }
+  .btn { background: var(--accent); color: #fff; border: 0; padding: 9px 16px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 600; }
+  .progress { width: 220px; height: 8px; background: var(--card2); border-radius: 99px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--violet)); transition: width .4s; }
+  .warn { color: var(--amber); font-weight: 600; }
+
+  .tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 560px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; cursor: pointer; transition: border-color .15s; }
+  .tile:hover, .tile.on { border-color: var(--accent); }
+  .tile-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+  .tile-value { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .green { color: var(--green); } .red { color: var(--red); } .amber { color: var(--amber); } .muted { color: var(--muted); } .violet { color: var(--violet); }
+
+  details.guide { background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; }
+  details.guide summary { cursor: pointer; padding: 12px 16px; font-weight: 700; font-size: 13.5px; list-style: none; display: flex; justify-content: space-between; }
+  details.guide summary::after { content: '▾'; color: var(--muted); }
+  details.guide[open] summary::after { content: '▴'; }
+  .guide-body { padding: 0 16px 14px; overflow-x: auto; }
+  .guide-body p { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+  .matrix { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 720px; }
+  .matrix th, .matrix td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center; }
+  .matrix th:first-child, .matrix td:first-child, .matrix td:last-child { text-align: left; }
+  .matrix th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .matrix td:last-child { color: var(--muted); max-width: 420px; white-space: normal; }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; }
+  .dot.primary { background: var(--green); box-shadow: 0 0 0 3px rgba(46,204,113,.18); }
+  .dot.ok { border: 2px solid var(--amber); }
+  .dot.none { background: var(--border); width: 6px; height: 6px; }
+  .kind { font-size: 10.5px; padding: 2px 7px; border-radius: 99px; background: var(--card2); color: var(--muted); margin-left: 6px; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .toolbar input, .toolbar select { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 11px; border-radius: 8px; font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: var(--card); color: var(--muted); border: 0; padding: 8px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; border-right: 1px solid var(--border); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: rgba(59,130,246,.18); color: #fff; }
+  .count { color: var(--muted); font-size: 12.5px; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 470px; gap: 14px; align-items: start; }
+  @media (max-width: 1250px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .table-scroll { overflow-x: auto; max-height: calc(100vh - 160px); overflow-y: auto; }
+  table.res { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.res th { position: sticky; top: 0; z-index: 3; text-align: left; background: var(--card2); color: var(--muted); padding: 10px 11px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; cursor: pointer; user-select: none; }
+  table.res th:hover { color: var(--text); }
+  table.res th.sorted::after { content: attr(data-dir); margin-left: 4px; color: var(--accent); }
+  table.res td { padding: 9px 11px; border-bottom: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  table.res td.num { text-align: right; }
+  table.res tr { cursor: pointer; }
+  table.res tr:hover td { background: rgba(255,255,255,.03); }
+  table.res tr.sel td { background: rgba(59,130,246,.10); }
+  .sym { font-weight: 700; }
+  .pat { font-weight: 600; }
+  .chip { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+  .chip.BREAKOUT { background: rgba(46,204,113,.14); color: var(--green); }
+  .chip.FORMING { background: rgba(245,165,36,.14); color: var(--amber); }
+  .chip.EXTENDED { background: rgba(167,139,250,.14); color: var(--violet); }
+  .chip.BULL { background: rgba(46,204,113,.12); color: var(--green); }
+  .chip.BEAR { background: rgba(239,68,68,.12); color: var(--red); }
+  .chip.tf { background: var(--card2); color: var(--text); }
+  .chip.tf.primary { box-shadow: inset 0 0 0 1px rgba(46,204,113,.5); }
+  .score { display: flex; align-items: center; gap: 8px; }
+  .score .bar { width: 54px; height: 6px; background: var(--card2); border-radius: 99px; overflow: hidden; }
+  .score .bar i { display: block; height: 100%; }
+  .grade { font-weight: 800; width: 16px; }
+  .gA { color: var(--green); } .gB { color: var(--amber); } .gC { color: var(--muted); }
+  .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+
+  .panel { position: sticky; top: 74px; }
+  .panel-head { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .panel-head h2 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .panel-head .sub { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  #mini { height: 300px; }
+  .levels { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .levels div { padding: 10px 12px; border-right: 1px solid var(--border); }
+  .levels div:last-child { border-right: 0; }
+  .levels span { display: block; font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+  .levels b { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .checks { list-style: none; margin: 0; padding: 10px 16px 6px; font-size: 12.5px; }
+  .checks li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+  .checks li:last-child { border-bottom: 0; }
+  .checks .k { color: var(--muted); }
+  .ok-y::before { content: '● '; color: var(--green); } .ok-n::before { content: '● '; color: var(--red); } .ok-m::before { content: '● '; color: var(--amber); }
+  .breakdown { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; padding: 8px 16px 14px; }
+  .breakdown div { background: var(--card2); border-radius: 6px; padding: 6px; text-align: center; font-size: 11px; color: var(--muted); }
+  .breakdown b { display: block; color: var(--text); font-size: 13px; }
+  .panel-foot { padding: 10px 16px 14px; display: flex; gap: 8px; }
+  .panel-foot a { font-size: 12.5px; text-decoration: none; border: 1px solid var(--border); padding: 7px 12px; border-radius: 6px; }
+  .panel-empty { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+  .note { font-size: 11.5px; color: var(--muted); padding: 0 16px 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Chart Pattern Scanner</h1>
+    <p>Each pattern searched only on the timeframes where it's most reliable · F&amp;O stocks + NIFTY / BANKNIFTY / FINNIFTY</p>
+  </div>
+  <nav><a href="/">Dashboard</a><a class="active" href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+</header>
+
+<div class="wrap">
+  <div class="statusbar">
+    <span class="meta">Last scan: <b id="scanned-at">—</b></span>
+    <span class="meta">Universe: <b id="universe">—</b></span>
+    <span class="meta">Took: <b id="duration">—</b></span>
+    <span class="meta">Auto-scan: <b id="slots">—</b> IST (weekdays)</span>
+    <span class="spacer"></span>
+    <span id="prog-wrap" hidden><span class="meta" id="prog-text"></span> <span class="progress"><i id="prog-bar"></i></span></span>
+    {% if not logged_in %}<span class="warn">Kite not logged in today - log in from the Dashboard to scan</span>{% endif %}
+    <button class="btn" id="scan-btn" {% if not logged_in %}disabled{% endif %}>Run scan now</button>
+  </div>
+
+  <div class="tiles">
+    <div class="tile" data-quick="status:BREAKOUT"><div class="tile-label">Fresh breakouts</div><div class="tile-value green" id="t-brk">0</div><div class="tile-sub">closed through trigger ≤ 3 bars</div></div>
+    <div class="tile" data-quick="status:FORMING"><div class="tile-label">Forming</div><div class="tile-value amber" id="t-frm">0</div><div class="tile-sub">within 1 ATR of trigger</div></div>
+    <div class="tile" data-quick="dir:BULL"><div class="tile-label">Bullish</div><div class="tile-value green" id="t-bull">0</div><div class="tile-sub">long setups</div></div>
+    <div class="tile" data-quick="dir:BEAR"><div class="tile-label">Bearish</div><div class="tile-value red" id="t-bear">0</div><div class="tile-sub">short setups</div></div>
+    <div class="tile" data-quick="grade:A"><div class="tile-label">A-grade</div><div class="tile-value" id="t-a">0</div><div class="tile-sub">score ≥ 75</div></div>
+    <div class="tile" data-quick="status:EXTENDED"><div class="tile-label">Extended</div><div class="tile-value violet" id="t-ext">0</div><div class="tile-sub">&gt; 1.5 ATR past trigger - don't chase</div></div>
+  </div>
+
+  <details class="guide">
+    <summary>Timeframe guide - which pattern is scanned where</summary>
+    <div class="guide-body">
+      <p>Reliability rises with the time a pattern takes to form. Reversal patterns need weekly/daily; continuation patterns (flags, triangles) stay valid lower. <span class="dot primary"></span> most effective &nbsp; <span class="dot ok"></span> valid, weaker (scored lower) &nbsp; <span class="dot none"></span> not scanned.</p>
+      <table class="matrix" id="matrix"></table>
+    </div>
+  </details>
+
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Search symbol…">
+    <div class="seg" id="tf-seg"></div>
+    <select id="f-dir"><option value="">All directions</option><option value="BULL">Bullish</option><option value="BEAR">Bearish</option></select>
+    <select id="f-status"><option value="">All statuses</option><option value="BREAKOUT">Breakout</option><option value="FORMING">Forming</option><option value="EXTENDED">Extended</option></select>
+    <select id="f-family"><option value="">All patterns</option></select>
+    <select id="f-grade"><option value="">Any grade</option><option value="A">A only</option><option value="B">B or better</option></select>
+    <label class="count"><input type="checkbox" id="f-primary"> Primary timeframes only</label>
+    <span class="spacer"></span>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="layout">
+    <div class="card">
+      <div class="table-scroll">
+        <table class="res">
+          <thead><tr>
+            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th><th data-k="tf_order">TF</th>
+            <th data-k="direction">Dir</th><th data-k="status">Status</th><th data-k="score">Score</th>
+            <th data-k="ltp" class="num">LTP</th><th data-k="trigger" class="num">Trigger</th><th data-k="dist_atr" class="num">Dist (ATR)</th>
+            <th data-k="stop" class="num">Stop</th><th data-k="target" class="num">Target</th><th data-k="rr" class="num">R:R</th>
+            <th data-k="vol_ratio" class="num">Vol×</th><th data-k="htf_trend">HTF trend</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden></div>
+      </div>
+    </div>
+
+    <div class="card panel" id="panel">
+      <div class="panel-empty" id="panel-empty">Select a row to see the pattern drawn on its chart.</div>
+      <div id="panel-body" hidden>
+        <div class="panel-head">
+          <h2><span id="p-sym"></span> <span class="chip" id="p-dir"></span> <span class="chip" id="p-status"></span></h2>
+          <div class="sub" id="p-sub"></div>
+        </div>
+        <div id="mini"></div>
+        <div class="levels">
+          <div><span>Trigger</span><b id="p-trig"></b></div>
+          <div><span>Stop</span><b class="red" id="p-stop"></b></div>
+          <div><span>Target</span><b class="green" id="p-tgt"></b></div>
+          <div><span>R:R</span><b id="p-rr"></b></div>
+        </div>
+        <ul class="checks" id="p-checks"></ul>
+        <div class="breakdown" id="p-breakdown"></div>
+        <div class="note">Target = measured move (pattern height projected from the trigger). Stop = pattern invalidation level. For spotting only - verify on the full chart before trading.</div>
+        <div class="panel-foot"><a id="p-chart" href="#">Open full chart →</a></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TF_ORDER = { week: 0, day: 1, '4hour': 2, '60minute': 3 };
+const state = { rows: [], tf: '', sortKey: 'score', sortDir: -1, sel: null, matrix: [], polling: null };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+async function load() {
+  const r = await fetch('/api/patterns');
+  if (!r.ok) return;
+  const d = await r.json();
+  state.rows = (d.results || []).map((x) => ({ ...x, tf_order: TF_ORDER[x.timeframe] }));
+  state.matrix = d.matrix || [];
+  $('scanned-at').textContent = d.scanned_at ? d.scanned_at.replace('T', ' ') + (d.trigger ? ' (' + d.trigger + ')' : '') : 'never - run a scan';
+  $('universe').textContent = d.symbols ? d.symbols + ' symbols' + (d.errors ? ' · ' + d.errors + ' errors' : '') : '—';
+  $('duration').textContent = d.duration_s ? Math.round(d.duration_s) + 's' : '—';
+  $('slots').textContent = (d.auto_slots || []).join(', ');
+  renderMatrix(d.timeframes || []);
+  renderTfSeg(d.timeframes || []);
+  renderFamilies();
+  renderProgress(d.progress || {});
+  render();
+}
+
+function renderMatrix(tfs) {
+  const head = '<tr><th>Pattern</th>' + tfs.map((t) => '<th>' + esc(t.label) + '</th>').join('') + '<th>Why</th></tr>';
+  const body = state.matrix.map((m) => '<tr><td><b>' + esc(m.label) + '</b><span class="kind">' + esc(m.kind) + '</span></td>' +
+    tfs.map((t) => '<td><span class="dot ' + (m.levels[t.key] || 'none') + '"></span></td>').join('') +
+    '<td>' + esc(m.note) + '</td></tr>').join('');
+  $('matrix').innerHTML = head + body;
+}
+
+function renderTfSeg(tfs) {
+  const opts = [{ key: '', label: 'All TF' }, ...tfs];
+  $('tf-seg').innerHTML = opts.map((t) => '<button data-tf="' + t.key + '" class="' + (state.tf === t.key ? 'on' : '') + '">' + esc(t.label) + '</button>').join('');
+  $('tf-seg').querySelectorAll('button').forEach((b) => b.onclick = () => { state.tf = b.dataset.tf; renderTfSeg(tfs); render(); });
+}
+
+function renderFamilies() {
+  const sel = $('f-family'); const cur = sel.value;
+  sel.innerHTML = '<option value="">All patterns</option>' + state.matrix.map((m) => '<option value="' + m.family + '">' + esc(m.label) + '</option>').join('');
+  sel.value = cur;
+}
+
+function filtered() {
+  const q = $('q').value.trim().toUpperCase();
+  const dir = $('f-dir').value, st = $('f-status').value, fam = $('f-family').value, g = $('f-grade').value, prim = $('f-primary').checked;
+  return state.rows.filter((r) => (!q || r.symbol.includes(q)) && (!state.tf || r.timeframe === state.tf) &&
+    (!dir || r.direction === dir) && (!st || r.status === st) && (!fam || r.family === fam) &&
+    (!g || (g === 'A' ? r.grade === 'A' : r.grade !== 'C')) && (!prim || r.matrix_level === 'primary'));
+}
+
+function render() {
+  const all = state.rows;
+  $('t-brk').textContent = all.filter((r) => r.status === 'BREAKOUT').length;
+  $('t-frm').textContent = all.filter((r) => r.status === 'FORMING').length;
+  $('t-bull').textContent = all.filter((r) => r.direction === 'BULL').length;
+  $('t-bear').textContent = all.filter((r) => r.direction === 'BEAR').length;
+  $('t-a').textContent = all.filter((r) => r.grade === 'A').length;
+  $('t-ext').textContent = all.filter((r) => r.status === 'EXTENDED').length;
+
+  const rows = filtered().sort((a, b) => {
+    const x = a[state.sortKey], y = b[state.sortKey];
+    if (x === y) return b.score - a.score;
+    if (x === null || x === undefined) return 1;
+    if (y === null || y === undefined) return -1;
+    return (x > y ? 1 : -1) * state.sortDir;
+  });
+  $('count').textContent = rows.length + ' of ' + all.length + ' setups';
+  document.querySelectorAll('table.res th').forEach((th) => {
+    th.classList.toggle('sorted', th.dataset.k === state.sortKey);
+    th.dataset.dir = state.sortDir > 0 ? '▲' : '▼';
+  });
+  $('empty').hidden = rows.length > 0;
+  $('empty').textContent = all.length ? 'No setups match these filters.' : 'No patterns yet - run a scan (takes ~3-5 minutes for the full F&O universe).';
+  $('rows').innerHTML = rows.map((r) => {
+    const col = r.score >= 75 ? 'var(--green)' : r.score >= 60 ? 'var(--amber)' : 'var(--muted)';
+    const trendCls = r.htf_aligned ? 'green' : (r.htf_trend === 'NEUTRAL' ? 'muted' : 'red');
+    const vol = r.vol_ratio === null ? '—' : fmt(r.vol_ratio, 2) + '×';
+    return '<tr data-id="' + esc(r.id) + '" class="' + (state.sel === r.id ? 'sel' : '') + '">' +
+      '<td class="sym">' + esc(r.symbol) + '</td>' +
+      '<td class="pat">' + esc(r.pattern) + '</td>' +
+      '<td><span class="chip tf ' + r.matrix_level + '" title="' + (r.matrix_level === 'primary' ? 'Most effective timeframe for this pattern' : 'Valid but weaker timeframe') + '">' + esc(r.tf_label) + '</span></td>' +
+      '<td><span class="chip ' + r.direction + '">' + (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
+      '<td><span class="chip ' + r.status + '">' + r.status + '</span></td>' +
+      '<td><div class="score"><span class="grade g' + r.grade + '">' + r.grade + '</span><span class="bar"><i style="width:' + r.score + '%;background:' + col + '"></i></span>' + r.score + '</div></td>' +
+      '<td class="num">' + fmt(r.ltp) + '</td><td class="num">' + fmt(r.trigger) + '</td>' +
+      '<td class="num">' + (r.dist_atr > 0 ? fmt(r.dist_atr, 2) + ' away' : fmt(-r.dist_atr, 2) + ' past') + '</td>' +
+      '<td class="num red">' + fmt(r.stop) + '</td><td class="num green">' + fmt(r.target) + '</td>' +
+      '<td class="num">' + fmt(r.rr, 1) + '</td><td class="num">' + vol + '</td>' +
+      '<td class="' + trendCls + '">' + esc(r.htf_trend) + '</td></tr>';
+  }).join('');
+  $('rows').querySelectorAll('tr').forEach((tr) => tr.onclick = () => select(tr.dataset.id));
+}
+
+let chart = null;
+async function select(id) {
+  state.sel = id; render();
+  const r = await fetch('/api/patterns/detail?id=' + encodeURIComponent(id));
+  if (!r.ok) return;
+  const d = await r.json();
+  $('panel-empty').hidden = true; $('panel-body').hidden = false;
+  $('p-sym').textContent = d.symbol + ' · ' + d.pattern;
+  $('p-dir').className = 'chip ' + d.direction; $('p-dir').textContent = d.direction === 'BULL' ? '▲ Bull' : '▼ Bear';
+  $('p-status').className = 'chip ' + d.status; $('p-status').textContent = d.status;
+  $('p-sub').textContent = d.tf_label + ' · ' + d.kind + ' · ' + d.bars + ' bars in pattern · score ' + d.score + ' (' + d.grade + ')';
+  $('p-trig').textContent = fmt(d.trigger); $('p-stop').textContent = fmt(d.stop); $('p-tgt').textContent = fmt(d.target); $('p-rr').textContent = fmt(d.rr, 1);
+  const volCls = d.vol_ratio === null ? 'ok-m' : (d.status === 'FORMING' ? (d.vol_ratio <= 1 ? 'ok-y' : 'ok-m') : (d.vol_ratio >= 1.5 ? 'ok-y' : d.vol_ratio >= 1.2 ? 'ok-m' : 'ok-n'));
+  const checks = [
+    ['Timeframe fit', d.matrix_level === 'primary' ? 'ok-y' : 'ok-m', d.tf_label + (d.matrix_level === 'primary' ? ' - most effective' : ' - valid, weaker')],
+    ['Volume', volCls, (d.vol_ratio === null ? 'n/a (index)' : fmt(d.vol_ratio, 2) + '× avg') + ' · ' + d.vol_note],
+    ['Higher-TF trend', d.htf_aligned ? 'ok-y' : (d.htf_trend === 'NEUTRAL' ? 'ok-m' : 'ok-n'), d.htf_trend + (d.htf_aligned ? ' - aligned' : '')],
+    ['Geometry fit', d.fit >= 0.65 ? 'ok-y' : d.fit >= 0.4 ? 'ok-m' : 'ok-n', Math.round(d.fit * 100) + '%'],
+    ['Distance to trigger', d.status === 'EXTENDED' ? 'ok-n' : 'ok-y', (d.dist_atr > 0 ? fmt(d.dist_atr) + ' ATR to go' : fmt(-d.dist_atr) + ' ATR past') + ' (ATR ' + fmt(d.atr) + ')'],
+  ];
+  $('p-checks').innerHTML = checks.map((c) => '<li><span class="k">' + c[0] + '</span><span class="' + c[1] + '">' + esc(c[2]) + '</span></li>').join('');
+  const b = d.breakdown || {};
+  $('p-breakdown').innerHTML = [['TF', b.timeframe, 30], ['Fit', b.fit, 25], ['Vol', b.volume, 15], ['Trend', b.trend, 15], ['R:R', b.rr, 10], ['Len', b.length, 5]]
+    .map((x) => '<div>' + x[0] + '<b>' + Math.round(x[1] || 0) + '/' + x[2] + '</b></div>').join('');
+  $('p-chart').href = '/chart/' + encodeURIComponent(d.symbol);
+  drawChart(d);
+}
+
+function drawChart(d) {
+  const el = $('mini');
+  if (chart) { chart.remove(); chart = null; }
+  chart = LightweightCharts.createChart(el, {
+    width: el.clientWidth, height: 300,
+    layout: { background: { color: '#12151f' }, textColor: '#8b93a7', fontSize: 11 },
+    grid: { vertLines: { color: '#1a1e2b' }, horzLines: { color: '#1a1e2b' } },
+    rightPriceScale: { borderColor: '#232838' },
+    timeScale: { borderColor: '#232838', timeVisible: d.timeframe === '60minute' || d.timeframe === '4hour' },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    localization: { locale: 'en-IN' },
+  });
+  const cs = chart.addCandlestickSeries({ upColor: '#2ecc71', downColor: '#ef4444', borderVisible: false, wickUpColor: '#2ecc71', wickDownColor: '#ef4444' });
+  cs.setData(d.candles);
+  const lineCol = d.direction === 'BULL' ? '#3b82f6' : '#f5a524';
+  (d.segments || []).forEach((seg) => {
+    const pts = []; const seen = new Set();
+    seg.forEach((p) => { if (!seen.has(p.time)) { seen.add(p.time); pts.push(p); } });
+    pts.sort((a, b) => a.time - b.time);
+    if (pts.length < 2) return;
+    const ls = chart.addLineSeries({ color: lineCol, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    ls.setData(pts);
+  });
+  cs.createPriceLine({ price: d.trigger, color: '#3b82f6', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Trigger' });
+  cs.createPriceLine({ price: d.stop, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Stop' });
+  cs.createPriceLine({ price: d.target, color: '#2ecc71', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'Target' });
+  const markers = (d.points || []).filter((p) => p.label).map((p) => ({ time: p.time, position: 'aboveBar', color: '#a78bfa', shape: 'circle', text: p.label }));
+  if (d.breakout_time) markers.push({ time: d.breakout_time, position: d.direction === 'BULL' ? 'belowBar' : 'aboveBar', color: d.direction === 'BULL' ? '#2ecc71' : '#ef4444', shape: d.direction === 'BULL' ? 'arrowUp' : 'arrowDown', text: 'Break' });
+  markers.sort((a, b) => a.time - b.time);
+  cs.setMarkers(markers);
+  chart.timeScale().fitContent();
+}
+window.addEventListener('resize', () => { if (chart) chart.applyOptions({ width: $('mini').clientWidth }); });
+
+function renderProgress(p) {
+  const running = !!p.running;
+  $('prog-wrap').hidden = !running;
+  $('scan-btn').disabled = running || $('scan-btn').dataset.locked === '1';
+  $('scan-btn').textContent = running ? 'Scanning…' : 'Run scan now';
+  if (running) {
+    const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
+    $('prog-text').textContent = p.done + ' / ' + (p.total || '?');
+    $('prog-bar').style.width = pct + '%';
+    if (!state.polling) state.polling = setInterval(poll, 3000);
+  } else if (state.polling) {
+    clearInterval(state.polling); state.polling = null; load();
+  }
+}
+async function poll() {
+  const r = await fetch('/api/patterns'); if (!r.ok) return;
+  const d = await r.json(); renderProgress(d.progress || {});
+}
+
+$('scan-btn').dataset.locked = $('scan-btn').disabled ? '1' : '0';
+$('scan-btn').onclick = async () => {
+  $('scan-btn').disabled = true;
+  const r = await fetch('/api/patterns/scan', { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(d.error || 'Scan could not start'); $('scan-btn').disabled = false; return; }
+  renderProgress(d.progress || { running: true });
+};
+['q', 'f-dir', 'f-status', 'f-family', 'f-grade', 'f-primary'].forEach((id) => $(id).addEventListener('input', render));
+document.querySelectorAll('table.res th').forEach((th) => th.onclick = () => {
+  const k = th.dataset.k;
+  if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = (k === 'score' || k === 'rr' || k === 'vol_ratio') ? -1 : 1; }
+  render();
+});
+document.querySelectorAll('.tile[data-quick]').forEach((t) => t.onclick = () => {
+  const [k, v] = t.dataset.quick.split(':');
+  const on = !t.classList.contains('on');
+  document.querySelectorAll('.tile').forEach((x) => x.classList.remove('on'));
+  $('f-status').value = ''; $('f-dir').value = ''; $('f-grade').value = '';
+  if (on) { t.classList.add('on'); ({ status: $('f-status'), dir: $('f-dir'), grade: $('f-grade') })[k].value = v; }
+  render();
+});
+load();
+</script>
+</body>
+</html>
