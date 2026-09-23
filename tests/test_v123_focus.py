@@ -186,11 +186,9 @@ def test_invalidated_live_setup_is_recorded_once_not_repeated_each_callback():
         )
 
     assert "ABB" not in state["focus"]
-    recent = [x for x in state["recent"] if x.get("symbol") == "ABB"]
-    assert len(recent) == 1
-    assert recent[0]["lifecycle"] == "INVALIDATED"
-    assert recent[0]["trigger"] == 7130.0
-    assert recent[0]["invalidation"] == 7126.0
+    assert "ABB" in state["continuation_watch"]
+    assert state["continuation_watch"]["ABB"]["lifecycle"] == "CONTINUATION_WATCH"
+    assert not [x for x in state["recent"] if x.get("symbol") == "ABB"]
 
 
 def test_recent_cleanup_collapses_duplicate_cards_for_same_symbol_direction():
@@ -239,19 +237,20 @@ def test_profitable_fast_exit_becomes_proven_mover_not_invalidated():
         state, observer, {"rows": []}, exited, [_scan("JINDALSTEL", 1160.0)],
         now=t0 + dt.timedelta(minutes=6)
     )
-    row = state["focus"]["JINDALSTEL"]
-    assert row["lifecycle"] == "PROVEN_MOVER"
+    assert "JINDALSTEL" not in state["focus"]
+    row = state["continuation_watch"]["JINDALSTEL"]
+    assert row["lifecycle"] == "CONTINUATION_WATCH"
     assert row["locked_option_contract"] == "JINDALSTEL1160CE"
     assert row["entry_episode_result"] == "PROVEN_MOVE"
 
 
-def test_structural_exit_still_invalidates_underlying_thesis():
+def test_micro_exit_moves_to_continuation_until_broader_thesis_breaks():
     t0 = dt.datetime(2026, 9, 23, 10, 0)
     state = v123_focus.update_focus(
-        None, {"events": [_observer_event("ABC")], "leaders": [], "laggards": []},
+        None, {"events": [_observer_event("ABC", price=101.0)], "leaders": [], "laggards": []},
         {"rows": []},
         {"candidates": [{"symbol":"ABC","direction":"Bullish","state":"TRADEABLE","live_price":101.0,"trigger":100.5,"invalidation":99.5}]},
-        [_scan("ABC")], now=t0
+        [_scan("ABC", 101.0)], now=t0
     )
     exited = {"candidates": [{
         "symbol":"ABC","direction":"Bullish","state":"EXIT",
@@ -262,4 +261,81 @@ def test_structural_exit_still_invalidates_underlying_thesis():
         state, {"events": [], "leaders": [], "laggards": []},
         {"rows": []}, exited, [_scan("ABC",99.4)], now=t0+dt.timedelta(minutes=5)
     )
-    assert "ABC" not in state["focus"]
+    assert "ABC" in state["continuation_watch"]
+    thesis_level = state["continuation_watch"]["ABC"]["thesis_invalidation"]
+    assert thesis_level < 99.5
+
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []},
+        [_scan("ABC", thesis_level - 0.1)], now=t0+dt.timedelta(minutes=8)
+    )
+    assert "ABC" not in state["continuation_watch"]
+    assert any(x.get("symbol") == "ABC" and x.get("lifecycle") == "INVALIDATED" for x in state["recent"])
+
+
+def test_aubank_fresh_continuation_event_rearms_same_thesis():
+    t0 = dt.datetime(2026, 9, 23, 10, 0)
+    observer = {"events": [_observer_event("AUBANK", price=100.0)], "leaders": [], "laggards": []}
+    trade = {"candidates": [{
+        "symbol":"AUBANK","direction":"Bullish","state":"TRADEABLE",
+        "live_price":100.0,"trigger":99.8,"invalidation":99.2,
+    }]}
+    state = v123_focus.update_focus(None, observer, {"rows":[]}, trade, [_scan("AUBANK",100.0)], now=t0)
+
+    exited = {"candidates": [{
+        "symbol":"AUBANK","direction":"Bullish","state":"EXIT",
+        "reason":"3m entry structure lost","live_price":99.7,
+        "trigger":99.8,"invalidation":99.2,
+    }]}
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []},
+        {"rows":[]}, exited, [_scan("AUBANK",99.7)], now=t0+dt.timedelta(minutes=3)
+    )
+    assert "AUBANK" in state["continuation_watch"]
+
+    rearm = {
+        "events": [_observer_event("AUBANK", family="PULLBACK_RECLAIM", price=100.4)],
+        "leaders": [], "laggards": [],
+    }
+    state = v123_focus.update_focus(
+        state, rearm, {"rows":[]}, {"candidates":[]},
+        [_scan("AUBANK",100.4)], now=t0+dt.timedelta(minutes=8)
+    )
+    assert "AUBANK" in state["focus"]
+    assert "AUBANK" not in state["continuation_watch"]
+    assert state["focus"]["AUBANK"]["rearmed_at"] is not None
+
+
+def test_continuation_watch_stays_in_deep_tactical_pool():
+    t0 = dt.datetime(2026, 9, 23, 10, 0)
+    state = v123_focus.update_focus(
+        None, {"events": [_observer_event("AUBANK")], "leaders": [], "laggards": []},
+        {"rows":[]},
+        {"candidates":[{"symbol":"AUBANK","direction":"Bullish","state":"READY","live_price":100.0,"trigger":100.2,"invalidation":100.1}]},
+        [_scan("AUBANK",100.0)], now=t0
+    )
+    assert "AUBANK" in state["continuation_watch"]
+    rows = v123_focus.tactical_candidates(state, [_scan("AUBANK",100.0)])
+    assert any(x["symbol"] == "AUBANK" for x in rows)
+
+
+def test_forensics_records_exact_discovery_gate_failure():
+    t0 = dt.datetime(2026, 9, 23, 11, 0)
+    observer = {
+        "events": [],
+        "leaders": [{
+            "symbol":"MISS","day_change_pct":2.4,"ret_3m_pct":0.05,"ret_5m_pct":0.18,
+            "ret_10m_pct":0.30,"relative_5m_vs_nifty_pct":0.02,
+            "volume_rate_accel":0.9,"discovery_reason":"NO_EVENT_FAMILY_QUALIFIED",
+            "discovery_failed_gates":["5m move < 0.20%","volume rate < 1.20x","relative 5m < 0.08%"],
+        }],
+        "laggards": [],
+    }
+    state = v123_focus.update_focus(
+        None, observer, {"rows":[]}, {"candidates":[]}, [_scan("MISS",102.4)], now=t0
+    )
+    row = state["forensics"]["MISS"]
+    assert row["stage"] == "DISCOVERY"
+    assert "volume rate < 1.20x" in row["reason"]
+    assert row["discovery_failed_gates"]

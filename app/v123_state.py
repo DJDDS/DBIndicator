@@ -128,7 +128,35 @@ def _focus_signature(state: dict) -> tuple:
             for symbol, row in (swing.get("selected") or {}).items()
         )),
     )
-    return (state.get("trade_date"), tuple(focus_sig), tuple(recent_sig), swing_sig)
+    continuation_sig = tuple(sorted(
+        (
+            symbol,
+            row.get("direction"),
+            row.get("lifecycle"),
+            row.get("watch_started_at"),
+            row.get("watch_until"),
+            row.get("thesis_invalidation"),
+            row.get("entry_episode_no"),
+            row.get("locked_option_contract"),
+        )
+        for symbol, row in (state.get("continuation_watch") or {}).items()
+        if isinstance(row, dict)
+    ))
+    forensics_sig = tuple(sorted(
+        (
+            symbol,
+            row.get("stage"),
+            row.get("reason"),
+            row.get("event_family"),
+            row.get("tactical_state"),
+        )
+        for symbol, row in (state.get("forensics") or {}).items()
+        if isinstance(row, dict)
+    ))
+    return (
+        state.get("trade_date"), tuple(focus_sig), tuple(recent_sig),
+        continuation_sig, forensics_sig, swing_sig
+    )
 
 
 class FocusStateStore:

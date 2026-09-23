@@ -589,15 +589,17 @@ div.card:has(> #early-radar-card) { display:none !important; }
         <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for persistent underlying opportunities…</div></div>
         <h3 style="margin-top:14px;">Building Next</h3>
         <div id="v123-focus-building" class="focus-list"><div class="focus-empty">Universe observer is looking for opening drive, range expansion, relative separation and continuation/reclaim events.</div></div>
+        <h3 style="margin-top:14px;">Continuation Watch / Alumni</h3>
+        <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">Recent important stocks stay under deep monitoring for a fresh re-entry event instead of disappearing.</div></div>
       </div>
       <div class="focus-pane">
-        <h3>Missed Movers Audit</h3>
+        <h3>Missed-Mover Forensics</h3>
         <div id="v123-focus-missed"><div class="focus-empty">No important missed mover recorded yet.</div></div>
         <h3 style="margin-top:14px;">Recent / Completed</h3>
         <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses stay here instead of disappearing.</div></div>
       </div>
     </div>
-    <div class="focus-note"><strong>Interpretation:</strong> UNDERLYING THESIS and EXECUTION VEHICLE are separate. OPTION BLOCKED can coexist with BULLISH/BEARISH ACTIVE; cash/future routing remains visible. A profitable fast entry can become PROVEN MOVER instead of disappearing. Direction does not flip without thesis invalidation. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+    <div class="focus-note"><strong>Interpretation:</strong> ENTRY invalidation is now separate from THESIS invalidation. A failed 3m entry moves to Continuation Watch rather than erasing the stock. Alumni remain under deep cash/futures/option monitoring and re-arm only on fresh market evidence. Missed-Mover Forensics records the exact pipeline stage and gate that stopped a real mover. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
   </section>
 
   <section id="v123-swing-desk" class="focus-desk" aria-label="V12.3 1D swing focus desk">
@@ -1472,6 +1474,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
         'ACTIVE':'ACTIVE — underlying thesis accepted',
         'MANAGE':'FOLLOW-THROUGH — manage the same thesis',
         'PROVEN_MOVER':'FIRST MOVE WORKED — keep thesis, wait for continuation',
+        'CONTINUATION_WATCH':'ALUMNI WATCH — waiting for a fresh event to re-arm',
         'PULLBACK':'DO NOT CHASE — wait for continuation/reclaim',
         'REENTRY_READY':'RE-ENTRY READY — same thesis, new structure',
         'WEAKENING':'WAIT — thesis weakening, not flipped',
@@ -1519,6 +1522,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
     }
     fill('v123-focus-active',desk.active_now,'No actionable Focus-Desk stock yet. The system will not invent one.');
     fill('v123-focus-building',desk.building_next,'No developing focus name right now.');
+    fill('v123-focus-continuation',desk.continuation_watch,'No recent important stock is waiting for re-entry.');
     // Defensive UI dedupe: backend already keeps one recent thesis per
     // symbol+direction, but never render historical duplicated persisted rows
     // as repeated cards after a hotfix/restart.
@@ -1532,10 +1536,16 @@ div.card:has(> #early-radar-card) { display:none !important; }
 
     var missed=document.getElementById('v123-focus-missed');
     if(missed){
-      var m=Array.isArray(desk.missed_movers)?desk.missed_movers:[];
+      var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
+      var m=forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
       missed.innerHTML=m.length?m.map(function(x){
-        return '<div class="focus-miss"><strong>'+v12Esc(x.symbol||'—')+'</strong><span class="move">'+s(x.day_change_pct,2)+'%</span><span>'+v12Esc(String(x.reason||'').replaceAll('_',' '))+'</span></div>';
-      }).join(''):'<div class="focus-empty">No important missed mover recorded yet.</div>';
+        var gates=Array.isArray(x.discovery_failed_gates)&&x.discovery_failed_gates.length
+          ? ' · gates: '+x.discovery_failed_gates.slice(0,3).join(', ')
+          : '';
+        return '<div class="focus-miss"><strong>'+v12Esc(x.symbol||'—')+'</strong>'+
+          '<span class="move">'+s(x.day_change_pct,2)+'%</span>'+
+          '<span><strong>'+v12Esc(x.stage||'')+'</strong> · '+v12Esc(String(x.reason||'').replaceAll('_',' '))+v12Esc(gates)+'</span></div>';
+      }).join(''):'<div class="focus-empty">No important mover is currently failing the pipeline.</div>';
     }
 
     var swing=desk.swing_1d||{}, swingRows=Object.values(swing.selected||{});
