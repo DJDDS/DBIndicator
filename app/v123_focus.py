@@ -208,6 +208,17 @@ def _underlying_invalidated(item, price):
     return False
 
 
+def _entry_invalidated(direction, price, invalidation):
+    price, invalidation = _f(price), _f(invalidation)
+    if price is None or invalidation is None:
+        return False
+    if direction == "Bullish":
+        return price <= invalidation
+    if direction == "Bearish":
+        return price >= invalidation
+    return False
+
+
 def _initial_thesis_invalidation(direction, price, atr, entry_invalidation):
     price = _f(price)
     atr = _f(atr)
@@ -285,7 +296,11 @@ def _derive_lifecycle(item, event, trow, now):
         item["invalidation"] = (trow or {}).get("invalidation")
 
     if _underlying_invalidated(item, price):
-        return "INVALIDATED", "underlying crossed structural invalidation"
+        return "INVALIDATED", "broader underlying thesis invalidation hit"
+
+    entry_invalid = _f((trow or {}).get("invalidation"))
+    if tstate in ("READY", "TRIGGERED", "TRADEABLE") and _entry_invalidated(item.get("direction"), price, entry_invalid):
+        return "CONTINUATION_WATCH", "entry structure invalidated; broader underlying thesis remains alive"
 
     if tstate == "PROFIT_PROTECT" or estate == "FOLLOW_THROUGH":
         return "MANAGE", "follow-through established; manage the same thesis"
@@ -715,6 +730,18 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         scan = scans.get(symbol) or {}
         price = _f((trow or {}).get("live_price"), _f((same or {}).get("live_price"), _f(scan.get("close"), _f(item.get("live_price")))))
         item["live_price"] = price
+        if same:
+            item["last_seen_at"] = _iso(now)
+            item["day_change_pct"] = same.get("day_change_pct", item.get("day_change_pct"))
+            item["ret_5m_pct"] = same.get("ret_5m_pct", item.get("ret_5m_pct"))
+            item["relative_5m_vs_nifty_pct"] = same.get("relative_5m_vs_nifty_pct", item.get("relative_5m_vs_nifty_pct"))
+        if trow:
+            item["tactical_state"] = trow.get("state")
+            item["tactical_reason"] = trow.get("reason")
+            item["vehicles"] = _vehicle_state(item, trow)
+            if trow.get("locked_option_contract"):
+                item["locked_option_contract"] = trow.get("locked_option_contract")
+                item["locked_option_delta"] = trow.get("locked_option_delta")
 
         if _underlying_invalidated(item, price):
             _history(item, "INVALIDATED", now, "broader thesis invalidation hit during continuation watch")
@@ -766,6 +793,26 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
                 promotion_trace.setdefault(symbol, []).append("CONTINUATION_NO_FRESH_REARM_EVENT")
         if symbol in continuation:
             continuation[symbol] = item
+
+    # Bound the Alumni/Continuation pool without touching active Focus.
+    if len(continuation) > MAX_CONTINUATION_WATCH:
+        ranked = sorted(
+            continuation.items(),
+            key=lambda kv: (
+                1 if str((kv[1] or {}).get("entry_episode_result") or "") == "PROVEN_MOVE" else 0,
+                str((kv[1] or {}).get("watch_started_at") or ""),
+            ),
+            reverse=True,
+        )
+        keep = {symbol for symbol, _ in ranked[:MAX_CONTINUATION_WATCH]}
+        for symbol, item in list(continuation.items()):
+            if symbol in keep:
+                continue
+            item = dict(item)
+            _history(item, "COMPLETED", now, "continuation-watch capacity rotated to stronger/recent alumni")
+            item["completed_at"] = _iso(now)
+            recent.append(item)
+            continuation.pop(symbol, None)
 
     for event in candidates:
         symbol = str(event.get("symbol") or "")
