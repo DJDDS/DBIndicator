@@ -816,6 +816,7 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
         "rr": round(rr, 2), "dist_atr": raw["dist_atr"], "atr": round(a, 2),
         "vol_ratio": round(vol_ratio, 2) if vol_ratio is not None else None, "vol_note": vol_note,
         "htf_trend": htf_trend, "htf_aligned": aligned, "bars": int(bars),
+        "formation_sessions": int(bars + 1), "pattern_timeframe": TF_LABEL[tf],
         "fit": round(max(0.0, min(1.0, raw["fit"])), 2),
         "bar_time": int(fr.t[last]),
         "breakout_time": int(fr.t[bi]) if bi is not None else None,
@@ -1272,6 +1273,14 @@ def _nse_evidence_map(ledger=None):
     return out
 
 
+def nse_evidence_for(pattern, direction, ledger=None):
+    return _nse_evidence_map(ledger).get((pattern, direction), {
+        "stage": "BUILDING", "events": 0, "resolved": 0,
+        "fast_success_pct": None, "swing_success_pct": None,
+        "median_ret_d5": None, "median_mae_d5": None,
+    })
+
+
 def public_rows(payload, ledger=None):
     """Results without chart payload, enriched with our own NSE evidence."""
     heavy = {"candles", "segments", "points"}
@@ -1279,11 +1288,9 @@ def public_rows(payload, ledger=None):
     rows = []
     for r in payload.get("results", []):
         row = {k: v for k, v in r.items() if k not in heavy}
-        row["nse_evidence"] = nse.get((r.get("pattern"), r.get("direction")), {
-            "stage": "BUILDING", "events": 0, "resolved": 0,
-            "fast_success_pct": None, "swing_success_pct": None,
-            "median_ret_d5": None, "median_mae_d5": None,
-        })
+        row["nse_evidence"] = nse.get((r.get("pattern"), r.get("direction"))) or nse_evidence_for(
+            r.get("pattern"), r.get("direction"), ledger
+        )
         rows.append(row)
     return rows
 
