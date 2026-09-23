@@ -93,7 +93,7 @@ def test_no_event_when_price_is_not_doing_anything():
 def test_mover_diagnostic_explains_why_event_was_missed():
     svc = _service()
     now = dt.datetime(2026, 9, 23, 11, 0)
-    _append(svc, "MISS", now-dt.timedelta(minutes=10), 100.0, 1000, high=102.0, prev=100.0)
+    _append(svc, "MISS", now-dt.timedelta(minutes=10), 101.65, 1000, high=102.0, prev=100.0)
     _append(svc, "MISS", now-dt.timedelta(minutes=5), 101.7, 1200, high=102.0, prev=100.0)
     _append(svc, "MISS", now-dt.timedelta(minutes=2), 101.78, 1280, high=102.0, prev=100.0)
     _append(svc, "MISS", now-dt.timedelta(minutes=1), 101.82, 1330, high=102.0, prev=100.0)
