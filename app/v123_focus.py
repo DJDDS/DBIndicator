@@ -593,7 +593,9 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
     event_by_key = {_candidate_key(row): row for row in candidates}
     tactical_by_key = _tactical_map(tactical)
     focus = dict(state.get("focus") or {})
+    continuation = dict(state.get("continuation_watch") or {})
     recent = _recent_cleanup(state.get("recent") or [], now)
+    promotion_trace = {}
 
     for symbol, item in list(focus.items()):
         item = dict(item)
@@ -677,12 +679,81 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         ):
             _history(item, "COMPLETED", now, "continuation window expired")
 
-        if item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
+        if item.get("lifecycle") == "CONTINUATION_WATCH":
+            item["watch_started_at"] = item.get("watch_started_at") or _iso(now)
+            item["watch_until"] = _iso(now + dt.timedelta(minutes=CONTINUATION_WATCH_MINUTES))
+            item["continuation_reason"] = item.get("tactical_reason") or note or "entry episode ended"
+            continuation[symbol] = item
+            focus.pop(symbol, None)
+        elif item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
             item["completed_at"] = _iso(now)
             recent.append(item)
             focus.pop(symbol, None)
+            continuation.pop(symbol, None)
         else:
             focus[symbol] = item
+
+    # Keep recently important names under deep monitoring after an entry episode
+    # ends.  A fresh market event can re-arm them without rediscovering from
+    # zero; stale repeated callbacks cannot.
+    for symbol, item in list(continuation.items()):
+        item = dict(item)
+        direction = str(item.get("direction") or "")
+        same = event_by_key.get((symbol, direction))
+        trow = tactical_by_key.get((symbol, direction))
+        scan = scans.get(symbol) or {}
+        price = _f((trow or {}).get("live_price"), _f((same or {}).get("live_price"), _f(scan.get("close"), _f(item.get("live_price")))))
+        item["live_price"] = price
+
+        if _underlying_invalidated(item, price):
+            _history(item, "INVALIDATED", now, "broader thesis invalidation hit during continuation watch")
+            item["completed_at"] = _iso(now)
+            recent.append(item)
+            continuation.pop(symbol, None)
+            continue
+
+        age = _minutes_since(item.get("watch_started_at"), now)
+        if age is not None and age >= CONTINUATION_WATCH_MINUTES:
+            _history(item, "COMPLETED", now, "continuation watch expired without a fresh re-entry event")
+            item["completed_at"] = _iso(now)
+            recent.append(item)
+            continuation.pop(symbol, None)
+            continue
+
+        if same:
+            allowed, rearm_reason = _event_rearm_decision(
+                recent, symbol, direction, same, trow, scan, now
+            )
+            # Continuation items themselves are also eligible for fresh re-arm
+            # even when there is no Recent row yet (e.g. profitable exit moved
+            # directly from Focus to Continuation).
+            if not allowed:
+                prior_price = _f(item.get("live_price"))
+                event_price = _f(same.get("live_price"))
+                atr = _f(scan.get("atr"), _f(item.get("atr")))
+                sign = 1.0 if direction == "Bullish" else -1.0
+                move_atr = None
+                if prior_price is not None and event_price is not None and atr and atr > 0:
+                    move_atr = sign * (event_price - prior_price) / atr
+                family_changed = str(same.get("event_family") or "") != str(item.get("event_family") or "")
+                if str(same.get("event_family") or "") == "PULLBACK_RECLAIM" or family_changed or (move_atr is not None and move_atr >= 0.20):
+                    allowed = True
+                    rearm_reason = "fresh continuation event"
+
+            if allowed and len(focus) < MAX_FOCUS:
+                item["event_family"] = same.get("event_family") or item.get("event_family")
+                item["event_source"] = same.get("source") or item.get("event_source")
+                item["last_seen_at"] = _iso(now)
+                item["rearmed_at"] = _iso(now)
+                item["rearm_reason"] = rearm_reason
+                item["entry_episode_open"] = False
+                _history(item, "BUILDING", now, "re-armed from continuation watch: " + str(rearm_reason))
+                focus[symbol] = item
+                continuation.pop(symbol, None)
+                promotion_trace.setdefault(symbol, []).append("REARMED_FROM_CONTINUATION")
+            elif same and not allowed:
+                promotion_trace.setdefault(symbol, []).append("CONTINUATION_NO_FRESH_REARM_EVENT")
+        continuation[symbol] = item if symbol in continuation else continuation.get(symbol)
 
     for event in candidates:
         symbol = str(event.get("symbol") or "")
@@ -691,7 +762,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             continue
 
         trow = tactical_by_key.get((symbol, direction))
-        if _recent_reentry_blocked(recent, symbol, direction, event, trow, now):
+        allowed, rearm_reason = _event_rearm_decision(
+            recent, symbol, direction, event, trow, scans.get(symbol) or {}, now
+        )
+        if not allowed:
+            promotion_trace.setdefault(symbol, []).append(str(rearm_reason))
             continue
 
         if len(focus) >= MAX_FOCUS:
@@ -716,6 +791,7 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
                     replace_key = key
                     replace_symbol = fsym
             if replace_symbol is None:
+                promotion_trace.setdefault(symbol, []).append("FOCUS_CAPACITY_WHILE_COMMITTED_THESIS_PERSISTED")
                 continue
             old = dict(focus.pop(replace_symbol))
             _history(old, "COMPLETED", now, "replaced by materially stronger live underlying event")
@@ -723,6 +799,10 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             recent.append(old)
 
         item = _new_focus_item(event, scans.get(symbol) or {}, now)
+        if rearm_reason and rearm_reason != "NEW_SYMBOL_DIRECTION":
+            item["rearmed_at"] = _iso(now)
+            item["rearm_reason"] = rearm_reason
+            promotion_trace.setdefault(symbol, []).append("REARMED: " + str(rearm_reason))
         lifecycle, note = _derive_lifecycle(item, event, trow, now)
         if lifecycle != item["lifecycle"]:
             _history(item, lifecycle, now, note)
@@ -740,11 +820,17 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             focus[symbol] = item
 
     focus_symbols = set(focus)
-    missed = _missed_movers(state, observer, focus_symbols, set(event_by_key), scans, now)
+    continuation_symbols = set(continuation)
+    missed, forensics = _missed_movers(
+        state, observer, focus_symbols, continuation_symbols,
+        event_by_key, scans, tactical_by_key, promotion_trace, now
+    )
 
     state["focus"] = focus
+    state["continuation_watch"] = continuation
     state["recent"] = _recent_cleanup(recent, now)
     state["missed"] = missed
+    state["forensics"] = forensics
     state["last_update"] = _iso(now)
     return state
 
@@ -754,7 +840,12 @@ def tactical_candidates(state, scan_rows):
     state = _normalise(state)
     scans = _scan_map(scan_rows)
     rows = []
-    for item in state.get("focus", {}).values():
+    combined = list((state.get("focus") or {}).values()) + list((state.get("continuation_watch") or {}).values())
+    seen_symbols = set()
+    for item in combined:
+        if str(item.get("symbol") or "") in seen_symbols:
+            continue
+        seen_symbols.add(str(item.get("symbol") or ""))
         if item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
             continue
         symbol = str(item.get("symbol") or "")
@@ -781,7 +872,7 @@ def tactical_candidates(state, scan_rows):
         ),
         reverse=True,
     )
-    return rows[:MAX_FOCUS]
+    return rows[:MAX_DEEP_MONITORED]
 
 
 def dashboard(state):
@@ -798,11 +889,21 @@ def dashboard(state):
     building = [x for x in focus if x.get("lifecycle") in ("DISCOVERED", "BUILDING")]
     active = [x for x in focus if x.get("lifecycle") in ("READY", "REENTRY_READY", "ACTIVE", "MANAGE", "PROVEN_MOVER", "PULLBACK", "WEAKENING")]
     recent = list(reversed(state.get("recent") or []))[:12]
+    continuation = sorted(
+        [dict(x) for x in (state.get("continuation_watch") or {}).values()],
+        key=lambda x: str(x.get("watch_started_at") or ""),
+        reverse=True,
+    )[:MAX_CONTINUATION_WATCH]
     missed = sorted(
         [dict(x) for x in (state.get("missed") or {}).values()],
         key=lambda x: abs(_f(x.get("day_change_pct"), 0.0)),
         reverse=True,
-    )[:12]
+    )[:20]
+    forensics = sorted(
+        [dict(x) for x in (state.get("forensics") or {}).values()],
+        key=lambda x: abs(_f(x.get("day_change_pct"), 0.0)),
+        reverse=True,
+    )[:30]
 
     return {
         "label": "V12.3 UNDERLYING-FIRST LIVE FOCUS DESK",
@@ -811,13 +912,17 @@ def dashboard(state):
         "active_now": active,
         "building_next": building,
         "recent": recent,
+        "continuation_watch": continuation,
         "missed_movers": missed,
+        "mover_forensics": forensics,
         "all_focus": focus,
         "last_update": state.get("last_update"),
         "swing_1d": state.get("swing_1d") or {},
         "rules": {
             "max_focus": MAX_FOCUS,
+            "max_continuation_watch": MAX_CONTINUATION_WATCH,
             "minimum_observation_minutes": MIN_FOCUS_MINUTES,
+            "continuation_watch_minutes": CONTINUATION_WATCH_MINUTES,
             "direction_flip": "requires invalidation; opposite event alone does not flip thesis",
             "vehicle_separation": "underlying thesis is independent of option/future/cash eligibility",
         },
