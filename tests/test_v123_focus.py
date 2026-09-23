@@ -186,11 +186,9 @@ def test_invalidated_live_setup_is_recorded_once_not_repeated_each_callback():
         )
 
     assert "ABB" not in state["focus"]
-    recent = [x for x in state["recent"] if x.get("symbol") == "ABB"]
-    assert len(recent) == 1
-    assert recent[0]["lifecycle"] == "INVALIDATED"
-    assert recent[0]["trigger"] == 7130.0
-    assert recent[0]["invalidation"] == 7126.0
+    assert "ABB" in state["continuation_watch"]
+    assert state["continuation_watch"]["ABB"]["lifecycle"] == "CONTINUATION_WATCH"
+    assert not [x for x in state["recent"] if x.get("symbol") == "ABB"]
 
 
 def test_recent_cleanup_collapses_duplicate_cards_for_same_symbol_direction():
@@ -239,8 +237,9 @@ def test_profitable_fast_exit_becomes_proven_mover_not_invalidated():
         state, observer, {"rows": []}, exited, [_scan("JINDALSTEL", 1160.0)],
         now=t0 + dt.timedelta(minutes=6)
     )
-    row = state["focus"]["JINDALSTEL"]
-    assert row["lifecycle"] == "PROVEN_MOVER"
+    assert "JINDALSTEL" not in state["focus"]
+    row = state["continuation_watch"]["JINDALSTEL"]
+    assert row["lifecycle"] == "CONTINUATION_WATCH"
     assert row["locked_option_contract"] == "JINDALSTEL1160CE"
     assert row["entry_episode_result"] == "PROVEN_MOVE"
 
