@@ -915,10 +915,16 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         item["vehicles"] = _vehicle_state(item, trow)
         item["focus_age_min"] = 0.0
 
-        # If the freshly promoted structure is already beyond invalidation,
-        # record it once as a completed thesis and never let it occupy/recycle
-        # a Focus slot.
-        if item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
+        # If the first tactical structure already failed but the broader
+        # thesis is intact, start as Alumni/Continuation rather than either
+        # flashing READY or treating the whole stock as dead.
+        if item.get("lifecycle") == "CONTINUATION_WATCH":
+            item["watch_started_at"] = _iso(now)
+            item["watch_reference_price"] = item.get("live_price")
+            item["watch_reference_family"] = item.get("event_family")
+            item["watch_until"] = _iso(now + dt.timedelta(minutes=CONTINUATION_WATCH_MINUTES))
+            continuation[symbol] = item
+        elif item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
             item["completed_at"] = _iso(now)
             recent.append(item)
             recent = _recent_cleanup(recent, now)
