@@ -1,3 +1,4 @@
+import datetime as dt
 import functools
 import logging
 import json
@@ -568,14 +569,70 @@ def load_fno_list():
     return redirect("/settings")
 
 
+# ---------------------------------------------------------------------------
+# Professional chart surface
+# ---------------------------------------------------------------------------
+# This is intentionally independent of the scanner's configured timeframe and
+# legacy indicator presets. The chart is a visual-analysis tool; switching its
+# timeframe or indicators never changes scanner/research logic.
+CHART_TIMEFRAMES = [
+    {"key": "3minute", "label": "3m", "lookback_days": 10, "source": "3minute"},
+    {"key": "5minute", "label": "5m", "lookback_days": 20, "source": "5minute"},
+    {"key": "15minute", "label": "15m", "lookback_days": 60, "source": "15minute"},
+    {"key": "30minute", "label": "30m", "lookback_days": 120, "source": "30minute"},
+    {"key": "60minute", "label": "1H", "lookback_days": 240, "source": "60minute"},
+    # 75m divides the 375-minute NSE cash session into five equal bars and is
+    # therefore often cleaner for Indian swing/intraday structure than a
+    # synthetic 4H bar with a shortened second session bucket.
+    {"key": "75minute", "label": "75m", "lookback_days": 240, "source": "15minute"},
+    {"key": "4hour", "label": "4H", "lookback_days": 365, "source": "60minute"},
+    {"key": "day", "label": "1D", "lookback_days": 1200, "source": "day"},
+    {"key": "week", "label": "1W", "lookback_days": 3650, "source": "day"},
+]
+_CHART_TF = {row["key"]: row for row in CHART_TIMEFRAMES}
+_CHART_DEFAULT_TF = "15minute"
+
+
+def _chart_fetch_candles(kite, instrument_token, timeframe):
+    spec = _CHART_TF[timeframe]
+    to_date = scanner.now_ist()
+    from_date = to_date - dt.timedelta(days=int(spec["lookback_days"]))
+    data = scanner._fetch_historical_chunked(
+        kite, instrument_token, from_date, to_date, spec["source"]
+    )
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    if df.empty:
+        return df
+    df = df.rename(columns={"date": "timestamp"}).set_index("timestamp")
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    if timeframe == "75minute":
+        df = df.resample(
+            "75min", origin="start_day", offset="9h15min"
+        ).agg(agg).dropna()
+    elif timeframe == "4hour":
+        df = df.resample(
+            "4h", origin="start_day", offset="9h15min"
+        ).agg(agg).dropna()
+    elif timeframe == "week":
+        df = df.resample("W-FRI").agg(agg).dropna()
+    return df
+
+
 @app.route("/chart/<symbol>")
 @require_dashboard_password
 def chart_page(symbol):
+    requested = request.args.get("timeframe", _CHART_DEFAULT_TF)
+    if requested not in _CHART_TF:
+        requested = _CHART_DEFAULT_TF
     return render_template(
         "chart.html",
         symbol=symbol.upper(),
-        timeframe=config.WATCHLIST_TIMEFRAME,
-        valid_timeframes=config.VALID_TIMEFRAMES,
+        timeframe=requested,
+        chart_timeframes=CHART_TIMEFRAMES,
     )
 
 
@@ -586,9 +643,9 @@ def chart_data(symbol):
     if kite is None:
         return jsonify({"error": "Not logged in to Kite today."}), 400
 
-    timeframe = request.args.get("timeframe", config.WATCHLIST_TIMEFRAME)
-    if timeframe not in config.VALID_TIMEFRAMES:
-        return jsonify({"error": "invalid timeframe"}), 400
+    timeframe = request.args.get("timeframe", _CHART_DEFAULT_TF)
+    if timeframe not in _CHART_TF:
+        return jsonify({"error": "invalid chart timeframe"}), 400
 
     try:
         instruments = scanner._load_instrument_map(kite)
@@ -596,61 +653,40 @@ def chart_data(symbol):
         if not token:
             return jsonify({"error": "symbol not found on NSE"}), 404
 
-        df = scanner.fetch_candles(kite, token, timeframe)
+        df = _chart_fetch_candles(kite, token, timeframe)
         if df.empty:
             return jsonify({"error": "no candle data returned"}), 502
 
-        series = indicators.compute_series(df, timeframe)
-        if "error" in series:
-            return jsonify({"error": series["error"], "candles": _candles(df)})
-
-        def _points(s):
-            return [
-                {"time": int(idx.timestamp()), "value": round(float(v), 3)}
-                for idx, v in s.items()
-                if pd.notna(v)
-            ]
-
-        fast, slow, sig = series["macd_params"]
-        payload = {
+        spec = _CHART_TF[timeframe]
+        return jsonify({
             "symbol": symbol.upper(),
             "timeframe": timeframe,
-            "macd_params": f"{fast},{slow},{sig}",
+            "timeframe_label": spec["label"],
+            "intraday": timeframe not in ("day", "week"),
             "candles": _candles(df),
-            "ema9": _points(series["ema9"]),
-            "bb_mid": _points(series["bb_mid"]),
-            "rsi": _points(series["rsi_line"]),
-            "rsi_smooth": _points(series["rsi_smooth"]),
-            "macd": _points(series["macd_line"]),
-            "macd_signal": _points(series["signal_line"]),
-            "macd_hist": _points(series["macd_hist"]),
-            # Session VWAP (resets daily, intraday timeframes only - empty
-            # on day/week) and anchored VWAP (since the current confluence
-            # trend leg began - see indicators.compute_avwap_series,
-            # meaningful on every timeframe) - same two lines the
-            # dashboard's VWAP/AVWAP badges show, plotted here so you can
-            # see exactly where they've been tracking, not just their
-            # current value.
-            "vwap": _points(indicators.session_vwap_series(df, timeframe)),
-            "avwap": _points(indicators.compute_avwap_series(series)),
-        }
-        return jsonify(payload)
+            "bar_count": int(len(df)),
+            "updated_at": scanner.now_ist().isoformat(timespec="seconds"),
+            "source": "Kite NSE OHLCV",
+        })
     except Exception as exc:  # noqa: BLE001
         log.exception("Chart data failed for %s", symbol)
         return jsonify({"error": str(exc)}), 500
 
 
 def _candles(df):
-    return [
-        {
+    out = []
+    for idx, row in df.iterrows():
+        item = {
             "time": int(idx.timestamp()),
             "open": round(float(row["open"]), 2),
             "high": round(float(row["high"]), 2),
             "low": round(float(row["low"]), 2),
             "close": round(float(row["close"]), 2),
         }
-        for idx, row in df.iterrows()
-    ]
+        if "volume" in row and pd.notna(row["volume"]):
+            item["volume"] = int(float(row["volume"]))
+        out.append(item)
+    return out
 
 
 @app.route("/api/insights")
