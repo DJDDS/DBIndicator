@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chart Pattern Scanner</title>
+<title>Swing Pattern Scanner · 1–5 Days</title>
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root {
@@ -87,6 +87,7 @@
   .chip.BREAKOUT { background: rgba(46,204,113,.14); color: var(--green); }
   .chip.FORMING { background: rgba(245,165,36,.14); color: var(--amber); }
   .chip.EXTENDED { background: rgba(167,139,250,.14); color: var(--violet); }
+  .chip.RETEST_HOLD { background: rgba(59,130,246,.16); color: #93c5fd; }
   .chip.FAILED { background: rgba(239,68,68,.14); color: var(--red); }
   .ev { display: inline-block; min-width: 22px; text-align: center; padding: 3px 6px; border-radius: 6px; font-size: 11px; font-weight: 800; }
   .ev.A { background: rgba(46,204,113,.16); color: var(--green); } .ev.B { background: rgba(59,130,246,.16); color: #93c5fd; }
@@ -134,8 +135,8 @@
 <body>
 <header>
   <div>
-    <h1>Chart Pattern Scanner</h1>
-    <p>Each pattern searched only on the timeframes where it's most reliable · F&amp;O stocks + NIFTY / BANKNIFTY / FINNIFTY</p>
+    <h1>Swing Pattern Scanner · 1–5 Days</h1>
+    <p>Underlying price only · Daily pattern engine · Weekly context · NSE F&amp;O + indices</p>
   </div>
   <nav><a href="/">Dashboard</a><a class="active" href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
 </header>
@@ -155,31 +156,28 @@
   <div class="tiles">
     <div class="tile" data-quick="status:BREAKOUT"><div class="tile-label">Fresh breakouts</div><div class="tile-value green" id="t-brk">0</div><div class="tile-sub">closed through trigger ≤ 3 bars</div></div>
     <div class="tile" data-quick="status:FORMING"><div class="tile-label">Forming</div><div class="tile-value amber" id="t-frm">0</div><div class="tile-sub">within 1 ATR of trigger</div></div>
-    <div class="tile" data-quick="dir:BULL"><div class="tile-label">Bullish</div><div class="tile-value green" id="t-bull">0</div><div class="tile-sub">long setups</div></div>
-    <div class="tile" data-quick="dir:BEAR"><div class="tile-label">Bearish</div><div class="tile-value red" id="t-bear">0</div><div class="tile-sub">short setups</div></div>
-    <div class="tile" data-quick="grade:A"><div class="tile-label">A-grade</div><div class="tile-value" id="t-a">0</div><div class="tile-sub">score ≥ 75</div></div>
-    <div class="tile" data-quick="status:EXTENDED"><div class="tile-label">Extended</div><div class="tile-value violet" id="t-ext">0</div><div class="tile-sub">&gt; 1.5 ATR past trigger - don't chase</div></div>
+    <div class="tile" data-quick="status:RETEST_HOLD"><div class="tile-label">Retest hold</div><div class="tile-value" id="t-retest">0</div><div class="tile-sub">breakout level held</div></div>
+    <div class="tile" data-quick="dir:BULL"><div class="tile-label">Bullish</div><div class="tile-value green" id="t-bull">0</div><div class="tile-sub">long structures</div></div>
+    <div class="tile" data-quick="dir:BEAR"><div class="tile-label">Bearish</div><div class="tile-value red" id="t-bear">0</div><div class="tile-sub">short structures</div></div>
+    <div class="tile" data-quick="status:EXTENDED"><div class="tile-label">Extended</div><div class="tile-value violet" id="t-ext">0</div><div class="tile-sub">&gt; 1.5 ATR past trigger</div></div>
     <div class="tile" data-quick="status:FAILED"><div class="tile-label">Failed breakouts</div><div class="tile-value red" id="t-fail">0</div><div class="tile-sub">closed back inside ≤ 10 bars - traps</div></div>
   </div>
 
   <details class="guide">
-    <summary>Timeframe &amp; evidence guide - which pattern is scanned where, and how well it's documented</summary>
+    <summary>Core swing structures - why these six are kept</summary>
     <div class="guide-body">
-      <p>Swing stack: <b>Weekly</b> = context · <b>Daily</b> = main pattern engine (deepest published evidence) · <b>4H</b> = maturation / earlier break · <b>1H</b> = entry refinement only (graded C unless the Daily trend agrees). <span class="dot primary"></span> primary &nbsp; <span class="dot ok"></span> secondary (scored lower) &nbsp; <span class="dot none"></span> not scanned.</p>
-      <p>Evidence tier (bull / bear): <span class="ev A">A</span> strong large-sample documentation · <span class="ev B">B</span> meaningful, definition-dependent · <span class="ev C">C</span> plausible, thin · <span class="ev D">D</span> weak - graded C at best. Tiers rank <i>candidates</i>; they are not NSE win rates - the Forward Validation table below builds those.</p>
+      <p><b>Daily is the only pattern engine.</b> Weekly is context only. The scanner keeps six fast-swing structures: VCP/Tight Base, Rectangle/Flat Base, Flag/Pennant, Ascending/Descending Triangle, Double Top/Bottom, and Three Rising Valleys/Falling Peaks.</p>
+      <p>Historical evidence is shown only as context; it does <b>not</b> add points to the quality score. NSE D1-D5 forward outcomes are the evidence that matters.</p>
       <table class="matrix" id="matrix"></table>
     </div>
   </details>
 
   <div class="toolbar">
     <input id="q" type="search" placeholder="Search symbol…">
-    <div class="seg" id="tf-seg"></div>
     <select id="f-dir"><option value="">All directions</option><option value="BULL">Bullish</option><option value="BEAR">Bearish</option></select>
-    <select id="f-status"><option value="">All statuses</option><option value="BREAKOUT">Breakout</option><option value="FORMING">Forming</option><option value="EXTENDED">Extended</option><option value="FAILED">Failed</option></select>
-    <select id="f-ev"><option value="">Any evidence</option><option value="A">Evidence A</option><option value="B">Evidence B or better</option></select>
-    <select id="f-family"><option value="">All patterns</option></select>
-    <select id="f-grade"><option value="">Any grade</option><option value="A">A only</option><option value="B">B or better</option></select>
-    <label class="count"><input type="checkbox" id="f-primary"> Primary timeframes only</label>
+    <select id="f-status"><option value="">Active states</option><option value="BREAKOUT">Breakout</option><option value="RETEST_HOLD">Retest hold</option><option value="FORMING">Forming</option><option value="EXTENDED">Extended</option><option value="FAILED">Failed</option></select>
+    <select id="f-family"><option value="">All core patterns</option></select>
+    <select id="f-grade"><option value="">Any quality</option><option value="A">A only</option><option value="B">B or better</option></select>
     <span class="spacer"></span>
     <span class="count" id="count"></span>
   </div>
@@ -189,11 +187,11 @@
       <div class="table-scroll">
         <table class="res">
           <thead><tr>
-            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th><th data-k="tf_order">TF</th>
-            <th data-k="direction">Dir</th><th data-k="status">Status</th><th data-k="score">Score</th><th data-k="evidence" title="Historical evidence tier">Ev.</th>
-            <th data-k="ltp" class="num">LTP</th><th data-k="trigger" class="num">Trigger</th><th data-k="dist_atr" class="num">Dist (ATR)</th>
-            <th data-k="stop" class="num">Stop</th><th data-k="target" class="num">Target</th><th data-k="rr" class="num">R:R</th>
-            <th data-k="vol_ratio" class="num">Vol×</th><th data-k="htf_trend">HTF trend</th><th data-k="horizon">Horizon</th>
+            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th>
+            <th data-k="direction">Dir</th><th data-k="status">State</th><th data-k="score">Quality</th><th data-k="evidence" title="Historical evidence only; not part of score">Ev.</th>
+            <th data-k="ltp" class="num">LTP</th><th data-k="trigger" class="num">Trigger</th><th data-k="dist_atr" class="num">Dist</th>
+            <th data-k="stop" class="num">Invalidation</th><th data-k="target" class="num">Pattern target</th><th data-k="rr" class="num">R:R</th>
+            <th data-k="vol_ratio" class="num">Vol×</th><th data-k="htf_trend">Weekly</th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
@@ -217,7 +215,7 @@
         </div>
         <ul class="checks" id="p-checks"></ul>
         <div class="breakdown" id="p-breakdown"></div>
-        <div class="note">Target = measured move (pattern height projected from the trigger). Stop = pattern invalidation level. Published pattern statistics are historical evidence, not expected NSE win rates. For spotting only - verify on the full chart before trading.</div>
+        <div class="note">Daily underlying-price structure only. Target = measured move; invalidation = structural failure. Historical evidence is informational only. The D1-D5 table below is the live NSE validation layer.</div>
         <div class="panel-foot"><a id="p-chart" href="#">Open full chart →</a></div>
       </div>
     </div>
@@ -225,15 +223,18 @@
   <div class="card fwd">
     <div class="fwd-head"><h3>Forward validation - live NSE outcomes</h3><span id="fwd-meta"></span><a href="/api/patterns/forward/export">Export ledger</a></div>
     <div class="table-scroll" style="max-height:none">
-      <table class="res"><thead><tr><th>Pattern</th><th>Dir</th><th>TF</th><th class="num">Breakouts</th><th class="num">Resolved</th><th class="num">Success</th><th class="num">Avg MFE (ATR)</th><th class="num">Avg MAE (ATR)</th><th class="num">Avg 5-bar ret</th></tr></thead><tbody id="fwd-rows"></tbody></table>
-      <div class="empty" id="fwd-empty">No activated breakouts recorded yet. Every BREAKOUT the scanner sees is logged once and scored after it happens - long and short kept separate.</div>
+      <table class="res"><thead><tr>
+        <th>Pattern</th><th>Dir</th><th class="num">Events</th><th class="num">Resolved</th>
+        <th class="num">D1 MFE</th><th class="num">D2 MFE</th><th class="num">D3 MFE</th><th class="num">D4 MFE</th><th class="num">D5 MFE</th>
+        <th class="num">Fast ≤D2</th><th class="num">Swing ≤D5</th><th class="num">D5 Ret</th><th class="num">D5 MAE</th>
+      </tr></thead><tbody id="fwd-rows"></tbody></table>
+      <div class="empty" id="fwd-empty">No D1-D5 activations yet. Entry is the next trading session open after a confirmed Daily breakout.</div>
     </div>
   </div>
 </div>
 
 <script>
-const TF_ORDER = { week: 0, day: 1, '4hour': 2, '60minute': 3 };
-const state = { rows: [], tf: '', sortKey: 'score', sortDir: -1, sel: null, matrix: [], polling: null };
+const state = { rows: [], sortKey: 'score', sortDir: -1, sel: null, matrix: [], polling: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -242,14 +243,13 @@ async function load() {
   const r = await fetch('/api/patterns');
   if (!r.ok) return;
   const d = await r.json();
-  state.rows = (d.results || []).map((x) => ({ ...x, tf_order: TF_ORDER[x.timeframe] }));
+  state.rows = d.results || [];
   state.matrix = d.matrix || [];
   $('scanned-at').textContent = d.scanned_at ? d.scanned_at.replace('T', ' ') + (d.trigger ? ' (' + d.trigger + ')' : '') : 'never - run a scan';
   $('universe').textContent = d.symbols ? d.symbols + ' symbols' + (d.errors ? ' · ' + d.errors + ' errors' : '') : '—';
   $('duration').textContent = d.duration_s ? Math.round(d.duration_s) + 's' : '—';
   $('slots').textContent = (d.auto_slots || []).join(', ');
   renderMatrix(d.timeframes || []);
-  renderTfSeg(d.timeframes || []);
   renderFamilies();
   renderProgress(d.progress || {});
   renderForward(d.forward || {});
@@ -258,17 +258,21 @@ async function load() {
 
 function renderForward(f) {
   const rows = f.rows || [];
-  $('fwd-meta').textContent = (f.events || 0) + ' breakouts logged · ' + (f.resolved || 0) + ' resolved' +
-    (f.success_pct !== null && f.success_pct !== undefined ? ' · overall ' + fmt(f.success_pct, 1) + '% success' : '') +
-    ' · rule: ' + (f.rule || '') + ' · trust a row only after ~100 resolved';
+  $('fwd-meta').textContent = (f.events || 0) + ' activations · ' + (f.resolved || 0) + ' D5 resolved' +
+    (f.fast_success_pct !== null && f.fast_success_pct !== undefined ? ' · fast ' + fmt(f.fast_success_pct, 1) + '%' : '') +
+    (f.success_pct !== null && f.success_pct !== undefined ? ' · swing ' + fmt(f.success_pct, 1) + '%' : '') +
+    ' · ' + (f.rule || '') + ' · trust pattern rows after ~100 resolved';
   $('fwd-empty').hidden = rows.length > 0;
   $('fwd-rows').innerHTML = rows.map((r) => {
-    const sc = r.success_pct === null ? 'muted' : r.success_pct >= 45 ? 'green' : r.success_pct >= 42.9 ? 'amber' : 'red';
-    return '<tr><td class="pat">' + esc(r.pattern) + '</td><td><span class="chip ' + r.direction + '">' + (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
-      '<td><span class="chip tf">' + esc(r.tf_label) + '</span></td><td class="num">' + r.events + '</td><td class="num">' + r.resolved + '</td>' +
-      '<td class="num ' + sc + '">' + (r.success_pct === null ? '—' : fmt(r.success_pct, 1) + '%') + '</td>' +
-      '<td class="num">' + fmt(r.avg_mfe_atr) + '</td><td class="num">' + fmt(r.avg_mae_atr) + '</td>' +
-      '<td class="num">' + (r.avg_ret_5 === null ? '—' : fmt(r.avg_ret_5) + '%') + '</td></tr>';
+    const fast = r.fast_success_pct === null || r.fast_success_pct === undefined ? '—' : fmt(r.fast_success_pct, 1) + '%';
+    const swing = r.success_pct === null || r.success_pct === undefined ? '—' : fmt(r.success_pct, 1) + '%';
+    return '<tr><td class="pat">' + esc(r.pattern) + '</td><td><span class="chip ' + r.direction + '">' +
+      (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
+      '<td class="num">' + r.events + '</td><td class="num">' + r.resolved + '</td>' +
+      [1,2,3,4,5].map((d) => '<td class="num">' + fmt(r['median_mfe_d' + d]) + '</td>').join('') +
+      '<td class="num">' + fast + '</td><td class="num">' + swing + '</td>' +
+      '<td class="num">' + (r.median_ret_d5 === null ? '—' : fmt(r.median_ret_d5) + '%') + '</td>' +
+      '<td class="num">' + fmt(r.median_mae_d5) + '</td></tr>';
   }).join('');
 }
 
@@ -282,34 +286,29 @@ function renderMatrix(tfs) {
   $('matrix').innerHTML = head + body;
 }
 
-function renderTfSeg(tfs) {
-  const opts = [{ key: '', label: 'All TF' }, ...tfs];
-  $('tf-seg').innerHTML = opts.map((t) => '<button data-tf="' + t.key + '" class="' + (state.tf === t.key ? 'on' : '') + '">' + esc(t.label) + '</button>').join('');
-  $('tf-seg').querySelectorAll('button').forEach((b) => b.onclick = () => { state.tf = b.dataset.tf; renderTfSeg(tfs); render(); });
-}
-
 function renderFamilies() {
   const sel = $('f-family'); const cur = sel.value;
-  sel.innerHTML = '<option value="">All patterns</option>' + state.matrix.map((m) => '<option value="' + m.family + '">' + esc(m.label) + '</option>').join('');
+  sel.innerHTML = '<option value="">All core patterns</option>' + state.matrix.map((m) => '<option value="' + m.family + '">' + esc(m.label) + '</option>').join('');
   sel.value = cur;
 }
 
 function filtered() {
   const q = $('q').value.trim().toUpperCase();
-  const dir = $('f-dir').value, st = $('f-status').value, fam = $('f-family').value, g = $('f-grade').value, prim = $('f-primary').checked, ev = $('f-ev').value;
-  return state.rows.filter((r) => (!q || r.symbol.includes(q)) && (!state.tf || r.timeframe === state.tf) &&
-    (!dir || r.direction === dir) && (st ? r.status === st : r.status !== 'FAILED') && (!fam || r.family === fam) &&
-    (!g || (g === 'A' ? r.grade === 'A' : r.grade !== 'C')) && (!prim || r.matrix_level === 'primary') &&
-    (!ev || (ev === 'A' ? r.evidence === 'A' : (r.evidence === 'A' || r.evidence === 'B'))));
+  const dir = $('f-dir').value, st = $('f-status').value, fam = $('f-family').value, g = $('f-grade').value;
+  return state.rows.filter((r) => (!q || r.symbol.includes(q)) &&
+    (!dir || r.direction === dir) &&
+    (st ? r.status === st : r.status !== 'FAILED') &&
+    (!fam || r.family === fam) &&
+    (!g || (g === 'A' ? r.grade === 'A' : r.grade !== 'C')));
 }
 
 function render() {
   const all = state.rows;
   $('t-brk').textContent = all.filter((r) => r.status === 'BREAKOUT').length;
   $('t-frm').textContent = all.filter((r) => r.status === 'FORMING').length;
+  $('t-retest').textContent = all.filter((r) => r.status === 'RETEST_HOLD').length;
   $('t-bull').textContent = all.filter((r) => r.direction === 'BULL').length;
   $('t-bear').textContent = all.filter((r) => r.direction === 'BEAR').length;
-  $('t-a').textContent = all.filter((r) => r.grade === 'A').length;
   $('t-ext').textContent = all.filter((r) => r.status === 'EXTENDED').length;
   $('t-fail').textContent = all.filter((r) => r.status === 'FAILED').length;
 
@@ -335,7 +334,6 @@ function render() {
     return '<tr data-id="' + esc(r.id) + '" class="' + (state.sel === r.id ? 'sel' : '') + '">' +
       '<td class="sym">' + esc(r.symbol) + '</td>' +
       '<td class="pat">' + esc(r.pattern) + '</td>' +
-      '<td><span class="chip tf ' + r.matrix_level + '" title="' + (r.matrix_level === 'primary' ? 'Most effective timeframe for this pattern' : 'Valid but weaker timeframe') + '">' + esc(r.tf_label) + '</span></td>' +
       '<td><span class="chip ' + r.direction + '">' + (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
       '<td><span class="chip ' + r.status + '">' + r.status + '</span></td>' +
       '<td><div class="score"><span class="grade g' + r.grade + '">' + r.grade + '</span><span class="bar"><i style="width:' + r.score + '%;background:' + col + '"></i></span>' + r.score + '</div></td>' +
@@ -344,7 +342,7 @@ function render() {
       '<td class="num">' + (r.dist_atr > 0 ? fmt(r.dist_atr, 2) + ' away' : fmt(-r.dist_atr, 2) + ' past') + '</td>' +
       '<td class="num red">' + fmt(r.stop) + '</td><td class="num green">' + fmt(r.target) + '</td>' +
       '<td class="num">' + fmt(r.rr, 1) + '</td><td class="num">' + vol + '</td>' +
-      '<td class="' + trendCls + '">' + esc(r.htf_trend) + '</td><td class="muted">' + esc(r.horizon) + '</td></tr>';
+      '<td class="' + trendCls + '">' + esc(r.htf_trend) + '</td></tr>';
   }).join('');
   $('rows').querySelectorAll('tr').forEach((tr) => tr.onclick = () => select(tr.dataset.id));
 }
@@ -359,22 +357,21 @@ async function select(id) {
   $('p-sym').textContent = d.symbol + ' · ' + d.pattern;
   $('p-dir').className = 'chip ' + d.direction; $('p-dir').textContent = d.direction === 'BULL' ? '▲ Bull' : '▼ Bear';
   $('p-status').className = 'chip ' + d.status; $('p-status').textContent = d.status;
-  $('p-sub').textContent = d.tf_label + ' · ' + d.kind + ' · ' + d.bars + ' bars in pattern · hold ' + d.horizon + ' · score ' + d.score + ' (' + d.grade + ')' +
+  $('p-sub').textContent = 'Daily · ' + d.kind + ' · ' + d.bars + ' bars in pattern · 1–5 day objective · quality ' + d.score + ' (' + d.grade + ')' +
     ((d.grade_caps || []).length ? ' · capped: ' + d.grade_caps.join('; ') : '');
   $('p-trig').textContent = fmt(d.trigger); $('p-stop').textContent = fmt(d.stop); $('p-tgt').textContent = fmt(d.target); $('p-rr').textContent = fmt(d.rr, 1);
   const volCls = d.vol_ratio === null ? 'ok-m' : (d.status === 'FORMING' ? (d.vol_ratio <= 1 ? 'ok-y' : 'ok-m') : (d.vol_ratio >= 1.5 ? 'ok-y' : d.vol_ratio >= 1.2 ? 'ok-m' : 'ok-n'));
   const checks = [
     ['Historical evidence', { A: 'ok-y', B: 'ok-y', C: 'ok-m', D: 'ok-n' }[d.evidence], 'Tier ' + d.evidence + ' for ' + d.pattern],
     ['Prior trend', d.prior_trend >= 1 ? 'ok-y' : d.prior_trend >= 0.5 ? 'ok-m' : 'ok-n', fmt(d.prior_trend, 2) + '× pattern height ' + (d.kind === 'reversal' ? 'against' : 'with') + ' the break'],
-    ['Timeframe fit', d.matrix_level === 'primary' ? 'ok-y' : 'ok-m', d.tf_label + (d.matrix_level === 'primary' ? ' - most effective' : ' - valid, weaker')],
     ['Volume', volCls, (d.vol_ratio === null ? 'n/a (index)' : fmt(d.vol_ratio, 2) + '× avg') + ' · ' + d.vol_note],
-    ['Higher-TF trend', d.htf_aligned ? 'ok-y' : (d.htf_trend === 'NEUTRAL' ? 'ok-m' : 'ok-n'), d.htf_trend + (d.htf_aligned ? ' - aligned' : '')],
+    ['Weekly context', d.htf_aligned ? 'ok-y' : (d.htf_trend === 'NEUTRAL' ? 'ok-m' : 'ok-n'), d.htf_trend + (d.htf_aligned ? ' - aligned' : '')],
     ['Geometry fit', d.fit >= 0.65 ? 'ok-y' : d.fit >= 0.4 ? 'ok-m' : 'ok-n', Math.round(d.fit * 100) + '%'],
     ['Distance to trigger', (d.status === 'EXTENDED' || d.status === 'FAILED') ? 'ok-n' : 'ok-y', (d.dist_atr > 0 ? fmt(d.dist_atr) + ' ATR to go' : fmt(-d.dist_atr) + ' ATR past') + ' (ATR ' + fmt(d.atr) + ')'],
   ];
   $('p-checks').innerHTML = checks.map((c) => '<li><span class="k">' + c[0] + '</span><span class="' + c[1] + '">' + esc(c[2]) + '</span></li>').join('');
   const b = d.breakdown || {};
-  $('p-breakdown').innerHTML = [['Evidence', b.evidence, 20], ['TF', b.timeframe, 20], ['Fit', b.fit, 20], ['Vol', b.volume, 12], ['HTF trend', b.trend, 8], ['Prior', b.prior, 5], ['R:R', b.rr, 10], ['Len', b.length, 5]]
+  $('p-breakdown').innerHTML = [['Fit', b.fit, 25], ['Volume', b.volume, 15], ['Weekly', b.trend, 15], ['Prior', b.prior, 15], ['State', b.state, 10], ['R:R', b.rr, 10], ['Length', b.length, 10]]
     .map((x) => '<div>' + x[0] + '<b>' + Math.round(x[1] || 0) + '/' + x[2] + '</b></div>').join('');
   $('p-chart').href = '/chart/' + encodeURIComponent(d.symbol);
   drawChart(d);
@@ -441,7 +438,7 @@ $('scan-btn').onclick = async () => {
   if (!r.ok) { alert(d.error || 'Scan could not start'); $('scan-btn').disabled = false; return; }
   renderProgress(d.progress || { running: true });
 };
-['q', 'f-dir', 'f-status', 'f-family', 'f-grade', 'f-primary', 'f-ev'].forEach((id) => $(id).addEventListener('input', render));
+['q', 'f-dir', 'f-status', 'f-family', 'f-grade'].forEach((id) => $(id).addEventListener('input', render));
 document.querySelectorAll('table.res th').forEach((th) => th.onclick = () => {
   const k = th.dataset.k;
   if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = (k === 'score' || k === 'rr' || k === 'vol_ratio') ? -1 : 1; }
@@ -452,7 +449,7 @@ document.querySelectorAll('.tile[data-quick]').forEach((t) => t.onclick = () => 
   const on = !t.classList.contains('on');
   document.querySelectorAll('.tile').forEach((x) => x.classList.remove('on'));
   $('f-status').value = ''; $('f-dir').value = ''; $('f-grade').value = '';
-  if (on) { t.classList.add('on'); ({ status: $('f-status'), dir: $('f-dir'), grade: $('f-grade') })[k].value = v; }
+  if (on) { t.classList.add('on'); ({ status: $('f-status'), dir: $('f-dir') })[k].value = v; }
   render();
 });
 load();
