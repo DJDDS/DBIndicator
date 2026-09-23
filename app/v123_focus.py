@@ -513,6 +513,63 @@ def _event_rearm_decision(recent, symbol, direction, event, trow, scan, now):
 
 
 
+def _continuation_rearm_decision(item, event, trow, scan, now):
+    """Fresh-event test for an Alumni/Continuation item.
+
+    Unlike Recent dedupe, a watch item already represents a known thesis, so
+    merely seeing the same callback again can never re-arm it.
+    """
+    if not event:
+        return False, "NO_LIVE_EVENT"
+
+    age_s = None
+    started = _dt(item.get("watch_started_at"))
+    if started is not None:
+        if started.tzinfo is not None and now.tzinfo is None:
+            started = started.replace(tzinfo=None)
+        elif started.tzinfo is None and now.tzinfo is not None:
+            started = started.replace(tzinfo=now.tzinfo)
+        age_s = max(0.0, (now - started).total_seconds())
+
+    family = str(event.get("event_family") or "")
+    prior_family = str(item.get("watch_reference_family") or item.get("event_family") or "")
+    direction = str(item.get("direction") or "")
+    sign = 1.0 if direction == "Bullish" else -1.0
+
+    price = _f(event.get("live_price"))
+    ref_price = _f(item.get("watch_reference_price"), _f(item.get("live_price")))
+    atr = _f((scan or {}).get("atr"), _f(item.get("atr")))
+    move_atr = None
+    if price is not None and ref_price is not None and atr and atr > 0:
+        move_atr = sign * (price - ref_price) / atr
+
+    current_trigger = _f((trow or {}).get("trigger"))
+    prior_trigger = _f(item.get("trigger"))
+    trigger_shift_atr = None
+    if current_trigger is not None and prior_trigger is not None and atr and atr > 0:
+        trigger_shift_atr = abs(current_trigger - prior_trigger) / atr
+
+    relative = _f(event.get("relative_5m_vs_nifty_pct"))
+    ret5 = _f(event.get("ret_5m_pct"))
+    reasons = []
+    if family == "PULLBACK_RECLAIM":
+        reasons.append("fresh pullback-reclaim")
+    if family and prior_family and family != prior_family:
+        reasons.append("event family changed")
+    if move_atr is not None and move_atr >= 0.20:
+        reasons.append("price renewed >=0.20 ATR from watch reference")
+    if trigger_shift_atr is not None and trigger_shift_atr >= 0.15:
+        reasons.append("new structural trigger")
+    if relative is not None and sign * relative >= 0.25 and ret5 is not None and sign * ret5 >= 0.20:
+        reasons.append("renewed 5m relative acceleration")
+
+    if reasons:
+        return True, "; ".join(reasons)
+    if age_s is not None and age_s < STALE_REARM_BLOCK_SECONDS:
+        return False, "STALE_CALLBACK_GUARD"
+    return False, "CONTINUATION_NO_FRESH_REARM_EVENT"
+
+
 def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_by_key, scan_map, tactical_by_key, promotion_trace, now):
     """Forensic audit of actual movers, not only selected candidates."""
     missed = dict(state.get("missed") or {})
@@ -759,25 +816,9 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             continue
 
         if same:
-            allowed, rearm_reason = _event_rearm_decision(
-                recent, symbol, direction, same, trow, scan, now
+            allowed, rearm_reason = _continuation_rearm_decision(
+                item, same, trow, scan, now
             )
-            # Continuation items themselves are also eligible for fresh re-arm
-            # even when there is no Recent row yet (e.g. profitable exit moved
-            # directly from Focus to Continuation).
-            if not allowed:
-                prior_price = _f(item.get("watch_reference_price"), _f(item.get("live_price")))
-                event_price = _f(same.get("live_price"))
-                atr = _f(scan.get("atr"), _f(item.get("atr")))
-                sign = 1.0 if direction == "Bullish" else -1.0
-                move_atr = None
-                if prior_price is not None and event_price is not None and atr and atr > 0:
-                    move_atr = sign * (event_price - prior_price) / atr
-                family_changed = str(same.get("event_family") or "") != str(item.get("watch_reference_family") or item.get("event_family") or "")
-                if str(same.get("event_family") or "") == "PULLBACK_RECLAIM" or family_changed or (move_atr is not None and move_atr >= 0.20):
-                    allowed = True
-                    rearm_reason = "fresh continuation event"
-
             if allowed and len(focus) < MAX_FOCUS:
                 item["event_family"] = same.get("event_family") or item.get("event_family")
                 item["event_source"] = same.get("source") or item.get("event_source")
