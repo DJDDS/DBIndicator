@@ -18,6 +18,7 @@ STATE_VERSION = 1
 MAX_FOCUS = 6
 MIN_FOCUS_MINUTES = 45
 RECENT_KEEP_MINUTES = 90
+RECENT_REENTRY_COOLDOWN_MINUTES = 10
 MAX_HISTORY = 24
 
 EVENT_PRIORITY = {
@@ -348,8 +349,14 @@ def _focus_age_minutes(item, now):
 
 
 def _recent_cleanup(rows, now):
-    out = []
+    """Keep one latest Recent/Completed card per symbol + direction.
+
+    A persistent invalidation event may be published by multiple live callbacks.
+    Recent/Completed is a thesis ledger, not an event log, so repeated copies of
+    the same thesis must collapse to the newest card.
+    """
     cutoff = now - dt.timedelta(minutes=RECENT_KEEP_MINUTES)
+    latest = {}
     for row in rows or []:
         ts = _dt(row.get("completed_at") or row.get("last_state_change_at"))
         if ts is None:
@@ -358,9 +365,73 @@ def _recent_cleanup(rows, now):
             ts = ts.replace(tzinfo=None)
         elif ts.tzinfo is None and cutoff.tzinfo is not None:
             ts = ts.replace(tzinfo=cutoff.tzinfo)
-        if ts >= cutoff:
-            out.append(row)
+        if ts < cutoff:
+            continue
+        key = (str(row.get("symbol") or ""), str(row.get("direction") or ""))
+        if not key[0]:
+            continue
+        prior = latest.get(key)
+        prior_ts = _dt((prior or {}).get("completed_at") or (prior or {}).get("last_state_change_at"))
+        if prior is None or prior_ts is None or ts >= prior_ts:
+            latest[key] = row
+    out = list(latest.values())
+    out.sort(key=lambda r: str(r.get("completed_at") or r.get("last_state_change_at") or ""))
     return out[-30:]
+
+
+def _same_level(a, b, tolerance=1e-9):
+    a, b = _f(a), _f(b)
+    if a is None or b is None:
+        return False
+    return abs(a - b) <= max(tolerance, 1e-6 * max(abs(a), abs(b), 1.0))
+
+
+def _recent_reentry_blocked(recent, symbol, direction, event, trow, now):
+    """Suppress immediate resurrection of the exact setup just invalidated.
+
+    A genuinely new pullback/reclaim or materially changed trigger/invalidation
+    can return later. The stale same setup cannot re-enter on every WebSocket
+    callback and flood Recent/Completed.
+    """
+    for row in reversed(recent or []):
+        if str(row.get("symbol") or "") != symbol or str(row.get("direction") or "") != direction:
+            continue
+        completed = _dt(row.get("completed_at") or row.get("last_state_change_at"))
+        if completed is None:
+            return False
+        if completed.tzinfo is not None and now.tzinfo is None:
+            completed = completed.replace(tzinfo=None)
+        elif completed.tzinfo is None and now.tzinfo is not None:
+            completed = completed.replace(tzinfo=now.tzinfo)
+        age_min = max(0.0, (now - completed).total_seconds() / 60.0)
+
+        current_family = str((event or {}).get("event_family") or "")
+        prior_family = str(row.get("event_family") or "")
+        current_trigger = (trow or {}).get("trigger")
+        current_invalid = (trow or {}).get("invalidation")
+        same_structure = (
+            current_family == prior_family
+            and (
+                current_trigger is None or row.get("trigger") is None
+                or _same_level(current_trigger, row.get("trigger"))
+            )
+            and (
+                current_invalid is None or row.get("invalidation") is None
+                or _same_level(current_invalid, row.get("invalidation"))
+            )
+        )
+
+        if same_structure:
+            return True
+
+        # Different structure may return, but not in the same few callbacks.
+        if age_min < RECENT_REENTRY_COOLDOWN_MINUTES:
+            return True
+
+        # Pullback/reclaim is an explicit later re-entry family once cooldown
+        # has expired; other materially changed structures may also re-enter.
+        return False
+    return False
 
 
 def _missed_movers(state, observer, focus_symbols, event_keys, scan_map, now):
@@ -502,6 +573,10 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         if not symbol or symbol in focus:
             continue
 
+        trow = tactical_by_key.get((symbol, direction))
+        if _recent_reentry_blocked(recent, symbol, direction, event, trow, now):
+            continue
+
         if len(focus) >= MAX_FOCUS:
             # Exceptional-event replacement is intentionally rare.  It can
             # only replace a non-actionable DISCOVERED/BUILDING thesis that
@@ -531,13 +606,21 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             recent.append(old)
 
         item = _new_focus_item(event, scans.get(symbol) or {}, now)
-        trow = tactical_by_key.get((symbol, direction))
         lifecycle, note = _derive_lifecycle(item, event, trow, now)
         if lifecycle != item["lifecycle"]:
             _history(item, lifecycle, now, note)
         item["vehicles"] = _vehicle_state(item, trow)
         item["focus_age_min"] = 0.0
-        focus[symbol] = item
+
+        # If the freshly promoted structure is already beyond invalidation,
+        # record it once as a completed thesis and never let it occupy/recycle
+        # a Focus slot.
+        if item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
+            item["completed_at"] = _iso(now)
+            recent.append(item)
+            recent = _recent_cleanup(recent, now)
+        else:
+            focus[symbol] = item
 
     focus_symbols = set(focus)
     missed = _missed_movers(state, observer, focus_symbols, set(event_by_key), scans, now)
