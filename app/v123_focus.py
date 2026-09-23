@@ -76,6 +76,7 @@ def empty_state():
         "missed": {},
         "last_update": None,
         "trade_date": None,
+        "swing_1d": {},
     }
 
 
@@ -89,6 +90,7 @@ def _normalise(state):
     out.setdefault("missed", {})
     out.setdefault("last_update", None)
     out.setdefault("trade_date", None)
+    out.setdefault("swing_1d", {})
     return out
 
 
@@ -724,6 +726,7 @@ def dashboard(state):
         "missed_movers": missed,
         "all_focus": focus,
         "last_update": state.get("last_update"),
+        "swing_1d": state.get("swing_1d") or {},
         "rules": {
             "max_focus": MAX_FOCUS,
             "minimum_observation_minutes": MIN_FOCUS_MINUTES,
