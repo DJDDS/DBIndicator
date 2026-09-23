@@ -1318,6 +1318,7 @@ def _apply_weighted_score(results):
 
 
 _state_lock = threading.Lock()
+_v123_focus_lock = threading.Lock()
 _state = {
     "results": [],
     "last_scan": None,
@@ -2052,25 +2053,29 @@ def _v122b_candidate_provider():
 
 
 def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):
-    now = now or now_ist()
-    with _state_lock:
-        observer_now = dict(observer if observer is not None else (_state.get("v123_market_observer") or {}))
-        tactical_now = dict(tactical if tactical is not None else (_state.get("v122b_tactical") or {}))
-        radar_now = dict(radar if radar is not None else (_state.get("event_early_radar") or {}))
-        results_now = [dict(row) for row in (results if results is not None else (_state.get("results") or []))]
-        focus_state = dict(_state.get("v123_focus_state") or v123_focus.empty_state())
+    # Observer and deep tactical WebSockets can publish concurrently.  Use a
+    # dedicated lifecycle lock so neither callback can overwrite a newer focus
+    # transition with a stale snapshot.
+    with _v123_focus_lock:
+        now = now or now_ist()
+        with _state_lock:
+            observer_now = dict(observer if observer is not None else (_state.get("v123_market_observer") or {}))
+            tactical_now = dict(tactical if tactical is not None else (_state.get("v122b_tactical") or {}))
+            radar_now = dict(radar if radar is not None else (_state.get("event_early_radar") or {}))
+            results_now = [dict(row) for row in (results if results is not None else (_state.get("results") or []))]
+            focus_state = dict(_state.get("v123_focus_state") or v123_focus.empty_state())
 
-    focus_state = v123_focus.update_focus(
-        focus_state, observer_now, radar_now, tactical_now, results_now, now=now
-    )
-    desk = v123_focus.dashboard(focus_state)
-    candidates = v123_focus.tactical_candidates(focus_state, results_now)
+        focus_state = v123_focus.update_focus(
+            focus_state, observer_now, radar_now, tactical_now, results_now, now=now
+        )
+        desk = v123_focus.dashboard(focus_state)
+        candidates = v123_focus.tactical_candidates(focus_state, results_now)
 
-    with _state_lock:
-        _state["v123_focus_state"] = focus_state
-        _state["v123_focus_desk"] = desk
-        _state["v122b_candidates"] = candidates
-    return desk
+        with _state_lock:
+            _state["v123_focus_state"] = focus_state
+            _state["v123_focus_desk"] = desk
+            _state["v122b_candidates"] = candidates
+        return desk
 
 
 def _v123_market_publish(payload):
