@@ -818,6 +818,7 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
         "htf_trend": htf_trend, "htf_aligned": aligned, "bars": int(bars),
         "formation_sessions": int(bars + 1), "pattern_timeframe": TF_LABEL[tf],
         "fit": round(max(0.0, min(1.0, raw["fit"])), 2),
+        "formation_start_time": int(fr.t[raw["start_i"]]),
         "bar_time": int(fr.t[last]),
         "breakout_time": int(fr.t[bi]) if bi is not None else None,
         "retest_time": int(fr.t[raw["retest_i"]]) if raw.get("retest_i") is not None else None,
