@@ -325,6 +325,17 @@ def _new_focus_item(event, scan, now):
     }
 
 
+def _minutes_since(value, now):
+    ts = _dt(value)
+    if ts is None:
+        return None
+    if ts.tzinfo is not None and now.tzinfo is None:
+        ts = ts.replace(tzinfo=None)
+    elif ts.tzinfo is None and now.tzinfo is not None:
+        ts = ts.replace(tzinfo=now.tzinfo)
+    return max(0.0, (now - ts).total_seconds() / 60.0)
+
+
 def _focus_age_minutes(item, now):
     selected = _dt(item.get("selected_at"))
     if selected is None:
@@ -459,6 +470,25 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         item["vehicles"] = _vehicle_state(item, trow)
         item["focus_age_min"] = round(_focus_age_minutes(item, now), 1)
 
+        # Persistence is deliberate, but not immortality.  A focus survives
+        # short ranking/data gaps; after its minimum observation commitment,
+        # an unproductive thesis can leave the desk so a new mover can enter.
+        since_seen = _minutes_since(item.get("last_seen_at"), now)
+        if (
+            item.get("lifecycle") in ("DISCOVERED", "BUILDING")
+            and item["focus_age_min"] >= MIN_FOCUS_MINUTES
+            and since_seen is not None and since_seen >= 15.0
+            and not same and not trow
+        ):
+            _history(item, "COMPLETED", now, "focus observation expired without an actionable structure")
+        elif (
+            item.get("lifecycle") in ("PULLBACK", "WEAKENING")
+            and item["focus_age_min"] >= 90.0
+            and since_seen is not None and since_seen >= 30.0
+            and not same
+        ):
+            _history(item, "COMPLETED", now, "continuation window expired")
+
         if item.get("lifecycle") in ("INVALIDATED", "COMPLETED"):
             item["completed_at"] = _iso(now)
             recent.append(item)
@@ -471,8 +501,35 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         direction = str(event.get("direction") or "")
         if not symbol or symbol in focus:
             continue
+
         if len(focus) >= MAX_FOCUS:
-            break
+            # Exceptional-event replacement is intentionally rare.  It can
+            # only replace a non-actionable DISCOVERED/BUILDING thesis that
+            # has already had at least ten minutes of observation, and only
+            # when the incoming event family is materially stronger.
+            incoming_p = EVENT_PRIORITY.get(str(event.get("event_family") or ""), 0)
+            replace_symbol = None
+            replace_key = None
+            for fsym, fitem in focus.items():
+                if fitem.get("lifecycle") not in ("DISCOVERED", "BUILDING"):
+                    continue
+                age = _focus_age_minutes(fitem, now)
+                if age < 10.0:
+                    continue
+                current_p = EVENT_PRIORITY.get(str(fitem.get("event_family") or ""), 0)
+                if incoming_p < current_p + 2:
+                    continue
+                key = (current_p, -age)
+                if replace_key is None or key < replace_key:
+                    replace_key = key
+                    replace_symbol = fsym
+            if replace_symbol is None:
+                continue
+            old = dict(focus.pop(replace_symbol))
+            _history(old, "COMPLETED", now, "replaced by materially stronger live underlying event")
+            old["completed_at"] = _iso(now)
+            recent.append(old)
+
         item = _new_focus_item(event, scans.get(symbol) or {}, now)
         trow = tactical_by_key.get((symbol, direction))
         lifecycle, note = _derive_lifecycle(item, event, trow, now)
