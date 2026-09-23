@@ -159,6 +159,17 @@ V122B_TACTICAL_EVENT_FILE = os.getenv(
 )
 V122B_TACTICAL_STALE_SECONDS = float(os.getenv("V122B_TACTICAL_STALE_SECONDS", "8"))
 
+# V12.3 live decision-support persistence. These files are operational state
+# only and are intentionally separate from all frozen research artifacts.
+V123_FOCUS_STATE_FILE = os.getenv(
+    "V123_FOCUS_STATE_FILE",
+    os.path.join(V12_STORAGE_ROOT, "v123_focus_state.json"),
+)
+V123_OBSERVER_STATE_FILE = os.getenv(
+    "V123_OBSERVER_STATE_FILE",
+    os.path.join(V12_STORAGE_ROOT, "v123_market_checkpoint.json"),
+)
+
 # Trial 25 forward earnings-volatility shadow recorder. All files live under
 # the same persistent V12 Railway volume and are research-only.
 TRIAL25_ROOT = _V12_STORAGE["trial25_root"]

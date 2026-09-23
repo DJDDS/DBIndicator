@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_state, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -21,6 +21,11 @@ from .scanner import (
 )
 
 log = logging.getLogger(__name__)
+
+# Dedicated operational V12.3 state store.  This is separate from the large
+# periodic scan snapshot so live Focus-Desk lifecycle transitions survive a
+# redeploy even when they occur between normal scanner saves.
+_v123_focus_store = v123_state.FocusStateStore(config.V123_FOCUS_STATE_FILE)
 
 LIVE_RELIABILITY_BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.2-LIVE-RELIABILITY-HOTFIX"
 
@@ -1615,6 +1620,11 @@ def _load_persisted_state():
                 _state["v122d_forward_summary"] = v122d_forward.summarize(_state["v122d_forward"])
                 _state["v123_market_observer"] = saved.get("v123_market_observer") or _state["v123_market_observer"]
                 _state["v123_focus_state"] = saved.get("v123_focus_state") or v123_focus.empty_state()
+                # Prefer the dedicated high-frequency V12.3 lifecycle file
+                # over the slower whole-scan snapshot when both exist.
+                live_focus = _v123_focus_store.load(now=now_ist())
+                if live_focus:
+                    _state["v123_focus_state"] = live_focus
                 _state["v123_focus_desk"] = v123_focus.dashboard(_state["v123_focus_state"])
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
@@ -2075,6 +2085,13 @@ def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, n
             _state["v123_focus_state"] = focus_state
             _state["v123_focus_desk"] = desk
             _state["v122b_candidates"] = candidates
+
+        # Atomic and signature-gated: writes only when the meaningful Focus
+        # lifecycle/membership/vehicle state changes, not on every price tick.
+        try:
+            _v123_focus_store.save_if_changed(focus_state, now=now)
+        except Exception:
+            log.exception("Failed to persist V12.3 Focus state")
         return desk
 
 
@@ -2149,6 +2166,7 @@ def _make_v123_market_stream_service():
         kite_client_getter=kite_auth.get_kite_client,
         api_key=config.KITE_API_KEY,
         now_provider=now_ist,
+        checkpoint_path=config.V123_OBSERVER_STATE_FILE,
     )
 
 
