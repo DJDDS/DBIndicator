@@ -993,7 +993,11 @@ def api_pattern_detail():
     pid = request.args.get("id", "")
     for row in chart_patterns.load_results().get("results", []):
         if row.get("id") == pid:
-            return jsonify(row)
+            enriched = dict(row)
+            enriched["nse_evidence"] = chart_patterns.nse_evidence_for(
+                row.get("pattern"), row.get("direction")
+            )
+            return jsonify(enriched)
     return jsonify({"error": "pattern not found - rescan may have replaced it"}), 404
 
 
