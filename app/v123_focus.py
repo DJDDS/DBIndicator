@@ -16,9 +16,12 @@ import math
 
 STATE_VERSION = 1
 MAX_FOCUS = 6
+MAX_CONTINUATION_WATCH = 6
+MAX_DEEP_MONITORED = 12
 MIN_FOCUS_MINUTES = 45
+CONTINUATION_WATCH_MINUTES = 45
+STALE_REARM_BLOCK_SECONDS = 90
 RECENT_KEEP_MINUTES = 90
-RECENT_REENTRY_COOLDOWN_MINUTES = 10
 MAX_HISTORY = 24
 
 EVENT_PRIORITY = {
@@ -39,6 +42,7 @@ LIFECYCLE_PRIORITY = {
     "PULLBACK": 5,
     "BUILDING": 4,
     "DISCOVERED": 3,
+    "CONTINUATION_WATCH": 3,
     "WEAKENING": 2,
     "INVALIDATED": 1,
     "COMPLETED": 0,
@@ -73,7 +77,9 @@ def empty_state():
         "version": STATE_VERSION,
         "focus": {},
         "recent": [],
+        "continuation_watch": {},
         "missed": {},
+        "forensics": {},
         "last_update": None,
         "trade_date": None,
         "swing_1d": {},
@@ -87,7 +93,9 @@ def _normalise(state):
     out["version"] = STATE_VERSION
     out.setdefault("focus", {})
     out.setdefault("recent", [])
+    out.setdefault("continuation_watch", {})
     out.setdefault("missed", {})
+    out.setdefault("forensics", {})
     out.setdefault("last_update", None)
     out.setdefault("trade_date", None)
     out.setdefault("swing_1d", {})
@@ -182,8 +190,14 @@ def _tactical_map(tactical):
 
 
 def _underlying_invalidated(item, price):
+    """Broader thesis invalidation, deliberately separate from entry SL.
+
+    Tactical 3m invalidation belongs to one entry attempt.  It must not erase a
+    still-valid session thesis.  The broader thesis level is fixed when Focus is
+    first admitted and may only be changed explicitly by thesis logic.
+    """
     direction = item.get("direction")
-    invalid = _f(item.get("invalidation"))
+    invalid = _f(item.get("thesis_invalidation"))
     price = _f(price)
     if invalid is None or price is None:
         return False
@@ -192,6 +206,21 @@ def _underlying_invalidated(item, price):
     if direction == "Bearish":
         return price >= invalid
     return False
+
+
+def _initial_thesis_invalidation(direction, price, atr, entry_invalidation):
+    price = _f(price)
+    atr = _f(atr)
+    entry = _f(entry_invalidation)
+    broad = None
+    if price is not None and atr is not None and atr > 0:
+        broad = price - 0.90 * atr if direction == "Bullish" else price + 0.90 * atr
+    if entry is None:
+        return broad
+    if broad is None:
+        return entry
+    # Thesis invalidation must be broader than the current micro-entry level.
+    return min(entry, broad) if direction == "Bullish" else max(entry, broad)
 
 
 def _vehicle_state(item, trow):
@@ -275,21 +304,15 @@ def _derive_lifecycle(item, event, trow, now):
         return "BUILDING", "pullback-reclaim event detected"
 
     if tstate in ("TIME_EXIT", "CANCELLED"):
-        if prior in ("ACTIVE", "MANAGE", "READY", "REENTRY_READY"):
-            return "WEAKENING", (trow or {}).get("reason") or "fast execution premise weakened"
+        if prior in ("ACTIVE", "MANAGE", "READY", "REENTRY_READY", "PROVEN_MOVER"):
+            return "CONTINUATION_WATCH", (trow or {}).get("reason") or "entry attempt ended; retain underlying thesis"
 
     if tstate == "EXIT":
         reason = (trow or {}).get("reason") or "entry exit"
         episode_result = str((trow or {}).get("entry_episode_result") or "")
-        # A fast entry can close profitably while the larger underlying thesis
-        # remains alive.  Only a true underlying structural invalidation kills
-        # the thesis; profit-protection exits become PROVEN_MOVER so the same
-        # stock stays on the desk for continuation/re-entry.
-        if "underlying structural invalidation" in reason.lower():
-            return "INVALIDATED", reason
         if episode_result == "PROVEN_MOVE" or "profit-protection" in reason.lower():
-            return "PROVEN_MOVER", "entry closed after a proved move; keep same underlying thesis for continuation"
-        return "WEAKENING", reason
+            return "CONTINUATION_WATCH", "proved entry closed; keep underlying campaign alive for a fresh re-entry event"
+        return "CONTINUATION_WATCH", "entry attempt closed; broader thesis remains on continuation watch"
 
     if event:
         if prior in ("ACTIVE", "MANAGE") and family in ("MOMENTUM_CONTINUATION", "RELATIVE_SEPARATION"):
@@ -332,6 +355,13 @@ def _new_focus_item(event, scan, now):
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
+        "entry_invalidation": event.get("invalidation"),
+        "thesis_invalidation": _initial_thesis_invalidation(
+            direction,
+            event.get("live_price") if event.get("live_price") is not None else scan.get("close"),
+            event.get("atr") if event.get("atr") is not None else scan.get("atr"),
+            event.get("invalidation"),
+        ),
         "history": [{
             "ts": _iso(now),
             "state": "DISCOVERED",
@@ -402,97 +432,150 @@ def _same_level(a, b, tolerance=1e-9):
     return abs(a - b) <= max(tolerance, 1e-6 * max(abs(a), abs(b), 1.0))
 
 
-def _recent_reentry_blocked(recent, symbol, direction, event, trow, now):
-    """Suppress immediate resurrection of the exact setup just invalidated.
+def _event_rearm_decision(recent, symbol, direction, event, trow, scan, now):
+    """Return (allowed, reason) for a previously completed same-direction thesis.
 
-    A genuinely new pullback/reclaim or materially changed trigger/invalidation
-    can return later. The stale same setup cannot re-enter on every WebSocket
-    callback and flood Recent/Completed.
+    The ABB fix remains: the exact stale callback cannot resurrect immediately.
+    But a genuine new market event can re-arm the campaign without waiting an
+    arbitrary ten/90-minute ban.
     """
+    prior = None
     for row in reversed(recent or []):
-        if str(row.get("symbol") or "") != symbol or str(row.get("direction") or "") != direction:
-            continue
-        completed = _dt(row.get("completed_at") or row.get("last_state_change_at"))
-        if completed is None:
-            return False
+        if str(row.get("symbol") or "") == symbol and str(row.get("direction") or "") == direction:
+            prior = row
+            break
+    if prior is None:
+        return True, "NEW_SYMBOL_DIRECTION"
+
+    completed = _dt(prior.get("completed_at") or prior.get("last_state_change_at"))
+    age_s = None
+    if completed is not None:
         if completed.tzinfo is not None and now.tzinfo is None:
             completed = completed.replace(tzinfo=None)
         elif completed.tzinfo is None and now.tzinfo is not None:
             completed = completed.replace(tzinfo=now.tzinfo)
-        age_min = max(0.0, (now - completed).total_seconds() / 60.0)
+        age_s = max(0.0, (now - completed).total_seconds())
 
-        current_family = str((event or {}).get("event_family") or "")
-        prior_family = str(row.get("event_family") or "")
-        current_trigger = (trow or {}).get("trigger")
-        current_invalid = (trow or {}).get("invalidation")
-        same_structure = (
-            current_family == prior_family
-            and (
-                current_trigger is None or row.get("trigger") is None
-                or _same_level(current_trigger, row.get("trigger"))
-            )
-            and (
-                current_invalid is None or row.get("invalidation") is None
-                or _same_level(current_invalid, row.get("invalidation"))
-            )
-        )
+    family = str((event or {}).get("event_family") or "")
+    prior_family = str(prior.get("event_family") or "")
+    price = _f((event or {}).get("live_price"))
+    prior_price = _f(prior.get("live_price"))
+    atr = _f((scan or {}).get("atr"), _f(prior.get("atr")))
+    signed_move_atr = None
+    if price is not None and prior_price is not None and atr and atr > 0:
+        sign = 1.0 if direction == "Bullish" else -1.0
+        signed_move_atr = sign * (price - prior_price) / atr
 
-        if same_structure:
-            return True
+    current_trigger = _f((trow or {}).get("trigger"))
+    prior_trigger = _f(prior.get("trigger"))
+    trigger_shift_atr = None
+    if current_trigger is not None and prior_trigger is not None and atr and atr > 0:
+        trigger_shift_atr = abs(current_trigger - prior_trigger) / atr
 
-        # Different structure may return, but not in the same few callbacks.
-        if age_min < RECENT_REENTRY_COOLDOWN_MINUTES:
-            return True
+    relative = _f((event or {}).get("relative_5m_vs_nifty_pct"))
+    ret5 = _f((event or {}).get("ret_5m_pct"))
+    sign = 1.0 if direction == "Bullish" else -1.0
 
-        # Pullback/reclaim is an explicit later re-entry family once cooldown
-        # has expired; other materially changed structures may also re-enter.
-        return False
-    return False
+    fresh_reasons = []
+    if family == "PULLBACK_RECLAIM":
+        fresh_reasons.append("fresh pullback-reclaim")
+    if family and family != prior_family:
+        fresh_reasons.append("event family changed")
+    if signed_move_atr is not None and signed_move_atr >= 0.20:
+        fresh_reasons.append("price advanced >=0.20 ATR from prior closeout")
+    if trigger_shift_atr is not None and trigger_shift_atr >= 0.15:
+        fresh_reasons.append("new structural trigger")
+    if relative is not None and sign * relative >= 0.25 and ret5 is not None and sign * ret5 >= 0.20:
+        fresh_reasons.append("renewed 5m relative acceleration")
+
+    if fresh_reasons:
+        return True, "; ".join(fresh_reasons)
+
+    if age_s is not None and age_s < STALE_REARM_BLOCK_SECONDS:
+        return False, "STALE_CALLBACK_GUARD"
+
+    return False, "NO_FRESH_REARM_EVENT"
 
 
-def _missed_movers(state, observer, focus_symbols, event_keys, scan_map, now):
+
+def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_by_key, scan_map, tactical_by_key, promotion_trace, now):
+    """Forensic audit of actual movers, not only selected candidates."""
     missed = dict(state.get("missed") or {})
-    rows = list((observer or {}).get("leaders") or [])[:8] + list((observer or {}).get("laggards") or [])[:8]
+    forensics = dict(state.get("forensics") or {})
+    rows = list((observer or {}).get("leaders") or []) + list((observer or {}).get("laggards") or [])
+    seen = set()
     for mover in rows:
         symbol = str(mover.get("symbol") or "")
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
         day = _f(mover.get("day_change_pct"))
-        if not symbol or day is None or abs(day) < 1.0 or symbol in focus_symbols:
+        if day is None or abs(day) < 0.75:
             continue
 
-        directions = [d for s, d in event_keys if s == symbol]
-        if symbol not in scan_map:
-            reason = "SCAN_METADATA_MISSING"
-        elif not directions:
-            reason = "MOVE_WITHOUT_QUALIFYING_LIVE_EVENT"
-        elif len(focus_symbols) >= MAX_FOCUS:
-            reason = "FOCUS_CAPACITY_WHILE_OTHER_THESIS_PERSISTED"
-        else:
-            reason = "EVENT_SEEN_BUT_NOT_PROMOTED"
+        direction = "Bullish" if day > 0 else "Bearish"
+        event = event_by_key.get((symbol, direction))
+        trow = tactical_by_key.get((symbol, direction))
+        trace = list(promotion_trace.get(symbol) or [])
 
-        row = dict(missed.get(symbol) or {})
-        row.update({
+        if symbol in focus_symbols:
+            stage, reason = "FOCUS", "ACTIVE_FOCUS"
+        elif symbol in continuation_symbols:
+            stage, reason = "CONTINUATION", "CONTINUATION_WATCH"
+        elif symbol not in scan_map:
+            stage, reason = "METADATA", "SCAN_METADATA_MISSING"
+        elif event is None:
+            stage, reason = "DISCOVERY", "MOVE_WITHOUT_QUALIFYING_LIVE_EVENT"
+        elif trow and str(trow.get("state") or "") == "OPTION_NOT_TRADEABLE":
+            stage, reason = "OPTION_ROUTE", str(trow.get("reason") or "OPTION_NOT_TRADEABLE")
+        elif trace:
+            stage, reason = "PROMOTION", trace[-1]
+        elif len(focus_symbols) >= MAX_FOCUS:
+            stage, reason = "FOCUS_CAPACITY", "FOCUS_CAPACITY_WHILE_COMMITTED_THESIS_PERSISTED"
+        else:
+            stage, reason = "PROMOTION", "EVENT_SEEN_BUT_NOT_PROMOTED"
+
+        entry = dict(forensics.get(symbol) or {})
+        history = list(entry.get("history") or [])
+        stamp = (stage, reason)
+        if not history or (history[-1].get("stage"), history[-1].get("reason")) != stamp:
+            history.append({"ts": _iso(now), "stage": stage, "reason": reason})
+        entry.update({
             "symbol": symbol,
+            "direction": direction,
             "day_change_pct": round(day, 3),
             "ret_5m_pct": mover.get("ret_5m_pct"),
+            "stage": stage,
             "reason": reason,
+            "event_family": (event or {}).get("event_family"),
+            "tactical_state": (trow or {}).get("state"),
+            "option_reason": ((trow or {}).get("option_route") or {}).get("reason") or (trow or {}).get("reason"),
+            "focus_count": len(focus_symbols),
+            "continuation_count": len(continuation_symbols),
             "last_seen_at": _iso(now),
+            "history": history[-12:],
         })
-        row.setdefault("first_seen_at", _iso(now))
-        missed[symbol] = row
+        entry.setdefault("first_seen_at", _iso(now))
+        forensics[symbol] = entry
+        if symbol not in focus_symbols and symbol not in continuation_symbols:
+            missed[symbol] = dict(entry)
 
     cutoff = now - dt.timedelta(hours=4)
-    clean = {}
-    for symbol, row in missed.items():
-        ts = _dt(row.get("last_seen_at"))
-        if ts is None:
-            continue
-        if ts.tzinfo is not None and cutoff.tzinfo is None:
-            ts = ts.replace(tzinfo=None)
-        elif ts.tzinfo is None and cutoff.tzinfo is not None:
-            ts = ts.replace(tzinfo=cutoff.tzinfo)
-        if ts >= cutoff:
-            clean[symbol] = row
-    return clean
+    def fresh_map(src):
+        out = {}
+        for symbol, row in src.items():
+            ts = _dt(row.get("last_seen_at"))
+            if ts is None:
+                continue
+            if ts.tzinfo is not None and cutoff.tzinfo is None:
+                ts = ts.replace(tzinfo=None)
+            elif ts.tzinfo is None and cutoff.tzinfo is not None:
+                ts = ts.replace(tzinfo=cutoff.tzinfo)
+            if ts >= cutoff:
+                out[symbol] = row
+        return out
+    return fresh_map(missed), fresh_map(forensics)
+
 
 
 def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None):
@@ -564,6 +647,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
                 item["trigger"] = trow.get("trigger")
             if trow.get("invalidation") is not None:
                 item["invalidation"] = trow.get("invalidation")
+                item["entry_invalidation"] = trow.get("invalidation")
+                if item.get("thesis_invalidation") is None:
+                    item["thesis_invalidation"] = _initial_thesis_invalidation(
+                        direction, item.get("live_price"), item.get("atr"), trow.get("invalidation")
+                    )
         elif same and same.get("live_price") is not None:
             item["live_price"] = same.get("live_price")
 
