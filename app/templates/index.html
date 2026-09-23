@@ -116,6 +116,38 @@
   .sl-cov { color: var(--dim); }
   .sl-empty { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 4px 0 0; }
   .sl-empty strong { color: var(--text); }
+
+  /* Event-Driven Early Detection: presentation-only hierarchy.
+     Keep event logic/state transitions untouched; make the live sequence scannable at speed. */
+  #early-radar-card > h2 { font-size:15px; line-height:1.35; letter-spacing:.045em; }
+  #early-radar-card > h2 .sub { display:inline; margin-left:10px; font-size:11px; line-height:1.45; font-weight:500; color:var(--dim); letter-spacing:.015em; }
+  #early-radar-card > .sl-empty { max-width:1180px; margin-top:5px !important; font-size:12.5px; line-height:1.55; color:var(--muted); }
+  #early-radar-card .sl-list { gap:8px; margin-top:12px; }
+  #early-radar-card .sl-row { grid-template-columns:24px minmax(150px,.72fr) minmax(108px,.46fr) minmax(260px,1.55fr) minmax(260px,1.15fr); gap:14px; padding:14px 14px; min-height:76px; }
+  #early-radar-card .sl-rank { font-family:var(--sans); font-size:11px; font-weight:500; color:var(--dim); opacity:.55; }
+  #early-radar-card .sl-sym { gap:5px; }
+  #early-radar-card .sl-name { font-family:var(--sans); font-size:17px; line-height:1.1; font-weight:750; letter-spacing:.01em; }
+  #early-radar-card .sl-close { font-family:var(--sans); font-size:11.5px; line-height:1.35; font-weight:550; color:var(--muted); }
+  #early-radar-card .sl-score { min-width:0 !important; text-align:left; font-family:var(--sans); font-size:10.5px !important; line-height:1.2; font-weight:800; letter-spacing:.065em; text-transform:uppercase; white-space:normal; }
+  #early-radar-card .sl-why { gap:5px; font-family:var(--sans); }
+  #early-radar-card .sl-oi { font-size:13.5px; line-height:1.35; font-weight:650; color:var(--text); }
+  #early-radar-card .sl-detail { font-family:var(--mono); font-size:10.5px; line-height:1.45; font-weight:500; color:var(--muted); white-space:normal; overflow:visible; text-overflow:clip; }
+  #early-radar-card .sl-tags { justify-content:flex-end; align-content:center; flex-wrap:wrap; gap:5px; font-family:var(--sans); font-size:10px; }
+  #early-radar-card .sl-tag { padding:3px 7px; line-height:1.25; font-weight:600; color:var(--muted); border:1px solid #252d3a; }
+  #early-radar-card .sl-tag.strong { color:#b9cff5; border-color:#33445e; background:#111a27; }
+  #early-radar-card .event-evidence { margin-top:14px; padding-top:11px; border-top:1px solid #3a2f0f; }
+  #early-radar-card .event-evidence > .sub { font-size:11.5px; line-height:1.5; color:var(--muted); }
+  @media (max-width:1000px) {
+    #early-radar-card .sl-row { grid-template-columns:22px minmax(135px,.8fr) minmax(100px,.55fr) minmax(0,1.65fr); }
+    #early-radar-card .sl-tags { grid-column:2 / -1; justify-content:flex-start; }
+  }
+  @media (max-width:680px) {
+    #early-radar-card > h2 .sub { display:block; margin:5px 0 0; }
+    #early-radar-card .sl-row { grid-template-columns:20px minmax(0,1fr) auto; gap:9px 10px; padding:12px 10px; }
+    #early-radar-card .sl-why, #early-radar-card .sl-tags { grid-column:2 / -1; }
+    #early-radar-card .sl-name { font-size:16px; }
+    #early-radar-card .sl-oi { font-size:13px; }
+  }
   .btst-list { display: flex; flex-direction: column; gap: 10px; }
   .btst-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel2); }
   .btst-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -722,12 +754,12 @@
         {% set state = r.event_state or 'SCOUT' %}
         <div class="sl-row {{ 'bull' if r.direction == 'Bullish' else ('bear' if r.direction == 'Bearish' else '') }}" onclick="window.location='/chart/{{ r.symbol }}'">
           <span class="sl-rank">{{ loop.index }}</span>
-          <span class="sl-score" style="color:{% if state in ['BREAK_ACCEPTED','FOLLOW_THROUGH'] %}var(--green){% elif state in ['FAILED','STALE','OPTION_BLOCKED'] %}var(--red){% else %}var(--amber){% endif %};font-size:11px;min-width:126px;">
-            {{ state.replace('_',' ') }}
-          </span>
           <span class="sl-sym">
             <a class="sl-name" href="/chart/{{ r.symbol }}" onclick="event.stopPropagation()">{{ r.symbol }}</a>
             <span class="sl-close">{{ r.direction }}{% if r.setup %} · {{ r.setup.replace('_',' ') }}{% endif %}</span>
+          </span>
+          <span class="sl-score" style="color:{% if state in ['BREAK_ACCEPTED','FOLLOW_THROUGH'] %}var(--green){% elif state in ['FAILED','STALE','OPTION_BLOCKED'] %}var(--red){% else %}var(--amber){% endif %};">
+            {{ state.replace('_',' ') }}
           </span>
           <span class="sl-why">
             <span class="sl-oi">{{ r.reason }}</span>
@@ -755,7 +787,7 @@
       {% endif %}
       {% set ev = event_early_evidence or {} %}
       {% set evstage = ev.get('by_stage', {}) %}
-      <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3a2f0f;">
+      <div class="event-evidence">
         <span class="sub"><strong>Live evidence recorder:</strong> {{ ev.get('events', 0) }} first-stage events captured. Synthetic audit evidence is not treated as proof; this recorder measures what actually happens 5m/15m/30m/60m after PRESSURE SHIFT, READY and BREAK ACCEPTED.</span>
         {% if ev.get('events', 0) %}
         <div class="sl-tags" style="margin-top:8px;">
