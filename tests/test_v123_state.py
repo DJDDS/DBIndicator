@@ -126,3 +126,81 @@ def test_restart_keeps_focus_even_if_observer_is_temporarily_empty(tmp_path):
     )
     assert "ABC" in updated["focus"]
     assert updated["focus"]["ABC"]["lifecycle"] == "READY"
+
+
+
+def _observer_mover(symbol="PBFINTECH", *, stage_ready=False):
+    return {
+        "leaders": [{
+            "symbol": symbol,
+            "live_price": 1512.0,
+            "day_change_pct": 1.15,
+            "ret_3m_pct": 0.12,
+            "ret_5m_pct": 0.24,
+            "ret_10m_pct": 0.42,
+            "relative_5m_vs_nifty_pct": 0.17,
+            "volume_rate_accel": 1.31,
+            "near_session_extreme": True,
+            "discovery_qualified": stage_ready,
+            "discovery_reason": "RANGE_EXPANSION" if stage_ready else "NO_EVENT_FAMILY_QUALIFIED",
+            "discovery_failed_gates": [] if stage_ready else ["5m move < 0.20%"],
+        }],
+        "laggards": [],
+    }
+
+
+def test_forensic_flight_recorder_keeps_pre_event_and_stage_change(tmp_path):
+    root = tmp_path / "forensics"
+    rec = v123_state.ForensicFlightRecorder(str(root), snapshot_seconds=60)
+    t0 = dt.datetime(2026, 9, 23, 12, 49)
+
+    focus = {"forensics": {
+        "PBFINTECH": {
+            "symbol": "PBFINTECH",
+            "direction": "Bullish",
+            "stage": "DISCOVERY",
+            "reason": "NO_EVENT_FAMILY_QUALIFIED",
+            "discovery_failed_gates": ["5m move < 0.20%"],
+            "focus_count": 4,
+            "continuation_count": 1,
+        }
+    }}
+    assert rec.record(_observer_mover(), focus, now=t0) == 1
+    assert rec.record(_observer_mover(), focus, now=t0 + dt.timedelta(seconds=20)) == 0
+
+    focus["forensics"]["PBFINTECH"].update({
+        "stage": "PROMOTION",
+        "reason": "RANGE_EXPANSION_QUALIFIED",
+        "event_family": "RANGE_EXPANSION",
+    })
+    assert rec.record(
+        _observer_mover(stage_ready=True), focus,
+        now=t0 + dt.timedelta(seconds=25)
+    ) == 1
+
+    path = root / "v123_forensic_2026-09-23.jsonl"
+    rows = [__import__("json").loads(line) for line in path.read_text().splitlines()]
+    assert len(rows) == 2
+    assert rows[0]["symbol"] == "PBFINTECH"
+    assert rows[0]["stage"] == "DISCOVERY"
+    assert rows[0]["ret_5m_pct"] == 0.24
+    assert rows[1]["stage"] == "PROMOTION"
+    assert rows[1]["event_family"] == "RANGE_EXPANSION"
+
+
+def test_forensic_flight_recorder_keeps_only_two_sessions(tmp_path):
+    root = tmp_path / "forensics"
+    rec = v123_state.ForensicFlightRecorder(str(root), snapshot_seconds=1, keep_sessions=2)
+    focus = {"forensics": {
+        "PBFINTECH": {"stage": "DISCOVERY", "reason": "TEST"}
+    }}
+
+    for day in (21, 22, 23):
+        now = dt.datetime(2026, 9, day, 12, 50)
+        rec.record(_observer_mover(), focus, now=now)
+
+    names = sorted(p.name for p in root.glob("v123_forensic_*.jsonl"))
+    assert names == [
+        "v123_forensic_2026-09-22.jsonl",
+        "v123_forensic_2026-09-23.jsonl",
+    ]
