@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1318,6 +1318,7 @@ def _apply_weighted_score(results):
 
 
 _state_lock = threading.Lock()
+_v123_focus_lock = threading.Lock()
 _state = {
     "results": [],
     "last_scan": None,
@@ -1361,6 +1362,15 @@ _state = {
     "event_early_radar": {"label": "EVENT-DRIVEN EARLY DETECTION · RESEARCH / SHADOW", "rows": [], "counts": {}},
     "v122d_forward": v122d_forward.empty_state(),
     "v122d_forward_summary": v122d_forward.summarize(v122d_forward.empty_state()),
+    "v123_market_observer": {
+        "status": "WAITING",
+        "universe_count": 0,
+        "events": [],
+        "leaders": [],
+        "laggards": [],
+    },
+    "v123_focus_state": v123_focus.empty_state(),
+    "v123_focus_desk": v123_focus.dashboard(v123_focus.empty_state()),
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -1603,6 +1613,9 @@ def _load_persisted_state():
                 _state["event_early_radar"] = saved.get("event_early_radar") or _state["event_early_radar"]
                 _state["v122d_forward"] = saved.get("v122d_forward") or v122d_forward.empty_state()
                 _state["v122d_forward_summary"] = v122d_forward.summarize(_state["v122d_forward"])
+                _state["v123_market_observer"] = saved.get("v123_market_observer") or _state["v123_market_observer"]
+                _state["v123_focus_state"] = saved.get("v123_focus_state") or v123_focus.empty_state()
+                _state["v123_focus_desk"] = v123_focus.dashboard(_state["v123_focus_state"])
                 _state["last_error"] = None
         # Seed only the persisted F&O cash tokens. If Kite's NSE instrument
         # master is temporarily unavailable after restart, the price scan can
@@ -1642,6 +1655,8 @@ def _save_persisted_state():
             "v12_trial25_status": _state.get("v12_trial25_status") or v12_live.TRIAL25_LOCKED_STATUS,
             "event_early_radar": _state.get("event_early_radar") or {},
             "v122d_forward": _state.get("v122d_forward") or v122d_forward.empty_state(),
+            "v123_market_observer": _state.get("v123_market_observer") or {},
+            "v123_focus_state": _state.get("v123_focus_state") or v123_focus.empty_state(),
         }
     try:
         # default=str is a safety net: if any result field ever ends up
@@ -1864,18 +1879,25 @@ def _run_loop():
                             market_breadth=breadth, lifecycle_state=early_lifecycle, now=scan_now,
                         )
                         swing_snapshot = oi_view.swing_research_console(radar_snapshot)
-                        # V12.2B is a separate interim execution-assist lane.
-                        # It consumes the existing 15m radar but cannot change
-                        # Trial-25, V12/V12.1 recorders, frozen tests or alerts.
-                        tactical_pool = v122b_tactical.select_tactical_pool(
-                            radar_snapshot, results, max_pool=v122b_tactical.TACTICAL_POOL_MAX
-                        )
+                        # V12.3 no longer chooses the deep stream from a
+                        # transient score/radar rank. Full-universe price events
+                        # plus persistent focus state decide which few names get
+                        # futures/depth/options analysis.
                         v12_snapshot = _run_v12_live(
                             kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
                         )
                         with _state_lock:
                             tactical_snapshot = dict(_state.get("v122b_tactical") or {})
-                        _update_v122d_event_evidence(radar_snapshot, tactical_snapshot, scan_now)
+                        event_radar_snapshot = _update_v122d_event_evidence(radar_snapshot, tactical_snapshot, scan_now)
+                        with _state_lock:
+                            observer_snapshot = dict(_state.get("v123_market_observer") or {})
+                        _update_v123_focus(
+                            observer=observer_snapshot,
+                            tactical=tactical_snapshot,
+                            radar=event_radar_snapshot,
+                            results=results,
+                            now=scan_now,
+                        )
                         with _state_lock:
                             _state["results"] = results
                             _state["index_direction"] = index_direction
@@ -1896,7 +1918,7 @@ def _run_loop():
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
                             _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}
                             _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
-                            _state["v122b_candidates"] = tactical_pool
+                            # v122b_candidates is maintained by _update_v123_focus.
                         wait_seconds = _record_scan_attempt_success(scan_ts)
                         try:
                             alerts.process_scan_results(results, WATCHLIST_TIMEFRAME)
@@ -1978,6 +2000,8 @@ def _run_loop():
 _v121_stream_started = False
 _v122b_stream_started = False
 _v122b_stream_service = None
+_v123_market_stream_started = False
+_v123_market_stream_service = None
 
 
 def _run_v121_postclose_backup(now):
@@ -2019,8 +2043,51 @@ def start_v121_index_stream_once():
 
 
 def _v122b_candidate_provider():
+    # V12.3: the deep FULL-mode tactical stream follows only the persistent
+    # Focus Desk.  There is intentionally no transient top-rank fallback:
+    # if no underlying thesis has earned a Focus slot, the deep stream waits.
     with _state_lock:
-        return [dict(row) for row in (_state.get("v122b_candidates") or [])]
+        focus_state = dict(_state.get("v123_focus_state") or {})
+        results = [dict(row) for row in (_state.get("results") or [])]
+    return v123_focus.tactical_candidates(focus_state, results)
+
+
+def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):
+    # Observer and deep tactical WebSockets can publish concurrently.  Use a
+    # dedicated lifecycle lock so neither callback can overwrite a newer focus
+    # transition with a stale snapshot.
+    with _v123_focus_lock:
+        now = now or now_ist()
+        with _state_lock:
+            observer_now = dict(observer if observer is not None else (_state.get("v123_market_observer") or {}))
+            tactical_now = dict(tactical if tactical is not None else (_state.get("v122b_tactical") or {}))
+            radar_now = dict(radar if radar is not None else (_state.get("event_early_radar") or {}))
+            results_now = [dict(row) for row in (results if results is not None else (_state.get("results") or []))]
+            focus_state = dict(_state.get("v123_focus_state") or v123_focus.empty_state())
+
+        focus_state = v123_focus.update_focus(
+            focus_state, observer_now, radar_now, tactical_now, results_now, now=now
+        )
+        desk = v123_focus.dashboard(focus_state)
+        candidates = v123_focus.tactical_candidates(focus_state, results_now)
+
+        with _state_lock:
+            _state["v123_focus_state"] = focus_state
+            _state["v123_focus_desk"] = desk
+            _state["v122b_candidates"] = candidates
+        return desk
+
+
+def _v123_market_publish(payload):
+    now = now_ist()
+    with _state_lock:
+        _state["v123_market_observer"] = dict(payload or {})
+    _update_v123_focus(observer=payload or {}, now=now)
+
+
+def _v123_metadata_provider():
+    with _state_lock:
+        return [dict(row) for row in (_state.get("results") or [])]
 
 
 def _update_v122d_event_evidence(base_radar, tactical, now):
@@ -2041,7 +2108,8 @@ def _v122b_publish(payload):
     with _state_lock:
         _state["v122b_tactical"] = dict(payload or {})
         base_radar = dict(_state.get("opportunity_radar") or {})
-    _update_v122d_event_evidence(base_radar, payload or {}, now)
+    event_radar = _update_v122d_event_evidence(base_radar, payload or {}, now)
+    _update_v123_focus(tactical=payload or {}, radar=event_radar, now=now)
 
 
 def _make_v122b_stream_service():
@@ -2073,6 +2141,31 @@ def start_v122b_tactical_stream_once():
     _v122b_stream_started = True
 
 
+def _make_v123_market_stream_service():
+    return v123_market_stream.UniverseMomentumStreamService(
+        publish_callback=_v123_market_publish,
+        metadata_provider=_v123_metadata_provider,
+        access_token_getter=kite_auth.get_access_token,
+        kite_client_getter=kite_auth.get_kite_client,
+        api_key=config.KITE_API_KEY,
+        now_provider=now_ist,
+    )
+
+
+def start_v123_market_stream_once():
+    global _v123_market_stream_started, _v123_market_stream_service
+    if _v123_market_stream_started:
+        return
+    _v123_market_stream_service = _make_v123_market_stream_service()
+    thread = threading.Thread(
+        target=_v123_market_stream_service.run_forever,
+        daemon=True,
+        name="v123-full-fno-underlying-stream",
+    )
+    thread.start()
+    _v123_market_stream_started = True
+
+
 def start_background_scanner():
     # Freeze the completed first-ten-day stock-option feasibility sample once.
     # Fail soft: research provenance must never block the live scanner.
@@ -2093,6 +2186,9 @@ def start_background_scanner():
         log.exception("V12 10-day feasibility freeze verification failed")
 
     start_v121_index_stream_once()
+    # Full-universe QUOTE stream starts before the deep Focus-Desk stream.
+    # It is fail-soft and uses the third KiteTicker connection.
+    start_v123_market_stream_once()
     start_v122b_tactical_stream_once()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()
