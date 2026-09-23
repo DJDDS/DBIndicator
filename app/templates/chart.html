@@ -311,6 +311,9 @@ function renderCharts(){
   priceChart=makeChart(document.getElementById('price-chart'),520);charts.push(priceChart);
   candleSeries=priceChart.addCandlestickSeries({upColor:'#16865c',downColor:'#d33f49',borderVisible:false,wickUpColor:'#16865c',wickDownColor:'#d33f49',priceLineVisible:true,lastValueVisible:true});
   candleSeries.setData(raw.map(({time,open,high,low,close})=>({time,open,high,low,close})));
+  if(prefs.avwapAnchor){
+    candleSeries.setMarkers([{time:prefs.avwapAnchor,position:'belowBar',color:COLORS.avwap,shape:'circle',text:'AVWAP anchor'}]);
+  }
 
   [[9,'ema9'],[20,'ema20'],[50,'ema50'],[200,'ema200']].forEach(([len,key])=>{if(prefs[key])addLine(priceChart,key,indexedSeries(emaValues(closes,len)),COLORS[key],key==='ema20'?2:1);});
   if(prefs.vwap&&intraday())addLine(priceChart,'vwap',sessionVwap(),COLORS.vwap,2);
@@ -388,7 +391,6 @@ async function loadData(){
     payload=d;raw=d.candles||[];
     document.getElementById('data-meta').textContent=tfLabel(prefs.timeframe)+' · '+d.bar_count+' bars · '+d.source+' · '+new Date(d.updated_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
     st.style.display='none';chartsEl.style.display='block';
-    if(!intraday())prefs.vwap=false;
     renderControls();renderCharts();
   }catch(e){st.className='status err';st.textContent=e.message||'Could not load chart.';}
 }
