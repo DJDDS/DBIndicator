@@ -134,6 +134,8 @@ def dashboard():
         forward_validation=forward_validation,
         v12_trade_console=state.get("v12_trade_console") or {},
         v122b_tactical=state.get("v122b_tactical") or {},
+        v123_market_observer=state.get("v123_market_observer") or {},
+        v123_focus_desk=state.get("v123_focus_desk") or {},
         v12_option_recorder=v12_recorder,
         v12_feasibility=state.get("v12_feasibility") or {},
         v12_earnings=state.get("v12_earnings") or {},
@@ -258,6 +260,8 @@ def api_dashboard_state():
         "opportunity_forward": opportunity_forward.summarize(state.get("opportunity_forward")),
         "v12_trade_console": state.get("v12_trade_console") or {},
         "v122b_tactical": state.get("v122b_tactical") or {},
+        "v123_market_observer": state.get("v123_market_observer") or {},
+        "v123_focus_desk": state.get("v123_focus_desk") or {},
         "v12_option_recorder": v12_recorder,
         "v12_feasibility": state.get("v12_feasibility") or {},
         "v12_earnings": state.get("v12_earnings") or {},
@@ -297,6 +301,8 @@ def api_v8_dashboard():
         base_radar, state.get("v122b_tactical") or {}
     )
     payload["event_early_evidence"] = state.get("v122d_forward_summary") or {}
+    payload["v123_market_observer"] = state.get("v123_market_observer") or {}
+    payload["v123_focus_desk"] = state.get("v123_focus_desk") or {}
     payload["swing_research"] = swing_research_console(base_radar)
     payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS
@@ -341,6 +347,17 @@ def api_v12_recorder_health():
         now=scanner.now_ist(), storage_mode=config.V12_STORAGE_MODE, storage_root=config.V12_STORAGE_ROOT,
     )
     return jsonify(health)
+
+
+@app.route("/api/v123-focus-state")
+@require_dashboard_password
+def api_v123_focus_state():
+    state = get_state()
+    return jsonify({
+        "market_observer": state.get("v123_market_observer") or {},
+        "focus_desk": state.get("v123_focus_desk") or {},
+        "focus_state": state.get("v123_focus_state") or {},
+    })
 
 
 @app.route("/api/v122b-tactical-state/export")

@@ -423,6 +423,45 @@
   .v12-links { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; font-size:10.5px; }
   @media (max-width:900px) { .v12-grid { grid-template-columns:1fr; } .v12-metrics { grid-template-columns:repeat(2,1fr); } }
 
+
+/* V12.3 main trading surface: one persistent underlying-first workspace.
+   Legacy decision panels remain in the DOM/backend for research, but are not
+   competing trading screens anymore. */
+#v122b-tactical-console, #v12-trade-console, #v8-decision-console, #swing-research-console,
+div.card:has(> #early-radar-card) { display:none !important; }
+.focus-desk{border:1px solid #2d536b;background:linear-gradient(180deg,rgba(58,142,180,.07),rgba(10,13,18,0) 65%);border-radius:10px;margin:14px 0 18px;overflow:hidden}
+.focus-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:15px 17px;border-bottom:1px solid #263747}
+.focus-kicker{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:#7bb9d6;font-weight:800}
+.focus-head h2{margin:3px 0 4px;font-size:18px;letter-spacing:-.01em}
+.focus-sub{font-size:11px;color:var(--muted);line-height:1.45;max-width:840px}
+.focus-status{white-space:nowrap;border:1px solid #31536a;border-radius:999px;padding:5px 9px;font-size:10px;color:#9bc8dd;font-weight:700}
+.focus-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,.85fr);gap:0}
+.focus-pane{padding:14px 16px;min-width:0}
+.focus-pane+ .focus-pane{border-left:1px solid #22303d}
+.focus-pane h3{margin:0 0 9px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#9eb0c2}
+.focus-list{display:flex;flex-direction:column;gap:8px}
+.focus-row{border:1px solid #273646;border-radius:8px;background:#0d141d;padding:10px 11px}
+.focus-row.ready,.focus-row.reentry_ready{border-color:#7d6426}
+.focus-row.active,.focus-row.manage{border-color:#216247}
+.focus-row.pullback,.focus-row.weakening{border-color:#6f522a}
+.focus-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.focus-symbol{font-size:14px;font-weight:850}
+.focus-symbol a{color:var(--text);text-decoration:none}
+.focus-direction{font-size:10px;font-weight:800;text-transform:uppercase}
+.focus-direction.bullish{color:#56c596}.focus-direction.bearish{color:#e27b78}
+.focus-life{margin-left:auto;font-size:10px;border:1px solid #344455;border-radius:999px;padding:3px 7px;font-weight:800}
+.focus-action{margin-top:6px;font-size:12px;font-weight:800;color:#dce8ef}
+.focus-meta{margin-top:5px;font-size:10px;color:#91a1b2;line-height:1.5}
+.focus-vehicles{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+.focus-vehicle{font-size:9px;border:1px solid #2d3947;border-radius:5px;padding:3px 6px;color:#91a1b2}
+.focus-vehicle.good{border-color:#23583f;color:#77c79f}.focus-vehicle.bad{border-color:#663e3e;color:#d98b88}
+.focus-history{margin-top:7px;padding-top:6px;border-top:1px solid #202b37;font-size:9px;color:#718295;line-height:1.55}
+.focus-empty{padding:14px;border:1px dashed #2b3948;border-radius:8px;color:#7f8ea0;font-size:11px}
+.focus-miss{display:grid;grid-template-columns:minmax(80px,.7fr) 70px minmax(0,1.5fr);gap:8px;padding:7px 0;border-top:1px solid #1f2a35;font-size:10px}
+.focus-miss:first-child{border-top:0}.focus-miss strong{font-size:11px}.focus-miss .move{text-align:right}
+.focus-note{padding:10px 16px;border-top:1px solid #22303d;font-size:10px;color:#7f91a2;line-height:1.5}
+@media(max-width:900px){.focus-grid{grid-template-columns:1fr}.focus-pane+ .focus-pane{border-left:0;border-top:1px solid #22303d}.focus-status{white-space:normal}}
+
 </style>
 </head>
 <!-- Compatibility label: F&O Early Movement · 15-min execution · High-Quality Swing 1-2D -->
@@ -532,6 +571,51 @@
       </table>
     </div>
   </div>
+
+  {% set fdesk = v123_focus_desk|default({}) %}
+  {% set mobserver = v123_market_observer|default({}) %}
+  <section id="v123-focus-desk" class="focus-desk" aria-label="V12.3 underlying first live focus desk">
+    <div class="focus-head">
+      <div>
+        <div class="focus-kicker">V12.3 · UNDERLYING-FIRST · LIVE FOCUS DESK</div>
+        <h2>Work a few stocks deeply — not dozens of flashing signals</h2>
+        <div class="focus-sub">Full F&amp;O cash underlyings are watched continuously. A small persistent desk is then analysed with 3m/5m structure, futures depth/basis and option routing. A bad option contract does not invalidate a good underlying thesis.</div>
+      </div>
+      <div id="v123-focus-status" class="focus-status">{{ mobserver.get('status','WAITING') }} · {{ mobserver.get('universe_count',0) }} F&amp;O</div>
+    </div>
+    <div class="focus-grid">
+      <div class="focus-pane">
+        <h3>Active / Ready / Manage</h3>
+        <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for persistent underlying opportunities…</div></div>
+        <h3 style="margin-top:14px;">Building Next</h3>
+        <div id="v123-focus-building" class="focus-list"><div class="focus-empty">Universe observer is looking for opening drive, range expansion, relative separation and continuation/reclaim events.</div></div>
+        <h3 style="margin-top:14px;">Continuation Watch / Alumni</h3>
+        <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">Recent important stocks stay under deep monitoring for a fresh re-entry event instead of disappearing.</div></div>
+      </div>
+      <div class="focus-pane">
+        <h3>Missed-Mover Forensics</h3>
+        <div id="v123-focus-missed"><div class="focus-empty">No important missed mover recorded yet.</div></div>
+        <h3 style="margin-top:14px;">Recent / Completed</h3>
+        <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses stay here instead of disappearing.</div></div>
+      </div>
+    </div>
+    <div class="focus-note"><strong>Interpretation:</strong> ENTRY invalidation is now separate from THESIS invalidation. A failed 3m entry moves to Continuation Watch rather than erasing the stock. Alumni remain under deep cash/futures/option monitoring and re-arm only on fresh market evidence. Missed-Mover Forensics records the exact pipeline stage and gate that stopped a real mover. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+  </section>
+
+  <section id="v123-swing-desk" class="focus-desk" aria-label="V12.3 1D swing focus desk">
+    <div class="focus-head">
+      <div>
+        <div class="focus-kicker">V12.3 · 1D SWING FOCUS · SLOW MEMBERSHIP</div>
+        <h2>3–5 stocks to carry into the next session</h2>
+        <div class="focus-sub">This desk does not rotate every 3 minutes. Membership is reviewed only around 09:45, 12:30 and 14:30 IST; the 14:30 set freezes into the close unless the underlying thesis invalidates. It uses 20-session range structure, 4H context, sector-relative behavior, participation and futures-OI context. Option suitability remains downstream.</div>
+      </div>
+      <div id="v123-swing-status" class="focus-status">WAITING · 0 focus</div>
+    </div>
+    <div class="focus-pane">
+      <div id="v123-swing-list" class="focus-list"><div class="focus-empty">Waiting for the next 1D selection checkpoint…</div></div>
+    </div>
+    <div class="focus-note"><strong>Runway:</strong> GOOD means the day has not consumed much ATR; CAUTION means prefer a retest; EXTENDED means do not chase and wait for a pullback. This is a separate slower decision-support desk, not the old 1D/2D score tab.</div>
+  </section>
 
   {% set tctl = v122b_tactical|default({}) %}
   <section id="v122b-tactical-console" class="card v12-card" style="border-color:#0f7b61;" aria-label="V12.2B tactical stock option execution engine">
@@ -1374,6 +1458,123 @@
       .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   }
 
+  function renderV123Focus(desk, observer) {
+    desk = desk || {}; observer = observer || {};
+    var status = document.getElementById('v123-focus-status');
+    if (status) status.textContent = (observer.status || 'WAITING') + ' · ' + (observer.universe_count || 0) + ' F&O · Focus ' + (desk.focus_count || 0);
+
+    function n(v,d){ var x=Number(v); return Number.isFinite(x)?x.toFixed(d==null?2:d):'—'; }
+    function s(v,d){ var x=Number(v); return Number.isFinite(x)?(x>=0?'+':'')+x.toFixed(d==null?2:d):'—'; }
+    function action(row){
+      var st=String(row.lifecycle||'DISCOVERED').toUpperCase();
+      var map={
+        'DISCOVERED':'DISCOVERED — observing the underlying',
+        'BUILDING':'BUILDING — wait for exact structure',
+        'READY':'READY — wait for trigger',
+        'ACTIVE':'ACTIVE — underlying thesis accepted',
+        'MANAGE':'FOLLOW-THROUGH — manage the same thesis',
+        'PROVEN_MOVER':'FIRST MOVE WORKED — keep thesis, wait for continuation',
+        'CONTINUATION_WATCH':'ALUMNI WATCH — waiting for a fresh event to re-arm',
+        'PULLBACK':'DO NOT CHASE — wait for continuation/reclaim',
+        'REENTRY_READY':'RE-ENTRY READY — same thesis, new structure',
+        'WEAKENING':'WAIT — thesis weakening, not flipped',
+        'INVALIDATED':'INVALIDATED — no new entry',
+        'COMPLETED':'COMPLETED'
+      }; return map[st]||st;
+    }
+    function vehicle(label,value){
+      value=String(value||'WAIT').toUpperCase();
+      var cls=value==='ELIGIBLE'?' good':(value==='BLOCKED'||value==='STALE'?' bad':'');
+      return '<span class="focus-vehicle'+cls+'">'+v12Esc(label)+' '+v12Esc(value)+'</span>';
+    }
+    function rowHtml(row){
+      row=row||{}; var life=String(row.lifecycle||'DISCOVERED').toLowerCase();
+      var v=row.vehicles||{}; var hist=(row.history||[]).slice(-3);
+      var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
+      var opt=v.option_contract?(' · '+v12Esc(v.option_contract)+(v.option_dte!=null?' DTE '+v12Esc(v.option_dte):'')):'';
+      var optionReason=v.option_reason?'<div class="focus-meta">Option: '+v12Esc(v.option_reason)+'</div>':'';
+      return '<div class="focus-row '+life+'">' +
+        '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
+        '<span class="focus-direction '+String(row.direction||'').toLowerCase()+'">'+v12Esc(row.direction||'')+'</span>' +
+        '<span class="focus-life">'+v12Esc(String(row.lifecycle||'').replaceAll('_',' '))+'</span></div>' +
+        '<div class="focus-action">'+v12Esc(action(row))+'</div>' +
+        '<div class="focus-meta">'+v12Esc(row.event_family||'UNDERLYING EVENT')+
+          ' · CMP '+n(row.live_price,2)+
+          (row.trigger!=null?' · Trigger '+n(row.trigger,2):' · Trigger forming')+
+          (row.invalidation!=null?' · Invalid '+n(row.invalidation,2):'')+
+          (row.day_change_pct!=null?' · Day '+s(row.day_change_pct,2)+'%':'')+
+          (row.relative_5m_vs_nifty_pct!=null?' · Rel/Nifty '+s(row.relative_5m_vs_nifty_pct,2)+'%':'')+
+          (row.entry_episode_no?' · Entry #'+v12Esc(row.entry_episode_no):'')+
+          ' · Focus '+n(row.focus_age_min,0)+'m</div>' +
+        '<div class="focus-vehicles">'+vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
+          '<span class="focus-vehicle">Best available '+v12Esc(v.preferred_available_vehicle||'WAIT')+opt+'</span></div>' +
+        (row.locked_option_contract?'<div class="focus-meta"><strong>Contract lock:</strong> '+v12Esc(row.locked_option_contract)+
+          (row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
+          (row.contract_reroute_reason?' · Re-route: '+v12Esc(row.contract_reroute_reason):'')+'</div>':'') +
+        optionReason +
+        (h?'<div class="focus-history">'+h+'</div>':'') +
+      '</div>';
+    }
+    function fill(id,rows,empty){
+      var el=document.getElementById(id); if(!el)return;
+      rows=Array.isArray(rows)?rows:[];
+      el.innerHTML=rows.length?rows.map(rowHtml).join(''):'<div class="focus-empty">'+v12Esc(empty)+'</div>';
+    }
+    fill('v123-focus-active',desk.active_now,'No actionable Focus-Desk stock yet. The system will not invent one.');
+    fill('v123-focus-building',desk.building_next,'No developing focus name right now.');
+    fill('v123-focus-continuation',desk.continuation_watch,'No recent important stock is waiting for re-entry.');
+    // Defensive UI dedupe: backend already keeps one recent thesis per
+    // symbol+direction, but never render historical duplicated persisted rows
+    // as repeated cards after a hotfix/restart.
+    var recentSeen={};
+    var recentRows=(Array.isArray(desk.recent)?desk.recent:[]).filter(function(row){
+      var key=String((row||{}).symbol||'')+'|'+String((row||{}).direction||'');
+      if(!key||recentSeen[key]) return false;
+      recentSeen[key]=true; return true;
+    });
+    fill('v123-focus-recent',recentRows,'No completed/invalidated focus thesis yet.');
+
+    var missed=document.getElementById('v123-focus-missed');
+    if(missed){
+      var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
+      var m=forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
+      missed.innerHTML=m.length?m.map(function(x){
+        var gates=Array.isArray(x.discovery_failed_gates)&&x.discovery_failed_gates.length
+          ? ' · gates: '+x.discovery_failed_gates.slice(0,3).join(', ')
+          : '';
+        return '<div class="focus-miss"><strong>'+v12Esc(x.symbol||'—')+'</strong>'+
+          '<span class="move">'+s(x.day_change_pct,2)+'%</span>'+
+          '<span><strong>'+v12Esc(x.stage||'')+'</strong> · '+v12Esc(String(x.reason||'').replaceAll('_',' '))+v12Esc(gates)+'</span></div>';
+      }).join(''):'<div class="focus-empty">No important mover is currently failing the pipeline.</div>';
+    }
+
+    var swing=desk.swing_1d||{}, swingRows=Object.values(swing.selected||{});
+    var swingStatus=document.getElementById('v123-swing-status');
+    if(swingStatus) swingStatus.textContent=(swing.phase||'WAITING')+' · '+swingRows.length+' focus';
+    var swingList=document.getElementById('v123-swing-list');
+    if(swingList){
+      swingRows.sort(function(a,b){return String(a.selected_at||'').localeCompare(String(b.selected_at||''));});
+      swingList.innerHTML=swingRows.length?swingRows.map(function(row){
+        var dir=String(row.direction||'').toLowerCase();
+        return '<div class="focus-row '+dir+'"><div class="focus-top">'+
+          '<span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>'+
+          '<span class="focus-direction '+dir+'">'+v12Esc(row.direction||'')+'</span>'+
+          '<span class="focus-life">'+v12Esc(row.runway||'')+' RUNWAY</span></div>'+
+          '<div class="focus-action">'+v12Esc(row.action||'1D FOCUS')+'</div>'+
+          '<div class="focus-meta">'+v12Esc(String(row.family||'').replaceAll('_',' '))+
+            ' · CMP '+n(row.live_price,2)+(row.trigger!=null?' · Trigger '+n(row.trigger,2):'')+
+            (row.invalidation!=null?' · Thesis invalid '+n(row.invalidation,2):'')+
+            (row.day_change_pct!=null?' · Day '+s(row.day_change_pct,2)+'%':'')+
+            (row.move_consumed_atr!=null?' · Used '+n(row.move_consumed_atr,2)+' ATR':'')+
+            (row.htf_direction?' · 4H '+v12Esc(row.htf_direction):'')+'</div>'+
+          '<div class="focus-meta">Selected '+v12Esc(row.selected_slot||'')+
+            (row.oi_structure?' · OI '+v12Esc(row.oi_structure):'')+
+            (row.stock_sector_lead_pct!=null?' · Sector lead '+s(row.stock_sector_lead_pct,2)+'%':'')+'</div>'+
+        '</div>';
+      }).join(''):'<div class="focus-empty">No 1D focus yet. Membership is only added at the scheduled checkpoints.</div>';
+    }
+  }
+
   function renderV122BTactical(data) {
     data = data || {};
     var box = document.getElementById('v122b-list');
@@ -1592,6 +1793,7 @@
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
       renderOpportunityForward(state.opportunity_forward);
+      renderV123Focus(state.v123_focus_desk, state.v123_market_observer);
       renderV122BTactical(state.v122b_tactical);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);

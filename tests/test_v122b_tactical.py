@@ -165,3 +165,49 @@ def test_tactical_pool_is_not_starved_by_empty_legacy_radar():
     assert by_symbol["DIRECTBULL"]["direction"] == "Bullish"
     assert by_symbol["DIRECTBEAR"]["direction"] == "Bearish"
     assert by_symbol["DIRECTBULL"]["tactical_source"] == "DIRECT_15M"
+
+
+
+def test_option_contract_lock_keeps_same_ready_contract_when_still_executable():
+    now = dt.datetime(2026, 9, 23, 10, 0)
+    locked = {
+        "symbol":"ABC29SEP100CE","type":"CE","strike":100,"expiry":"2026-09-29","dte":6,
+        "mid":10.0,"spread_pct":0.5,"delta":0.58,"lot_size":500,
+    }
+    newer = {
+        "symbol":"ABC29SEP105CE","type":"CE","strike":105,"expiry":"2026-09-29","dte":6,
+        "mid":7.0,"spread_pct":0.4,"delta":0.50,"lot_size":500,
+    }
+    route = t.route_option(
+        [locked, newer], direction="Bullish", spot=104.0, now=now,
+        speed_class="IMPULSE", expected_underlying_move_abs=5.0,
+        earnings={"pre_result": False},
+        locked_contract_symbol="ABC29SEP100CE",
+    )
+    assert route["tradeable"] is True
+    assert route["locked"] is True
+    assert route["contract"]["symbol"] == "ABC29SEP100CE"
+    assert "ENTRY CONTRACT LOCK" in route["selection_reason"]
+
+
+def test_option_contract_lock_reroutes_only_with_explicit_reason():
+    now = dt.datetime(2026, 9, 23, 10, 0)
+    stale_lock = {
+        "symbol":"ABC29SEP90CE","type":"CE","strike":90,"expiry":"2026-09-29","dte":6,
+        "mid":15.0,"spread_pct":0.5,"delta":0.90,"lot_size":500,
+    }
+    replacement = {
+        "symbol":"ABC29SEP100CE","type":"CE","strike":100,"expiry":"2026-09-29","dte":6,
+        "mid":10.0,"spread_pct":0.5,"delta":0.58,"lot_size":500,
+    }
+    route = t.route_option(
+        [stale_lock, replacement], direction="Bullish", spot=101.0, now=now,
+        speed_class="IMPULSE", expected_underlying_move_abs=5.0,
+        earnings={"pre_result": False},
+        locked_contract_symbol="ABC29SEP90CE",
+    )
+    assert route["tradeable"] is True
+    assert route["locked"] is False
+    assert route["contract"]["symbol"] == "ABC29SEP100CE"
+    assert route["reroute_reason"]
+    assert "RE-ROUTED" in route["selection_reason"]

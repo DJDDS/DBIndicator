@@ -173,7 +173,11 @@ class TacticalStockStreamService:
         # when a continuing candidate moves materially; historical 3m seeding
         # remains one-shot and therefore this does not multiply REST history.
         return tuple(sorted(
-            (str(x.get("symbol")), str(x.get("direction")), round(_f(x.get("close"), 0.0), 2))
+            (
+                str(x.get("symbol")), str(x.get("direction")),
+                round(_f(x.get("close"), 0.0), 2),
+                str(x.get("locked_option_contract") or ""),
+            )
             for x in candidates if x.get("symbol")
         ))
 
@@ -252,12 +256,14 @@ class TacticalStockStreamService:
                 strikes = sorted({_f(x.get("strike")) for x in expc})
                 atm = min(strikes, key=lambda s: abs(s - spot))
                 ix = strikes.index(atm)
-                if direction == "Bullish":
-                    keep = set(strikes[max(0, ix - 1):ix + 1])
-                else:
-                    keep = set(strikes[ix:min(len(strikes), ix + 2)])
+                # Focus names get a small but complete local neighborhood:
+                # one ITM + ATM + one OTM.  The prior two-strike window could
+                # make the router jump merely because the stock moved one
+                # strike interval.
+                keep = set(strikes[max(0, ix - 1):min(len(strikes), ix + 2)])
+                locked_symbol = str(candidate.get("locked_option_contract") or "")
                 for con in expc:
-                    if _f(con.get("strike")) not in keep:
+                    if _f(con.get("strike")) not in keep and str(con.get("tradingsymbol") or "") != locked_symbol:
                         continue
                     tok = con.get("instrument_token")
                     if tok:
@@ -504,6 +510,8 @@ class TacticalStockStreamService:
             event = v122b_tactical.earnings_context(earnings_state, symbol, now)
             option_snaps = self._option_snapshots(symbol, live_price or _f(candidate.get("close"), 0.0), now)
             route = None
+            life = self._lifecycle.setdefault(symbol, {})
+            locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
             if setup.get("setup") and live_price:
                 route = v122b_tactical.route_option(
                     option_snaps,
@@ -513,6 +521,7 @@ class TacticalStockStreamService:
                     speed_class=setup.get("speed_class") or "IMPULSE",
                     expected_underlying_move_abs=max(_f(setup.get("expected_move_abs"), 0.0), 0.25 * max(_f(candidate.get("atr"), 0.0), 0.0)),
                     earnings=event,
+                    locked_contract_symbol=locked_contract,
                 )
 
             state = v122b_tactical.classify_state(
@@ -526,7 +535,38 @@ class TacticalStockStreamService:
             if state.get("state") == "TRADEABLE":
                 direction_used[setup.get("direction") or direction] += 1
 
+            # Start an entry episode when structure is READY or already
+            # TRADEABLE and an executable option exists.  Contract selection
+            # becomes sticky for this thesis; later re-routes are explicit.
+            route_contract = (route or {}).get("contract") or {}
+            if state.get("state") in ("READY", "TRIGGERED", "TRADEABLE") and (route or {}).get("tradeable") and route_contract.get("symbol"):
+                if not life.get("episode_open"):
+                    life["episode_no"] = int(life.get("episode_no") or 0) + 1
+                    life["episode_open"] = True
+                    life["episode_started_at"] = now
+                    life["episode_ready_at"] = now if state.get("state") == "READY" else None
+                if life.get("locked_option_contract") != route_contract.get("symbol"):
+                    life["locked_option_contract"] = route_contract.get("symbol")
+                    life["locked_option_strike"] = route_contract.get("strike")
+                    life["locked_option_delta"] = route_contract.get("delta")
+                    life["locked_option_expiry"] = route_contract.get("expiry")
+                    life["contract_locked_at"] = now
+                    life["contract_selection_reason"] = (route or {}).get("selection_reason")
+                    life["contract_reroute_reason"] = (route or {}).get("reroute_reason")
+
             state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
+
+            if state.get("state") in ("EXIT", "TIME_EXIT") and life.get("episode_open"):
+                life["episode_open"] = False
+                life["episode_closed_at"] = now
+                best = _f(life.get("best_favourable"), 0.0)
+                expected = max(_f(setup.get("expected_move_abs"), 0.0), 1e-9)
+                life["episode_result"] = (
+                    "PROVEN_MOVE" if best >= v122b_tactical.PROPOSED_PROFIT_PROTECT_FRACTION * expected
+                    else ("NO_FOLLOWTHROUGH" if state.get("state") == "TIME_EXIT" else "ENTRY_EXIT")
+                )
+                life["episode_exit_reason"] = state.get("reason")
+
             basis = self._basis(symbol, now)
             rvol3, rvol3_accel, rvol3_prev = self._rvol_3m(symbol, current, now)
             option_route = route or {}
@@ -562,6 +602,18 @@ class TacticalStockStreamService:
                 "earnings": event,
                 "option_route": option_route,
                 "one_lot_risk": risk,
+                "entry_episode_no": int(life.get("episode_no") or 0),
+                "entry_episode_open": bool(life.get("episode_open")),
+                "entry_episode_result": life.get("episode_result"),
+                "entry_episode_exit_reason": life.get("episode_exit_reason"),
+                "entry_episode_started_at": _iso(life.get("episode_started_at")) if isinstance(life.get("episode_started_at"), dt.datetime) else None,
+                "entry_episode_closed_at": _iso(life.get("episode_closed_at")) if isinstance(life.get("episode_closed_at"), dt.datetime) else None,
+                "locked_option_contract": life.get("locked_option_contract"),
+                "locked_option_strike": life.get("locked_option_strike"),
+                "locked_option_delta": life.get("locked_option_delta"),
+                "locked_option_expiry": life.get("locked_option_expiry"),
+                "contract_selection_reason": life.get("contract_selection_reason") or option_route.get("selection_reason"),
+                "contract_reroute_reason": life.get("contract_reroute_reason") or option_route.get("reroute_reason"),
                 "triggered_at": _iso(life.get("triggered_at")) if isinstance(life.get("triggered_at"), dt.datetime) else None,
                 "best_favourable_abs": _f(life.get("best_favourable")),
                 "trailing_invalidation": _f(life.get("trailing_invalidation")),

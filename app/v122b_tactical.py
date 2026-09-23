@@ -51,6 +51,16 @@ PROPOSED_MAX_BASIS_SKEW_SECONDS = 2.5
 PROPOSED_MICRO_PERSIST_SECONDS = 30.0
 PROPOSED_OPPOSING_DEPTH_PERSISTENCE = 0.60
 
+# Contract stability priors.  The preferred band is descriptive/ranking; the
+# wider guard is the only lock-break condition.  This prevents a READY trade
+# from silently jumping strikes as spot moves while still allowing an explicit
+# re-route when the old option becomes economically inappropriate.
+PROPOSED_OPTION_DELTA_TARGET = 0.55
+PROPOSED_OPTION_DELTA_PREFERRED_MIN = 0.45
+PROPOSED_OPTION_DELTA_PREFERRED_MAX = 0.70
+PROPOSED_OPTION_DELTA_LOCK_MIN = 0.35
+PROPOSED_OPTION_DELTA_LOCK_MAX = 0.80
+
 
 def _f(value: Any, default=None):
     try:
@@ -707,12 +717,22 @@ def route_option(
     expected_underlying_move_abs: float,
     earnings: dict | None = None,
     max_friction_ratio: float = PROPOSED_MAX_FRICTION_TO_EXPECTED_MOVE,
+    locked_contract_symbol: str | None = None,
 ) -> dict:
-    """Choose ATM/modest-ITM long option and apply DTE + friction hard vetoes."""
+    """Choose a stable directional option and explain the route.
+
+    Once READY has locked a contract, keep that contract through the current
+    entry episode while it remains live, inside the broad delta guard and
+    executable after friction.  A re-route is explicit and carries a reason;
+    the UI should never silently jump from one strike to another.
+    """
     typ = "CE" if direction == "Bullish" else "PE"
     live = [dict(x) for x in snapshots or [] if x.get("type") == typ and _f(x.get("mid")) not in (None, 0)]
     if not live:
-        return {"tradeable": False, "reason": "no live quoted directional option"}
+        return {
+            "tradeable": False, "reason": "no live quoted directional option",
+            "locked_contract_requested": locked_contract_symbol,
+        }
 
     expiries = sorted({str(x.get("expiry")) for x in live if x.get("expiry")})
     if not expiries:
@@ -724,19 +744,88 @@ def route_option(
     nearest_rows = [x for x in live if str(x.get("expiry")) == expiries[0]]
     nearest_dte = min((_i(x.get("dte"), 9999) for x in nearest_rows), default=9999)
 
-    # User-requested result-season rule: <=8 DTE routes to next month by default.
     if pre_result and nearest_dte <= PROPOSED_PRE_RESULT_NEXT_MONTH_DTE and len(expiries) >= 2:
         preferred_expiry = expiries[1]
     elif speed_class == "SWING" and nearest_dte <= 12 and len(expiries) >= 2:
         preferred_expiry = expiries[1]
 
     pool = [x for x in live if str(x.get("expiry")) == preferred_expiry]
-    if not pool:
-        return {"tradeable": False, "reason": "preferred expiry has no quoted contract"}
+    # A currently locked entry contract is allowed to remain on its original
+    # expiry for that entry episode.  Expiry is reconsidered only on re-entry.
+    locked = next(
+        (x for x in live if locked_contract_symbol and str(x.get("symbol") or "") == str(locked_contract_symbol)),
+        None,
+    )
 
     spot = _f(spot, 0.0)
-    # ATM and modest ITM are preferred; OTM lottery contracts are deliberately
-    # not selected just because their premium is cheaper.
+    strikes = sorted({_f(x.get("strike")) for x in pool if _f(x.get("strike")) is not None})
+    atm_strike = min(strikes, key=lambda s: abs(s - spot)) if strikes else None
+
+    def assess(contract):
+        contract = dict(contract)
+        mid = _f(contract.get("mid"))
+        spread = _f(contract.get("spread_pct"))
+        delta = abs(_f(contract.get("delta"), 0.0))
+        if mid is None or spread is None:
+            return None, "missing bid/ask"
+        friction = estimated_round_trip_cost_pct(mid, _i(contract.get("lot_size"), 1), spread)
+        expected = expected_premium_move_pct(contract, spot, expected_underlying_move_abs)
+        if friction is None or expected is None or expected <= 0:
+            return None, "cannot estimate friction/expected move"
+        ratio = friction / expected
+        strike = _f(contract.get("strike"))
+        moneyness = None
+        if strike is not None and spot:
+            moneyness = (strike - spot) / spot * 100.0
+        contract["estimated_round_trip_friction_pct"] = friction
+        contract["expected_premium_move_pct"] = expected
+        contract["friction_to_expected_move"] = round(ratio, 4)
+        contract["moneyness_vs_spot_pct"] = round(moneyness, 3) if moneyness is not None else None
+        contract["delta_abs"] = round(delta, 4) if delta else None
+        if ratio > float(max_friction_ratio):
+            return None, f"friction consumes {ratio*100:.1f}% of expected premium move"
+        return contract, None
+
+    reroute_reason = None
+    if locked is not None:
+        locked_delta = abs(_f(locked.get("delta"), 0.0))
+        if not (PROPOSED_OPTION_DELTA_LOCK_MIN <= locked_delta <= PROPOSED_OPTION_DELTA_LOCK_MAX):
+            reroute_reason = (
+                f"locked contract delta {locked_delta:.2f} left "
+                f"{PROPOSED_OPTION_DELTA_LOCK_MIN:.2f}-{PROPOSED_OPTION_DELTA_LOCK_MAX:.2f} guard"
+            )
+        else:
+            assessed, rejected = assess(locked)
+            if assessed is not None:
+                return {
+                    "tradeable": True,
+                    "reason": None,
+                    "contract": assessed,
+                    "preferred_expiry": preferred_expiry,
+                    "pre_result_next_month": bool(pre_result and preferred_expiry != expiries[0]),
+                    "atm_strike": atm_strike,
+                    "locked": True,
+                    "locked_contract_requested": locked_contract_symbol,
+                    "selection_reason": "ENTRY CONTRACT LOCK — original READY contract remains executable",
+                    "reroute_reason": None,
+                    "delta_preferred_band": [PROPOSED_OPTION_DELTA_PREFERRED_MIN, PROPOSED_OPTION_DELTA_PREFERRED_MAX],
+                    "delta_lock_guard": [PROPOSED_OPTION_DELTA_LOCK_MIN, PROPOSED_OPTION_DELTA_LOCK_MAX],
+                }
+            reroute_reason = rejected or "locked contract no longer executable"
+    elif locked_contract_symbol:
+        reroute_reason = "locked contract is no longer in the live subscribed/quoted universe"
+
+    if not pool:
+        return {
+            "tradeable": False,
+            "reason": "preferred expiry has no quoted contract",
+            "preferred_expiry": preferred_expiry,
+            "locked_contract_requested": locked_contract_symbol,
+            "reroute_reason": reroute_reason,
+        }
+
+    # Prefer ATM/modest ITM, then the target-delta corridor and tighter spread.
+    # OTM is not forbidden, but it loses to an executable ATM/ITM contract.
     def strike_key(x):
         strike = _f(x.get("strike"), spot)
         itm_penalty = 0
@@ -745,29 +834,23 @@ def route_option(
         if direction == "Bearish" and strike < spot:
             itm_penalty = 1
         delta = abs(_f(x.get("delta"), 0.0))
+        preferred_penalty = 0 if PROPOSED_OPTION_DELTA_PREFERRED_MIN <= delta <= PROPOSED_OPTION_DELTA_PREFERRED_MAX else 1
         spread = _f(x.get("spread_pct"), 999.0)
-        return (itm_penalty, abs(strike - spot), abs(delta - 0.55), spread)
+        return (
+            itm_penalty,
+            preferred_penalty,
+            abs(delta - PROPOSED_OPTION_DELTA_TARGET),
+            abs(strike - spot),
+            spread,
+        )
 
     pool.sort(key=strike_key)
     chosen = None
     reject_reasons = []
-    for contract in pool:
-        mid = _f(contract.get("mid"))
-        spread = _f(contract.get("spread_pct"))
-        if mid is None or spread is None:
-            reject_reasons.append("missing bid/ask")
-            continue
-        friction = estimated_round_trip_cost_pct(mid, _i(contract.get("lot_size"), 1), spread)
-        expected = expected_premium_move_pct(contract, spot, expected_underlying_move_abs)
-        if friction is None or expected is None or expected <= 0:
-            reject_reasons.append("cannot estimate friction/expected move")
-            continue
-        ratio = friction / expected
-        contract["estimated_round_trip_friction_pct"] = friction
-        contract["expected_premium_move_pct"] = expected
-        contract["friction_to_expected_move"] = round(ratio, 4)
-        if ratio > float(max_friction_ratio):
-            reject_reasons.append(f"friction consumes {ratio*100:.1f}% of expected premium move")
+    for raw in pool:
+        contract, rejected = assess(raw)
+        if contract is None:
+            reject_reasons.append(rejected)
             continue
         chosen = contract
         break
@@ -778,13 +861,34 @@ def route_option(
             "reason": reject_reasons[0] if reject_reasons else "no contract passed friction gate",
             "preferred_expiry": preferred_expiry,
             "pre_result_next_month": bool(pre_result and preferred_expiry != expiries[0]),
+            "atm_strike": atm_strike,
+            "locked": False,
+            "locked_contract_requested": locked_contract_symbol,
+            "reroute_reason": reroute_reason,
         }
+
+    delta = abs(_f(chosen.get("delta"), 0.0))
+    selection_reason = (
+        f"selected {chosen.get('symbol')} near ATM/modest ITM; "
+        f"delta {delta:.2f}, ATM {atm_strike:g}" if atm_strike is not None
+        else f"selected {chosen.get('symbol')} from executable directional options"
+    )
+    if reroute_reason:
+        selection_reason = "RE-ROUTED — " + reroute_reason + "; " + selection_reason
+
     return {
         "tradeable": True,
         "reason": None,
         "contract": chosen,
         "preferred_expiry": preferred_expiry,
         "pre_result_next_month": bool(pre_result and preferred_expiry != expiries[0]),
+        "atm_strike": atm_strike,
+        "locked": False,
+        "locked_contract_requested": locked_contract_symbol,
+        "selection_reason": selection_reason,
+        "reroute_reason": reroute_reason,
+        "delta_preferred_band": [PROPOSED_OPTION_DELTA_PREFERRED_MIN, PROPOSED_OPTION_DELTA_PREFERRED_MAX],
+        "delta_lock_guard": [PROPOSED_OPTION_DELTA_LOCK_MIN, PROPOSED_OPTION_DELTA_LOCK_MAX],
     }
 
 
