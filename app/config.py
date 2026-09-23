@@ -169,6 +169,10 @@ V123_OBSERVER_STATE_FILE = os.getenv(
     "V123_OBSERVER_STATE_FILE",
     os.path.join(V12_STORAGE_ROOT, "v123_market_checkpoint.json"),
 )
+V123_FORENSIC_ROOT = os.getenv(
+    "V123_FORENSIC_ROOT",
+    os.path.join(V12_STORAGE_ROOT, "v123_forensics"),
+)
 
 # Trial 25 forward earnings-volatility shadow recorder. All files live under
 # the same persistent V12 Railway volume and are research-only.
