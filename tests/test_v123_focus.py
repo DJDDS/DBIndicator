@@ -159,3 +159,52 @@ def test_new_trading_day_clears_yesterdays_focus():
     )
     assert state["focus"] == {}
     assert state["trade_date"] == "2026-09-24"
+
+
+
+def test_invalidated_live_setup_is_recorded_once_not_repeated_each_callback():
+    t0 = dt.datetime(2026, 9, 23, 11, 32, 0)
+    observer = {
+        "events": [_observer_event("ABB", direction="Bullish", family="PRESSURE_SHIFT", price=7125.0)],
+        "leaders": [], "laggards": [],
+    }
+    # Mirrors the production glitch: live price is already below the bullish
+    # invalidation level, while the same tactical snapshot remains published.
+    tactical = {
+        "candidates": [{
+            "symbol": "ABB", "direction": "Bullish", "state": "READY",
+            "live_price": 7125.0, "trigger": 7130.0, "invalidation": 7126.0,
+            "option_route": {"tradeable": False, "reason": "friction consumes 66.1% of expected premium move"},
+        }]
+    }
+
+    state = None
+    for i in range(12):
+        state = v123_focus.update_focus(
+            state, observer, {"rows": []}, tactical, [_scan("ABB", 7125.0)],
+            now=t0 + dt.timedelta(seconds=i * 5),
+        )
+
+    assert "ABB" not in state["focus"]
+    recent = [x for x in state["recent"] if x.get("symbol") == "ABB"]
+    assert len(recent) == 1
+    assert recent[0]["lifecycle"] == "INVALIDATED"
+    assert recent[0]["trigger"] == 7130.0
+    assert recent[0]["invalidation"] == 7126.0
+
+
+def test_recent_cleanup_collapses_duplicate_cards_for_same_symbol_direction():
+    now = dt.datetime(2026, 9, 23, 11, 40)
+    rows = [
+        {
+            "symbol": "ABB", "direction": "Bullish", "lifecycle": "INVALIDATED",
+            "completed_at": "2026-09-23T11:32:01", "trigger": 7130.0, "invalidation": 7126.0,
+        },
+        {
+            "symbol": "ABB", "direction": "Bullish", "lifecycle": "INVALIDATED",
+            "completed_at": "2026-09-23T11:32:05", "trigger": 7130.0, "invalidation": 7126.0,
+        },
+    ]
+    cleaned = v123_focus._recent_cleanup(rows, now)
+    assert len(cleaned) == 1
+    assert cleaned[0]["completed_at"] == "2026-09-23T11:32:05"
