@@ -34,7 +34,7 @@ SAMPLE_SECONDS = 5
 MAX_SAMPLE_MINUTES = 45
 PUBLISH_SECONDS = 2
 MAX_DISCOVERY_EVENTS = 30
-MAX_MOVER_ROWS = 16
+MAX_MOVER_ROWS = 30
 
 
 def _f(value, default=None):
@@ -456,6 +456,71 @@ class UniverseMomentumStreamService:
             "why": why,
         }
 
+    def _event_diagnostic(self, symbol, sample, meta, nifty_returns, now, event=None):
+        """Explain why an actual mover did or did not qualify for discovery."""
+        price = _f(sample.get("price"))
+        prev = _f(sample.get("prev_close"), _f(meta.get("prev_close")))
+        if price is None or prev is None or prev <= 0:
+            return {"qualified": False, "reason": "MISSING_PRICE_OR_PREV_CLOSE", "failed_gates": ["price/prev_close"]}
+
+        day = _pct(price, prev)
+        r3 = self._return(symbol, now, 180)
+        r5 = self._return(symbol, now, 300)
+        r10 = self._return(symbol, now, 600)
+        vol_accel = self._volume_accel(symbol, now)
+        n5 = nifty_returns.get("5m")
+        rel5 = None if r5 is None or n5 is None else round(r5 - n5, 4)
+        live_axis = r3 if r3 is not None else (r5 if r5 is not None else day)
+        direction = "Bullish" if (live_axis or 0) >= 0 else "Bearish"
+        at_extreme = self._near_extreme(sample, direction)
+        sign = 1.0 if direction == "Bullish" else -1.0
+
+        if event:
+            return {
+                "qualified": True,
+                "reason": str(event.get("event_family") or "QUALIFIED_EVENT"),
+                "failed_gates": [],
+                "direction": direction,
+                "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
+                "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
+                "near_session_extreme": at_extreme,
+            }
+
+        failed = []
+        if r5 is None:
+            failed.append("5m history not ready")
+        elif sign * r5 < 0.20:
+            failed.append("5m move < 0.20%")
+        if vol_accel is None:
+            failed.append("volume acceleration unavailable")
+        elif vol_accel < 1.20:
+            failed.append("volume rate < 1.20x")
+        if not at_extreme:
+            failed.append("not near session extreme")
+        if rel5 is not None and sign * rel5 < 0.08:
+            failed.append("relative 5m < 0.08%")
+        if day is not None and sign * day < 0.75:
+            failed.append("day move < 0.75%")
+        if r3 is None or sign * r3 < 0.10:
+            failed.append("3m continuation < 0.10%")
+        if r10 is None or sign * r10 < 0.35:
+            failed.append("10m continuation < 0.35%")
+        if not self._continuation_reclaim(symbol, direction, now, day):
+            failed.append("no fresh pullback-reclaim")
+
+        # Report the few most informative unmet gates rather than dumping every
+        # branch condition.
+        return {
+            "qualified": False,
+            "reason": "NO_EVENT_FAMILY_QUALIFIED",
+            "failed_gates": failed[:5],
+            "direction": direction,
+            "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
+            "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
+            "near_session_extreme": at_extreme,
+        }
+
+
     def _build_snapshot(self, now):
         meta = self._metadata()
         with self._lock:
@@ -482,14 +547,25 @@ class UniverseMomentumStreamService:
             price = _f(sample.get("price"))
             day = _pct(price, prev)
             r5 = self._return(symbol, now, 300)
+            event = self._event_for(symbol, sample, meta.get(symbol) or {}, nifty_returns, now)
+            diagnostic = self._event_diagnostic(
+                symbol, sample, meta.get(symbol) or {}, nifty_returns, now, event=event
+            )
             if day is not None:
                 movers.append({
                     "symbol": symbol,
                     "live_price": round(price, 4) if price is not None else None,
                     "day_change_pct": round(day, 4),
+                    "ret_3m_pct": diagnostic.get("ret_3m_pct"),
                     "ret_5m_pct": round(r5, 4) if r5 is not None else None,
+                    "ret_10m_pct": diagnostic.get("ret_10m_pct"),
+                    "relative_5m_vs_nifty_pct": diagnostic.get("relative_5m_vs_nifty_pct"),
+                    "volume_rate_accel": diagnostic.get("volume_rate_accel"),
+                    "near_session_extreme": diagnostic.get("near_session_extreme"),
+                    "discovery_qualified": diagnostic.get("qualified"),
+                    "discovery_reason": diagnostic.get("reason"),
+                    "discovery_failed_gates": diagnostic.get("failed_gates"),
                 })
-            event = self._event_for(symbol, sample, meta.get(symbol) or {}, nifty_returns, now)
             if event:
                 events.append(event)
 
