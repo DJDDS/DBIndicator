@@ -412,8 +412,18 @@ class ThreeMinuteBarBuilder:
         completed = None
         if self.current is None or self.current.get("bucket") != bucket:
             if self.current is not None:
-                completed = dict(self.current)
-                completed["complete"] = True
+                old_bucket = self.current.get("bucket")
+                # Only the immediately preceding 3-minute bucket is a valid
+                # completion.  After a feed/subscription gap, emitting a
+                # 30-minute-old partial bar as if it just completed corrupts
+                # the freshest trigger and volume calculation.
+                contiguous = (
+                    isinstance(old_bucket, dt.datetime)
+                    and bucket - old_bucket <= dt.timedelta(minutes=3)
+                )
+                if contiguous:
+                    completed = dict(self.current)
+                    completed["complete"] = True
             self.current = {
                 "bucket": bucket,
                 "ts": bucket.isoformat(timespec="seconds"),
@@ -485,11 +495,31 @@ def fast_trend_veto(bars: list[dict], direction: str) -> dict:
     }
 
 
-def _opening_range(bars: list[dict]) -> tuple[float | None, float | None]:
-    session = []
+def _opening_range(
+    bars: list[dict],
+    *,
+    trading_day: dt.date | None = None,
+) -> tuple[float | None, float | None]:
+    """Return the 09:15-09:30 range for one trading day only.
+
+    Seeded 3-minute history spans more than one session.  Mixing yesterday's
+    opening bars into today's opening range can move the trigger far away from
+    the live market, especially after a gap.  When the caller supplies today's
+    date we use it explicitly; otherwise we fall back to the newest date
+    present in the bar buffer for backwards-compatible callers/tests.
+    """
+    dated = []
     for b in bars:
         ts = _dt(b.get("ts"))
-        if ts is None:
+        if ts is not None:
+            dated.append((ts, b))
+    if not dated:
+        return None, None
+
+    day = trading_day or max(ts.date() for ts, _ in dated)
+    session = []
+    for ts, b in dated:
+        if ts.date() != day:
             continue
         mins = ts.hour * 60 + ts.minute
         if 9 * 60 + 15 <= mins < 9 * 60 + 30:
@@ -546,7 +576,7 @@ def detect_structural_setup(
         pullback_invalid = lo2 if sign > 0 else hi2
 
     # 3) Opening drive: break the completed first-15-minute range after 09:30.
-    orh, orl = _opening_range(completed_bars)
+    orh, orl = _opening_range(completed_bars, trading_day=now.date())
     minute = now.hour * 60 + now.minute
     opening_trigger = orh if sign > 0 else orl
     opening_invalid = orl if sign > 0 else orh
