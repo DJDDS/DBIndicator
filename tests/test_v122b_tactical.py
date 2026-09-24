@@ -211,3 +211,100 @@ def test_option_contract_lock_reroutes_only_with_explicit_reason():
     assert route["contract"]["symbol"] == "ABC29SEP100CE"
     assert route["reroute_reason"]
     assert "RE-ROUTED" in route["selection_reason"]
+
+
+
+def test_five_minute_witness_requires_non_opposing_underlying_evidence():
+    assert t.five_minute_witness_supportive("Bullish", 0.22, 0.11) is True
+    assert t.five_minute_witness_supportive("Bearish", -0.22, -0.11) is True
+    assert t.five_minute_witness_supportive("Bullish", 0.22, -0.01) is False
+    assert t.five_minute_witness_supportive("Bullish", None, None) is False
+
+
+def test_route_failure_class_separates_quote_noise_from_hard_structure():
+    assert t.option_route_failure_class({"tradeable": True}) == "HEALTHY"
+    assert t.option_route_failure_class({
+        "tradeable": False,
+        "reason": "friction consumes 33.2% of expected premium move",
+    }) == "TEMPORARY"
+    assert t.option_route_failure_class({
+        "tradeable": False,
+        "reason": "no valid option expiry",
+    }) == "HARD"
+
+
+def test_ltf_style_route_flicker_retains_window_then_recovers():
+    t0 = dt.datetime(2026, 9, 24, 10, 20, 0)
+    base_state = {"state": "OPTION_NOT_TRADEABLE", "tradeable": False, "reason": "friction"}
+    bad_route = {
+        "tradeable": False,
+        "reason": "friction consumes 34.0% of expected premium move",
+    }
+
+    degraded, since, age = t.stabilize_option_route_state(
+        base_state,
+        bad_route,
+        episode_open=True,
+        witness_supportive=True,
+        degraded_since=None,
+        now=t0,
+    )
+    assert degraded["state"] == "ROUTE_DEGRADED"
+    assert age == pytest.approx(0.0)
+
+    degraded2, since2, age2 = t.stabilize_option_route_state(
+        base_state,
+        bad_route,
+        episode_open=True,
+        witness_supportive=True,
+        degraded_since=since,
+        now=t0 + dt.timedelta(seconds=12),
+    )
+    assert degraded2["state"] == "ROUTE_DEGRADED"
+    assert since2 == since
+    assert age2 == pytest.approx(12.0)
+
+    recovered, cleared, recovered_age = t.stabilize_option_route_state(
+        {"state": "TRADEABLE", "tradeable": True, "reason": "recovered"},
+        {"tradeable": True, "contract": {"symbol": "LTF29SEPCE"}},
+        episode_open=True,
+        witness_supportive=True,
+        degraded_since=since,
+        now=t0 + dt.timedelta(seconds=18),
+    )
+    assert recovered["state"] == "TRADEABLE"
+    assert cleared is None
+    assert recovered_age is None
+
+
+def test_persistent_or_hard_route_failure_is_not_hidden():
+    t0 = dt.datetime(2026, 9, 24, 10, 20, 0)
+    bad_route = {
+        "tradeable": False,
+        "reason": "missing bid/ask",
+    }
+    state, since, age = t.stabilize_option_route_state(
+        {"state": "OPTION_NOT_TRADEABLE", "tradeable": False},
+        bad_route,
+        episode_open=True,
+        witness_supportive=True,
+        degraded_since=t0,
+        now=t0 + dt.timedelta(seconds=31),
+    )
+    assert state["state"] == "OPTION_NOT_TRADEABLE"
+    assert "persistent option-route degradation" in state["reason"]
+    assert age == pytest.approx(31.0)
+
+    hard = {"tradeable": False, "reason": "no valid option expiry"}
+    hard_state = {"state": "OPTION_NOT_TRADEABLE", "tradeable": False, "reason": "no valid option expiry"}
+    unchanged, cleared, hard_age = t.stabilize_option_route_state(
+        hard_state,
+        hard,
+        episode_open=True,
+        witness_supportive=True,
+        degraded_since=t0,
+        now=t0 + dt.timedelta(seconds=2),
+    )
+    assert unchanged == hard_state
+    assert cleared is None
+    assert hard_age is None
