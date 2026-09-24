@@ -1,0 +1,19 @@
+name: V12.3 Continuation Math Validation
+
+on:
+  push:
+    branches:
+      - v123-continuation-math-professional-desk
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: PYTHONPATH=. pytest -q tests/test_v122b_tactical.py tests/test_v122b_stream.py tests/test_v123_focus.py tests/test_post_deploy_ui.py
+      - run: python -m compileall -q app
