@@ -532,6 +532,47 @@ class TacticalStockStreamService:
                 option_route=route,
                 active_same_direction=direction_used[setup.get("direction") or direction],
             )
+
+            route_class = v122b_tactical.option_route_failure_class(route)
+            witness_supportive = v122b_tactical.five_minute_witness_supportive(
+                setup.get("direction") or direction,
+                candidate.get("focus_ret_5m_pct"),
+                candidate.get("focus_relative_5m_vs_nifty_pct"),
+            )
+            route_degraded_age_s = None
+            # Once a READY/TRADEABLE episode has locked an executable contract,
+            # a single quote/friction wobble must not erase the entry window.
+            # Smooth only temporary route failures and only while the 5-minute
+            # underlying witness remains non-opposing. Hard structural/data
+            # vetoes still pass through immediately.
+            if route_class == "HEALTHY":
+                life["route_degraded_since"] = None
+                life["last_route_healthy_at"] = now
+            elif life.get("episode_open") and route_class == "TEMPORARY" and witness_supportive:
+                degraded_since = life.get("route_degraded_since")
+                if not isinstance(degraded_since, dt.datetime):
+                    degraded_since = now
+                    life["route_degraded_since"] = now
+                route_degraded_age_s = max(0.0, (now - degraded_since).total_seconds())
+                if route_degraded_age_s < v122b_tactical.PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS:
+                    state = {
+                        "state": "ROUTE_DEGRADED",
+                        "tradeable": False,
+                        "reason": "entry window retained; option route temporarily degraded: "
+                                  + str((route or {}).get("reason") or "quote/friction quality"),
+                    }
+                else:
+                    state = {
+                        "state": "OPTION_NOT_TRADEABLE",
+                        "tradeable": False,
+                        "reason": "persistent option-route degradation >= %.0fs: %s" % (
+                            v122b_tactical.PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS,
+                            str((route or {}).get("reason") or "quote/friction quality"),
+                        ),
+                    }
+            else:
+                life["route_degraded_since"] = None
+
             if state.get("state") == "TRADEABLE":
                 direction_used[setup.get("direction") or direction] += 1
 
@@ -602,6 +643,17 @@ class TacticalStockStreamService:
                 "earnings": event,
                 "option_route": option_route,
                 "one_lot_risk": risk,
+                "five_minute_witness_supportive": witness_supportive,
+                "focus_ret_5m_pct": candidate.get("focus_ret_5m_pct"),
+                "focus_relative_5m_vs_nifty_pct": candidate.get("focus_relative_5m_vs_nifty_pct"),
+                "route_failure_class": route_class,
+                "route_degraded_age_s": round(route_degraded_age_s, 1) if route_degraded_age_s is not None else None,
+                "entry_window_state": (
+                    "DEGRADED" if state.get("state") == "ROUTE_DEGRADED"
+                    else ("OPEN" if life.get("episode_open") and (route or {}).get("tradeable")
+                          else ("BLOCKED" if life.get("episode_open") and not (route or {}).get("tradeable")
+                                else "WAITING"))
+                ),
                 "entry_episode_no": int(life.get("episode_no") or 0),
                 "entry_episode_open": bool(life.get("episode_open")),
                 "entry_episode_result": life.get("episode_result"),
@@ -625,7 +677,7 @@ class TacticalStockStreamService:
             output.append(payload)
 
         priority = {
-            "TRADEABLE": 10, "PROFIT_PROTECT": 9, "READY": 8, "TRIGGERED": 7,
+            "TRADEABLE": 10, "PROFIT_PROTECT": 9, "ROUTE_DEGRADED": 8.5, "READY": 8, "TRIGGERED": 7,
             "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
             "CANCELLED": 3, "BLOCKED_EXPOSURE": 2, "RESEARCH_ONLY": 1,
             "STALE": 0, "EXIT": 0,
@@ -644,6 +696,7 @@ class TacticalStockStreamService:
                 "pool_max": v122b_tactical.TACTICAL_POOL_MAX,
                 "pre_result_next_month_dte_lte": v122b_tactical.PROPOSED_PRE_RESULT_NEXT_MONTH_DTE,
                 "max_friction_ratio": v122b_tactical.PROPOSED_MAX_FRICTION_TO_EXPECTED_MOVE,
+                "route_degrade_persist_seconds": v122b_tactical.PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS,
                 "same_direction_cap": v122b_tactical.PROPOSED_MAX_SAME_DIRECTION_ACTIVE,
             },
         })
