@@ -554,12 +554,15 @@ class TacticalStockStreamService:
             if sign * relative >= 0.25 and sign * ret5 >= 0.20:
                 prior_rel = _f(life.get("last_closed_relative_5m"))
                 prior_ret5 = _f(life.get("last_closed_ret_5m"))
-                materially_renewed = (
-                    prior_rel is None or prior_ret5 is None
-                    or sign * relative > sign * prior_rel + 0.05
-                    or sign * ret5 > sign * prior_ret5 + 0.05
+                # "Renewed" means the existing V12.3 relative-acceleration
+                # condition has newly crossed from not-qualified to qualified.
+                # Do not invent an extra +0.05 tuning constant merely to
+                # manufacture freshness.
+                was_already_qualified = (
+                    prior_rel is not None and prior_ret5 is not None
+                    and sign * prior_rel >= 0.25 and sign * prior_ret5 >= 0.20
                 )
-                if materially_renewed:
+                if not was_already_qualified:
                     return True, "RENEWED_5M_RELATIVE_ACCELERATION"
 
         return False, "WAITING_FOR_FRESH_STRUCTURE_AFTER_PRIOR_EPISODE"
@@ -647,6 +650,7 @@ class TacticalStockStreamService:
             "future_tick_age_s": round(fut_age, 2) if fut_age is not None else None,
             "tactical_state": state.get("state"),
             "shadow_only": True,
+            "controls_trading": False,
             "validation_label": "SHADOW CONTINUATION MATH / NOT A TRADE FILTER",
         }
 
