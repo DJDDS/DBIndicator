@@ -462,6 +462,62 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-note{padding:10px 16px;border-top:1px solid #22303d;font-size:10px;color:#7f91a2;line-height:1.5}
 @media(max-width:900px){.focus-grid{grid-template-columns:1fr}.focus-pane+ .focus-pane{border-left:0;border-top:1px solid #22303d}.focus-status{white-space:normal}}
 
+
+/* V12.3 professional trading workspace */
+.focus-desk.focus-pro{border-color:#35566c;background:
+  radial-gradient(circle at 8% 0%,rgba(59,130,246,.10),transparent 33%),
+  linear-gradient(180deg,#0d141c 0%,#0a0f16 100%);box-shadow:0 16px 44px rgba(0,0,0,.22)}
+.focus-pro .focus-head{padding:18px 20px;background:rgba(7,11,16,.58);backdrop-filter:blur(8px)}
+.focus-pro .focus-head h2{font-size:20px;text-transform:none;letter-spacing:-.025em}
+.focus-pro .focus-status{display:flex;align-items:center;gap:7px;background:#0b131b}
+.focus-live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(22,199,132,.10)}
+.focus-kpis{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:8px;padding:12px 16px;border-bottom:1px solid #21303d;background:rgba(8,13,19,.72)}
+.focus-kpi{padding:10px 11px;border:1px solid #263746;border-radius:9px;background:#0d151e;min-width:0}
+.focus-kpi span{display:block;color:#718397;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:750}
+.focus-kpi strong{display:block;margin-top:4px;font:800 17px var(--mono);color:#dce7ef}
+.focus-kpi small{display:block;margin-top:2px;color:#627487;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.focus-workspace{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.78fr);gap:0}
+.focus-primary{padding:14px 16px 16px;min-width:0}
+.focus-sidebar{padding:14px;border-left:1px solid #21303d;background:rgba(7,11,16,.35);min-width:0}
+.focus-section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 9px}
+.focus-section-head h3{margin:0;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#9cafc0}
+.focus-section-head span{font-size:9px;color:#687b8e}
+.focus-sidebar-block+.focus-sidebar-block{margin-top:15px;padding-top:14px;border-top:1px solid #1d2a35}
+.focus-pro .focus-list{gap:9px}
+.focus-pro .focus-row{position:relative;padding:12px 13px;border-radius:10px;background:linear-gradient(180deg,#101923,#0c131b);box-shadow:inset 0 1px 0 rgba(255,255,255,.018);transition:border-color .18s ease,transform .18s ease,background .18s ease}
+.focus-pro .focus-row:hover{transform:translateY(-1px);border-color:#3a536a}
+.focus-pro .focus-row.active,.focus-pro .focus-row.manage{background:linear-gradient(180deg,rgba(22,199,132,.055),#0c1518);border-color:#285f49}
+.focus-pro .focus-row.ready,.focus-pro .focus-row.reentry_ready{background:linear-gradient(180deg,rgba(240,185,11,.055),#14140d)}
+.focus-pro .focus-row.pullback,.focus-pro .focus-row.weakening{background:linear-gradient(180deg,rgba(240,185,11,.03),#12120e)}
+.focus-pro .focus-symbol{font-size:16px;letter-spacing:-.01em}
+.focus-pro .focus-life{font-family:var(--mono);font-size:9px}
+.focus-pro .focus-action{font-size:11px;color:#cfdbe5}
+.focus-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px}
+.focus-mini{border:1px solid #21303d;border-radius:8px;background:rgba(7,12,17,.52);padding:8px 9px;min-width:0}
+.focus-mini .label{display:block;color:#66798c;font-size:8.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:800}
+.focus-mini .value{display:block;margin-top:3px;font:750 11px var(--mono);color:#d3dfe7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.focus-mini .subvalue{display:block;margin-top:3px;color:#708194;font-size:8.5px;line-height:1.35}
+.focus-math{margin-top:8px;padding:8px 9px;border:1px dashed #31516a;border-radius:8px;background:rgba(44,105,145,.055)}
+.focus-math-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:6px}
+.focus-math-head strong{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;color:#82b8d3}
+.focus-math-head span{font-size:8px;color:#617b8c}
+.focus-math-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+.focus-math-cell{min-width:0}
+.focus-math-cell span{display:block;color:#607588;font-size:7.5px;text-transform:uppercase;letter-spacing:.06em}
+.focus-math-cell b{display:block;margin-top:2px;font:700 10px var(--mono);color:#c9d8e1}
+.focus-fresh{margin-top:7px;font-size:9px;color:#7890a3}
+.focus-fresh.good{color:#79c79f}.focus-fresh.wait{color:#d6b45d}
+.focus-audit-grid{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #21303d}
+.focus-audit-pane{padding:13px 16px;min-width:0}
+.focus-audit-pane+.focus-audit-pane{border-left:1px solid #21303d}
+.focus-audit-pane h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8fa3b6}
+.focus-pro .focus-miss{grid-template-columns:minmax(90px,.7fr) 64px minmax(0,1.7fr)}
+.focus-pro .focus-note{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 16px;background:#091017}
+.focus-note-links{display:flex;gap:10px;flex-wrap:wrap;white-space:nowrap}
+.focus-note-links a{text-decoration:none}
+@media(max-width:1050px){.focus-kpis{grid-template-columns:repeat(3,1fr)}.focus-workspace{grid-template-columns:1fr}.focus-sidebar{border-left:0;border-top:1px solid #21303d}.focus-card-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.focus-kpis{grid-template-columns:repeat(2,1fr)}.focus-card-grid{grid-template-columns:1fr}.focus-math-grid{grid-template-columns:repeat(3,1fr)}.focus-audit-grid{grid-template-columns:1fr}.focus-audit-pane+.focus-audit-pane{border-left:0;border-top:1px solid #21303d}.focus-pro .focus-note{align-items:flex-start;flex-direction:column}}
+
 </style>
 </head>
 <!-- Compatibility label: F&O Early Movement · 15-min execution · High-Quality Swing 1-2D -->
@@ -574,32 +630,56 @@ div.card:has(> #early-radar-card) { display:none !important; }
 
   {% set fdesk = v123_focus_desk|default({}) %}
   {% set mobserver = v123_market_observer|default({}) %}
-  <section id="v123-focus-desk" class="focus-desk" aria-label="V12.3 underlying first live focus desk">
+  <section id="v123-focus-desk" class="focus-desk focus-pro" aria-label="V12.3 underlying first live focus desk">
     <div class="focus-head">
       <div>
-        <div class="focus-kicker">V12.3 · UNDERLYING-FIRST · LIVE FOCUS DESK</div>
-        <h2>Work a few stocks deeply — not dozens of flashing signals</h2>
-        <div class="focus-sub">Full F&amp;O cash underlyings are watched continuously. A small persistent desk is then analysed with 3m/5m structure, futures depth/basis and option routing. A bad option contract does not invalidate a good underlying thesis.</div>
+        <div class="focus-kicker">V12.3 · UNDERLYING-FIRST · LIVE EXECUTION WORKSPACE</div>
+        <h2>Live Focus Desk</h2>
+        <div class="focus-sub">The whole F&amp;O universe is watched continuously; only a few underlyings are worked deeply. 3m times the entry, 5m checks stability, 15m supplies context, and cash/futures/options remain separate execution vehicles.</div>
       </div>
-      <div id="v123-focus-status" class="focus-status">{{ mobserver.get('status','WAITING') }} · {{ mobserver.get('universe_count',0) }} F&amp;O</div>
+      <div id="v123-focus-status" class="focus-status"><span class="focus-live-dot"></span>{{ mobserver.get('status','WAITING') }} · {{ mobserver.get('universe_count',0) }} F&amp;O</div>
     </div>
-    <div class="focus-grid">
-      <div class="focus-pane">
-        <h3>Active / Ready / Manage</h3>
-        <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for persistent underlying opportunities…</div></div>
-        <h3 style="margin-top:14px;">Building Next</h3>
-        <div id="v123-focus-building" class="focus-list"><div class="focus-empty">Universe observer is looking for opening drive, range expansion, relative separation and continuation/reclaim events.</div></div>
-        <h3 style="margin-top:14px;">Continuation Watch / Alumni</h3>
-        <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">Recent important stocks stay under deep monitoring for a fresh re-entry event instead of disappearing.</div></div>
-      </div>
-      <div class="focus-pane">
+
+    <div class="focus-kpis" aria-label="Live Focus Desk summary">
+      <div class="focus-kpi"><span>Actionable desk</span><strong id="v123-kpi-active">0</strong><small>ready / active / manage</small></div>
+      <div class="focus-kpi"><span>Building</span><strong id="v123-kpi-building">0</strong><small>developing underlying events</small></div>
+      <div class="focus-kpi"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></div>
+      <div class="focus-kpi"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></div>
+      <div class="focus-kpi"><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
+    </div>
+
+    <div class="focus-workspace">
+      <main class="focus-primary">
+        <div class="focus-section-head"><h3>Active / Ready / Manage</h3><span>highest attention first</span></div>
+        <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for a persistent underlying opportunity…</div></div>
+      </main>
+      <aside class="focus-sidebar">
+        <div class="focus-sidebar-block">
+          <div class="focus-section-head"><h3>Building Next</h3><span>pre-entry observation</span></div>
+          <div id="v123-focus-building" class="focus-list"><div class="focus-empty">Observer is looking for opening drive, range expansion, relative separation and continuation/reclaim events.</div></div>
+        </div>
+        <div class="focus-sidebar-block">
+          <div class="focus-section-head"><h3>Continuation Watch</h3><span>fresh evidence required</span></div>
+          <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">No important alumni is waiting for re-entry.</div></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="focus-audit-grid">
+      <div class="focus-audit-pane">
         <h3>Missed-Mover Forensics</h3>
-        <div id="v123-focus-missed"><div class="focus-empty">No important missed mover recorded yet.</div></div>
-        <h3 style="margin-top:14px;">Recent / Completed</h3>
-        <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses stay here instead of disappearing.</div></div>
+        <div id="v123-focus-missed"><div class="focus-empty">No important mover is currently failing the pipeline.</div></div>
+      </div>
+      <div class="focus-audit-pane">
+        <h3>Recent / Completed</h3>
+        <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses remain here for review.</div></div>
       </div>
     </div>
-    <div class="focus-note"><strong>Interpretation:</strong> 3m times the entry; the existing 5m underlying/relative move is a stability witness; 15m remains broader context. Once an executable contract opens an ENTRY WINDOW, temporary quote/friction deterioration becomes ROUTE DEGRADED instead of erasing the opportunity. Enter only when route health is HEALTHY. ENTRY invalidation remains separate from THESIS invalidation. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+
+    <div class="focus-note">
+      <span><strong>Execution rule:</strong> a prior episode cannot recycle the same stale trigger; fresh structure/re-arm evidence is required. Continuation mathematics is recorded in shadow only and does not control live trades.</span>
+      <span class="focus-note-links"><a href="/api/v123-focus-state">Raw Focus state</a><a href="/api/v122b-tactical-events/export">Lifecycle events</a><a href="/api/v123-continuation-shadow/export">Continuation math</a></span>
+    </div>
   </section>
 
   <section id="v123-swing-desk" class="focus-desk" aria-label="V12.3 1D swing focus desk">
@@ -1458,28 +1538,30 @@ div.card:has(> #early-radar-card) { display:none !important; }
       .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   }
 
-  function renderV123Focus(desk, observer) {
-    desk = desk || {}; observer = observer || {};
+  function renderV123Focus(desk, observer, tactical) {
+    desk = desk || {}; observer = observer || {}; tactical = tactical || {};
     var status = document.getElementById('v123-focus-status');
-    if (status) status.textContent = (observer.status || 'WAITING') + ' · ' + (observer.universe_count || 0) + ' F&O · Focus ' + (desk.focus_count || 0);
+    if (status) status.innerHTML = '<span class="focus-live-dot"></span>' +
+      v12Esc(observer.status || 'WAITING') + ' · ' + v12Esc(observer.universe_count || 0) + ' F&O · Focus ' + v12Esc(desk.focus_count || 0);
 
     function n(v,d){ var x=Number(v); return Number.isFinite(x)?x.toFixed(d==null?2:d):'—'; }
     function s(v,d){ var x=Number(v); return Number.isFinite(x)?(x>=0?'+':'')+x.toFixed(d==null?2:d):'—'; }
+    function setText(id,value){var el=document.getElementById(id);if(el)el.textContent=value;}
     function action(row){
       var st=String(row.lifecycle||'DISCOVERED').toUpperCase();
       var map={
-        'DISCOVERED':'DISCOVERED — observing the underlying',
-        'BUILDING':'BUILDING — wait for exact structure',
-        'READY':'READY — wait for trigger',
-        'ACTIVE':'ACTIVE — underlying thesis accepted',
-        'MANAGE':'FOLLOW-THROUGH — manage the same thesis',
-        'PROVEN_MOVER':'FIRST MOVE WORKED — keep thesis, wait for continuation',
-        'CONTINUATION_WATCH':'ALUMNI WATCH — waiting for a fresh event to re-arm',
-        'PULLBACK':'DO NOT CHASE — wait for continuation/reclaim',
-        'REENTRY_READY':'RE-ENTRY READY — same thesis, new structure',
-        'WEAKENING':'WAIT — thesis weakening, not flipped',
-        'INVALIDATED':'INVALIDATED — no new entry',
-        'COMPLETED':'COMPLETED'
+        'DISCOVERED':'Observing the underlying',
+        'BUILDING':'Wait for exact price structure',
+        'READY':'Structure ready — wait for price trigger',
+        'ACTIVE':'Underlying trigger accepted',
+        'MANAGE':'Follow-through established — manage',
+        'PROVEN_MOVER':'First move worked — watch continuation',
+        'CONTINUATION_WATCH':'Waiting for genuinely fresh re-entry evidence',
+        'PULLBACK':'Do not chase — wait for continuation/reclaim',
+        'REENTRY_READY':'Fresh structure is ready',
+        'WEAKENING':'Thesis weakening — no automatic flip',
+        'INVALIDATED':'Underlying thesis invalidated',
+        'COMPLETED':'Observation completed'
       }; return map[st]||st;
     }
     function vehicle(label,value){
@@ -1487,53 +1569,102 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var cls=value==='ELIGIBLE'?' good':(value==='DEGRADED'?' warn':(value==='BLOCKED'||value==='STALE'?' bad':''));
       return '<span class="focus-vehicle'+cls+'">'+v12Esc(label)+' '+v12Esc(value)+'</span>';
     }
+    function mathCell(label,value,suffix){
+      return '<div class="focus-math-cell"><span>'+v12Esc(label)+'</span><b>'+v12Esc(value)+(suffix||'')+'</b></div>';
+    }
     function rowHtml(row){
-      row=row||{}; var life=String(row.lifecycle||'DISCOVERED').toLowerCase();
-      var v=row.vehicles||{}; var hist=(row.history||[]).slice(-3);
+      row=row||{};
+      var life=String(row.lifecycle||'DISCOVERED').toLowerCase();
+      var v=row.vehicles||{};
+      var hist=(row.history||[]).slice(-2);
       var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
-      var opt=v.option_contract?(' · '+v12Esc(v.option_contract)+(v.option_dte!=null?' DTE '+v12Esc(v.option_dte):'')):'';
-      var optionReason=v.option_reason?'<div class="focus-meta">Option: '+v12Esc(v.option_reason)+'</div>':'';
-      var windowBadge=v.execution_window_open
-        ? '<span class="focus-vehicle good">ENTRY WINDOW '+v12Esc(v.execution_window_state||'OPEN')+'</span>'
-        : '';
+      var cm=row.continuation_math||{};
+      var cmp=Number(row.live_price), trigger=Number(row.trigger), atr=Number(row.atr);
+      var dir=String(row.direction||'');
+      var sign=dir==='Bearish'?-1:1;
+      var triggerAtr=(Number.isFinite(cmp)&&Number.isFinite(trigger)&&Number.isFinite(atr)&&atr>0)?sign*(cmp-trigger)/atr:NaN;
+      var optionContract=row.locked_option_contract||v.option_contract||'—';
+      var route=String(row.route_health||v.route_health||'WAIT').toUpperCase();
       var witness=String(row.five_minute_witness||v.five_minute_witness||'UNMEASURED').toUpperCase();
-      var witnessCls=witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn');
-      var witnessBadge='<span class="focus-vehicle'+witnessCls+'">5m '+v12Esc(witness)+'</span>';
-      var routeHealth=v.route_health?'<span class="focus-vehicle'+(v.route_health==='HEALTHY'?' good':(v.route_health==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(v.route_health)+'</span>':'';
-      return '<div class="focus-row '+life+'">' +
+      var window=String(row.execution_window_state||v.execution_window_state||(v.execution_window_open?'OPEN':'CLOSED')).toUpperCase();
+      var fresh=row.fresh_entry_gate;
+      var freshReason=String(row.fresh_entry_reason||'');
+      var freshLine=fresh===false
+        ? '<div class="focus-fresh wait">Fresh-entry gate: waiting for new structure / re-arm evidence</div>'
+        : (freshReason && freshReason!=='OPEN_EPISODE_OR_FIRST_SIGNAL'
+          ? '<div class="focus-fresh good">Fresh evidence: '+v12Esc(freshReason.replaceAll('_',' '))+'</div>' : '');
+      var mathHtml='';
+      if(cm && Object.keys(cm).length){
+        mathHtml='<div class="focus-math"><div class="focus-math-head"><strong>Shadow continuation mathematics</strong><span>research only · does not control trade</span></div>'+
+          '<div class="focus-math-grid">'+
+          mathCell('Progress',s(cm.progress_atr,2),' ATR')+
+          mathCell('MFE',n(cm.mfe_atr,2),' ATR')+
+          mathCell('MAE',n(cm.mae_atr,2),' ATR')+
+          mathCell('Efficiency',n(cm.path_efficiency,2),'')+
+          mathCell('Pullback',cm.pullback_ratio==null?'—':n(Number(cm.pullback_ratio)*100,0),'%')+
+          '</div></div>';
+      }
+      return '<article class="focus-row '+life+'">' +
         '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
-        '<span class="focus-direction '+String(row.direction||'').toLowerCase()+'">'+v12Esc(row.direction||'')+'</span>' +
+        '<span class="focus-direction '+dir.toLowerCase()+'">'+v12Esc(dir)+'</span>' +
         '<span class="focus-life">'+v12Esc(String(row.lifecycle||'').replaceAll('_',' '))+'</span></div>' +
         '<div class="focus-action">'+v12Esc(action(row))+'</div>' +
-        '<div class="focus-meta">'+v12Esc(row.event_family||'UNDERLYING EVENT')+
-          ' · CMP '+n(row.live_price,2)+
-          (row.trigger!=null?' · Trigger '+n(row.trigger,2):' · Trigger forming')+
-          (row.invalidation!=null?' · Invalid '+n(row.invalidation,2):'')+
-          (row.day_change_pct!=null?' · Day '+s(row.day_change_pct,2)+'%':'')+
-          (row.relative_5m_vs_nifty_pct!=null?' · Rel/Nifty '+s(row.relative_5m_vs_nifty_pct,2)+'%':'')+
-          (row.entry_episode_no?' · Entry #'+v12Esc(row.entry_episode_no):'')+
-          ' · Focus '+n(row.focus_age_min,0)+'m</div>' +
+        '<div class="focus-card-grid">' +
+          '<div class="focus-mini"><span class="label">Underlying</span><span class="value">CMP '+n(row.live_price,2)+'</span><span class="subvalue">'+
+            (row.trigger!=null?'Trigger '+n(row.trigger,2):'Trigger forming')+
+            (Number.isFinite(triggerAtr)?' · Δ '+s(triggerAtr,2)+' ATR':'')+
+            (row.invalidation!=null?' · invalid '+n(row.invalidation,2):'')+'</span></div>'+
+          '<div class="focus-mini"><span class="label">Execution</span><span class="value">Route '+v12Esc(route)+' · '+v12Esc(window)+'</span><span class="subvalue">'+
+            v12Esc(optionContract)+(row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+'</span></div>'+
+          '<div class="focus-mini"><span class="label">Context</span><span class="value">5m '+v12Esc(witness)+'</span><span class="subvalue">'+
+            v12Esc(row.event_family||'UNDERLYING EVENT')+
+            (row.relative_5m_vs_nifty_pct!=null?' · Rel '+s(row.relative_5m_vs_nifty_pct,2)+'%':'')+
+            (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
+        '</div>'+
         '<div class="focus-vehicles">'+vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
-          windowBadge+witnessBadge+routeHealth+
-          '<span class="focus-vehicle">Best available '+v12Esc(v.preferred_available_vehicle||'WAIT')+opt+'</span></div>' +
-        (row.locked_option_contract?'<div class="focus-meta"><strong>Contract lock:</strong> '+v12Esc(row.locked_option_contract)+
-          (row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
-          (row.contract_reroute_reason?' · Re-route: '+v12Esc(row.contract_reroute_reason):'')+'</div>':'') +
-        optionReason +
-        (h?'<div class="focus-history">'+h+'</div>':'') +
-      '</div>';
+          (v.execution_window_open?'<span class="focus-vehicle good">ENTRY WINDOW '+v12Esc(window)+'</span>':'')+
+          '<span class="focus-vehicle'+(witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn'))+'">5m '+v12Esc(witness)+'</span>'+
+          (route!=='WAIT'?'<span class="focus-vehicle'+(route==='HEALTHY'?' good':(route==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(route)+'</span>':'')+
+        '</div>'+
+        freshLine+mathHtml+
+        (v.option_reason?'<div class="focus-meta">Option route: '+v12Esc(v.option_reason)+'</div>':'')+
+        (h?'<div class="focus-history">'+h+'</div>':'')+
+      '</article>';
     }
     function fill(id,rows,empty){
       var el=document.getElementById(id); if(!el)return;
       rows=Array.isArray(rows)?rows:[];
       el.innerHTML=rows.length?rows.map(rowHtml).join(''):'<div class="focus-empty">'+v12Esc(empty)+'</div>';
     }
-    fill('v123-focus-active',desk.active_now,'No actionable Focus-Desk stock yet. The system will not invent one.');
-    fill('v123-focus-building',desk.building_next,'No developing focus name right now.');
-    fill('v123-focus-continuation',desk.continuation_watch,'No recent important stock is waiting for re-entry.');
-    // Defensive UI dedupe: backend already keeps one recent thesis per
-    // symbol+direction, but never render historical duplicated persisted rows
-    // as repeated cards after a hotfix/restart.
+
+    var active=Array.isArray(desk.active_now)?desk.active_now.slice():[];
+    active.sort(function(a,b){
+      function rank(x){
+        var v=x.vehicles||{}, life=String(x.lifecycle||'');
+        return (v.execution_window_open?100:0)+(String(x.route_health||v.route_health||'')==='HEALTHY'?20:0)+
+          ({MANAGE:9,ACTIVE:8,REENTRY_READY:7,READY:6,PULLBACK:4,WEAKENING:2}[life]||0);
+      }
+      return rank(b)-rank(a);
+    });
+    var building=Array.isArray(desk.building_next)?desk.building_next:[];
+    var continuation=Array.isArray(desk.continuation_watch)?desk.continuation_watch:[];
+    var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
+    var misses=forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
+
+    setText('v123-kpi-active',active.length);
+    setText('v123-kpi-building',building.length);
+    setText('v123-kpi-continuation',continuation.length);
+    setText('v123-kpi-missed',misses.length);
+    var shadow=tactical.continuation_shadow||{};
+    setText('v123-kpi-shadow',shadow.status==='RECORDING_SHADOW'?'LIVE':'SHADOW');
+    setText('v123-kpi-shadow-sub',shadow.status==='RECORDING_SHADOW'
+      ? String(shadow.samples_written||0)+' samples · '+String(shadow.episodes_with_close_record||0)+' closed episodes'
+      : 'research only · no trade control');
+
+    fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');
+    fill('v123-focus-building',building,'No developing focus name right now.');
+    fill('v123-focus-continuation',continuation,'No recent important stock is waiting for fresh re-entry evidence.');
+
     var recentSeen={};
     var recentRows=(Array.isArray(desk.recent)?desk.recent:[]).filter(function(row){
       var key=String((row||{}).symbol||'')+'|'+String((row||{}).direction||'');
@@ -1544,9 +1675,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
 
     var missed=document.getElementById('v123-focus-missed');
     if(missed){
-      var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
-      var m=forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
-      missed.innerHTML=m.length?m.map(function(x){
+      missed.innerHTML=misses.length?misses.map(function(x){
         var gates=Array.isArray(x.discovery_failed_gates)&&x.discovery_failed_gates.length
           ? ' · gates: '+x.discovery_failed_gates.slice(0,3).join(', ')
           : '';
@@ -1575,11 +1704,8 @@ div.card:has(> #early-radar-card) { display:none !important; }
             (row.day_change_pct!=null?' · Day '+s(row.day_change_pct,2)+'%':'')+
             (row.move_consumed_atr!=null?' · Used '+n(row.move_consumed_atr,2)+' ATR':'')+
             (row.htf_direction?' · 4H '+v12Esc(row.htf_direction):'')+'</div>'+
-          '<div class="focus-meta">Selected '+v12Esc(row.selected_slot||'')+
-            (row.oi_structure?' · OI '+v12Esc(row.oi_structure):'')+
-            (row.stock_sector_lead_pct!=null?' · Sector lead '+s(row.stock_sector_lead_pct,2)+'%':'')+'</div>'+
         '</div>';
-      }).join(''):'<div class="focus-empty">No 1D focus yet. Membership is only added at the scheduled checkpoints.</div>';
+      }).join(''):'<div class="focus-empty">No 1D focus yet. Membership is only added at scheduled checkpoints.</div>';
     }
   }
 
@@ -1806,7 +1932,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
       renderOpportunityForward(state.opportunity_forward);
-      renderV123Focus(state.v123_focus_desk, state.v123_market_observer);
+      renderV123Focus(state.v123_focus_desk, state.v123_market_observer, state.v122b_tactical);
       renderV122BTactical(state.v122b_tactical);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
