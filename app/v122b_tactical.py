@@ -663,6 +663,8 @@ def option_route_health(option_route: dict | None) -> dict:
     Structurally unavailable expiry/contract cases remain BLOCKED. This
     classification never makes a non-executable quote tradeable.
     """
+    if option_route is None:
+        return {"state": "WAIT", "reason": "option route not evaluated yet"}
     route = option_route or {}
     if route.get("tradeable"):
         return {"state": "HEALTHY", "reason": None}
