@@ -50,6 +50,7 @@ PROPOSED_STALE_SECONDS = 8.0
 PROPOSED_MAX_BASIS_SKEW_SECONDS = 2.5
 PROPOSED_MICRO_PERSIST_SECONDS = 30.0
 PROPOSED_OPPOSING_DEPTH_PERSISTENCE = 0.60
+PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS = 30.0
 
 # Contract stability priors.  The preferred band is descriptive/ranking; the
 # wider guard is the only lock-break condition.  This prevents a READY trade
@@ -113,6 +114,51 @@ def _candidate_direction(row: dict) -> str | None:
         or row.get("failed_breakout_direction")
     )
     return direction if direction in ("Bullish", "Bearish") else None
+
+
+def five_minute_witness_supportive(direction: str, ret_5m_pct=None, relative_5m_vs_nifty_pct=None) -> bool:
+    """Conservative 5-minute stability witness for a live 3-minute entry.
+
+    This does not create a new signal or score. It only answers whether the
+    already-observed 5-minute underlying evidence is still non-opposing while
+    option quotes temporarily deteriorate. When both fields are available,
+    both must remain non-opposing.
+    """
+    sign = _sign(direction)
+    if sign == 0:
+        return False
+    values = [
+        _f(ret_5m_pct),
+        _f(relative_5m_vs_nifty_pct),
+    ]
+    values = [value for value in values if value is not None]
+    if not values:
+        return False
+    return all(sign * value >= 0.0 for value in values)
+
+
+def option_route_failure_class(route: dict | None) -> str:
+    """Classify route failures without changing option-selection thresholds.
+
+    TEMPORARY failures are quote/friction observations that can flicker on a
+    live feed. HARD failures describe missing/invalid contract structure and
+    should not be smoothed by the execution-window hysteresis.
+    """
+    if route is None:
+        return "TEMPORARY"
+    if route.get("tradeable"):
+        return "HEALTHY"
+    reason = str(route.get("reason") or "").lower()
+    temporary_fragments = (
+        "friction consumes",
+        "missing bid/ask",
+        "cannot estimate friction/expected move",
+        "no live quoted directional option",
+        "preferred expiry has no quoted contract",
+    )
+    if any(fragment in reason for fragment in temporary_fragments):
+        return "TEMPORARY"
+    return "HARD"
 
 
 def _candidate_rank_tuple(row: dict) -> tuple:
