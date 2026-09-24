@@ -583,10 +583,7 @@ class TacticalStockStreamService:
             option_snaps = self._option_snapshots(symbol, live_price or _f(candidate.get("close"), 0.0), now)
             route = None
             life = self._lifecycle.setdefault(symbol, {})
-            # Contract locking is per entry episode.  A closed episode may
-            # retain its last contract for display/history, but a fresh re-entry
-            # must be free to select the best current contract.
-            locked_contract = life.get("locked_option_contract") if life.get("episode_open") else None
+            locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
             if setup.get("setup") and live_price:
                 route = v122b_tactical.route_option(
                     option_snaps,
