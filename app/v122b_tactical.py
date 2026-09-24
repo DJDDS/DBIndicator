@@ -161,6 +161,45 @@ def option_route_failure_class(route: dict | None) -> str:
     return "HARD"
 
 
+def stabilize_option_route_state(
+    state: dict,
+    route: dict | None,
+    *,
+    episode_open: bool,
+    witness_supportive: bool,
+    degraded_since,
+    now: dt.datetime,
+    persist_seconds: float = PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS,
+) -> tuple[dict, dt.datetime | None, float | None]:
+    """Apply bounded hysteresis to an already-open option entry window.
+
+    A route must first have been executable to open an episode. Thereafter,
+    only TEMPORARY quote/friction failures can be smoothed, only while the
+    5-minute underlying witness remains non-opposing, and only for the same
+    short persistence window already used by the live microstructure layer.
+    """
+    route_class = option_route_failure_class(route)
+    if route_class == "HEALTHY":
+        return state, None, None
+    if not episode_open or route_class != "TEMPORARY" or not witness_supportive:
+        return state, None, None
+
+    start = degraded_since if isinstance(degraded_since, dt.datetime) else now
+    age = max(0.0, (now - start).total_seconds())
+    reason = str((route or {}).get("reason") or "quote/friction quality")
+    if age < float(persist_seconds):
+        return {
+            "state": "ROUTE_DEGRADED",
+            "tradeable": False,
+            "reason": "entry window retained; option route temporarily degraded: " + reason,
+        }, start, age
+    return {
+        "state": "OPTION_NOT_TRADEABLE",
+        "tradeable": False,
+        "reason": "persistent option-route degradation >= %.0fs: %s" % (float(persist_seconds), reason),
+    }, start, age
+
+
 def _candidate_rank_tuple(row: dict) -> tuple:
     """Rank only to bound API work; the rank is not a trade score."""
     phase = str(row.get("phase") or "")
