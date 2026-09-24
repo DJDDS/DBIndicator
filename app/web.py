@@ -373,6 +373,14 @@ def api_v122b_tactical_events_export():
     return _v12_export(config.V122B_TACTICAL_EVENT_FILE, "v122b_tactical_events.jsonl", "application/x-ndjson")
 
 
+@app.route("/api/v123-continuation-shadow/export")
+@require_dashboard_password
+def api_v123_continuation_shadow_export():
+    """Download research-only continuation-path observations."""
+    path = str(__import__("pathlib").Path(config.V122B_TACTICAL_EVENT_FILE).with_name("v123_continuation_shadow.jsonl"))
+    return _v12_export(path, "v123_continuation_shadow.jsonl", "application/x-ndjson")
+
+
 @app.route("/api/v12-option-state/export")
 @require_dashboard_password
 def api_v12_option_state_export():

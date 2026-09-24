@@ -73,3 +73,22 @@ def test_dashboard_template_compiles_in_flask_jinja_environment():
     from app import web
     template = web.app.jinja_env.get_template("index.html")
     assert template is not None
+
+
+
+def test_v123_focus_dashboard_is_professional_dynamic_workspace():
+    text = Path('app/templates/index.html').read_text(encoding='utf-8')
+    assert 'DBIndicator · NSE F&amp;O Command Center' in text
+    assert 'id="v123-kpi-active"' in text
+    assert 'id="v123-kpi-continuation"' in text
+    assert 'id="v123-kpi-shadow"' in text
+    assert 'Shadow continuation mathematics' in text
+    assert 'Fresh-entry gate' in text
+    assert '/api/v123-continuation-shadow/export' in text
+    assert 'renderV123Focus(state.v123_focus_desk, state.v123_market_observer, state.v122b_tactical)' in text
+
+
+def test_web_exposes_continuation_shadow_export():
+    text = Path('app/web.py').read_text(encoding='utf-8')
+    assert '@app.route("/api/v123-continuation-shadow/export")' in text
+    assert 'v123_continuation_shadow.jsonl' in text

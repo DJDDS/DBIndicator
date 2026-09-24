@@ -406,3 +406,47 @@ def test_tactical_candidates_carry_existing_5m_focus_evidence_into_execution_lay
     rows = v123_focus.tactical_candidates(state, [_scan("LTF", 215.0)])
     assert rows[0]["ret_5m_pct"] == 0.42
     assert rows[0]["relative_5m_vs_nifty_pct"] == 0.24
+
+
+
+def test_focus_carries_shadow_math_and_fresh_entry_evidence():
+    t0 = dt.datetime(2026, 9, 24, 13, 0)
+    observer = {"events": [_observer_event("FEDERALBNK", price=330.5)], "leaders": [], "laggards": []}
+    tactical = {"candidates": [{
+        "symbol": "FEDERALBNK", "direction": "Bullish", "state": "TRADEABLE",
+        "live_price": 330.55, "trigger": 330.45, "invalidation": 329.35,
+        "entry_episode_no": 2, "entry_episode_open": True,
+        "fresh_entry_gate": True, "fresh_entry_reason": "NEW_STRUCTURAL_TRIGGER_GE_0_15_ATR",
+        "continuation_math": {
+            "progress_atr": 0.08, "mfe_atr": 0.10, "mae_atr": 0.02,
+            "path_efficiency": 0.62, "pullback_ratio": 0.20,
+        },
+        "route_health": "HEALTHY", "execution_window_open": True,
+        "execution_window_state": "OPEN_ACTIVE",
+        "five_minute_witness": {"state": "SUPPORTIVE"},
+        "option_route": {"tradeable": True, "contract": {"symbol": "FEDERALBNK26SEP330CE"}},
+    }]}
+    state = v123_focus.update_focus(
+        None, observer, {"rows": []}, tactical, [_scan("FEDERALBNK", 330.55)], now=t0
+    )
+    row = state["focus"]["FEDERALBNK"]
+    assert row["fresh_entry_gate"] is True
+    assert row["fresh_entry_reason"] == "NEW_STRUCTURAL_TRIGGER_GE_0_15_ATR"
+    assert row["continuation_math"]["path_efficiency"] == 0.62
+
+
+def test_tactical_candidate_carries_focus_rearm_evidence_downstream():
+    t0 = dt.datetime(2026, 9, 24, 13, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("AUBANK", family="PULLBACK_RECLAIM", price=101.0)], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan("AUBANK", 101.0)], now=t0,
+    )
+    state["focus"]["AUBANK"]["rearmed_at"] = (t0 + dt.timedelta(minutes=2)).isoformat()
+    state["focus"]["AUBANK"]["rearm_reason"] = "fresh pullback-reclaim"
+    state["focus"]["AUBANK"]["watch_reference_price"] = 100.2
+    state["focus"]["AUBANK"]["watch_reference_family"] = "RANGE_EXPANSION"
+    rows = v123_focus.tactical_candidates(state, [_scan("AUBANK", 101.0)])
+    assert rows[0]["focus_rearmed_at"] == (t0 + dt.timedelta(minutes=2)).isoformat()
+    assert rows[0]["focus_rearm_reason"] == "fresh pullback-reclaim"
+    assert rows[0]["watch_reference_price"] == 100.2
