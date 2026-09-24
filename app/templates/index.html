@@ -525,14 +525,14 @@ div.card:has(> #early-radar-card) { display:none !important; }
 <div id="toast-wrap"></div>
 <header>
   <div class="brand">
-    <h1>V9.4 Live F&amp;O Monitor</h1>
-    <span class="tagline">NSE F&amp;O &middot; live Watchlist + OI intelligence &middot; research models evidence-gated &middot; 15m signal / 4H context</span>
+    <h1>DBIndicator · NSE F&amp;O Command Center</h1>
+    <span class="tagline">Underlying-first decision support &middot; Live Focus &middot; continuation &middot; 1D swing &middot; missed-mover forensics</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
     <span class="hdr-pill"><span class="status-dot on"></span>Kite connected</span>
     <span class="hdr-pill" id="scan-status-text">Scanner {{ scan_status or "WAITING" }}</span>
-    <span class="hdr-pill" id="live-build-text" title="Live reliability runtime">V10.2.2 live</span>
+    <span class="hdr-pill" id="live-build-text" title="Current production architecture">V12.3 live architecture</span>
     <span class="hdr-pill" id="last-attempt-text">Attempt {{ last_scan_attempt or "—" }}</span>
     <span class="hdr-pill" id="last-scan-text">Success {{ last_scan or "waiting for first scan..." }}</span>
     <span class="hdr-pill"><span class="status-dot {{ 'on' if telegram_enabled else 'off' }}"></span>Telegram {{ 'on' if telegram_enabled else 'off' }}</span>
