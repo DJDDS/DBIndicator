@@ -250,9 +250,14 @@ def _vehicle_state(item, trow):
     route = (trow or {}).get("option_route") or {}
     contract = route.get("contract") or {}
     locked_symbol = (trow or {}).get("locked_option_contract") or item.get("locked_option_contract")
+    tactical_state = str((trow or {}).get("state") or "")
+    entry_window = str((trow or {}).get("entry_window_state") or "")
     if route.get("tradeable"):
         option = "ELIGIBLE"
         option_reason = None
+    elif trow and (tactical_state == "ROUTE_DEGRADED" or entry_window == "DEGRADED"):
+        option = "DEGRADED"
+        option_reason = route.get("reason") or (trow or {}).get("reason")
     elif trow:
         option = "BLOCKED"
         option_reason = route.get("reason") or (trow or {}).get("reason")
@@ -262,6 +267,8 @@ def _vehicle_state(item, trow):
 
     if option == "ELIGIBLE":
         preferred = "OPTION"
+    elif option == "DEGRADED":
+        preferred = "WAIT_OPTION_ROUTE"
     elif future == "ELIGIBLE":
         preferred = "FUTURE"
     elif cash == "ELIGIBLE":
@@ -304,6 +311,13 @@ def _derive_lifecycle(item, event, trow, now):
 
     if tstate == "PROFIT_PROTECT" or estate == "FOLLOW_THROUGH":
         return "MANAGE", "follow-through established; manage the same thesis"
+
+    if tstate == "ROUTE_DEGRADED":
+        if prior in ("ACTIVE", "MANAGE"):
+            return prior, "underlying thesis remains valid; option route temporarily degraded"
+        if prior in ("READY", "REENTRY_READY"):
+            return prior, "entry structure retained; option route temporarily degraded"
+        return "READY", "underlying entry structure valid; waiting for option route recovery"
 
     if tstate in ("TRADEABLE", "TRIGGERED") or estate == "BREAK_ACCEPTED":
         return "ACTIVE", "underlying trigger accepted"
@@ -974,6 +988,8 @@ def tactical_candidates(state, scan_rows):
         base["focus_lifecycle"] = item.get("lifecycle")
         base["focus_selected_at"] = item.get("selected_at")
         base["focus_event_family"] = item.get("event_family")
+        base["focus_ret_5m_pct"] = item.get("ret_5m_pct")
+        base["focus_relative_5m_vs_nifty_pct"] = item.get("relative_5m_vs_nifty_pct")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
