@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "RAILPACK",
-    "buildCommand": "pip install -r requirements.txt"
+    "buildCommand": "pip install -r requirements.txt && pip install -q pytest && PYTHONPATH=. pytest -q tests/test_v122b_tactical.py tests/test_v123_focus.py tests/test_post_deploy_ui.py && python -m compileall -q app"
   },
   "deploy": {
     "startCommand": "MALLOC_ARENA_MAX=2 MALLOC_TRIM_THRESHOLD_=65536 gunicorn -w 1 --worker-class gthread --threads 4 --timeout 600 --graceful-timeout 60 -b 0.0.0.0:$PORT run:app",
