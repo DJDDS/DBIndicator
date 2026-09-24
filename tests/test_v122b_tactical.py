@@ -252,3 +252,38 @@ def test_option_route_health_separates_transient_execution_noise_from_hard_block
 
     wait = t.option_route_health(None)
     assert wait["state"] == "WAIT"
+
+
+
+def test_opening_range_uses_latest_trading_day_only():
+    bars = [
+        {"ts": "2026-09-23T09:15:00", "high": 1052.0, "low": 995.0},
+        {"ts": "2026-09-23T09:18:00", "high": 1048.0, "low": 1000.0},
+        {"ts": "2026-09-24T09:15:00", "high": 1002.0, "low": 997.0},
+        {"ts": "2026-09-24T09:18:00", "high": 1004.0, "low": 995.0},
+    ]
+    high, low = t._opening_range(bars, trading_day=dt.date(2026, 9, 24))
+    assert high == 1004.0
+    assert low == 995.0
+
+
+def test_three_minute_builder_drops_stale_partial_after_gap():
+    b = t.ThreeMinuteBarBuilder()
+    assert b.update(100.0, 1000, dt.datetime(2026, 9, 24, 10, 0, 5)) is None
+    assert b.update(100.5, 1010, dt.datetime(2026, 9, 24, 10, 1, 5)) is None
+
+    # A 30-minute gap must not emit the old 10:00 partial bar as a newly
+    # completed bar at 10:30.
+    completed = b.update(102.0, 1200, dt.datetime(2026, 9, 24, 10, 30, 1))
+    assert completed is None
+    assert b.current["bucket"] == dt.datetime(2026, 9, 24, 10, 30)
+
+
+def test_three_minute_builder_still_completes_contiguous_bucket():
+    b = t.ThreeMinuteBarBuilder()
+    b.update(100.0, 1000, dt.datetime(2026, 9, 24, 10, 0, 5))
+    b.update(100.5, 1010, dt.datetime(2026, 9, 24, 10, 2, 55))
+    completed = b.update(101.0, 1020, dt.datetime(2026, 9, 24, 10, 3, 1))
+    assert completed is not None
+    assert completed["ts"].startswith("2026-09-24T10:00:00")
+    assert completed["complete"] is True
