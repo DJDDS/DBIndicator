@@ -66,3 +66,10 @@ def test_dashboard_scan_health_exposes_attempted_valid_and_error_counts():
     assert 'id="live-valid-count"' in text
     assert 'id="live-error-count"' in text
     assert 'Attempted' in text and 'Valid' in text and 'Errors' in text
+
+
+
+def test_dashboard_template_compiles_in_flask_jinja_environment():
+    from app import web
+    template = web.app.jinja_env.get_template("index.html")
+    assert template is not None

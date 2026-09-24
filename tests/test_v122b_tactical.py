@@ -211,3 +211,44 @@ def test_option_contract_lock_reroutes_only_with_explicit_reason():
     assert route["contract"]["symbol"] == "ABC29SEP100CE"
     assert route["reroute_reason"]
     assert "RE-ROUTED" in route["selection_reason"]
+
+
+
+def test_five_minute_witness_is_direction_aware_without_new_score():
+    bull = t.five_minute_witness("Bullish", 0.31, 0.18)
+    assert bull["state"] == "SUPPORTIVE"
+
+    bear = t.five_minute_witness("Bearish", -0.27, -0.14)
+    assert bear["state"] == "SUPPORTIVE"
+
+    mixed = t.five_minute_witness("Bullish", 0.20, -0.03)
+    assert mixed["state"] == "MIXED"
+
+    opposing = t.five_minute_witness("Bullish", -0.18, -0.09)
+    assert opposing["state"] == "OPPOSING"
+
+
+def test_option_route_health_separates_transient_execution_noise_from_hard_block():
+    healthy = t.option_route_health({"tradeable": True})
+    assert healthy["state"] == "HEALTHY"
+
+    degraded = t.option_route_health({
+        "tradeable": False,
+        "reason": "friction consumes 44.2% of expected premium move",
+    })
+    assert degraded["state"] == "DEGRADED"
+
+    missing_quote = t.option_route_health({
+        "tradeable": False,
+        "reason": "missing bid/ask",
+    })
+    assert missing_quote["state"] == "DEGRADED"
+
+    hard = t.option_route_health({
+        "tradeable": False,
+        "reason": "no valid option expiry",
+    })
+    assert hard["state"] == "BLOCKED"
+
+    wait = t.option_route_health(None)
+    assert wait["state"] == "WAIT"

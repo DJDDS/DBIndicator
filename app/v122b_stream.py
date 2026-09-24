@@ -524,6 +524,13 @@ class TacticalStockStreamService:
                     locked_contract_symbol=locked_contract,
                 )
 
+            five_minute = v122b_tactical.five_minute_witness(
+                setup.get("direction") or direction,
+                candidate.get("ret_5m_pct"),
+                candidate.get("relative_5m_vs_nifty_pct"),
+            )
+            route_health = v122b_tactical.option_route_health(route)
+
             state = v122b_tactical.classify_state(
                 setup,
                 fast_veto=fast,
@@ -532,6 +539,35 @@ class TacticalStockStreamService:
                 option_route=route,
                 active_same_direction=direction_used[setup.get("direction") or direction],
             )
+
+            # Keep current execution honesty separate from opportunity
+            # persistence. A bad quote is never called executable, but once an
+            # entry episode has opened, a transient route-quality failure no
+            # longer erases the underlying opportunity.
+            if route_health.get("state") == "HEALTHY":
+                life["last_executable_at"] = now
+                if life.get("route_degraded_since") is not None:
+                    life["route_recovered_at"] = now
+                life["route_degraded_since"] = None
+                life["route_blocked_since"] = None
+            elif route_health.get("state") == "DEGRADED":
+                if life.get("route_degraded_since") is None:
+                    life["route_degraded_since"] = now
+            elif route_health.get("state") == "BLOCKED":
+                if life.get("route_blocked_since") is None:
+                    life["route_blocked_since"] = now
+
+            if (
+                state.get("state") == "OPTION_NOT_TRADEABLE"
+                and life.get("episode_open")
+                and route_health.get("state") == "DEGRADED"
+            ):
+                state = {
+                    "state": "ROUTE_DEGRADED",
+                    "tradeable": False,
+                    "reason": "entry window remains open; current option route degraded: " + str(route_health.get("reason") or "quote quality"),
+                }
+
             if state.get("state") == "TRADEABLE":
                 direction_used[setup.get("direction") or direction] += 1
 
@@ -575,6 +611,26 @@ class TacticalStockStreamService:
                 spot=live_price,
                 invalidation=setup.get("invalidation"),
             )
+            route_degraded_seconds = None
+            if isinstance(life.get("route_degraded_since"), dt.datetime):
+                route_degraded_seconds = max(0.0, (now - life["route_degraded_since"]).total_seconds())
+
+            execution_window_open = bool(
+                life.get("episode_open")
+                and state.get("state") not in ("EXIT", "TIME_EXIT", "CANCELLED", "STALE", "BLOCKED_EXPOSURE")
+                and route_health.get("state") != "BLOCKED"
+            )
+            if not execution_window_open:
+                execution_window_state = "CLOSED"
+            elif state.get("state") == "PROFIT_PROTECT":
+                execution_window_state = "MANAGE"
+            elif state.get("state") == "ROUTE_DEGRADED":
+                execution_window_state = "OPEN_WAIT_ROUTE"
+            elif state.get("state") == "TRADEABLE":
+                execution_window_state = "OPEN_ACTIVE"
+            else:
+                execution_window_state = "OPEN_READY"
+
             payload = {
                 "symbol": symbol,
                 "direction": setup.get("direction") or direction,
@@ -598,6 +654,16 @@ class TacticalStockStreamService:
                 "rvol_3m_accel": rvol3_accel,
                 "rvol_3m_previous": rvol3_prev,
                 "relative_3m_vs_nifty_pct": self._relative_3m(symbol),
+                "ret_5m_pct": candidate.get("ret_5m_pct"),
+                "relative_5m_vs_nifty_pct": candidate.get("relative_5m_vs_nifty_pct"),
+                "five_minute_witness": five_minute,
+                "route_health": route_health.get("state"),
+                "route_health_reason": route_health.get("reason"),
+                "route_degraded_seconds": round(route_degraded_seconds, 1) if route_degraded_seconds is not None else None,
+                "last_executable_at": _iso(life.get("last_executable_at")) if isinstance(life.get("last_executable_at"), dt.datetime) else None,
+                "execution_window_open": execution_window_open,
+                "execution_window_state": execution_window_state,
+                "underlying_triggered": bool(setup.get("triggered")),
                 "fast_veto": fast,
                 "earnings": event,
                 "option_route": option_route,
@@ -626,7 +692,7 @@ class TacticalStockStreamService:
 
         priority = {
             "TRADEABLE": 10, "PROFIT_PROTECT": 9, "READY": 8, "TRIGGERED": 7,
-            "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
+            "ROUTE_DEGRADED": 7, "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
             "CANCELLED": 3, "BLOCKED_EXPOSURE": 2, "RESEARCH_ONLY": 1,
             "STALE": 0, "EXIT": 0,
         }

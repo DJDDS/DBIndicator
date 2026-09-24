@@ -454,7 +454,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-meta{margin-top:5px;font-size:10px;color:#91a1b2;line-height:1.5}
 .focus-vehicles{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
 .focus-vehicle{font-size:9px;border:1px solid #2d3947;border-radius:5px;padding:3px 6px;color:#91a1b2}
-.focus-vehicle.good{border-color:#23583f;color:#77c79f}.focus-vehicle.bad{border-color:#663e3e;color:#d98b88}
+.focus-vehicle.good{border-color:#23583f;color:#77c79f}.focus-vehicle.warn{border-color:#7d6426;color:#d7b75e}.focus-vehicle.bad{border-color:#663e3e;color:#d98b88}
 .focus-history{margin-top:7px;padding-top:6px;border-top:1px solid #202b37;font-size:9px;color:#718295;line-height:1.55}
 .focus-empty{padding:14px;border:1px dashed #2b3948;border-radius:8px;color:#7f8ea0;font-size:11px}
 .focus-miss{display:grid;grid-template-columns:minmax(80px,.7fr) 70px minmax(0,1.5fr);gap:8px;padding:7px 0;border-top:1px solid #1f2a35;font-size:10px}
@@ -599,7 +599,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
         <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses stay here instead of disappearing.</div></div>
       </div>
     </div>
-    <div class="focus-note"><strong>Interpretation:</strong> ENTRY invalidation is now separate from THESIS invalidation. A failed 3m entry moves to Continuation Watch rather than erasing the stock. Alumni remain under deep cash/futures/option monitoring and re-arm only on fresh market evidence. Missed-Mover Forensics records the exact pipeline stage and gate that stopped a real mover. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+    <div class="focus-note"><strong>Interpretation:</strong> 3m times the entry; the existing 5m underlying/relative move is a stability witness; 15m remains broader context. Once an executable contract opens an ENTRY WINDOW, temporary quote/friction deterioration becomes ROUTE DEGRADED instead of erasing the opportunity. Enter only when route health is HEALTHY. ENTRY invalidation remains separate from THESIS invalidation. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
   </section>
 
   <section id="v123-swing-desk" class="focus-desk" aria-label="V12.3 1D swing focus desk">
@@ -626,7 +626,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
       </div>
       <div id="v122b-status" class="v12-lock">{{ tctl.get('status') or 'WAITING' }} · INTERIM / NOT VALIDATED</div>
     </div>
-    <div class="v12-note"><strong>Result-first:</strong> READY defines the exact stock trigger before the move; TRADEABLE means that trigger fired and the selected option passed the DTE/liquidity/friction gate. TIME_EXIT, STALE, CANCELLED and OPTION NOT TRADEABLE are hard warnings. No order is placed automatically.</div>
+    <div class="v12-note"><strong>Result-first:</strong> READY defines the exact stock trigger before the move; TRADEABLE means the trigger fired and the selected option is executable now. ROUTE DEGRADED means the underlying execution window remains alive but the current option quote/liquidity is not healthy enough to enter; wait for route recovery rather than discarding the stock. STALE/CANCELLED remain hard warnings. No order is placed automatically.</div>
     <div id="v122b-list" class="v12-list" style="margin-top:10px;">
       <div class="v8-empty">Waiting for the bounded tactical pool…</div>
     </div>
@@ -1484,7 +1484,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
     }
     function vehicle(label,value){
       value=String(value||'WAIT').toUpperCase();
-      var cls=value==='ELIGIBLE'?' good':(value==='BLOCKED'||value==='STALE'?' bad':'');
+      var cls=value==='ELIGIBLE'?' good':(value==='DEGRADED'?' warn':(value==='BLOCKED'||value==='STALE'?' bad':''));
       return '<span class="focus-vehicle'+cls+'">'+v12Esc(label)+' '+v12Esc(value)+'</span>';
     }
     function rowHtml(row){
@@ -1493,6 +1493,13 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
       var opt=v.option_contract?(' · '+v12Esc(v.option_contract)+(v.option_dte!=null?' DTE '+v12Esc(v.option_dte):'')):'';
       var optionReason=v.option_reason?'<div class="focus-meta">Option: '+v12Esc(v.option_reason)+'</div>':'';
+      var windowBadge=v.execution_window_open
+        ? '<span class="focus-vehicle good">ENTRY WINDOW '+v12Esc(v.execution_window_state||'OPEN')+'</span>'
+        : '';
+      var witness=String(row.five_minute_witness||v.five_minute_witness||'UNMEASURED').toUpperCase();
+      var witnessCls=witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn');
+      var witnessBadge='<span class="focus-vehicle'+witnessCls+'">5m '+v12Esc(witness)+'</span>';
+      var routeHealth=v.route_health?'<span class="focus-vehicle'+(v.route_health==='HEALTHY'?' good':(v.route_health==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(v.route_health)+'</span>':'';
       return '<div class="focus-row '+life+'">' +
         '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
         '<span class="focus-direction '+String(row.direction||'').toLowerCase()+'">'+v12Esc(row.direction||'')+'</span>' +
@@ -1507,6 +1514,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
           (row.entry_episode_no?' · Entry #'+v12Esc(row.entry_episode_no):'')+
           ' · Focus '+n(row.focus_age_min,0)+'m</div>' +
         '<div class="focus-vehicles">'+vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
+          windowBadge+witnessBadge+routeHealth+
           '<span class="focus-vehicle">Best available '+v12Esc(v.preferred_available_vehicle||'WAIT')+opt+'</span></div>' +
         (row.locked_option_contract?'<div class="focus-meta"><strong>Contract lock:</strong> '+v12Esc(row.locked_option_contract)+
           (row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
@@ -1596,7 +1604,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
       row = row || {};
       var state = String(row.state || 'FORMING').toUpperCase();
       var cls = ['TRADEABLE','PROFIT_PROTECT'].indexOf(state) >= 0 ? 'exec' :
-        (['READY','TRIGGERED','FORMING'].indexOf(state) >= 0 ? 'setup' : 'watch');
+        (['READY','TRIGGERED','FORMING','ROUTE_DEGRADED'].indexOf(state) >= 0 ? 'setup' : 'watch');
       var route = row.option_route || {};
       var contract = route.contract || {};
       var event = row.earnings || {};
@@ -1610,7 +1618,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
         '<strong>' + v12Esc(contract.symbol) + '</strong> · DTE ' + v12Esc(contract.dte) +
         ' · spread ' + num(contract.spread_pct, 2, '%') +
         ' · friction/use ' + (Number.isFinite(friction) ? (friction * 100).toFixed(0) + '%' : '—') :
-        '<strong>OPTION WAIT</strong>';
+        '<strong>OPTION ' + v12Esc(row.route_health || 'WAIT') + '</strong>';
       var nextMonth = route.pre_result_next_month ? ' · PRE-RESULT → NEXT MONTH' : '';
       return '<div class="v12-row ' + cls + '">' +
         '<div class="sym"><a href="/chart/' + encodeURIComponent(row.symbol || '') + '">' + v12Esc(row.symbol || '—') + '</a> · ' +
@@ -1621,7 +1629,12 @@ div.card:has(> #early-radar-card) { display:none !important; }
         ' · invalidate <strong>' + num(row.invalidation, 2, '') + '</strong>' +
         ' · 3m RVOL ' + num(row.rvol_3m, 2, 'x') +
         ' (Δ ' + num(row.rvol_3m_accel, 2, 'x') + ')' +
-        ' · Rel/Nifty ' + pctSigned(row.relative_3m_vs_nifty_pct, 2) +
+        ' · Rel/Nifty 3m ' + pctSigned(row.relative_3m_vs_nifty_pct, 2) +
+        ' · 5m ' + pctSigned(row.ret_5m_pct, 2) +
+        ' · Rel/Nifty 5m ' + pctSigned(row.relative_5m_vs_nifty_pct, 2) +
+        ' · 5m witness ' + v12Esc((row.five_minute_witness || {}).state || 'UNMEASURED') +
+        ' · window ' + v12Esc(row.execution_window_state || 'CLOSED') +
+        ' · route ' + v12Esc(row.route_health || 'WAIT') +
         ' · depth support ' + num(Number(depth.support_fraction) * 100, 0, '%') +
         ' · basis Δ60s ' + pctSigned(basis.basis_change_60s_pct_points, 4) +
         '<br>' + optionText + nextMonth +

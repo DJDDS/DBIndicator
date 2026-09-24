@@ -250,12 +250,20 @@ def _vehicle_state(item, trow):
     route = (trow or {}).get("option_route") or {}
     contract = route.get("contract") or {}
     locked_symbol = (trow or {}).get("locked_option_contract") or item.get("locked_option_contract")
+    route_health = str((trow or {}).get("route_health") or "")
+    execution_window_open = bool((trow or {}).get("execution_window_open"))
     if route.get("tradeable"):
         option = "ELIGIBLE"
         option_reason = None
+    elif trow and route_health == "DEGRADED" and execution_window_open:
+        option = "DEGRADED"
+        option_reason = (trow or {}).get("route_health_reason") or route.get("reason") or (trow or {}).get("reason")
+    elif trow and route_health == "WAIT":
+        option = "WAIT"
+        option_reason = "deep option route not evaluated yet"
     elif trow:
         option = "BLOCKED"
-        option_reason = route.get("reason") or (trow or {}).get("reason")
+        option_reason = (trow or {}).get("route_health_reason") or route.get("reason") or (trow or {}).get("reason")
     else:
         option = "WAIT"
         option_reason = "deep option route not evaluated yet"
@@ -277,6 +285,10 @@ def _vehicle_state(item, trow):
         "option_contract": locked_symbol or contract.get("symbol"),
         "option_dte": contract.get("dte"),
         "option_spread_pct": contract.get("spread_pct"),
+        "route_health": route_health or None,
+        "execution_window_open": execution_window_open,
+        "execution_window_state": (trow or {}).get("execution_window_state"),
+        "five_minute_witness": ((trow or {}).get("five_minute_witness") or {}).get("state"),
         "preferred_available_vehicle": preferred,
     }
 
@@ -304,6 +316,9 @@ def _derive_lifecycle(item, event, trow, now):
 
     if tstate == "PROFIT_PROTECT" or estate == "FOLLOW_THROUGH":
         return "MANAGE", "follow-through established; manage the same thesis"
+
+    if bool((trow or {}).get("underlying_triggered")) and tstate in ("ROUTE_DEGRADED", "OPTION_NOT_TRADEABLE"):
+        return "ACTIVE", "underlying trigger accepted; option execution route is not currently healthy"
 
     if tstate in ("TRADEABLE", "TRIGGERED") or estate == "BREAK_ACCEPTED":
         return "ACTIVE", "underlying trigger accepted"
@@ -725,6 +740,17 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["entry_episode_exit_reason"] = trow.get("entry_episode_exit_reason")
             item["entry_episode_started_at"] = trow.get("entry_episode_started_at")
             item["entry_episode_closed_at"] = trow.get("entry_episode_closed_at")
+            item["execution_window_open"] = bool(trow.get("execution_window_open"))
+            item["execution_window_state"] = trow.get("execution_window_state")
+            item["route_health"] = trow.get("route_health")
+            item["route_health_reason"] = trow.get("route_health_reason")
+            item["route_degraded_seconds"] = trow.get("route_degraded_seconds")
+            item["last_executable_at"] = trow.get("last_executable_at")
+            item["five_minute_witness"] = ((trow.get("five_minute_witness") or {}).get("state"))
+            if trow.get("ret_5m_pct") is not None:
+                item["ret_5m_pct"] = trow.get("ret_5m_pct")
+            if trow.get("relative_5m_vs_nifty_pct") is not None:
+                item["relative_5m_vs_nifty_pct"] = trow.get("relative_5m_vs_nifty_pct")
             if trow.get("locked_option_contract"):
                 item["locked_option_contract"] = trow.get("locked_option_contract")
                 item["locked_option_strike"] = trow.get("locked_option_strike")
@@ -974,6 +1000,8 @@ def tactical_candidates(state, scan_rows):
         base["focus_lifecycle"] = item.get("lifecycle")
         base["focus_selected_at"] = item.get("selected_at")
         base["focus_event_family"] = item.get("event_family")
+        base["ret_5m_pct"] = item.get("ret_5m_pct")
+        base["relative_5m_vs_nifty_pct"] = item.get("relative_5m_vs_nifty_pct")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)

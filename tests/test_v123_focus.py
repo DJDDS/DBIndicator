@@ -339,3 +339,70 @@ def test_forensics_records_exact_discovery_gate_failure():
     assert row["stage"] == "DISCOVERY"
     assert "volume rate < 1.20x" in row["reason"]
     assert row["discovery_failed_gates"]
+
+
+
+def test_route_degradation_keeps_triggered_underlying_active_and_option_degraded():
+    t0 = dt.datetime(2026, 9, 24, 10, 20)
+    observer = {
+        "events": [_observer_event("LTF", direction="Bullish", family="RANGE_EXPANSION", price=215.0)],
+        "leaders": [], "laggards": [],
+    }
+    tradeable = {"candidates": [{
+        "symbol": "LTF", "direction": "Bullish", "state": "TRADEABLE",
+        "live_price": 215.2, "trigger": 214.8, "invalidation": 213.9,
+        "future_tick_age_s": 1.0,
+        "ret_5m_pct": 0.34, "relative_5m_vs_nifty_pct": 0.21,
+        "five_minute_witness": {"state": "SUPPORTIVE"},
+        "route_health": "HEALTHY",
+        "execution_window_open": True,
+        "execution_window_state": "OPEN_ACTIVE",
+        "underlying_triggered": True,
+        "entry_episode_no": 1, "entry_episode_open": True,
+        "locked_option_contract": "LTF220CE",
+        "option_route": {"tradeable": True, "contract": {"symbol": "LTF220CE", "dte": 7}},
+    }]}
+    state = v123_focus.update_focus(None, observer, {"rows": []}, tradeable, [_scan("LTF", 215.2)], now=t0)
+    assert state["focus"]["LTF"]["lifecycle"] == "ACTIVE"
+    assert state["focus"]["LTF"]["vehicles"]["option"] == "ELIGIBLE"
+
+    degraded = {"candidates": [{
+        "symbol": "LTF", "direction": "Bullish", "state": "ROUTE_DEGRADED",
+        "reason": "entry window remains open; current option route degraded: friction consumes 44.2% of expected premium move",
+        "live_price": 215.4, "trigger": 214.8, "invalidation": 213.9,
+        "future_tick_age_s": 1.0,
+        "ret_5m_pct": 0.39, "relative_5m_vs_nifty_pct": 0.25,
+        "five_minute_witness": {"state": "SUPPORTIVE"},
+        "route_health": "DEGRADED",
+        "route_health_reason": "friction consumes 44.2% of expected premium move",
+        "execution_window_open": True,
+        "execution_window_state": "OPEN_WAIT_ROUTE",
+        "underlying_triggered": True,
+        "entry_episode_no": 1, "entry_episode_open": True,
+        "locked_option_contract": "LTF220CE",
+        "option_route": {"tradeable": False, "reason": "friction consumes 44.2% of expected premium move"},
+    }]}
+    state = v123_focus.update_focus(
+        state, observer, {"rows": []}, degraded, [_scan("LTF", 215.4)],
+        now=t0 + dt.timedelta(seconds=20),
+    )
+    row = state["focus"]["LTF"]
+    assert row["lifecycle"] == "ACTIVE"
+    assert row["execution_window_open"] is True
+    assert row["vehicles"]["option"] == "DEGRADED"
+    assert row["vehicles"]["route_health"] == "DEGRADED"
+    assert row["five_minute_witness"] == "SUPPORTIVE"
+
+
+def test_tactical_candidates_carry_existing_5m_focus_evidence_into_execution_layer():
+    t0 = dt.datetime(2026, 9, 24, 10, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("LTF", price=215.0)], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan("LTF", 215.0)], now=t0,
+    )
+    state["focus"]["LTF"]["ret_5m_pct"] = 0.42
+    state["focus"]["LTF"]["relative_5m_vs_nifty_pct"] = 0.24
+    rows = v123_focus.tactical_candidates(state, [_scan("LTF", 215.0)])
+    assert rows[0]["ret_5m_pct"] == 0.42
+    assert rows[0]["relative_5m_vs_nifty_pct"] == 0.24
