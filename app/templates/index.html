@@ -599,7 +599,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
         <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses stay here instead of disappearing.</div></div>
       </div>
     </div>
-    <div class="focus-note"><strong>Interpretation:</strong> ENTRY invalidation is now separate from THESIS invalidation. A failed 3m entry moves to Continuation Watch rather than erasing the stock. Alumni remain under deep cash/futures/option monitoring and re-arm only on fresh market evidence. Missed-Mover Forensics records the exact pipeline stage and gate that stopped a real mover. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
+    <div class="focus-note"><strong>Interpretation:</strong> ENTRY invalidation is separate from THESIS invalidation. Once an option route has passed and an entry window opens, a brief live quote/friction wobble shows as ROUTE DEGRADED instead of instantly erasing the opportunity; the existing 5m underlying witness must remain non-opposing, and persistent or hard failures still block the route. A failed 3m entry moves to Continuation Watch rather than erasing the stock. <a href="/api/v123-focus-state">Raw V12.3 state</a></div>
   </section>
 
   <section id="v123-swing-desk" class="focus-desk" aria-label="V12.3 1D swing focus desk">
@@ -1484,7 +1484,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
     }
     function vehicle(label,value){
       value=String(value||'WAIT').toUpperCase();
-      var cls=value==='ELIGIBLE'?' good':(value==='BLOCKED'||value==='STALE'?' bad':'');
+      var cls=value==='ELIGIBLE'?' good':(value==='BLOCKED'||value==='STALE'?' bad':(value==='DEGRADED'?' warn':''));
       return '<span class="focus-vehicle'+cls+'">'+v12Esc(label)+' '+v12Esc(value)+'</span>';
     }
     function rowHtml(row){
@@ -1493,6 +1493,10 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
       var opt=v.option_contract?(' · '+v12Esc(v.option_contract)+(v.option_dte!=null?' DTE '+v12Esc(v.option_dte):'')):'';
       var optionReason=v.option_reason?'<div class="focus-meta">Option: '+v12Esc(v.option_reason)+'</div>':'';
+      var windowState=String(row.entry_window_state||'').toUpperCase();
+      var windowLine=windowState?'<div class="focus-meta"><strong>Execution window:</strong> '+v12Esc(windowState)+
+        (row.route_degraded_age_s!=null?' · degraded '+n(row.route_degraded_age_s,0)+'s':'')+
+        (row.five_minute_witness_supportive?' · 5m witness supportive':'')+'</div>':'';
       return '<div class="focus-row '+life+'">' +
         '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
         '<span class="focus-direction '+String(row.direction||'').toLowerCase()+'">'+v12Esc(row.direction||'')+'</span>' +
@@ -1511,6 +1515,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
         (row.locked_option_contract?'<div class="focus-meta"><strong>Contract lock:</strong> '+v12Esc(row.locked_option_contract)+
           (row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
           (row.contract_reroute_reason?' · Re-route: '+v12Esc(row.contract_reroute_reason):'')+'</div>':'') +
+        windowLine +
         optionReason +
         (h?'<div class="focus-history">'+h+'</div>':'') +
       '</div>';
