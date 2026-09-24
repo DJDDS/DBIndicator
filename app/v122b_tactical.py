@@ -627,6 +627,56 @@ def projected_three_minute_rvol(current_bar: dict | None, baseline_volume: float
     return round(projected / base, 3)
 
 
+def five_minute_witness(direction: str, ret_5m_pct=None, relative_5m_vs_nifty_pct=None) -> dict:
+    """Direction-aware 5m witness using evidence the full-universe observer already has.
+
+    This is deliberately not another score or threshold. It only asks whether
+    the measured 5m stock return and 5m relative move are pointing with,
+    against, or inconsistently with the existing underlying thesis.
+    """
+    sign = _sign(direction)
+    vals = []
+    for value in (ret_5m_pct, relative_5m_vs_nifty_pct):
+        value = _f(value)
+        if value is not None and sign:
+            vals.append(sign * value)
+    if not vals:
+        state = "UNMEASURED"
+    elif all(v > 0 for v in vals):
+        state = "SUPPORTIVE"
+    elif all(v < 0 for v in vals):
+        state = "OPPOSING"
+    else:
+        state = "MIXED"
+    return {
+        "state": state,
+        "ret_5m_pct": _f(ret_5m_pct),
+        "relative_5m_vs_nifty_pct": _f(relative_5m_vs_nifty_pct),
+        "measured_inputs": len(vals),
+    }
+
+
+def option_route_health(option_route: dict | None) -> dict:
+    """Separate current quote quality from the underlying trade opportunity.
+
+    A transient quote/friction failure is DEGRADED, not a thesis failure.
+    Structurally unavailable expiry/contract cases remain BLOCKED. This
+    classification never makes a non-executable quote tradeable.
+    """
+    route = option_route or {}
+    if route.get("tradeable"):
+        return {"state": "HEALTHY", "reason": None}
+    reason = str(route.get("reason") or "option route not executable")
+    low = reason.lower()
+    hard_markers = (
+        "no valid option expiry",
+        "preferred expiry has no quoted contract",
+    )
+    if any(marker in low for marker in hard_markers):
+        return {"state": "BLOCKED", "reason": reason}
+    return {"state": "DEGRADED", "reason": reason}
+
+
 def classify_state(
     setup: dict,
     *,
