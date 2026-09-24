@@ -141,6 +141,65 @@ class TacticalStockStreamService:
         self._seeded = set()
         self._universe_signature = None
         self._last_tick_at = None
+        self._session_date = None
+
+    @staticmethod
+    def _reset_trigger(life):
+        """Clear episode-specific timing/price state without erasing history."""
+        for key in (
+            "triggered_at",
+            "entry_underlying",
+            "best_favourable",
+            "trailing_invalidation",
+            "setup",
+            "speed_class",
+            "route_degraded_since",
+            "route_blocked_since",
+            "last_executable_at",
+        ):
+            life.pop(key, None)
+
+    def _maybe_reset_session(self, now):
+        """Start each trading day with clean tactical market state.
+
+        Focus/observer persistence is handled outside this service.  This reset
+        is deliberately scoped to the deep tactical stream so yesterday's
+        bars, depth, basis and entry clocks cannot leak into a new session.
+        """
+        day = now.date()
+        with self._lock:
+            if self._session_date is None:
+                self._session_date = day
+                return False
+            if self._session_date == day:
+                return False
+            self._session_date = day
+            self._latest_ticks = {}
+            self._bar_builders = {}
+            self._bars = defaultdict(lambda: deque(maxlen=240))
+            self._tod_baseline = defaultdict(dict)
+            self._depth_samples = defaultdict(lambda: deque(maxlen=180))
+            self._basis_samples = defaultdict(lambda: deque(maxlen=180))
+            self._lifecycle = {}
+            self._last_states = {}
+            self._seeded = set()
+            self._universe_signature = None
+            self._last_tick_at = None
+        return True
+
+    def _drop_symbol_market_state(self, symbol):
+        """Discard only stale deep-stream market construction for a removed name.
+
+        If the name later returns to Focus/Continuation it is re-seeded from
+        clean history instead of completing an old partial bar after a gap.
+        """
+        with self._lock:
+            self._bar_builders.pop(symbol, None)
+            self._bars.pop(symbol, None)
+            self._tod_baseline.pop(symbol, None)
+            self._depth_samples.pop(symbol, None)
+            self._basis_samples.pop(symbol, None)
+            self._seeded.discard(symbol)
 
     def snapshot(self):
         with self._lock:
@@ -192,14 +251,22 @@ class TacticalStockStreamService:
         bars = []
         volumes_by_slot = defaultdict(list)
         today = now.date()
+        now_cmp = now.replace(tzinfo=None) if isinstance(now, dt.datetime) else now
+        current_bucket = v122b_tactical.ThreeMinuteBarBuilder.bucket_start(now_cmp)
         for row in rows:
             ts = row.get("date")
             if not isinstance(ts, dt.datetime):
                 ts = _dt(ts)
             if ts is None:
                 continue
+            ts_cmp = ts.replace(tzinfo=None)
+            # Kite historical_data can include the still-forming current
+            # 3-minute candle.  Never seed that bucket as complete; the live
+            # builder owns it.
+            if v122b_tactical.ThreeMinuteBarBuilder.bucket_start(ts_cmp) >= current_bucket:
+                continue
             bar = {
-                "ts": ts.replace(tzinfo=None).isoformat(timespec="seconds"),
+                "ts": ts_cmp.isoformat(timespec="seconds"),
                 "open": _f(row.get("open")), "high": _f(row.get("high")),
                 "low": _f(row.get("low")), "close": _f(row.get("close")),
                 "volume": _f(row.get("volume"), 0.0), "complete": True,
@@ -314,10 +381,14 @@ class TacticalStockStreamService:
     def _refresh_candidates(self, kite, now):
         candidates = list(self.candidate_provider() or [])[:v122b_tactical.TACTICAL_POOL_MAX]
         sig = self._candidate_signature(candidates)
+        new_symbols = {str(x.get("symbol")) for x in candidates if x.get("symbol")}
         with self._lock:
             prior = self._universe_signature
+            old_symbols = set(self._candidates)
         if sig == prior:
             return
+        for symbol in old_symbols - new_symbols:
+            self._drop_symbol_market_state(symbol)
         metadata = self._resolve_universe(kite, candidates, now)
         with self._lock:
             self._candidates = {str(x.get("symbol")): dict(x) for x in candidates if x.get("symbol")}
@@ -477,6 +548,7 @@ class TacticalStockStreamService:
             pass
 
     def _evaluate(self, now):
+        self._maybe_reset_session(now)
         with self._lock:
             candidates = [dict(x) for x in self._candidates.values()]
             metadata = dict(self._metadata)
@@ -511,7 +583,10 @@ class TacticalStockStreamService:
             option_snaps = self._option_snapshots(symbol, live_price or _f(candidate.get("close"), 0.0), now)
             route = None
             life = self._lifecycle.setdefault(symbol, {})
-            locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
+            # Contract locking is per entry episode.  A closed episode may
+            # retain its last contract for display/history, but a fresh re-entry
+            # must be free to select the best current contract.
+            locked_contract = life.get("locked_option_contract") if life.get("episode_open") else None
             if setup.get("setup") and live_price:
                 route = v122b_tactical.route_option(
                     option_snaps,
@@ -690,6 +765,13 @@ class TacticalStockStreamService:
             self._last_states[symbol] = payload["state"]
             output.append(payload)
 
+            # Preserve the just-closed payload for audit/history, then clear
+            # the episode clock before the next evaluation.  This prevents a
+            # later breakout (or next-day breakout) from inheriting the first
+            # trade's timer and entry price.
+            if state.get("state") in ("EXIT", "TIME_EXIT"):
+                self._reset_trigger(life)
+
         priority = {
             "TRADEABLE": 10, "PROFIT_PROTECT": 9, "READY": 8, "TRIGGERED": 7,
             "ROUTE_DEGRADED": 7, "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
@@ -829,6 +911,7 @@ class TacticalStockStreamService:
         while True:
             now = self.now_provider()
             try:
+                self._maybe_reset_session(now)
                 if not _market_open(now):
                     if self._active:
                         self._close()
