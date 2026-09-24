@@ -539,39 +539,17 @@ class TacticalStockStreamService:
                 candidate.get("focus_ret_5m_pct"),
                 candidate.get("focus_relative_5m_vs_nifty_pct"),
             )
-            route_degraded_age_s = None
-            # Once a READY/TRADEABLE episode has locked an executable contract,
-            # a single quote/friction wobble must not erase the entry window.
-            # Smooth only temporary route failures and only while the 5-minute
-            # underlying witness remains non-opposing. Hard structural/data
-            # vetoes still pass through immediately.
+            state, degraded_since, route_degraded_age_s = v122b_tactical.stabilize_option_route_state(
+                state,
+                route,
+                episode_open=bool(life.get("episode_open")),
+                witness_supportive=witness_supportive,
+                degraded_since=life.get("route_degraded_since"),
+                now=now,
+            )
+            life["route_degraded_since"] = degraded_since
             if route_class == "HEALTHY":
-                life["route_degraded_since"] = None
                 life["last_route_healthy_at"] = now
-            elif life.get("episode_open") and route_class == "TEMPORARY" and witness_supportive:
-                degraded_since = life.get("route_degraded_since")
-                if not isinstance(degraded_since, dt.datetime):
-                    degraded_since = now
-                    life["route_degraded_since"] = now
-                route_degraded_age_s = max(0.0, (now - degraded_since).total_seconds())
-                if route_degraded_age_s < v122b_tactical.PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS:
-                    state = {
-                        "state": "ROUTE_DEGRADED",
-                        "tradeable": False,
-                        "reason": "entry window retained; option route temporarily degraded: "
-                                  + str((route or {}).get("reason") or "quote/friction quality"),
-                    }
-                else:
-                    state = {
-                        "state": "OPTION_NOT_TRADEABLE",
-                        "tradeable": False,
-                        "reason": "persistent option-route degradation >= %.0fs: %s" % (
-                            v122b_tactical.PROPOSED_ROUTE_DEGRADE_PERSIST_SECONDS,
-                            str((route or {}).get("reason") or "quote/friction quality"),
-                        ),
-                    }
-            else:
-                life["route_degraded_since"] = None
 
             if state.get("state") == "TRADEABLE":
                 direction_used[setup.get("direction") or direction] += 1
