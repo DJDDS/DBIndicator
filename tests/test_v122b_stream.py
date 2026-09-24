@@ -266,4 +266,4 @@ def test_shadow_recorder_writes_milestones_without_controlling_trade(tmp_path):
     text = shadow.read_text(encoding="utf-8")
     assert '"horizon_min":3' in text
     assert '"shadow_only":true' in text
-    assert '"controls_trading"' not in text
+    assert '"controls_trading":false' in text
