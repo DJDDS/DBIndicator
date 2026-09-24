@@ -339,3 +339,43 @@ def test_forensics_records_exact_discovery_gate_failure():
     assert row["stage"] == "DISCOVERY"
     assert "volume rate < 1.20x" in row["reason"]
     assert row["discovery_failed_gates"]
+
+
+
+def test_route_degraded_keeps_underlying_ready_and_marks_option_degraded():
+    t0 = dt.datetime(2026, 9, 24, 10, 25)
+    observer = {"events": [_observer_event()], "leaders": [], "laggards": []}
+    tactical = {"candidates": [{
+        "symbol": "ABC", "direction": "Bullish", "state": "ROUTE_DEGRADED",
+        "live_price": 100.6, "trigger": 100.5, "invalidation": 99.5,
+        "entry_window_state": "DEGRADED",
+        "route_degraded_age_s": 8.0,
+        "five_minute_witness_supportive": True,
+        "future_tick_age_s": 1.0,
+        "option_route": {
+            "tradeable": False,
+            "reason": "friction consumes 33.0% of expected premium move",
+            "contract": {"symbol": "ABCOPT"},
+        },
+    }]}
+    state = v123_focus.update_focus(None, observer, {"rows": []}, tactical, [_scan()], now=t0)
+    row = state["focus"]["ABC"]
+    assert row["lifecycle"] == "READY"
+    assert row["vehicles"]["option"] == "DEGRADED"
+    assert row["vehicles"]["preferred_available_vehicle"] == "WAIT_OPTION_ROUTE"
+    assert row["entry_window_state"] == "DEGRADED"
+
+
+def test_focus_5m_witness_is_passed_to_deep_tactical_candidate():
+    t0 = dt.datetime(2026, 9, 24, 10, 25)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("LTF", price=205.0)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": []},
+        [_scan("LTF", 205.0)],
+        now=t0,
+    )
+    rows = v123_focus.tactical_candidates(state, [_scan("LTF", 205.0)])
+    assert rows[0]["focus_ret_5m_pct"] == 0.4
+    assert rows[0]["focus_relative_5m_vs_nifty_pct"] == 0.3
