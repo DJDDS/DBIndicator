@@ -95,14 +95,10 @@ def test_web_exposes_continuation_shadow_export():
 
 
 
-def test_focus_dashboard_shows_dynamic_underlying_risk_plan():
+def test_live_dashboard_hides_unvalidated_sl_target_plan_but_keeps_research_pipeline():
     text = Path('app/templates/index.html').read_text(encoding='utf-8')
-    assert 'Dynamic SL / Target Plan' in text
-    assert 'underlying authoritative · option levels indicative' in text
-    assert 'Target 1' in text
-    assert 'Target 2 / runner' in text
-    assert 'local delta+gamma' in text
-    assert 'time_stop_minutes_if_no_followthrough' in text
-    assert '3m ATR14' in text
-    assert 'shadow calibration only' in text
-    assert 'VOLATILITY TRAIL' not in text
+    assert 'Dynamic SL / Target Plan' not in text
+    assert '<strong>PLAN</strong>' not in text
+    assert 'freshLine+riskHtml+mathHtml' not in text
+    assert 'Shadow continuation mathematics' in text
+    assert 'research only · does not control trade' in text
