@@ -61,6 +61,15 @@ PROPOSED_OPTION_DELTA_PREFERRED_MAX = 0.70
 PROPOSED_OPTION_DELTA_LOCK_MIN = 0.35
 PROPOSED_OPTION_DELTA_LOCK_MAX = 0.80
 
+# Dynamic risk-plan priors. These are decision-support levels, not order
+# instructions and not validated alpha thresholds. Target distances come from
+# the setup's own measured move. The 0.40 ATR trail floor is deliberately a
+# *minimum noise allowance* after the move proves itself, informed by
+# volatility-scaled trailing-stop research; it never widens the original
+# structural invalidation and it never controls the tactical state machine.
+RISK_PLAN_TARGET1_FRACTION = 0.50
+RISK_PLAN_TRAIL_NOISE_FLOOR_ATR = 0.40
+
 
 def _f(value: Any, default=None):
     try:
@@ -993,6 +1002,162 @@ def one_lot_risk_preview(contract: dict | None, *, spot: float, invalidation: fl
         "estimated_loss_pct": round(loss / outlay * 100.0, 2) if outlay > 0 else None,
         "note": "delta-only preview; realised IV/gamma/spread can change the option loss",
     }
+
+
+def dynamic_trade_plan(
+    *,
+    direction: str,
+    spot: float,
+    trigger: float | None,
+    invalidation: float | None,
+    expected_move_abs: float | None,
+    atr: float | None,
+    best_favourable_abs: float | None = None,
+    completed_bars: list[dict] | None = None,
+    contract: dict | None = None,
+    entry_underlying: float | None = None,
+    option_entry_mid: float | None = None,
+    option_entry_delta_abs: float | None = None,
+) -> dict:
+    """Build an underlying-first SL/target plan for decision support.
+
+    Principles:
+      1) Initial SL is the actual structural invalidation from the setup.
+      2) T1/T2 use 50% / 100% of the setup's measured move, not a fixed
+         premium percentage.
+      3) Only after >=50% of the measured move has been demonstrated do we
+         trail. The trail uses the latest two completed 3m bars but is not
+         allowed to sit tighter than 0.40 ATR behind the best underlying price.
+      4) Option premium levels are delta-only scenario estimates. The
+         underlying levels remain authoritative because IV/gamma/theta/spread
+         can move option prices materially.
+
+    This function does not alter trade state or place orders.
+    """
+    sign = _sign(direction)
+    spot = _f(spot)
+    trigger = _f(trigger)
+    invalidation = _f(invalidation)
+    expected = abs(_f(expected_move_abs, 0.0))
+    atr = abs(_f(atr, 0.0))
+    if not sign or spot is None or invalidation is None:
+        return {
+            "available": False,
+            "reason": "direction/spot/structural invalidation unavailable",
+            "controls_trading": False,
+        }
+
+    entry = _f(entry_underlying, trigger if trigger is not None else spot)
+    if entry is None:
+        entry = spot
+
+    risk_abs = sign * (entry - invalidation)
+    if risk_abs <= 0:
+        return {
+            "available": False,
+            "reason": "structural invalidation is not adverse to the entry reference",
+            "controls_trading": False,
+        }
+
+    # Setup-measured move is primary. ATR is only a fallback when a setup has
+    # no usable measured move; this prevents a cosmetic ATR target from
+    # replacing real market structure.
+    move = expected if expected > 0 else (atr if atr > 0 else None)
+    if move is None or move <= 0:
+        return {
+            "available": False,
+            "reason": "setup measured move and ATR unavailable",
+            "controls_trading": False,
+        }
+
+    t1_dist = RISK_PLAN_TARGET1_FRACTION * move
+    t2_dist = move
+    target1 = entry + sign * t1_dist
+    target2 = entry + sign * t2_dist
+
+    best_favourable = max(0.0, _f(best_favourable_abs, 0.0))
+    progress = max(0.0, sign * (spot - entry))
+    best_price = entry + sign * best_favourable
+
+    stage = "INITIAL"
+    dynamic_sl = invalidation
+    structure_trail = None
+    noise_trail = None
+    bars = list(completed_bars or [])
+    if best_favourable >= t1_dist and t1_dist > 0:
+        stage = "RUNNER" if best_favourable >= t2_dist else "PROTECT"
+        if len(bars) >= 2:
+            recent = bars[-2:]
+            if sign > 0:
+                structure_trail = min(_f(b.get("low"), spot) for b in recent)
+            else:
+                structure_trail = max(_f(b.get("high"), spot) for b in recent)
+        if atr > 0:
+            noise_trail = best_price - sign * RISK_PLAN_TRAIL_NOISE_FLOOR_ATR * atr
+
+        # "Looser of structure and ATR-noise stop", then never worse than the
+        # original structural SL. This avoids a hyper-tight bar-by-bar trail.
+        if sign > 0:
+            candidates = [x for x in (structure_trail, noise_trail) if x is not None]
+            if candidates:
+                dynamic_sl = max(invalidation, min(candidates))
+        else:
+            candidates = [x for x in (structure_trail, noise_trail) if x is not None]
+            if candidates:
+                dynamic_sl = min(invalidation, max(candidates))
+
+    rr_t1 = t1_dist / risk_abs if risk_abs > 0 else None
+    rr_t2 = t2_dist / risk_abs if risk_abs > 0 else None
+    remaining_t1 = max(0.0, t1_dist - progress)
+    remaining_t2 = max(0.0, t2_dist - progress)
+
+    contract = contract or {}
+    current_mid = _f(contract.get("mid"))
+    delta_now = abs(_f(contract.get("delta_abs"), _f(contract.get("delta"), 0.0)))
+    premium_ref = _f(option_entry_mid, current_mid)
+    delta_ref = abs(_f(option_entry_delta_abs, delta_now))
+
+    def premium_at(level):
+        if premium_ref is None or premium_ref <= 0 or delta_ref <= 0 or level is None:
+            return None
+        directional_move = sign * (level - entry)
+        return round(max(0.0, premium_ref + delta_ref * directional_move), 2)
+
+    plan = {
+        "available": True,
+        "controls_trading": False,
+        "authority": "UNDERLYING",
+        "plan_stage": stage,
+        "entry_reference_underlying": round(entry, 4),
+        "entry_reference_source": "LIVE_TRIGGER" if entry_underlying is not None else "TRIGGER_REFERENCE",
+        "initial_sl_underlying": round(invalidation, 4),
+        "dynamic_sl_underlying": round(dynamic_sl, 4),
+        "target1_underlying": round(target1, 4),
+        "target2_underlying": round(target2, 4),
+        "target1_reached": bool(progress >= t1_dist),
+        "target2_reached": bool(progress >= t2_dist),
+        "remaining_to_target1_abs": round(remaining_t1, 4),
+        "remaining_to_target2_abs": round(remaining_t2, 4),
+        "risk_abs": round(risk_abs, 4),
+        "risk_atr": round(risk_abs / atr, 4) if atr > 0 else None,
+        "target1_rr": round(rr_t1, 3) if rr_t1 is not None else None,
+        "target2_rr": round(rr_t2, 3) if rr_t2 is not None else None,
+        "measured_move_abs": round(move, 4),
+        "target1_fraction_of_measured_move": RISK_PLAN_TARGET1_FRACTION,
+        "trail_noise_floor_atr": RISK_PLAN_TRAIL_NOISE_FLOOR_ATR,
+        "structure_trail_underlying": round(structure_trail, 4) if structure_trail is not None else None,
+        "noise_floor_trail_underlying": round(noise_trail, 4) if noise_trail is not None else None,
+        "best_favourable_abs": round(best_favourable, 4),
+        "option_contract": contract.get("symbol"),
+        "option_entry_reference_mid": round(premium_ref, 2) if premium_ref is not None else None,
+        "option_delta_reference_abs": round(delta_ref, 4) if delta_ref else None,
+        "indicative_option_sl": premium_at(dynamic_sl),
+        "indicative_option_target1": premium_at(target1),
+        "indicative_option_target2": premium_at(target2),
+        "premium_projection_note": "delta-only scenario estimate; underlying SL/targets are authoritative; IV/gamma/theta/spread can change realised premium",
+        "method": "STRUCTURE_SL + MEASURED_MOVE_TARGETS + 3M_STRUCTURE/0.40ATR_TRAIL",
+    }
+    return plan
 
 
 def latency_tax(trigger_option_mid: float | None, fill_price: float | None) -> float | None:
