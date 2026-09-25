@@ -458,3 +458,116 @@ def test_tactical_candidate_carries_focus_rearm_evidence_downstream():
     assert rows[0]["focus_rearmed_at"] == (t0 + dt.timedelta(minutes=2)).isoformat()
     assert rows[0]["focus_rearm_reason"] == "fresh pullback-reclaim"
     assert rows[0]["watch_reference_price"] == 100.2
+
+
+
+def test_rearm_clears_prior_continuation_timer_and_references():
+    t0 = dt.datetime(2026, 9, 25, 14, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("SUPREMEIND", price=3510.0)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{
+            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "TRADEABLE",
+            "live_price": 3510.0, "trigger": 3505.0, "invalidation": 3485.0,
+            "future_tick_age_s": 1.0,
+            "option_route": {"tradeable": True, "contract": {"symbol": "SUPREMEIND3500CE"}},
+        }]},
+        [_scan("SUPREMEIND", 3510.0)], now=t0,
+    )
+
+    exited = {"candidates": [{
+        "symbol": "SUPREMEIND", "direction": "Bullish", "state": "EXIT",
+        "reason": "3m entry structure lost", "live_price": 3508.0,
+        "trigger": 3505.0, "invalidation": 3485.0,
+    }]}
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []},
+        {"rows": []}, exited, [_scan("SUPREMEIND", 3508.0)],
+        now=t0 + dt.timedelta(minutes=3),
+    )
+    first_watch = state["continuation_watch"]["SUPREMEIND"]
+    assert first_watch["watch_started_at"] == (t0 + dt.timedelta(minutes=3)).isoformat()
+    assert first_watch["watch_reference_price"] is not None
+
+    rearm = {
+        "events": [_observer_event(
+            "SUPREMEIND", family="PULLBACK_RECLAIM", price=3518.0
+        )],
+        "leaders": [], "laggards": [],
+    }
+    state = v123_focus.update_focus(
+        state, rearm, {"rows": []}, {"candidates": []},
+        [_scan("SUPREMEIND", 3518.0)], now=t0 + dt.timedelta(minutes=20),
+    )
+    row = state["focus"]["SUPREMEIND"]
+    assert row["rearmed_at"] == (t0 + dt.timedelta(minutes=20)).isoformat()
+    assert "watch_started_at" not in row
+    assert "watch_until" not in row
+    assert "watch_reference_price" not in row
+    assert "watch_reference_family" not in row
+
+
+def test_new_continuation_watch_after_rearm_gets_fresh_45_minute_clock():
+    t0 = dt.datetime(2026, 9, 25, 14, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("SUPREMEIND", price=3510.0)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{
+            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "TRADEABLE",
+            "live_price": 3510.0, "trigger": 3505.0, "invalidation": 3485.0,
+            "future_tick_age_s": 1.0,
+            "option_route": {"tradeable": True, "contract": {"symbol": "SUPREMEIND3500CE"}},
+        }]},
+        [_scan("SUPREMEIND", 3510.0)], now=t0,
+    )
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []}, {"rows": []},
+        {"candidates": [{
+            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "EXIT",
+            "reason": "3m entry structure lost", "live_price": 3508.0,
+            "trigger": 3505.0, "invalidation": 3485.0,
+        }]},
+        [_scan("SUPREMEIND", 3508.0)], now=t0 + dt.timedelta(minutes=3),
+    )
+    state = v123_focus.update_focus(
+        state,
+        {"events": [_observer_event(
+            "SUPREMEIND", family="PULLBACK_RECLAIM", price=3518.0
+        )], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []},
+        [_scan("SUPREMEIND", 3518.0)], now=t0 + dt.timedelta(minutes=20),
+    )
+
+    second_watch_time = t0 + dt.timedelta(minutes=30)
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []}, {"rows": []},
+        {"candidates": [{
+            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "CANCELLED",
+            "reason": "persistent futures depth opposes the setup",
+            "live_price": 3516.0, "trigger": 3518.5, "invalidation": 3490.0,
+        }]},
+        [_scan("SUPREMEIND", 3516.0)], now=second_watch_time,
+    )
+    row = state["continuation_watch"]["SUPREMEIND"]
+    assert row["watch_started_at"] == second_watch_time.isoformat()
+    assert row["watch_until"] == (
+        second_watch_time + dt.timedelta(minutes=v123_focus.CONTINUATION_WATCH_MINUTES)
+    ).isoformat()
+
+    # 26 minutes later must still be on watch; this is the SUPREMEIND failure mode
+    # seen on 25 Sep when the old watch clock was inherited.
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []},
+        [_scan("SUPREMEIND", 3525.0)],
+        now=second_watch_time + dt.timedelta(minutes=26),
+    )
+    assert "SUPREMEIND" in state["continuation_watch"]
+    assert not any(
+        x.get("symbol") == "SUPREMEIND"
+        and x.get("lifecycle") == "COMPLETED"
+        and x.get("completed_at") == (second_watch_time + dt.timedelta(minutes=26)).isoformat()
+        for x in state["recent"]
+    )
