@@ -1626,13 +1626,13 @@ div.card:has(> #early-radar-card) { display:none !important; }
         var optT2=rp.indicative_option_target2!=null?'₹'+n(rp.indicative_option_target2,2):'—';
         riskHtml='<div class="focus-risk-plan"><div class="focus-risk-head"><strong>Dynamic SL / Target Plan</strong><span>underlying authoritative · option levels indicative</span></div>'+
           '<div class="focus-risk-grid">'+
-            '<div class="focus-risk-cell stop"><span>'+v12Esc(rp.plan_stage==='INITIAL'?'Initial SL':'Dynamic SL')+'</span><b>'+n(dynSL,2)+'</b><small>Risk '+n(rp.risk_abs,2)+' · '+n(rp.risk_atr,2)+' ATR</small></div>'+
+            '<div class="focus-risk-cell stop"><span>'+v12Esc(rp.plan_stage==='INITIAL'?'Initial SL':'Dynamic SL')+'</span><b>'+n(dynSL,2)+'</b><small>Risk '+n(rp.risk_abs,2)+' · '+n(rp.risk_atr,2)+' ATR'+(rp.time_stop_minutes_if_no_followthrough!=null?' · time '+n(rp.time_stop_minutes_if_no_followthrough,0)+'m':'')+'</small></div>'+
             '<div class="focus-risk-cell t1"><span>Target 1</span><b>'+n(rp.target1_underlying,2)+'</b><small>'+n(rp.target1_rr,2)+'R · '+(rp.target1_reached?'reached':'remaining '+n(rp.remaining_to_target1_abs,2))+'</small></div>'+
             '<div class="focus-risk-cell t2"><span>Target 2 / runner</span><b>'+n(rp.target2_underlying,2)+'</b><small>'+n(rp.target2_rr,2)+'R · '+(rp.target2_reached?'runner mode':'remaining '+n(rp.remaining_to_target2_abs,2))+'</small></div>'+
             '<div class="focus-risk-cell option"><span>'+v12Esc(rp.option_contract||'Option estimate')+'</span><b>SL '+optSL+'</b><small>T1 '+optT1+' · T2 '+optT2+'</small></div>'+
           '</div>'+
           '<div class="focus-risk-note">'+v12Esc(String(rp.method||'STRUCTURE / MEASURED MOVE / VOLATILITY TRAIL').replaceAll('_',' '))+
-          ' · premium projection is delta-only; IV/gamma/theta/spread can change realised premium.</div></div>';
+          ' · premium projection uses local delta+gamma with IV/time held constant; theta/vega/spread can change realised premium.</div></div>';
       }
       return '<article class="focus-row '+life+'">' +
         '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
