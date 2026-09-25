@@ -645,6 +645,15 @@ class TacticalStockStreamService:
             "option_spread_pct": option_contract.get("spread_pct"),
             "option_delta_abs": option_contract.get("delta_abs") or option_contract.get("delta"),
             "friction_to_expected_move": option_contract.get("friction_to_expected_move"),
+            "atr3_14_shadow": v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])),
+            "mfe_atr3_shadow": (
+                round(_f(life.get("best_favourable"), 0.0) / v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])), 4)
+                if v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])) else None
+            ),
+            "mae_atr3_shadow": (
+                round(_f(life.get("worst_adverse"), 0.0) / v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])), 4)
+                if v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])) else None
+            ),
             "depth_support_fraction": (persistence or {}).get("support_fraction"),
             "depth_oppose_fraction": (persistence or {}).get("oppose_fraction"),
             "fast_veto": bool((fast or {}).get("veto")),
@@ -967,6 +976,7 @@ class TacticalStockStreamService:
                 expected_move_abs=setup.get("expected_move_abs"),
                 atr=candidate.get("atr"),
                 best_favourable_abs=life.get("best_favourable"),
+                worst_adverse_abs=life.get("worst_adverse"),
                 completed_bars=bars,
                 contract=option_route.get("contract"),
                 entry_underlying=life.get("entry_underlying"),
@@ -1103,7 +1113,8 @@ class TacticalStockStreamService:
                 "max_friction_ratio": v122b_tactical.PROPOSED_MAX_FRICTION_TO_EXPECTED_MOVE,
                 "same_direction_cap": v122b_tactical.PROPOSED_MAX_SAME_DIRECTION_ACTIVE,
                 "risk_plan_target1_fraction": v122b_tactical.RISK_PLAN_TARGET1_FRACTION,
-                "risk_plan_trail_noise_floor_atr": v122b_tactical.RISK_PLAN_TRAIL_NOISE_FLOOR_ATR,
+                "risk_plan_trailing_method": "PROVEN_3M_STRUCTURE_AFTER_T1",
+                "risk_plan_atr3_shadow_length": v122b_tactical.RISK_PLAN_ATR3_LENGTH,
                 "risk_plan_controls_trading": False,
             },
         })
