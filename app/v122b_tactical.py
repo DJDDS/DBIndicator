@@ -1017,7 +1017,9 @@ def dynamic_trade_plan(
     contract: dict | None = None,
     entry_underlying: float | None = None,
     option_entry_mid: float | None = None,
-    option_entry_delta_abs: float | None = None,
+    option_entry_delta: float | None = None,
+    option_entry_gamma: float | None = None,
+    speed_class: str | None = None,
 ) -> dict:
     """Build an underlying-first SL/target plan for decision support.
 
@@ -1113,15 +1115,24 @@ def dynamic_trade_plan(
 
     contract = contract or {}
     current_mid = _f(contract.get("mid"))
-    delta_now = abs(_f(contract.get("delta_abs"), _f(contract.get("delta"), 0.0)))
+    delta_now = _f(contract.get("delta"))
+    gamma_now = max(0.0, _f(contract.get("gamma"), 0.0))
     premium_ref = _f(option_entry_mid, current_mid)
-    delta_ref = abs(_f(option_entry_delta_abs, delta_now))
+    delta_ref = _f(option_entry_delta, delta_now)
+    gamma_ref = max(0.0, _f(option_entry_gamma, gamma_now))
 
     def premium_at(level):
-        if premium_ref is None or premium_ref <= 0 or delta_ref <= 0 or level is None:
+        if premium_ref is None or premium_ref <= 0 or delta_ref is None or level is None:
             return None
-        directional_move = sign * (level - entry)
-        return round(max(0.0, premium_ref + delta_ref * directional_move), 2)
+        ds = level - entry
+        # Second-order local Taylor approximation. Gamma is useful for the
+        # convexity that matters to long options; IV/time are deliberately held
+        # constant because the barrier hit time and IV path are unknown.
+        est = premium_ref + delta_ref * ds + 0.5 * gamma_ref * ds * ds
+        return round(max(0.0, est), 2)
+
+    bars_allowed = PROPOSED_FOLLOWTHROUGH_BARS.get(speed_class)
+    time_stop_minutes = int(bars_allowed * 3) if bars_allowed else None
 
     plan = {
         "available": True,
@@ -1150,12 +1161,14 @@ def dynamic_trade_plan(
         "best_favourable_abs": round(best_favourable, 4),
         "option_contract": contract.get("symbol"),
         "option_entry_reference_mid": round(premium_ref, 2) if premium_ref is not None else None,
-        "option_delta_reference_abs": round(delta_ref, 4) if delta_ref else None,
+        "option_delta_reference": round(delta_ref, 4) if delta_ref is not None else None,
+        "option_gamma_reference": round(gamma_ref, 6) if gamma_ref else None,
+        "time_stop_minutes_if_no_followthrough": time_stop_minutes,
         "indicative_option_sl": premium_at(dynamic_sl),
         "indicative_option_target1": premium_at(target1),
         "indicative_option_target2": premium_at(target2),
-        "premium_projection_note": "delta-only scenario estimate; underlying SL/targets are authoritative; IV/gamma/theta/spread can change realised premium",
-        "method": "STRUCTURE_SL + MEASURED_MOVE_TARGETS + 3M_STRUCTURE/0.40ATR_TRAIL",
+        "premium_projection_note": "delta+gamma local scenario estimate with IV/time held constant; underlying SL/targets are authoritative; theta/vega/spread can change realised premium",
+        "method": "STRUCTURE_SL + MEASURED_MOVE_TARGETS + TIME_BARRIER + 3M_STRUCTURE/0.40ATR_NOISE_FLOOR_TRAIL",
     }
     return plan
 
