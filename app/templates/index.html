@@ -1585,6 +1585,9 @@ div.card:has(> #early-radar-card) { display:none !important; }
     function mathCell(label,value,suffix){
       return '<div class="focus-math-cell"><span>'+v12Esc(label)+'</span><b>'+v12Esc(value)+(suffix||'')+'</b></div>';
     }
+    // Risk-plan values remain in backend/shadow evidence for forensic research,
+    // but are intentionally not rendered live until episode/contract coherence
+    // is validated across forward sessions.
     function rowHtml(row){
       row=row||{};
       var life=String(row.lifecycle||'DISCOVERED').toLowerCase();
@@ -1592,7 +1595,6 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var hist=(row.history||[]).slice(-2);
       var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
       var cm=row.continuation_math||{};
-      var rp=row.risk_plan||{};
       var cmp=Number(row.live_price), trigger=Number(row.trigger), atr=Number(row.atr);
       var dir=String(row.direction||'');
       var sign=dir==='Bearish'?-1:1;
@@ -1618,23 +1620,6 @@ div.card:has(> #early-radar-card) { display:none !important; }
           mathCell('Pullback',cm.pullback_ratio==null?'—':n(Number(cm.pullback_ratio)*100,0),'%')+
           '</div></div>';
       }
-      var riskHtml='';
-      if(rp && rp.available){
-        var dynSL=rp.dynamic_sl_underlying!=null?rp.dynamic_sl_underlying:rp.initial_sl_underlying;
-        var optSL=rp.indicative_option_sl!=null?'₹'+n(rp.indicative_option_sl,2):'—';
-        var optT1=rp.indicative_option_target1!=null?'₹'+n(rp.indicative_option_target1,2):'—';
-        var optT2=rp.indicative_option_target2!=null?'₹'+n(rp.indicative_option_target2,2):'—';
-        riskHtml='<div class="focus-risk-plan"><div class="focus-risk-head"><strong>Dynamic SL / Target Plan</strong><span>underlying authoritative · option levels indicative</span></div>'+
-          '<div class="focus-risk-grid">'+
-            '<div class="focus-risk-cell stop"><span>'+v12Esc(rp.plan_stage==='INITIAL'?'Initial SL':'Dynamic SL')+'</span><b>'+n(dynSL,2)+'</b><small>Risk '+n(rp.risk_abs,2)+' · '+n(rp.risk_atr,2)+' ATR'+(rp.time_stop_minutes_if_no_followthrough!=null?' · time '+n(rp.time_stop_minutes_if_no_followthrough,0)+'m':'')+'</small></div>'+
-            '<div class="focus-risk-cell t1"><span>Target 1</span><b>'+n(rp.target1_underlying,2)+'</b><small>'+n(rp.target1_rr,2)+'R · '+(rp.target1_reached?'reached':'remaining '+n(rp.remaining_to_target1_abs,2))+'</small></div>'+
-            '<div class="focus-risk-cell t2"><span>Target 2 / runner</span><b>'+n(rp.target2_underlying,2)+'</b><small>'+n(rp.target2_rr,2)+'R · '+(rp.target2_reached?'runner mode':'remaining '+n(rp.remaining_to_target2_abs,2))+'</small></div>'+
-            '<div class="focus-risk-cell option"><span>'+v12Esc(rp.option_contract||'Option estimate')+'</span><b>SL '+optSL+'</b><small>T1 '+optT1+' · T2 '+optT2+'</small></div>'+
-          '</div>'+
-          '<div class="focus-risk-note">'+v12Esc(String(rp.method||'STRUCTURE / MEASURED MOVE / 3M STRUCTURE TRAIL').replaceAll('_',' '))+
-          (rp.atr3_14_shadow!=null?' · 3m ATR14 '+n(rp.atr3_14_shadow,2)+' (shadow calibration only)':'')+
-          ' · premium projection uses local delta+gamma with IV/time held constant; theta/vega/spread can change realised premium.</div></div>';
-      }
       return '<article class="focus-row '+life+'">' +
         '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
         '<span class="focus-direction '+dir.toLowerCase()+'">'+v12Esc(dir)+'</span>' +
@@ -1657,7 +1642,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
           '<span class="focus-vehicle'+(witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn'))+'">5m '+v12Esc(witness)+'</span>'+
           (route!=='WAIT'?'<span class="focus-vehicle'+(route==='HEALTHY'?' good':(route==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(route)+'</span>':'')+
         '</div>'+
-        freshLine+riskHtml+mathHtml+
+        freshLine+mathHtml+
         (v.option_reason?'<div class="focus-meta">Option route: '+v12Esc(v.option_reason)+'</div>':'')+
         (h?'<div class="focus-history">'+h+'</div>':'')+
       '</article>';
@@ -1797,12 +1782,6 @@ div.card:has(> #early-radar-card) { display:none !important; }
         ' · basis Δ60s ' + pctSigned(basis.basis_change_60s_pct_points, 4) +
         '<br>' + optionText + nextMonth +
         (risk.premium_outlay != null ? ' · 1-lot outlay ₹' + num(risk.premium_outlay, 0, '') + ' · est. invalidation risk ₹' + num(risk.estimated_loss_at_invalidation, 0, '') : '') +
-        (riskPlan.available ? '<br><strong>PLAN</strong> · SL ' + num(riskPlan.dynamic_sl_underlying, 2, '') +
-          ' · T1 ' + num(riskPlan.target1_underlying, 2, '') + ' (' + num(riskPlan.target1_rr, 2, 'R') + ')' +
-          ' · T2 ' + num(riskPlan.target2_underlying, 2, '') + ' (' + num(riskPlan.target2_rr, 2, 'R') + ')' +
-          (riskPlan.indicative_option_sl != null ? ' · option≈ SL ₹' + num(riskPlan.indicative_option_sl, 2, '') +
-            ' / T1 ₹' + num(riskPlan.indicative_option_target1, 2, '') +
-            ' / T2 ₹' + num(riskPlan.indicative_option_target2, 2, '') : '') : '') +
         '<br><strong>' + v12Esc(row.reason || '') + '</strong>' +
         (row.trailing_invalidation != null ? ' · trail ' + num(row.trailing_invalidation, 2, '') : '') +
         '</div></div>';
