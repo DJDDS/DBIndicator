@@ -170,7 +170,8 @@ class TacticalStockStreamService:
             "shadow_recorded_milestones",
             "plan_option_contract",
             "plan_option_entry_mid",
-            "plan_option_entry_delta_abs",
+            "plan_option_entry_delta",
+            "plan_option_entry_gamma",
         ):
             life.pop(key, None)
 
@@ -930,10 +931,8 @@ class TacticalStockStreamService:
                 if life.get("plan_option_contract") != route_contract_now.get("symbol"):
                     life["plan_option_contract"] = route_contract_now.get("symbol")
                     life["plan_option_entry_mid"] = _f(route_contract_now.get("mid"))
-                    life["plan_option_entry_delta_abs"] = abs(_f(
-                        route_contract_now.get("delta_abs"),
-                        _f(route_contract_now.get("delta"), 0.0),
-                    ))
+                    life["plan_option_entry_delta"] = _f(route_contract_now.get("delta"))
+                    life["plan_option_entry_gamma"] = max(0.0, _f(route_contract_now.get("gamma"), 0.0))
 
             if state.get("state") in ("EXIT", "TIME_EXIT") and life.get("episode_open"):
                 life["episode_open"] = False
@@ -972,7 +971,9 @@ class TacticalStockStreamService:
                 contract=option_route.get("contract"),
                 entry_underlying=life.get("entry_underlying"),
                 option_entry_mid=life.get("plan_option_entry_mid"),
-                option_entry_delta_abs=life.get("plan_option_entry_delta_abs"),
+                option_entry_delta=life.get("plan_option_entry_delta"),
+                option_entry_gamma=life.get("plan_option_entry_gamma"),
+                speed_class=setup.get("speed_class"),
             )
             route_degraded_seconds = None
             if isinstance(life.get("route_degraded_since"), dt.datetime):
