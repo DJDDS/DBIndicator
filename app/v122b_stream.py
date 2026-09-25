@@ -616,6 +616,15 @@ class TacticalStockStreamService:
             return metrics
 
         option_contract = (route or {}).get("contract") or {}
+        atr3_shadow = v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or []))
+        mfe_atr3_shadow = (
+            round(_f(life.get("best_favourable"), 0.0) / atr3_shadow, 4)
+            if atr3_shadow else None
+        )
+        mae_atr3_shadow = (
+            round(_f(life.get("worst_adverse"), 0.0) / atr3_shadow, 4)
+            if atr3_shadow else None
+        )
         base = {
             "ts": _iso(now),
             "trade_date": now.date().isoformat(),
@@ -645,15 +654,9 @@ class TacticalStockStreamService:
             "option_spread_pct": option_contract.get("spread_pct"),
             "option_delta_abs": option_contract.get("delta_abs") or option_contract.get("delta"),
             "friction_to_expected_move": option_contract.get("friction_to_expected_move"),
-            "atr3_14_shadow": v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])),
-            "mfe_atr3_shadow": (
-                round(_f(life.get("best_favourable"), 0.0) / v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])), 4)
-                if v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])) else None
-            ),
-            "mae_atr3_shadow": (
-                round(_f(life.get("worst_adverse"), 0.0) / v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])), 4)
-                if v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])) else None
-            ),
+            "atr3_14_shadow": atr3_shadow,
+            "mfe_atr3_shadow": mfe_atr3_shadow,
+            "mae_atr3_shadow": mae_atr3_shadow,
             "depth_support_fraction": (persistence or {}).get("support_fraction"),
             "depth_oppose_fraction": (persistence or {}).get("oppose_fraction"),
             "fast_veto": bool((fast or {}).get("veto")),
