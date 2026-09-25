@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 from collections import deque
 
 from app import v122b_stream, v122b_tactical
@@ -267,3 +268,126 @@ def test_shadow_recorder_writes_milestones_without_controlling_trade(tmp_path):
     assert '"horizon_min":3' in text
     assert '"shadow_only":true' in text
     assert '"controls_trading":false' in text
+
+
+
+def test_shadow_math_locks_episode_direction_and_entry_atr():
+    t0 = dt.datetime(2026, 9, 25, 10, 0)
+    svc = _service(t0)
+    bullish_setup = {
+        "direction": "Bullish", "setup": "MICRO_BREAKOUT",
+        "speed_class": None, "invalidation": 95.0, "expected_move_abs": 10.0,
+    }
+    state = {"state": "TRADEABLE", "tradeable": True}
+    first = {"direction": "Bullish", "live_price": 100.0, "atr": 10.0}
+    _, life = svc._manage_lifecycle("ABC", first, bullish_setup, state, t0)
+
+    bearish_setup = {
+        "direction": "Bearish", "setup": "MICRO_BREAKOUT",
+        "speed_class": None, "invalidation": 110.0, "expected_move_abs": 10.0,
+    }
+    later = {"direction": "Bearish", "live_price": 102.0, "atr": 20.0}
+    svc._manage_lifecycle("ABC", later, bearish_setup, state, t0 + dt.timedelta(minutes=1))
+    metrics = svc._continuation_math(life, later, 102.0)
+
+    assert life["shadow_episode_direction"] == "Bullish"
+    assert life["shadow_direction_mismatch_seen"] is True
+    assert metrics["entry_atr"] == 10.0
+    assert metrics["current_atr"] == 20.0
+    assert metrics["progress_atr"] == 0.2
+    assert metrics["progress_current_atr"] == 0.1
+
+
+def test_shadow_recorder_does_not_backfill_old_horizons_as_current_observations(tmp_path):
+    now = dt.datetime(2026, 9, 25, 12, 0)
+    event_file = tmp_path / "v122b_events.jsonl"
+    svc = v122b_stream.TacticalStockStreamService(
+        candidate_provider=lambda: [],
+        publish_callback=lambda payload: None,
+        access_token_getter=lambda: None,
+        kite_client_getter=lambda: None,
+        api_key="test",
+        earnings_state_file=None,
+        state_file=None,
+        event_file=str(event_file),
+        ticker_factory=lambda *args, **kwargs: None,
+        now_provider=lambda: now,
+        sleep_fn=lambda seconds: None,
+        reactor_getter=lambda: None,
+    )
+    life = {
+        "episode_no": 1,
+        "episode_started_at": now,
+        "triggered_at": now,
+        "entry_underlying": 100.0,
+        "shadow_episode_direction": "Bullish",
+        "shadow_entry_atr": 10.0,
+        "shadow_best_favourable": 1.0,
+        "shadow_worst_adverse": 0.2,
+        "shadow_path_length_abs": 2.0,
+        "shadow_last_path_price": 100.5,
+        "shadow_recorded_milestones": [],
+    }
+    candidate = {"direction": "Bullish", "atr": 10.0, "focus_event_family": "RANGE_EXPANSION"}
+    setup = {"direction": "Bullish", "setup": "MICRO_BREAKOUT", "trigger": 100.0, "invalidation": 99.0}
+    svc._record_continuation_shadow(
+        now=now + dt.timedelta(minutes=14), symbol="ABC",
+        candidate=candidate, setup=setup, state={"state": "TRADEABLE"},
+        life=life, live_price=100.5,
+        route_health={"state": "HEALTHY"}, route={"contract": {}},
+        persistence={}, fast={"veto": False}, stale=False,
+        rvol3=None, rvol3_accel=None, relative3=None,
+        five_minute={"state": "SUPPORTIVE"}, cash_age=1.0, fut_age=1.0,
+    )
+    rows = [
+        json.loads(x)
+        for x in (tmp_path / "v123_continuation_shadow.jsonl").read_text(encoding="utf-8").splitlines()
+        if x.strip()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["sample_kind"] == "LATE_OBSERVATION"
+    assert rows[0]["horizon_min"] is None
+    assert rows[0]["target_horizon_min"] == 10
+    assert rows[0]["missed_horizons_min"] == [3, 6]
+
+
+def test_shadow_close_observation_is_idempotent(tmp_path):
+    now = dt.datetime(2026, 9, 25, 12, 0)
+    event_file = tmp_path / "v122b_events.jsonl"
+    svc = v122b_stream.TacticalStockStreamService(
+        candidate_provider=lambda: [], publish_callback=lambda payload: None,
+        access_token_getter=lambda: None, kite_client_getter=lambda: None,
+        api_key="test", earnings_state_file=None, state_file=None,
+        event_file=str(event_file), ticker_factory=lambda *args, **kwargs: None,
+        now_provider=lambda: now, sleep_fn=lambda seconds: None,
+        reactor_getter=lambda: None,
+    )
+    life = {
+        "episode_no": 3, "episode_started_at": now, "triggered_at": now,
+        "entry_underlying": 100.0, "shadow_episode_direction": "Bullish",
+        "shadow_entry_atr": 10.0, "shadow_best_favourable": 0.5,
+        "shadow_worst_adverse": 0.1, "shadow_path_length_abs": 1.0,
+        "shadow_last_path_price": 100.4, "shadow_recorded_milestones": [],
+        "episode_result": "ENTRY_EXIT", "episode_exit_reason": "test",
+    }
+    kwargs = dict(
+        now=now + dt.timedelta(minutes=2), symbol="ABC",
+        candidate={"direction": "Bullish", "atr": 10.0},
+        setup={"direction": "Bullish", "setup": "MICRO_BREAKOUT", "trigger": 100.0, "invalidation": 99.0},
+        state={"state": "EXIT"}, life=life, live_price=100.4,
+        route_health={"state": "HEALTHY"}, route={"contract": {}},
+        persistence={}, fast={"veto": False}, stale=False,
+        rvol3=None, rvol3_accel=None, relative3=None,
+        five_minute={"state": "SUPPORTIVE"}, cash_age=1.0, fut_age=1.0,
+        force_close=True,
+    )
+    svc._record_continuation_shadow(**kwargs)
+    svc._record_continuation_shadow(**kwargs)
+    rows = [
+        json.loads(x)
+        for x in (tmp_path / "v123_continuation_shadow.jsonl").read_text(encoding="utf-8").splitlines()
+        if x.strip()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["sample_kind"] == "EPISODE_CLOSE"
+    assert rows[0]["observation_id"]
