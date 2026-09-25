@@ -117,6 +117,7 @@ class TacticalStockStreamService:
         )
         self._shadow_samples_written = 0
         self._shadow_episode_keys = set()
+        self._shadow_observation_keys = self._load_shadow_observation_keys()
         self.ticker_factory = ticker_factory or _ticker_factory
         self.now_provider = now_provider or scanner.now_ist
         self.sleep_fn = sleep_fn
@@ -150,6 +151,41 @@ class TacticalStockStreamService:
         self._session_date = None
 
     @staticmethod
+    def _shadow_observation_key(row):
+        """Deterministic idempotency key for one shadow observation."""
+        return "|".join(str(x or "") for x in (
+            row.get("trade_date"),
+            row.get("symbol"),
+            row.get("episode_no"),
+            row.get("triggered_at"),
+            row.get("sample_kind"),
+            row.get("horizon_min"),
+            row.get("target_horizon_min"),
+        ))
+
+    def _load_shadow_observation_keys(self):
+        keys = set()
+        if not self.continuation_file:
+            return keys
+        path = Path(self.continuation_file)
+        if not path.exists():
+            return keys
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        row = json.loads(raw)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    keys.add(self._shadow_observation_key(row))
+        except OSError:
+            pass
+        return keys
+
+    @staticmethod
     def _reset_trigger(life):
         """Clear episode-specific timing/price state without erasing history."""
         for key in (
@@ -168,6 +204,14 @@ class TacticalStockStreamService:
             "shadow_outcome",
             "shadow_outcome_at",
             "shadow_recorded_milestones",
+            "shadow_episode_direction",
+            "shadow_entry_atr",
+            "shadow_entry_atr3",
+            "shadow_best_favourable",
+            "shadow_worst_adverse",
+            "shadow_path_length_abs",
+            "shadow_last_path_price",
+            "shadow_direction_mismatch_seen",
             "plan_option_contract",
             "plan_option_entry_mid",
             "plan_option_entry_delta",
@@ -575,28 +619,38 @@ class TacticalStockStreamService:
     def _continuation_math(life, row, price):
         trig = life.get("triggered_at")
         entry = _f(life.get("entry_underlying"))
-        atr = _f(row.get("atr"))
-        if not isinstance(trig, dt.datetime) or entry is None or price is None or not atr or atr <= 0:
+        entry_atr = _f(life.get("shadow_entry_atr"), _f(row.get("atr")))
+        current_atr = _f(row.get("atr"))
+        if not isinstance(trig, dt.datetime) or entry is None or price is None or not entry_atr or entry_atr <= 0:
             return None
-        direction = str(row.get("direction") or "")
+        direction = str(life.get("shadow_episode_direction") or row.get("direction") or "")
         sign = 1.0 if direction == "Bullish" else -1.0
         progress_abs = sign * (price - entry)
-        path = max(_f(life.get("path_length_abs"), 0.0), 0.0)
-        mfe = max(_f(life.get("best_favourable"), 0.0), 0.0)
-        mae = max(_f(life.get("worst_adverse"), 0.0), 0.0)
+        path = max(_f(life.get("shadow_path_length_abs"), _f(life.get("path_length_abs"), 0.0)), 0.0)
+        mfe = max(_f(life.get("shadow_best_favourable"), _f(life.get("best_favourable"), 0.0)), 0.0)
+        mae = max(_f(life.get("shadow_worst_adverse"), _f(life.get("worst_adverse"), 0.0)), 0.0)
         efficiency = progress_abs / path if path > 1e-9 else 0.0
         efficiency = max(-1.0, min(1.0, efficiency))
         pullback = None
         if mfe > 1e-9:
             pullback = max(0.0, min(3.0, (mfe - progress_abs) / mfe))
-        return {
-            "progress_atr": round(progress_abs / atr, 4),
-            "mfe_atr": round(mfe / atr, 4),
-            "mae_atr": round(mae / atr, 4),
+        out = {
+            "progress_atr": round(progress_abs / entry_atr, 4),
+            "mfe_atr": round(mfe / entry_atr, 4),
+            "mae_atr": round(mae / entry_atr, 4),
+            "entry_atr": round(entry_atr, 6),
+            "current_atr": round(current_atr, 6) if current_atr is not None else None,
             "path_efficiency": round(efficiency, 4),
             "pullback_ratio": round(pullback, 4) if pullback is not None else None,
             "outcome_first_hit": life.get("shadow_outcome"),
         }
+        if current_atr and current_atr > 0:
+            out.update({
+                "progress_current_atr": round(progress_abs / current_atr, 4),
+                "mfe_current_atr": round(mfe / current_atr, 4),
+                "mae_current_atr": round(mae / current_atr, 4),
+            })
+        return out
 
     def _record_continuation_shadow(self, *, now, symbol, candidate, setup, state, life,
                                     live_price, route_health, route, persistence, fast,
@@ -617,19 +671,24 @@ class TacticalStockStreamService:
 
         option_contract = (route or {}).get("contract") or {}
         atr3_shadow = v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or []))
+        entry_atr3_shadow = _f(life.get("shadow_entry_atr3"))
+        shadow_mfe = max(_f(life.get("shadow_best_favourable"), _f(life.get("best_favourable"), 0.0)), 0.0)
+        shadow_mae = max(_f(life.get("shadow_worst_adverse"), _f(life.get("worst_adverse"), 0.0)), 0.0)
         mfe_atr3_shadow = (
-            round(_f(life.get("best_favourable"), 0.0) / atr3_shadow, 4)
-            if atr3_shadow else None
+            round(shadow_mfe / entry_atr3_shadow, 4)
+            if entry_atr3_shadow else None
         )
         mae_atr3_shadow = (
-            round(_f(life.get("worst_adverse"), 0.0) / atr3_shadow, 4)
-            if atr3_shadow else None
+            round(shadow_mae / entry_atr3_shadow, 4)
+            if entry_atr3_shadow else None
         )
         base = {
             "ts": _iso(now),
             "trade_date": now.date().isoformat(),
             "symbol": symbol,
-            "direction": setup.get("direction") or candidate.get("direction"),
+            "direction": life.get("shadow_episode_direction") or setup.get("direction") or candidate.get("direction"),
+            "current_candidate_direction": setup.get("direction") or candidate.get("direction"),
+            "direction_mismatch_detected": bool(life.get("shadow_direction_mismatch_seen")),
             "setup": setup.get("setup"),
             "event_family": candidate.get("focus_event_family"),
             "episode_no": int(life.get("episode_no") or 0),
@@ -640,6 +699,8 @@ class TacticalStockStreamService:
             "entry_underlying": life.get("entry_underlying"),
             "live_price": live_price,
             "atr": candidate.get("atr"),
+            "entry_atr": metrics.get("entry_atr"),
+            "current_atr": metrics.get("current_atr"),
             **metrics,
             "ret_5m_pct": candidate.get("ret_5m_pct"),
             "relative_5m_vs_nifty_pct": candidate.get("relative_5m_vs_nifty_pct"),
@@ -655,8 +716,12 @@ class TacticalStockStreamService:
             "option_delta_abs": option_contract.get("delta_abs") or option_contract.get("delta"),
             "friction_to_expected_move": option_contract.get("friction_to_expected_move"),
             "atr3_14_shadow": atr3_shadow,
+            "entry_atr3_shadow": entry_atr3_shadow,
+            "current_atr3_14_shadow": atr3_shadow,
             "mfe_atr3_shadow": mfe_atr3_shadow,
             "mae_atr3_shadow": mae_atr3_shadow,
+            "mfe_current_atr3_shadow": round(shadow_mfe / atr3_shadow, 4) if atr3_shadow else None,
+            "mae_current_atr3_shadow": round(shadow_mae / atr3_shadow, 4) if atr3_shadow else None,
             "depth_support_fraction": (persistence or {}).get("support_fraction"),
             "depth_oppose_fraction": (persistence or {}).get("oppose_fraction"),
             "fast_veto": bool((fast or {}).get("veto")),
@@ -671,13 +736,22 @@ class TacticalStockStreamService:
         }
 
         rows = []
-        for milestone in due:
+        if due:
+            milestone = max(due)
+            lag_s = max(0.0, age_s - milestone)
             row = dict(base)
-            row["sample_kind"] = "MILESTONE"
-            row["horizon_min"] = milestone // 60
+            if lag_s <= 90.0:
+                row["sample_kind"] = "MILESTONE"
+                row["horizon_min"] = milestone // 60
+            else:
+                row["sample_kind"] = "LATE_OBSERVATION"
+                row["horizon_min"] = None
+            row["target_horizon_min"] = milestone // 60
+            row["horizon_lag_seconds"] = round(lag_s, 1)
+            row["missed_horizons_min"] = [m // 60 for m in due if m != milestone]
             row["age_seconds"] = round(age_s, 1)
             rows.append(row)
-            done.add(milestone)
+            done.update(due)
         if force_close:
             row = dict(base)
             row["sample_kind"] = "EPISODE_CLOSE"
@@ -688,8 +762,13 @@ class TacticalStockStreamService:
             rows.append(row)
 
         for row in rows:
+            key = self._shadow_observation_key(row)
+            row["observation_id"] = key
+            if key in self._shadow_observation_keys:
+                continue
             try:
                 _append_jsonl(self.continuation_file, row)
+                self._shadow_observation_keys.add(key)
                 self._shadow_samples_written += 1
             except OSError:
                 pass
@@ -718,6 +797,14 @@ class TacticalStockStreamService:
                 "shadow_outcome": None,
                 "shadow_outcome_at": None,
                 "shadow_recorded_milestones": [],
+                "shadow_episode_direction": direction,
+                "shadow_entry_atr": _f(row.get("atr")),
+                "shadow_entry_atr3": v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or [])),
+                "shadow_best_favourable": 0.0,
+                "shadow_worst_adverse": 0.0,
+                "shadow_path_length_abs": 0.0,
+                "shadow_last_path_price": price,
+                "shadow_direction_mismatch_seen": False,
                 "setup": setup.get("setup"),
                 "speed_class": setup.get("speed_class"),
             })
@@ -734,12 +821,31 @@ class TacticalStockStreamService:
         life["path_length_abs"] = _f(life.get("path_length_abs"), 0.0) + abs(price - prior_price)
         life["last_path_price"] = price
 
+        shadow_direction = str(life.get("shadow_episode_direction") or direction)
+        shadow_sign = 1 if shadow_direction == "Bullish" else -1
+        if str(direction) != shadow_direction:
+            life["shadow_direction_mismatch_seen"] = True
+        shadow_entry = _f(life.get("entry_underlying"), price)
+        shadow_favourable = shadow_sign * (price - shadow_entry)
+        life["shadow_best_favourable"] = max(
+            _f(life.get("shadow_best_favourable"), 0.0), shadow_favourable
+        )
+        life["shadow_worst_adverse"] = max(
+            _f(life.get("shadow_worst_adverse"), 0.0), max(0.0, -shadow_favourable)
+        )
+        shadow_prior = _f(life.get("shadow_last_path_price"), price)
+        life["shadow_path_length_abs"] = (
+            _f(life.get("shadow_path_length_abs"), 0.0) + abs(price - shadow_prior)
+        )
+        life["shadow_last_path_price"] = price
+
         atr = _f(row.get("atr"))
-        if atr and atr > 0 and not life.get("shadow_outcome"):
-            if favourable >= 0.30 * atr:
+        shadow_atr = _f(life.get("shadow_entry_atr"), atr)
+        if shadow_atr and shadow_atr > 0 and not life.get("shadow_outcome"):
+            if shadow_favourable >= 0.30 * shadow_atr:
                 life["shadow_outcome"] = "PLUS_0_30_ATR_FIRST"
                 life["shadow_outcome_at"] = now
-            elif -favourable >= 0.15 * atr:
+            elif -shadow_favourable >= 0.15 * shadow_atr:
                 life["shadow_outcome"] = "MINUS_0_15_ATR_FIRST"
                 life["shadow_outcome_at"] = now
 
