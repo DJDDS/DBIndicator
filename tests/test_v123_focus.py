@@ -421,6 +421,12 @@ def test_focus_carries_shadow_math_and_fresh_entry_evidence():
             "progress_atr": 0.08, "mfe_atr": 0.10, "mae_atr": 0.02,
             "path_efficiency": 0.62, "pullback_ratio": 0.20,
         },
+        "risk_plan": {
+            "available": True, "controls_trading": False,
+            "dynamic_sl_underlying": 329.35,
+            "target1_underlying": 331.20,
+            "target2_underlying": 331.95,
+        },
         "route_health": "HEALTHY", "execution_window_open": True,
         "execution_window_state": "OPEN_ACTIVE",
         "five_minute_witness": {"state": "SUPPORTIVE"},
@@ -433,6 +439,8 @@ def test_focus_carries_shadow_math_and_fresh_entry_evidence():
     assert row["fresh_entry_gate"] is True
     assert row["fresh_entry_reason"] == "NEW_STRUCTURAL_TRIGGER_GE_0_15_ATR"
     assert row["continuation_math"]["path_efficiency"] == 0.62
+    assert row["risk_plan"]["dynamic_sl_underlying"] == 329.35
+    assert row["risk_plan"]["controls_trading"] is False
 
 
 def test_tactical_candidate_carries_focus_rearm_evidence_downstream():

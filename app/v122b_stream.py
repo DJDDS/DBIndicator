@@ -168,6 +168,10 @@ class TacticalStockStreamService:
             "shadow_outcome",
             "shadow_outcome_at",
             "shadow_recorded_milestones",
+            "plan_option_contract",
+            "plan_option_entry_mid",
+            "plan_option_entry_delta",
+            "plan_option_entry_gamma",
         ):
             life.pop(key, None)
 
@@ -612,6 +616,15 @@ class TacticalStockStreamService:
             return metrics
 
         option_contract = (route or {}).get("contract") or {}
+        atr3_shadow = v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or []))
+        mfe_atr3_shadow = (
+            round(_f(life.get("best_favourable"), 0.0) / atr3_shadow, 4)
+            if atr3_shadow else None
+        )
+        mae_atr3_shadow = (
+            round(_f(life.get("worst_adverse"), 0.0) / atr3_shadow, 4)
+            if atr3_shadow else None
+        )
         base = {
             "ts": _iso(now),
             "trade_date": now.date().isoformat(),
@@ -641,6 +654,9 @@ class TacticalStockStreamService:
             "option_spread_pct": option_contract.get("spread_pct"),
             "option_delta_abs": option_contract.get("delta_abs") or option_contract.get("delta"),
             "friction_to_expected_move": option_contract.get("friction_to_expected_move"),
+            "atr3_14_shadow": atr3_shadow,
+            "mfe_atr3_shadow": mfe_atr3_shadow,
+            "mae_atr3_shadow": mae_atr3_shadow,
             "depth_support_fraction": (persistence or {}).get("support_fraction"),
             "depth_oppose_fraction": (persistence or {}).get("oppose_fraction"),
             "fast_veto": bool((fast or {}).get("veto")),
@@ -772,6 +788,7 @@ class TacticalStockStreamService:
             "fresh_entry_gate": payload.get("fresh_entry_gate"),
             "fresh_entry_reason": payload.get("fresh_entry_reason"),
             "continuation_math": payload.get("continuation_math"),
+            "risk_plan": payload.get("risk_plan"),
             "validation_label": "INTERIM / NOT VALIDATED",
         }
         try:
@@ -918,6 +935,17 @@ class TacticalStockStreamService:
 
             state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
 
+            # Freeze the option premium/delta reference at the actual underlying
+            # trigger for consistent premium projections. READY-stage plans use
+            # the live route reference and become frozen only after triggering.
+            route_contract_now = (route or {}).get("contract") or {}
+            if isinstance(life.get("triggered_at"), dt.datetime) and route_contract_now.get("symbol"):
+                if life.get("plan_option_contract") != route_contract_now.get("symbol"):
+                    life["plan_option_contract"] = route_contract_now.get("symbol")
+                    life["plan_option_entry_mid"] = _f(route_contract_now.get("mid"))
+                    life["plan_option_entry_delta"] = _f(route_contract_now.get("delta"))
+                    life["plan_option_entry_gamma"] = max(0.0, _f(route_contract_now.get("gamma"), 0.0))
+
             if state.get("state") in ("EXIT", "TIME_EXIT") and life.get("episode_open"):
                 life["episode_open"] = False
                 life["episode_closed_at"] = now
@@ -942,6 +970,23 @@ class TacticalStockStreamService:
                 option_route.get("contract"),
                 spot=live_price,
                 invalidation=setup.get("invalidation"),
+            )
+            risk_plan = v122b_tactical.dynamic_trade_plan(
+                direction=setup.get("direction") or direction,
+                spot=live_price,
+                trigger=setup.get("trigger"),
+                invalidation=setup.get("invalidation"),
+                expected_move_abs=setup.get("expected_move_abs"),
+                atr=candidate.get("atr"),
+                best_favourable_abs=life.get("best_favourable"),
+                worst_adverse_abs=life.get("worst_adverse"),
+                completed_bars=bars,
+                contract=option_route.get("contract"),
+                entry_underlying=life.get("entry_underlying"),
+                option_entry_mid=life.get("plan_option_entry_mid"),
+                option_entry_delta=life.get("plan_option_entry_delta"),
+                option_entry_gamma=life.get("plan_option_entry_gamma"),
+                speed_class=setup.get("speed_class"),
             )
             route_degraded_seconds = None
             if isinstance(life.get("route_degraded_since"), dt.datetime):
@@ -1009,6 +1054,7 @@ class TacticalStockStreamService:
                 "earnings": event,
                 "option_route": option_route,
                 "one_lot_risk": risk,
+                "risk_plan": risk_plan,
                 "entry_episode_no": int(life.get("episode_no") or 0),
                 "entry_episode_open": bool(life.get("episode_open")),
                 "entry_episode_result": life.get("episode_result"),
@@ -1069,6 +1115,10 @@ class TacticalStockStreamService:
                 "pre_result_next_month_dte_lte": v122b_tactical.PROPOSED_PRE_RESULT_NEXT_MONTH_DTE,
                 "max_friction_ratio": v122b_tactical.PROPOSED_MAX_FRICTION_TO_EXPECTED_MOVE,
                 "same_direction_cap": v122b_tactical.PROPOSED_MAX_SAME_DIRECTION_ACTIVE,
+                "risk_plan_target1_fraction": v122b_tactical.RISK_PLAN_TARGET1_FRACTION,
+                "risk_plan_trailing_method": "PROVEN_3M_STRUCTURE_AFTER_T1",
+                "risk_plan_atr3_shadow_length": v122b_tactical.RISK_PLAN_ATR3_LENGTH,
+                "risk_plan_controls_trading": False,
             },
         })
 

@@ -92,3 +92,17 @@ def test_web_exposes_continuation_shadow_export():
     text = Path('app/web.py').read_text(encoding='utf-8')
     assert '@app.route("/api/v123-continuation-shadow/export")' in text
     assert 'v123_continuation_shadow.jsonl' in text
+
+
+
+def test_focus_dashboard_shows_dynamic_underlying_risk_plan():
+    text = Path('app/templates/index.html').read_text(encoding='utf-8')
+    assert 'Dynamic SL / Target Plan' in text
+    assert 'underlying authoritative · option levels indicative' in text
+    assert 'Target 1' in text
+    assert 'Target 2 / runner' in text
+    assert 'local delta+gamma' in text
+    assert 'time_stop_minutes_if_no_followthrough' in text
+    assert '3m ATR14' in text
+    assert 'shadow calibration only' in text
+    assert 'VOLATILITY TRAIL' not in text
