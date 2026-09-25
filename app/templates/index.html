@@ -1631,7 +1631,8 @@ div.card:has(> #early-radar-card) { display:none !important; }
             '<div class="focus-risk-cell t2"><span>Target 2 / runner</span><b>'+n(rp.target2_underlying,2)+'</b><small>'+n(rp.target2_rr,2)+'R · '+(rp.target2_reached?'runner mode':'remaining '+n(rp.remaining_to_target2_abs,2))+'</small></div>'+
             '<div class="focus-risk-cell option"><span>'+v12Esc(rp.option_contract||'Option estimate')+'</span><b>SL '+optSL+'</b><small>T1 '+optT1+' · T2 '+optT2+'</small></div>'+
           '</div>'+
-          '<div class="focus-risk-note">'+v12Esc(String(rp.method||'STRUCTURE / MEASURED MOVE / VOLATILITY TRAIL').replaceAll('_',' '))+
+          '<div class="focus-risk-note">'+v12Esc(String(rp.method||'STRUCTURE / MEASURED MOVE / 3M STRUCTURE TRAIL').replaceAll('_',' '))+
+          (rp.atr3_14_shadow!=null?' · 3m ATR14 '+n(rp.atr3_14_shadow,2)+' (shadow calibration only)':'')+
           ' · premium projection uses local delta+gamma with IV/time held constant; theta/vega/spread can change realised premium.</div></div>';
       }
       return '<article class="focus-row '+life+'">' +
