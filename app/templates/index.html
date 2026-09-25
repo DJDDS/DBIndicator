@@ -507,6 +507,18 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-math-cell b{display:block;margin-top:2px;font:700 10px var(--mono);color:#c9d8e1}
 .focus-fresh{margin-top:7px;font-size:9px;color:#7890a3}
 .focus-fresh.good{color:#79c79f}.focus-fresh.wait{color:#d6b45d}
+.focus-risk-plan{margin-top:8px;padding:9px 10px;border:1px solid #335341;border-radius:8px;background:linear-gradient(180deg,rgba(22,199,132,.055),rgba(9,18,15,.45))}
+.focus-risk-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:7px}
+.focus-risk-head strong{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;color:#83cfaa}
+.focus-risk-head span{font-size:8px;color:#6f8d7e}
+.focus-risk-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.focus-risk-cell{min-width:0;border-left:2px solid #2a4036;padding-left:7px}
+.focus-risk-cell.stop{border-left-color:#a94f59}.focus-risk-cell.t1{border-left-color:#b99943}.focus-risk-cell.t2{border-left-color:#4e9b70}.focus-risk-cell.option{border-left-color:#426f96}
+.focus-risk-cell span{display:block;color:#637b6e;font-size:7.5px;text-transform:uppercase;letter-spacing:.06em}
+.focus-risk-cell b{display:block;margin-top:2px;font:750 11px var(--mono);color:#d3e2da}
+.focus-risk-cell small{display:block;margin-top:2px;color:#6b7d74;font-size:7.5px;line-height:1.25}
+.focus-risk-note{margin-top:6px;color:#71857a;font-size:8px;line-height:1.35}
+@media(max-width:720px){.focus-risk-grid{grid-template-columns:repeat(2,1fr)}}
 .focus-audit-grid{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #21303d}
 .focus-audit-pane{padding:13px 16px;min-width:0}
 .focus-audit-pane+.focus-audit-pane{border-left:1px solid #21303d}
@@ -1580,6 +1592,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var hist=(row.history||[]).slice(-2);
       var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
       var cm=row.continuation_math||{};
+      var rp=row.risk_plan||{};
       var cmp=Number(row.live_price), trigger=Number(row.trigger), atr=Number(row.atr);
       var dir=String(row.direction||'');
       var sign=dir==='Bearish'?-1:1;
@@ -1605,6 +1618,22 @@ div.card:has(> #early-radar-card) { display:none !important; }
           mathCell('Pullback',cm.pullback_ratio==null?'—':n(Number(cm.pullback_ratio)*100,0),'%')+
           '</div></div>';
       }
+      var riskHtml='';
+      if(rp && rp.available){
+        var dynSL=rp.dynamic_sl_underlying!=null?rp.dynamic_sl_underlying:rp.initial_sl_underlying;
+        var optSL=rp.indicative_option_sl!=null?'₹'+n(rp.indicative_option_sl,2):'—';
+        var optT1=rp.indicative_option_target1!=null?'₹'+n(rp.indicative_option_target1,2):'—';
+        var optT2=rp.indicative_option_target2!=null?'₹'+n(rp.indicative_option_target2,2):'—';
+        riskHtml='<div class="focus-risk-plan"><div class="focus-risk-head"><strong>Dynamic SL / Target Plan</strong><span>underlying authoritative · option levels indicative</span></div>'+
+          '<div class="focus-risk-grid">'+
+            '<div class="focus-risk-cell stop"><span>'+v12Esc(rp.plan_stage==='INITIAL'?'Initial SL':'Dynamic SL')+'</span><b>'+n(dynSL,2)+'</b><small>Risk '+n(rp.risk_abs,2)+' · '+n(rp.risk_atr,2)+' ATR</small></div>'+
+            '<div class="focus-risk-cell t1"><span>Target 1</span><b>'+n(rp.target1_underlying,2)+'</b><small>'+n(rp.target1_rr,2)+'R · '+(rp.target1_reached?'reached':'remaining '+n(rp.remaining_to_target1_abs,2))+'</small></div>'+
+            '<div class="focus-risk-cell t2"><span>Target 2 / runner</span><b>'+n(rp.target2_underlying,2)+'</b><small>'+n(rp.target2_rr,2)+'R · '+(rp.target2_reached?'runner mode':'remaining '+n(rp.remaining_to_target2_abs,2))+'</small></div>'+
+            '<div class="focus-risk-cell option"><span>'+v12Esc(rp.option_contract||'Option estimate')+'</span><b>SL '+optSL+'</b><small>T1 '+optT1+' · T2 '+optT2+'</small></div>'+
+          '</div>'+
+          '<div class="focus-risk-note">'+v12Esc(String(rp.method||'STRUCTURE / MEASURED MOVE / VOLATILITY TRAIL').replaceAll('_',' '))+
+          ' · premium projection is delta-only; IV/gamma/theta/spread can change realised premium.</div></div>';
+      }
       return '<article class="focus-row '+life+'">' +
         '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
         '<span class="focus-direction '+dir.toLowerCase()+'">'+v12Esc(dir)+'</span>' +
@@ -1627,7 +1656,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
           '<span class="focus-vehicle'+(witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn'))+'">5m '+v12Esc(witness)+'</span>'+
           (route!=='WAIT'?'<span class="focus-vehicle'+(route==='HEALTHY'?' good':(route==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(route)+'</span>':'')+
         '</div>'+
-        freshLine+mathHtml+
+        freshLine+riskHtml+mathHtml+
         (v.option_reason?'<div class="focus-meta">Option route: '+v12Esc(v.option_reason)+'</div>':'')+
         (h?'<div class="focus-history">'+h+'</div>':'')+
       '</article>';
@@ -1738,6 +1767,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var depth = row.depth || {};
       var basis = row.basis || {};
       var risk = row.one_lot_risk || {};
+      var riskPlan = row.risk_plan || {};
       var friction = Number(contract.friction_to_expected_move);
       var eventText = event.confidence === 'CONFIRMED' && event.days_to_result != null ?
         ' · Result T' + (Number(event.days_to_result) >= 0 ? '-' + event.days_to_result : event.days_to_result) : '';
@@ -1766,6 +1796,12 @@ div.card:has(> #early-radar-card) { display:none !important; }
         ' · basis Δ60s ' + pctSigned(basis.basis_change_60s_pct_points, 4) +
         '<br>' + optionText + nextMonth +
         (risk.premium_outlay != null ? ' · 1-lot outlay ₹' + num(risk.premium_outlay, 0, '') + ' · est. invalidation risk ₹' + num(risk.estimated_loss_at_invalidation, 0, '') : '') +
+        (riskPlan.available ? '<br><strong>PLAN</strong> · SL ' + num(riskPlan.dynamic_sl_underlying, 2, '') +
+          ' · T1 ' + num(riskPlan.target1_underlying, 2, '') + ' (' + num(riskPlan.target1_rr, 2, 'R') + ')' +
+          ' · T2 ' + num(riskPlan.target2_underlying, 2, '') + ' (' + num(riskPlan.target2_rr, 2, 'R') + ')' +
+          (riskPlan.indicative_option_sl != null ? ' · option≈ SL ₹' + num(riskPlan.indicative_option_sl, 2, '') +
+            ' / T1 ₹' + num(riskPlan.indicative_option_target1, 2, '') +
+            ' / T2 ₹' + num(riskPlan.indicative_option_target2, 2, '') : '') : '') +
         '<br><strong>' + v12Esc(row.reason || '') + '</strong>' +
         (row.trailing_invalidation != null ? ' · trail ' + num(row.trailing_invalidation, 2, '') : '') +
         '</div></div>';
