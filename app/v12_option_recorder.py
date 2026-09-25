@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import os
+import threading
 import time
+from pathlib import Path
 from typing import Iterable
 
 from . import derivative_intelligence
@@ -22,6 +25,7 @@ SNAPSHOT_SLOTS = (
 )
 DEFAULT_GRACE_MINUTES = 7
 QUOTE_BATCH_SIZE = 400
+_RECORD_SNAPSHOT_LOCK = threading.Lock()
 
 
 def _finite(value) -> bool:
@@ -133,12 +137,16 @@ def rank_deep_symbols(broad_summaries: dict, earnings_symbols: set[str] | None, 
     earnings = {str(s) for s in (earnings_symbols or set())}
     candidates = set(broad_summaries) | earnings
 
-    def score(symbol):
-        value = _num((broad_summaries.get(symbol) or {}).get("liquidity_score"), -1.0)
-        return value
+    def rank_key(symbol):
+        summary = broad_summaries.get(symbol) or {}
+        liquidity = _num(summary.get("liquidity_score"), -1.0)
+        spread = _num((summary.get("primary") or {}).get("straddle_spread_pct"), float("inf"))
+        # Continuous executable spread breaks the coarse liquidity-score ties.
+        # Symbol is only a final deterministic tie-breaker.
+        return (-liquidity, spread, str(symbol))
 
-    event_names = sorted((s for s in candidates if s in earnings), key=lambda s: (score(s), s), reverse=True)
-    normal_names = sorted((s for s in candidates if s not in earnings), key=lambda s: (score(s), s), reverse=True)
+    event_names = sorted((s for s in candidates if s in earnings), key=rank_key)
+    normal_names = sorted((s for s in candidates if s not in earnings), key=rank_key)
     return (event_names + normal_names)[: max(0, int(limit))]
 
 
@@ -188,8 +196,7 @@ def _best(depth_rows: list[dict]) -> float | None:
     return value if value is not None and value > 0 else None
 
 
-def _stale_flag(quote: dict, now: dt.datetime, *, seconds: int = 600):
-    raw = quote.get("last_trade_time") or quote.get("timestamp")
+def _age_seconds(raw, now: dt.datetime):
     if raw is None:
         return None
     if isinstance(raw, str):
@@ -201,9 +208,18 @@ def _stale_flag(quote: dict, now: dt.datetime, *, seconds: int = 600):
         return None
     if raw.tzinfo is not None and now.tzinfo is None:
         raw = raw.replace(tzinfo=None)
-    if raw.tzinfo is None and now.tzinfo is not None:
-        now = now.replace(tzinfo=None)
-    return (now - raw).total_seconds() > seconds
+    elif raw.tzinfo is None and now.tzinfo is not None:
+        raw = raw.replace(tzinfo=now.tzinfo)
+    return max(0.0, (now - raw).total_seconds())
+
+
+def _stale_flag(quote: dict, now: dt.datetime, *, seconds: int = 600):
+    """Quote freshness first; last-trade inactivity is a separate research fact."""
+    quote_age = _age_seconds(quote.get("timestamp"), now)
+    if quote_age is not None:
+        return quote_age > seconds
+    trade_age = _age_seconds(quote.get("last_trade_time"), now)
+    return trade_age > seconds if trade_age is not None else None
 
 
 def normalize_contract_snapshot(contract: dict, quote: dict | None, spot: float, now: dt.datetime, slot: str) -> dict:
@@ -237,6 +253,9 @@ def normalize_contract_snapshot(contract: dict, quote: dict | None, spot: float,
     if mid_iv is not None and t is not None:
         greeks = derivative_intelligence.option_greeks(float(spot), float(strike), t, derivative_intelligence.RISK_FREE_RATE, mid_iv / 100.0, typ)
 
+    quote_age_s = _age_seconds(quote.get("timestamp"), now)
+    last_trade_age_s = _age_seconds(quote.get("last_trade_time"), now)
+
     return {
         "ts": now.isoformat(timespec="seconds"),
         "slot": str(slot),
@@ -268,6 +287,10 @@ def normalize_contract_snapshot(contract: dict, quote: dict | None, spot: float,
         "theta_per_day": round(_num(greeks.get("theta_per_day")), 6) if _num(greeks.get("theta_per_day")) is not None else None,
         "vega": round(_num(greeks.get("vega")), 6) if _num(greeks.get("vega")) is not None else None,
         "stale": _stale_flag(quote, now),
+        "quote_age_s": round(quote_age_s, 2) if quote_age_s is not None else None,
+        "last_trade_age_s": round(last_trade_age_s, 2) if last_trade_age_s is not None else None,
+        "quote_stale": (quote_age_s > 600.0) if quote_age_s is not None else None,
+        "last_trade_stale": (last_trade_age_s > 600.0) if last_trade_age_s is not None else None,
     }
 
 
@@ -505,7 +528,7 @@ def recorder_health(snapshot_file, state_file, *, now: dt.datetime | None = None
     }
 
 
-def record_snapshot(
+def _record_snapshot_unlocked(
     kite,
     results: list[dict],
     earnings_symbols: set[str] | None,
@@ -615,7 +638,13 @@ def record_snapshot(
         if key:
             unique_contracts[key] = snap
     state["quote_contracts"] = int(state.get("quote_contracts") or 0) + len(unique_contracts)
-    state["stale_contracts"] = int(state.get("stale_contracts") or 0) + sum(snap.get("stale") is True for snap in unique_contracts.values())
+    state["stale_contracts"] = int(state.get("stale_contracts") or 0) + sum(
+        (snap.get("quote_stale") if snap.get("quote_stale") is not None else snap.get("stale")) is True
+        for snap in unique_contracts.values()
+    )
+    state["last_trade_inactive_contracts"] = int(state.get("last_trade_inactive_contracts") or 0) + sum(
+        snap.get("last_trade_stale") is True for snap in unique_contracts.values()
+    )
     state["final_week_samples"] = int(state.get("final_week_samples") or 0) + sum(
         1 for summary in broad_summaries.values()
         if (summary.get("primary") or {}).get("two_sided") and _finite((summary.get("primary") or {}).get("dte")) and float((summary.get("primary") or {}).get("dte")) <= 5
@@ -635,3 +664,68 @@ def record_snapshot(
         "broad_symbols": len(broad_summaries),
         "deep_symbols": len(deep_symbols),
     }
+
+
+def _acquire_slot_claim(state_file, now: dt.datetime, slot: str):
+    """Cross-thread/process best-effort claim so one fixed slot is written once."""
+    if not state_file:
+        return None, True
+    path = Path(str(state_file) + f".{now.date().isoformat()}.{slot}.claim")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return path, False
+    try:
+        os.write(fd, now.isoformat(timespec="seconds").encode("utf-8"))
+    finally:
+        os.close(fd)
+    return path, True
+
+
+def _release_slot_claim(path):
+    if not path:
+        return
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def record_snapshot(
+    kite,
+    results: list[dict],
+    earnings_symbols: set[str] | None,
+    *,
+    now: dt.datetime,
+    snapshot_file,
+    state_file,
+    contracts_map: dict | None = None,
+    deep_symbol_limit: int = 40,
+    grace_minutes: int = DEFAULT_GRACE_MINUTES,
+    sleep_fn=None,
+) -> dict:
+    """Serialize fixed-slot capture and claim the slot before expensive quote work."""
+    with _RECORD_SNAPSHOT_LOCK:
+        state = load_v12_state(state_file)
+        slot = due_snapshot_slot(now, state, grace_minutes=grace_minutes)
+        if slot is None:
+            return {"status": "NOT_DUE", "slot": None, "quote_errors": 0}
+        claim_path, claimed = _acquire_slot_claim(state_file, now, slot)
+        if not claimed:
+            return {"status": "SLOT_BUSY", "slot": slot, "quote_errors": 0}
+        try:
+            return _record_snapshot_unlocked(
+                kite,
+                results,
+                earnings_symbols,
+                now=now,
+                snapshot_file=snapshot_file,
+                state_file=state_file,
+                contracts_map=contracts_map,
+                deep_symbol_limit=deep_symbol_limit,
+                grace_minutes=grace_minutes,
+                sleep_fn=sleep_fn,
+            )
+        finally:
+            _release_slot_claim(claim_path)
