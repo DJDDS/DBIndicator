@@ -461,47 +461,42 @@ def test_tactical_candidate_carries_focus_rearm_evidence_downstream():
 
 
 
+
 def test_rearm_clears_prior_continuation_timer_and_references():
     t0 = dt.datetime(2026, 9, 25, 14, 0)
-    state = v123_focus.update_focus(
-        None,
-        {"events": [_observer_event("SUPREMEIND", price=3510.0)], "leaders": [], "laggards": []},
-        {"rows": []},
-        {"candidates": [{
-            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "TRADEABLE",
-            "live_price": 3510.0, "trigger": 3505.0, "invalidation": 3485.0,
-            "future_tick_age_s": 1.0,
-            "option_route": {"tradeable": True, "contract": {"symbol": "SUPREMEIND3500CE"}},
-        }]},
-        [_scan("SUPREMEIND", 3510.0)], now=t0,
-    )
+    observer = {"events": [_observer_event("AUBANK", price=100.0)], "leaders": [], "laggards": []}
+    trade = {"candidates": [{
+        "symbol": "AUBANK", "direction": "Bullish", "state": "TRADEABLE",
+        "live_price": 100.0, "trigger": 99.8, "invalidation": 99.2,
+        "future_tick_age_s": 1.0,
+        "option_route": {"tradeable": True, "contract": {"symbol": "AUBANK100CE"}},
+    }]}
+    state = v123_focus.update_focus(None, observer, {"rows": []}, trade, [_scan("AUBANK", 100.0)], now=t0)
 
     exited = {"candidates": [{
-        "symbol": "SUPREMEIND", "direction": "Bullish", "state": "EXIT",
-        "reason": "3m entry structure lost", "live_price": 3508.0,
-        "trigger": 3505.0, "invalidation": 3485.0,
+        "symbol": "AUBANK", "direction": "Bullish", "state": "EXIT",
+        "reason": "3m entry structure lost", "live_price": 99.7,
+        "trigger": 99.8, "invalidation": 99.2,
     }]}
     state = v123_focus.update_focus(
         state, {"events": [], "leaders": [], "laggards": []},
-        {"rows": []}, exited, [_scan("SUPREMEIND", 3508.0)],
+        {"rows": []}, exited, [_scan("AUBANK", 99.7)],
         now=t0 + dt.timedelta(minutes=3),
     )
-    first_watch = state["continuation_watch"]["SUPREMEIND"]
+    first_watch = state["continuation_watch"]["AUBANK"]
     assert first_watch["watch_started_at"] == (t0 + dt.timedelta(minutes=3)).isoformat()
     assert first_watch["watch_reference_price"] is not None
 
     rearm = {
-        "events": [_observer_event(
-            "SUPREMEIND", family="PULLBACK_RECLAIM", price=3518.0
-        )],
+        "events": [_observer_event("AUBANK", family="PULLBACK_RECLAIM", price=100.4)],
         "leaders": [], "laggards": [],
     }
     state = v123_focus.update_focus(
         state, rearm, {"rows": []}, {"candidates": []},
-        [_scan("SUPREMEIND", 3518.0)], now=t0 + dt.timedelta(minutes=20),
+        [_scan("AUBANK", 100.4)], now=t0 + dt.timedelta(minutes=8),
     )
-    row = state["focus"]["SUPREMEIND"]
-    assert row["rearmed_at"] == (t0 + dt.timedelta(minutes=20)).isoformat()
+    row = state["focus"]["AUBANK"]
+    assert row["rearmed_at"] == (t0 + dt.timedelta(minutes=8)).isoformat()
     assert "watch_started_at" not in row
     assert "watch_until" not in row
     assert "watch_reference_price" not in row
@@ -510,63 +505,72 @@ def test_rearm_clears_prior_continuation_timer_and_references():
 
 def test_new_continuation_watch_after_rearm_gets_fresh_45_minute_clock():
     t0 = dt.datetime(2026, 9, 25, 14, 0)
-    state = v123_focus.update_focus(
-        None,
-        {"events": [_observer_event("SUPREMEIND", price=3510.0)], "leaders": [], "laggards": []},
-        {"rows": []},
-        {"candidates": [{
-            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "TRADEABLE",
-            "live_price": 3510.0, "trigger": 3505.0, "invalidation": 3485.0,
-            "future_tick_age_s": 1.0,
-            "option_route": {"tradeable": True, "contract": {"symbol": "SUPREMEIND3500CE"}},
-        }]},
-        [_scan("SUPREMEIND", 3510.0)], now=t0,
-    )
+    observer = {"events": [_observer_event("AUBANK", price=100.0)], "leaders": [], "laggards": []}
+    trade = {"candidates": [{
+        "symbol": "AUBANK", "direction": "Bullish", "state": "TRADEABLE",
+        "live_price": 100.0, "trigger": 99.8, "invalidation": 99.2,
+        "future_tick_age_s": 1.0,
+        "option_route": {"tradeable": True, "contract": {"symbol": "AUBANK100CE"}},
+    }]}
+    state = v123_focus.update_focus(None, observer, {"rows": []}, trade, [_scan("AUBANK", 100.0)], now=t0)
+
     state = v123_focus.update_focus(
         state, {"events": [], "leaders": [], "laggards": []}, {"rows": []},
         {"candidates": [{
-            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "EXIT",
-            "reason": "3m entry structure lost", "live_price": 3508.0,
-            "trigger": 3505.0, "invalidation": 3485.0,
+            "symbol": "AUBANK", "direction": "Bullish", "state": "EXIT",
+            "reason": "3m entry structure lost", "live_price": 99.7,
+            "trigger": 99.8, "invalidation": 99.2,
         }]},
-        [_scan("SUPREMEIND", 3508.0)], now=t0 + dt.timedelta(minutes=3),
+        [_scan("AUBANK", 99.7)], now=t0 + dt.timedelta(minutes=3),
     )
     state = v123_focus.update_focus(
         state,
-        {"events": [_observer_event(
-            "SUPREMEIND", family="PULLBACK_RECLAIM", price=3518.0
-        )], "leaders": [], "laggards": []},
+        {"events": [_observer_event("AUBANK", family="PULLBACK_RECLAIM", price=100.4)], "leaders": [], "laggards": []},
         {"rows": []}, {"candidates": []},
-        [_scan("SUPREMEIND", 3518.0)], now=t0 + dt.timedelta(minutes=20),
+        [_scan("AUBANK", 100.4)], now=t0 + dt.timedelta(minutes=8),
     )
 
-    second_watch_time = t0 + dt.timedelta(minutes=30)
+    # Re-armed thesis becomes active again before a later tactical cancellation.
+    state = v123_focus.update_focus(
+        state,
+        {"events": [_observer_event("AUBANK", family="MOMENTUM_CONTINUATION", price=100.8)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{
+            "symbol": "AUBANK", "direction": "Bullish", "state": "TRADEABLE",
+            "live_price": 100.8, "trigger": 100.5, "invalidation": 99.4,
+            "future_tick_age_s": 1.0,
+            "option_route": {"tradeable": True, "contract": {"symbol": "AUBANK100CE"}},
+        }]},
+        [_scan("AUBANK", 100.8)], now=t0 + dt.timedelta(minutes=12),
+    )
+    assert state["focus"]["AUBANK"]["lifecycle"] == "ACTIVE"
+
+    second_watch_time = t0 + dt.timedelta(minutes=15)
     state = v123_focus.update_focus(
         state, {"events": [], "leaders": [], "laggards": []}, {"rows": []},
         {"candidates": [{
-            "symbol": "SUPREMEIND", "direction": "Bullish", "state": "CANCELLED",
+            "symbol": "AUBANK", "direction": "Bullish", "state": "CANCELLED",
             "reason": "persistent futures depth opposes the setup",
-            "live_price": 3516.0, "trigger": 3518.5, "invalidation": 3490.0,
+            "live_price": 100.6, "trigger": 100.5, "invalidation": 99.4,
         }]},
-        [_scan("SUPREMEIND", 3516.0)], now=second_watch_time,
+        [_scan("AUBANK", 100.6)], now=second_watch_time,
     )
-    row = state["continuation_watch"]["SUPREMEIND"]
+    row = state["continuation_watch"]["AUBANK"]
     assert row["watch_started_at"] == second_watch_time.isoformat()
     assert row["watch_until"] == (
         second_watch_time + dt.timedelta(minutes=v123_focus.CONTINUATION_WATCH_MINUTES)
     ).isoformat()
 
-    # 26 minutes later must still be on watch; this is the SUPREMEIND failure mode
-    # seen on 25 Sep when the old watch clock was inherited.
+    # 26 minutes later must still be on watch: the prior watch clock cannot leak.
     state = v123_focus.update_focus(
         state, {"events": [], "leaders": [], "laggards": []},
         {"rows": []}, {"candidates": []},
-        [_scan("SUPREMEIND", 3525.0)],
+        [_scan("AUBANK", 101.0)],
         now=second_watch_time + dt.timedelta(minutes=26),
     )
-    assert "SUPREMEIND" in state["continuation_watch"]
+    assert "AUBANK" in state["continuation_watch"]
     assert not any(
-        x.get("symbol") == "SUPREMEIND"
+        x.get("symbol") == "AUBANK"
         and x.get("lifecycle") == "COMPLETED"
         and x.get("completed_at") == (second_watch_time + dt.timedelta(minutes=26)).isoformat()
         for x in state["recent"]
