@@ -749,7 +749,7 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["five_minute_witness"] = ((trow.get("five_minute_witness") or {}).get("state"))
             item["fresh_entry_gate"] = trow.get("fresh_entry_gate")
             item["fresh_entry_reason"] = trow.get("fresh_entry_reason")
-            item["continuation_math"] = trow.get("continuation_math")
+            item["continuation_math"] = trow.get("continuation_math")\n            item["risk_plan"] = trow.get("risk_plan")
             if trow.get("ret_5m_pct") is not None:
                 item["ret_5m_pct"] = trow.get("ret_5m_pct")
             if trow.get("relative_5m_vs_nifty_pct") is not None:
@@ -832,7 +832,7 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["tactical_reason"] = trow.get("reason")
             item["fresh_entry_gate"] = trow.get("fresh_entry_gate")
             item["fresh_entry_reason"] = trow.get("fresh_entry_reason")
-            item["continuation_math"] = trow.get("continuation_math")
+            item["continuation_math"] = trow.get("continuation_math")\n            item["risk_plan"] = trow.get("risk_plan")
             item["vehicles"] = _vehicle_state(item, trow)
             if trow.get("locked_option_contract"):
                 item["locked_option_contract"] = trow.get("locked_option_contract")
