@@ -725,9 +725,17 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         else:
             item["opposite_first_seen_at"] = None
 
+        prior_lifecycle = str(item.get("lifecycle") or "")
         lifecycle, note = _derive_lifecycle(item, same, trow, now)
-        if lifecycle != item.get("lifecycle"):
+        if lifecycle != prior_lifecycle:
             _history(item, lifecycle, now, note)
+            if lifecycle == "CONTINUATION_WATCH" and prior_lifecycle != "CONTINUATION_WATCH":
+                # A genuine new watch episode must never inherit a clock/reference
+                # from an earlier watch that was re-armed back into Focus.
+                item.pop("watch_started_at", None)
+                item.pop("watch_until", None)
+                item.pop("watch_reference_price", None)
+                item.pop("watch_reference_family", None)
 
         if trow:
             item["live_price"] = trow.get("live_price") if trow.get("live_price") is not None else item.get("live_price")
@@ -866,6 +874,12 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
                 item["rearmed_at"] = _iso(now)
                 item["rearm_reason"] = rearm_reason
                 item["entry_episode_open"] = False
+                # Re-arm ends the prior continuation-watch episode. Clear its
+                # clock/reference so a later watch starts a fresh 45-minute timer.
+                item.pop("watch_started_at", None)
+                item.pop("watch_until", None)
+                item.pop("watch_reference_price", None)
+                item.pop("watch_reference_family", None)
                 _history(item, "BUILDING", now, "re-armed from continuation watch: " + str(rearm_reason))
                 focus[symbol] = item
                 continuation.pop(symbol, None)
