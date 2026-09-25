@@ -287,3 +287,93 @@ def test_three_minute_builder_still_completes_contiguous_bucket():
     assert completed is not None
     assert completed["ts"].startswith("2026-09-24T10:00:00")
     assert completed["complete"] is True
+
+
+
+def test_dynamic_trade_plan_uses_structure_measured_move_and_time_barrier():
+    plan = t.dynamic_trade_plan(
+        direction="Bullish",
+        spot=100.0,
+        trigger=100.0,
+        invalidation=98.0,
+        expected_move_abs=4.0,
+        atr=5.0,
+        best_favourable_abs=0.0,
+        completed_bars=[],
+        contract={
+            "symbol": "ABC26SEP100CE", "mid": 10.0,
+            "delta": 0.50, "gamma": 0.05,
+        },
+        entry_underlying=100.0,
+        option_entry_mid=10.0,
+        option_entry_delta=0.50,
+        option_entry_gamma=0.05,
+        speed_class="IMPULSE",
+    )
+    assert plan["available"] is True
+    assert plan["controls_trading"] is False
+    assert plan["authority"] == "UNDERLYING"
+    assert plan["initial_sl_underlying"] == 98.0
+    assert plan["dynamic_sl_underlying"] == 98.0
+    assert plan["target1_underlying"] == 102.0
+    assert plan["target2_underlying"] == 104.0
+    assert plan["target1_rr"] == 1.0
+    assert plan["target2_rr"] == 2.0
+    assert plan["time_stop_minutes_if_no_followthrough"] == 9
+    # Delta-gamma local scenarios, holding IV/time constant.
+    assert plan["indicative_option_sl"] == pytest.approx(9.10)
+    assert plan["indicative_option_target1"] == pytest.approx(11.10)
+    assert plan["indicative_option_target2"] == pytest.approx(12.40)
+
+
+def test_dynamic_trade_plan_trails_only_after_half_measured_move_and_respects_noise_floor():
+    bars = [
+        {"low": 100.8, "high": 102.0},
+        {"low": 101.2, "high": 102.5},
+    ]
+    plan = t.dynamic_trade_plan(
+        direction="Bullish",
+        spot=102.0,
+        trigger=100.0,
+        invalidation=98.0,
+        expected_move_abs=4.0,
+        atr=5.0,
+        best_favourable_abs=2.5,
+        completed_bars=bars,
+        contract={"symbol": "ABC26SEP100CE", "mid": 11.0, "delta": 0.60, "gamma": 0.04},
+        entry_underlying=100.0,
+        option_entry_mid=10.0,
+        option_entry_delta=0.50,
+        option_entry_gamma=0.05,
+        speed_class="CONTINUATION",
+    )
+    assert plan["plan_stage"] == "PROTECT"
+    assert plan["structure_trail_underlying"] == 100.8
+    assert plan["noise_floor_trail_underlying"] == 100.5
+    # The looser of structure vs volatility-noise trail is used, while never
+    # widening beyond the original structural stop.
+    assert plan["dynamic_sl_underlying"] == 100.5
+    assert plan["time_stop_minutes_if_no_followthrough"] == 15
+
+
+def test_dynamic_trade_plan_is_direction_symmetric_for_put_trade():
+    plan = t.dynamic_trade_plan(
+        direction="Bearish",
+        spot=200.0,
+        trigger=200.0,
+        invalidation=203.0,
+        expected_move_abs=6.0,
+        atr=8.0,
+        contract={"symbol": "ABC26SEP200PE", "mid": 12.0, "delta": -0.55, "gamma": 0.03},
+        entry_underlying=200.0,
+        option_entry_mid=12.0,
+        option_entry_delta=-0.55,
+        option_entry_gamma=0.03,
+        speed_class="IMPULSE",
+    )
+    assert plan["initial_sl_underlying"] == 203.0
+    assert plan["target1_underlying"] == 197.0
+    assert plan["target2_underlying"] == 194.0
+    assert plan["target2_rr"] == 2.0
+    assert plan["indicative_option_target2"] > 12.0
+    assert plan["indicative_option_sl"] < 12.0
