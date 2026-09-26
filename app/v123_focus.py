@@ -242,17 +242,23 @@ def _vehicle_state(item, trow):
 
     cash = "ELIGIBLE" if underlying_valid and live_price is not None else "WAIT"
 
+    data_ok = (trow or {}).get("data_ok")
     future_age = _f((trow or {}).get("future_tick_age_s"))
     future = "WAIT"
     if underlying_valid and future_age is not None:
         future = "ELIGIBLE" if future_age <= 8.0 else "STALE"
+    if data_ok is False:
+        future = "STALE"
 
     route = (trow or {}).get("option_route") or {}
     contract = route.get("contract") or {}
     locked_symbol = (trow or {}).get("locked_option_contract") or item.get("locked_option_contract")
     route_health = str((trow or {}).get("route_health") or "")
     execution_window_open = bool((trow or {}).get("execution_window_open"))
-    if route.get("tradeable"):
+    if data_ok is False:
+        option = "WAIT"
+        option_reason = "deep tactical data stale; execution held"
+    elif route.get("tradeable"):
         option = "ELIGIBLE"
         option_reason = None
     elif trow and route_health == "DEGRADED" and execution_window_open:
