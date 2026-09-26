@@ -1191,6 +1191,11 @@ class TacticalStockStreamService:
                 live_price, setup.get("trigger"), setup.get("invalidation"),
                 candidate.get("atr"),
             )
+            max_option_entry_price = v122b_tactical.max_option_price_for_entry_zone(
+                (route or {}).get("contract"),
+                setup.get("direction") or direction,
+                live_price, setup.get("trigger"), candidate.get("atr"),
+            )
 
             fresh_episode_ok = True
             fresh_episode_reason = "OPEN_EPISODE_OR_FIRST_SIGNAL"
@@ -1355,6 +1360,7 @@ class TacticalStockStreamService:
                 "soft_pending_state": state.get("soft_pending_state"),
                 "soft_pending_seconds": state.get("soft_pending_seconds"),
                 "entry_zone": entry_zone,
+                "max_option_entry_price": max_option_entry_price,
                 "session_entry_allowed": self._session_allows_new_entry(now),
                 "setup": setup.get("setup"),
                 "speed_class": setup.get("speed_class"),
