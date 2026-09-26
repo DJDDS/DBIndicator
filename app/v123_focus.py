@@ -299,7 +299,16 @@ def _derive_lifecycle(item, event, trow, now):
     estate = str((event or {}).get("event_state") or "")
     family = str((event or {}).get("event_family") or item.get("event_family") or "")
 
-    price = _f((trow or {}).get("live_price"), _f((event or {}).get("live_price"), _f(item.get("live_price"))))
+    data_ok = (trow or {}).get("data_ok")
+    if data_ok is False:
+        # A stale deep tactical stream must not drive lifecycle churn. Prefer
+        # the independent underlying observer price when available.
+        price = _f((event or {}).get("live_price"), _f(item.get("live_price")))
+        item["data_ok"] = False
+    else:
+        price = _f((trow or {}).get("live_price"), _f((event or {}).get("live_price"), _f(item.get("live_price"))))
+        if trow:
+            item["data_ok"] = True
     item["live_price"] = price
 
     if (trow or {}).get("trigger") is not None:
@@ -309,6 +318,9 @@ def _derive_lifecycle(item, event, trow, now):
 
     if _underlying_invalidated(item, price):
         return "INVALIDATED", "broader underlying thesis invalidation hit"
+
+    if data_ok is False:
+        return prior, "deep tactical data stale; lifecycle held"
 
     entry_invalid = _f((trow or {}).get("invalidation"))
     if tstate in ("READY", "TRIGGERED", "TRADEABLE") and _entry_invalidated(item.get("direction"), price, entry_invalid):
@@ -690,6 +702,16 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         # into a new trading day; research ledgers remain separate.
         state = empty_state()
     state["trade_date"] = today
+
+    # Freeze the intraday lifecycle exactly at 15:30. Market-closed WebSocket
+    # callbacks and later scan jobs may still publish, but they must not mutate
+    # the day's Focus/Continuation state after the close.
+    second = now.hour * 3600 + now.minute * 60 + now.second
+    if now.weekday() < 5 and second >= 15 * 3600 + 30 * 60:
+        state["session_frozen_at"] = state.get("session_frozen_at") or _iso(now)
+        return state
+    state.pop("session_frozen_at", None)
+
     scans = _scan_map(scan_rows)
     candidates = _event_candidates(observer, event_radar)
     event_by_key = {_candidate_key(row): row for row in candidates}
@@ -759,6 +781,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["fresh_entry_reason"] = trow.get("fresh_entry_reason")
             item["continuation_math"] = trow.get("continuation_math")
             item["risk_plan"] = trow.get("risk_plan")
+            item["data_ok"] = trow.get("data_ok", True)
+            item["data_status"] = trow.get("data_status")
+            item["execution_paused"] = bool(trow.get("execution_paused"))
+            item["entry_zone"] = trow.get("entry_zone")
+            item["session_entry_allowed"] = trow.get("session_entry_allowed")
             if trow.get("ret_5m_pct") is not None:
                 item["ret_5m_pct"] = trow.get("ret_5m_pct")
             if trow.get("relative_5m_vs_nifty_pct") is not None:
@@ -843,6 +870,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["fresh_entry_reason"] = trow.get("fresh_entry_reason")
             item["continuation_math"] = trow.get("continuation_math")
             item["risk_plan"] = trow.get("risk_plan")
+            item["data_ok"] = trow.get("data_ok", True)
+            item["data_status"] = trow.get("data_status")
+            item["execution_paused"] = bool(trow.get("execution_paused"))
+            item["entry_zone"] = trow.get("entry_zone")
+            item["session_entry_allowed"] = trow.get("session_entry_allowed")
             item["vehicles"] = _vehicle_state(item, trow)
             if trow.get("locked_option_contract"):
                 item["locked_option_contract"] = trow.get("locked_option_contract")
@@ -982,6 +1014,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["fresh_entry_reason"] = trow.get("fresh_entry_reason")
             item["continuation_math"] = trow.get("continuation_math")
             item["risk_plan"] = trow.get("risk_plan")
+            item["data_ok"] = trow.get("data_ok", True)
+            item["data_status"] = trow.get("data_status")
+            item["execution_paused"] = bool(trow.get("execution_paused"))
+            item["entry_zone"] = trow.get("entry_zone")
+            item["session_entry_allowed"] = trow.get("session_entry_allowed")
             if trow.get("locked_option_contract"):
                 item["locked_option_contract"] = trow.get("locked_option_contract")
                 item["locked_option_strike"] = trow.get("locked_option_strike")
