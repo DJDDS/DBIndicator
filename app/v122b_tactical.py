@@ -51,6 +51,13 @@ PROPOSED_MAX_BASIS_SKEW_SECONDS = 2.5
 PROPOSED_MICRO_PERSIST_SECONDS = 30.0
 PROPOSED_OPPOSING_DEPTH_PERSISTENCE = 0.60
 
+# Forensic entry-timing fix: this is price geometry, not an alpha score.
+# A fresh entry may approach from 0.25 ATR before the trigger and is
+# chase-extended beyond 0.20 ATR after the trigger.
+ENTRY_ZONE_APPROACH_ATR = 0.25
+ENTRY_ZONE_MAX_PAST_TRIGGER_ATR = 0.20
+OPENING_DRIVE_EXPIRES_MINUTE = 10 * 60 + 15
+
 # Contract stability priors.  The preferred band is descriptive/ranking; the
 # wider guard is the only lock-break condition.  This prevents a READY trade
 # from silently jumping strikes as spot moves while still allowing an explicit
@@ -538,6 +545,28 @@ def _opening_range(
     return max(_f(b.get("high"), -math.inf) for b in session), min(_f(b.get("low"), math.inf) for b in session)
 
 
+def entry_price_zone(direction: str, price, trigger, invalidation, atr) -> dict:
+    """Stable price-zone state used instead of flickering READY/TRADEABLE cards."""
+    sign = _sign(direction)
+    price = _f(price)
+    trigger = _f(trigger)
+    invalidation = _f(invalidation)
+    atr = abs(_f(atr, 0.0))
+    if not sign or price is None or trigger is None or atr <= 0:
+        return {"state": "UNAVAILABLE", "distance_atr": None}
+    distance = sign * (price - trigger) / atr
+    if invalidation is not None and sign * (price - invalidation) <= 0:
+        return {"state": "INVALID", "distance_atr": round(distance, 4)}
+    if distance < -ENTRY_ZONE_APPROACH_ATR:
+        state = "WATCH"
+    elif distance < 0:
+        state = "APPROACHING"
+    elif distance <= ENTRY_ZONE_MAX_PAST_TRIGGER_ATR:
+        state = "IN_ZONE"
+    else:
+        state = "EXTENDED"
+    return {"state": state, "distance_atr": round(distance, 4)}
+
 def detect_structural_setup(
     completed_bars: list[dict],
     current_bar: dict | None,
@@ -589,10 +618,11 @@ def detect_structural_setup(
     minute = now.hour * 60 + now.minute
     opening_trigger = orh if sign > 0 else orl
     opening_invalid = orl if sign > 0 else orh
-    opening_triggered = bool(opening_trigger is not None and minute >= 9 * 60 + 30 and sign * (price - opening_trigger) > 0)
+    opening_window = 9 * 60 + 30 <= minute <= OPENING_DRIVE_EXPIRES_MINUTE
+    opening_triggered = bool(opening_trigger is not None and opening_window and sign * (price - opening_trigger) > 0)
     opening_ready = bool(
         opening_trigger is not None
-        and minute >= 9 * 60 + 30
+        and opening_window
         and sign * (opening_trigger - price) >= -0.10 * max(atr or 1.0, 1e-9)
         and sign * (opening_trigger - price) <= 0.25 * max(atr or 1.0, 1e-9)
     )
