@@ -1040,16 +1040,36 @@ class TacticalStockStreamService:
     def _log_transition(self, symbol, old, new, payload):
         if old == new:
             return
+        now = self.now_provider()
+        ts = _iso(now)
+        episode_no = int(payload.get("entry_episode_no") or 0)
+        event_id = "|".join(str(x or "") for x in (
+            now.date().isoformat(), symbol, episode_no, old, new, ts
+        ))
+        if event_id in self._transition_ids:
+            return
+        self._transition_ids.add(event_id)
+        self._transition_seq += 1
         record = {
-            "ts": _iso(self.now_provider()), "symbol": symbol,
-            "from_state": old, "to_state": new,
-            "setup": payload.get("setup"), "direction": payload.get("direction"),
-            "trigger": payload.get("trigger"), "invalidation": payload.get("invalidation"),
+            "schema_version": 2,
+            "event_id": event_id,
+            "seq": self._transition_seq,
+            "ts": ts,
+            "symbol": symbol,
+            "from_state": old,
+            "to_state": new,
+            "setup": payload.get("setup"),
+            "direction": payload.get("direction"),
+            "trigger": payload.get("trigger"),
+            "invalidation": payload.get("invalidation"),
             "option_contract": ((payload.get("option_route") or {}).get("contract") or {}).get("symbol"),
             "underlying": payload.get("live_price"),
             "entry_episode_no": payload.get("entry_episode_no"),
             "execution_window_state": payload.get("execution_window_state"),
             "route_health": payload.get("route_health"),
+            "data_ok": payload.get("data_ok"),
+            "data_status": payload.get("data_status"),
+            "entry_zone": payload.get("entry_zone"),
             "ret_5m_pct": payload.get("ret_5m_pct"),
             "relative_5m_vs_nifty_pct": payload.get("relative_5m_vs_nifty_pct"),
             "rvol_3m": payload.get("rvol_3m"),
