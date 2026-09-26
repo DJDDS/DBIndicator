@@ -927,6 +927,10 @@ class TacticalStockStreamService:
                 "shadow_path_length_abs": 0.0,
                 "shadow_last_path_price": price,
                 "shadow_direction_mismatch_seen": False,
+                "shadow_t0_recorded": False,
+                "shadow_missed_milestones": [],
+                "shadow_barrier_hits": {},
+                "shadow_void_reason": None,
                 "setup": setup.get("setup"),
                 "speed_class": setup.get("speed_class"),
             })
@@ -960,6 +964,23 @@ class TacticalStockStreamService:
             _f(life.get("shadow_path_length_abs"), 0.0) + abs(price - shadow_prior)
         )
         life["shadow_last_path_price"] = price
+
+        # Pre-registered research barrier grid.  It records first touch order
+        # only; it never controls the live tactical state.
+        shadow_atr0 = _f(life.get("shadow_entry_atr"))
+        if shadow_atr0 and shadow_atr0 > 0:
+            hits = dict(life.get("shadow_barrier_hits") or {})
+            adverse = max(0.0, -shadow_favourable)
+            for target_atr in (0.30, 0.55, 0.80):
+                for stop_atr in (0.15, 0.35, 0.50):
+                    key = f"a{target_atr:.2f}_b{stop_atr:.2f}"
+                    if key in hits:
+                        continue
+                    if shadow_favourable >= target_atr * shadow_atr0:
+                        hits[key] = {"first": "TARGET", "ts": _iso(now)}
+                    elif adverse >= stop_atr * shadow_atr0:
+                        hits[key] = {"first": "STOP", "ts": _iso(now)}
+            life["shadow_barrier_hits"] = hits
 
         atr = _f(row.get("atr"))
         shadow_atr = _f(life.get("shadow_entry_atr"), atr)
