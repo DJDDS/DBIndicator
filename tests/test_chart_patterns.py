@@ -188,3 +188,60 @@ def test_lower_timeframes_do_not_emit_production_patterns():
     fr = cp.make_frame(_series(anchors, noise=0.05))
     assert cp.detect_all("X", {"60minute": fr}, tfs=["60minute"]) == []
     assert cp.detect_all("X", {"4hour": fr}, tfs=["4hour"]) == []
+
+
+# --- 26-Sep-2026 dynamic structure research layer ---
+
+def test_daily_multiscale_pivots_and_structure_features_are_exposed():
+    assert cp.PIVOT_ORDERS["day"] == (3, 5, 8)
+    anchors = [(0, 100), (40, 101), (50, 125), (60, 120), (63, 121), (66, 127)]
+    vol = lambda i: np.where((i >= 40) & (i <= 50), 3e6, np.where(i >= 65, 4e6, 1e6))
+    hits = _hits(_series(anchors, noise=0.05, vol=vol))
+    assert hits
+    h = hits[0]
+    assert h["pivot_k"] in cp.PIVOT_ORDERS["day"]
+    assert h["height_atr"] is not None and h["height_atr"] > 0
+    assert h["volatility_regime"] in {"CALM", "NORMAL", "ELEVATED", "N/A"}
+    assert "volatility_regime_ratio" in h
+    assert "breakout_thrust" in h
+    assert "breakout_close_location" in h
+    assert "breakout_body_fraction" in h
+    assert "breakout_range_atr" in h
+    assert "candle_pivot" in h and "candle_breakout" in h
+    assert h["candle_weight"] == 0.0
+    assert h["research_only"] is False
+
+
+def test_cup_handle_and_wedge_are_shadow_not_production():
+    assert set(cp.RESEARCH_SHADOW_MATRIX) == {"cup_handle", "wedge"}
+    assert "cup_handle" not in cp.PATTERN_MATRIX
+    assert "wedge" not in cp.PATTERN_MATRIX
+    assert cp.RESEARCH_BASIS["cup_handle"]["label"] == "RESEARCH"
+    assert cp.RESEARCH_BASIS["wedge"]["label"] == "RESEARCH"
+
+
+def test_forward_ledger_snapshots_structure_features():
+    row = {
+        "id": "X|day|flag|BULL", "symbol": "X", "timeframe": "day", "tf_label": "Daily",
+        "family": "flag", "pattern": "Bull Flag", "direction": "BULL",
+        "research_basis": "DIRECT", "score": 70, "grade": "B", "breakout_time": 123,
+        "status": "BREAKOUT", "retest_time": None, "trigger": 100.0, "stop": 95.0, "target": 110.0,
+        "research_only": False, "pivot_k": 5, "height_atr": 2.4, "vol_ratio": 1.8,
+        "volatility_regime_ratio": 0.8, "volatility_regime": "CALM", "breakout_thrust": 0.72,
+        "breakout_close_location": 0.91, "breakout_body_fraction": 0.64, "breakout_range_atr": 1.5,
+        "candle_pivot": "Hammer", "candle_breakout": "Bullish Engulfing", "candle_weight": 0.0,
+    }
+    ledger = {}
+    assert cp.record_breakouts(ledger, [row], "2026-09-26T15:45:00+05:30") == 1
+    ev = next(iter(ledger.values()))
+    assert ev["pivot_k"] == 5
+    assert ev["height_atr"] == 2.4
+    assert ev["vol_ratio"] == 1.8
+    assert ev["volatility_regime"] == "CALM"
+    assert ev["breakout_thrust"] == 0.72
+    assert ev["candle_weight"] == 0.0
+
+
+def test_pattern_auto_scan_is_after_post_cas_window():
+    # V12 POST_CAS runs through 15:40; the heavy Daily pattern scan starts later.
+    assert cp.AUTO_SLOTS == [(15, 45)]
