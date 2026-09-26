@@ -565,7 +565,34 @@ def entry_price_zone(direction: str, price, trigger, invalidation, atr) -> dict:
         state = "IN_ZONE"
     else:
         state = "EXTENDED"
-    return {"state": state, "distance_atr": round(distance, 4)}
+    far_edge = trigger + sign * ENTRY_ZONE_MAX_PAST_TRIGGER_ATR * atr
+    return {
+        "state": state,
+        "distance_atr": round(distance, 4),
+        "far_edge_underlying": round(far_edge, 4),
+    }
+
+
+def max_option_price_for_entry_zone(contract: dict | None, direction: str, spot, trigger, atr):
+    """E4 decision-support maximum premium at the +0.20 ATR zone edge."""
+    contract = dict(contract or {})
+    sign = _sign(direction)
+    spot = _f(spot)
+    trigger = _f(trigger)
+    atr = abs(_f(atr, 0.0))
+    mid = _f(contract.get("mid"))
+    delta = _f(contract.get("delta"))
+    gamma = max(0.0, _f(contract.get("gamma"), 0.0))
+    bid = _f(contract.get("bid"))
+    ask = _f(contract.get("ask"))
+    if not sign or spot is None or trigger is None or mid is None or delta is None or atr <= 0 or mid <= 0:
+        return None
+    far_edge = trigger + sign * ENTRY_ZONE_MAX_PAST_TRIGGER_ATR * atr
+    ds = far_edge - spot
+    half_spread = max(0.0, (ask - bid) / 2.0) if bid is not None and ask is not None and ask >= bid else 0.0
+    premium = mid + delta * ds + 0.5 * gamma * ds * ds + half_spread
+    return round(max(0.0, premium), 2)
+
 
 def detect_structural_setup(
     completed_bars: list[dict],
