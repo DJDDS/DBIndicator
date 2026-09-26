@@ -676,6 +676,12 @@ class TacticalStockStreamService:
           * >=0.15 ATR structural-trigger shift,
           * renewed 5m relative acceleration.
         """
+        cooldown_ok, cooldown_reason = self._cancel_cooldown_allowed(
+            life, setup, candidate, live_price, now
+        )
+        if not cooldown_ok:
+            return False, cooldown_reason
+
         prior = life.get("last_closed_signature")
         if not prior:
             return True, "FIRST_EPISODE"
