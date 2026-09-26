@@ -101,7 +101,6 @@ def _candidate(row):
     if sign * day_move_pct <= 0:
         return None
 
-    consumed_atr = abs(close - prev) / atr
     htf = row.get("htf_direction")
     htf_agrees = htf is None or htf == direction
     sector_lead = _f(row.get("stock_sector_lead_pct"))
@@ -131,6 +130,10 @@ def _candidate(row):
             invalidation = max(base_invalid, avwap)
         else:
             invalidation = base_invalid
+        if trigger is not None:
+            # Daily swing risk must be on the adverse side and at least
+            # 0.5 daily ATR away from the trigger.
+            invalidation = min(invalidation, trigger - 0.50 * atr)
     else:
         trigger = breakout_level if breakout_level is not None else lo20
         base_invalid = (trigger + 0.35 * atr) if trigger is not None else (close + 0.8 * atr)
@@ -138,6 +141,13 @@ def _candidate(row):
             invalidation = min(base_invalid, avwap)
         else:
             invalidation = base_invalid
+        if trigger is not None:
+            invalidation = max(invalidation, trigger + 0.50 * atr)
+
+    # "Move consumed" is distance from the actionable trigger, not distance
+    # from yesterday's close.  Fall back only when a trigger is unavailable.
+    consumed_ref = trigger if trigger is not None else prev
+    consumed_atr = abs(close - consumed_ref) / atr
 
     if consumed_atr <= 0.80:
         runway = "GOOD"
@@ -222,8 +232,11 @@ def update(state, rows, *, now=None):
         item["live_price"] = _f(row.get("close"), item.get("live_price"))
         prev = _f(row.get("prev_close"))
         atr = _f(row.get("atr"))
-        if item.get("live_price") is not None and prev and atr and atr > 0:
-            item["move_consumed_atr"] = round(abs(item["live_price"] - prev) / atr, 2)
+        trigger = _f(item.get("trigger"))
+        if item.get("live_price") is not None and atr and atr > 0:
+            ref = trigger if trigger is not None else prev
+            if ref is not None:
+                item["move_consumed_atr"] = round(abs(item["live_price"] - ref) / atr, 2)
         item["last_update"] = _iso(now)
         selected[symbol] = item
 
