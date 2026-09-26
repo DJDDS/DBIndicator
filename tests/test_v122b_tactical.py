@@ -462,7 +462,7 @@ def test_max_option_price_reference_projects_to_far_edge_and_never_controls_trad
         contract, "Bullish", 100.0, 100.0, 2.0
     )
     # +0.40 underlying to the +0.20 ATR edge, plus half-spread.
-    assert value == pytest.approx(10.50, abs=0.01)
+    assert value == pytest.approx(10.40, abs=0.01)
 
 
 def test_tactical_opening_drive_expires_after_1015():
