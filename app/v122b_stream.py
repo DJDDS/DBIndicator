@@ -147,6 +147,7 @@ class TacticalStockStreamService:
         self._last_states = {}
         self._transition_ids = set()
         self._transition_seq = 0
+        self._load_transition_history()
         self._snapshot = {
             "status": "WAITING",
             "validation_label": "INTERIM / NOT VALIDATED",
@@ -157,6 +158,35 @@ class TacticalStockStreamService:
         self._universe_signature = None
         self._last_tick_at = None
         self._session_date = None
+
+    def _load_transition_history(self):
+        """Restore today's latest tactical states and seen event IDs after restart."""
+        if not self.event_file:
+            return
+        path = Path(self.event_file)
+        if not path.exists():
+            return
+        today = self.now_provider().date().isoformat()
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        row = json.loads(raw)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    event_id = str(row.get("event_id") or "")
+                    if event_id:
+                        self._transition_ids.add(event_id)
+                    self._transition_seq = max(self._transition_seq, int(row.get("seq") or 0))
+                    ts = str(row.get("ts") or "")
+                    symbol = str(row.get("symbol") or "")
+                    if ts.startswith(today) and symbol and row.get("to_state"):
+                        self._last_states[symbol] = row.get("to_state")
+        except OSError:
+            pass
 
     @staticmethod
     def _shadow_observation_key(row):
