@@ -1158,31 +1158,61 @@ class TacticalStockStreamService:
                     "reason": "entry window remains open; current option route degraded: " + str(route_health.get("reason") or "quote quality"),
                 }
 
+            # STALE is a data flag, not a published lifecycle transition.
+            # Soft deteriorations are execution-paused until they persist 20s;
+            # hard exits/vetoes remain immediate.
+            state = self._stabilize_tactical_state(
+                life, state, now=now, stale=stale,
+                live_price=live_price, candidate=candidate,
+            )
+
+            entry_zone = v122b_tactical.entry_price_zone(
+                setup.get("direction") or direction,
+                live_price, setup.get("trigger"), setup.get("invalidation"),
+                candidate.get("atr"),
+            )
+
             fresh_episode_ok = True
             fresh_episode_reason = "OPEN_EPISODE_OR_FIRST_SIGNAL"
             if (
                 not life.get("episode_open")
                 and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE")
-                and life.get("last_closed_signature")
             ):
                 fresh_episode_ok, fresh_episode_reason = self._fresh_episode_allowed(
                     life, setup, candidate, live_price, now
                 )
+
+                if entry_zone.get("state") == "EXTENDED":
+                    fresh_episode_ok = False
+                    fresh_episode_reason = "PRICE_EXTENDED_GT_0_20_ATR_WAIT_RETEST"
+                elif not self._session_allows_new_entry(now):
+                    fresh_episode_ok = False
+                    fresh_episode_reason = "SESSION_ENTRY_CUTOFF_15_25"
+
                 if not fresh_episode_ok:
                     state = {
+                        **state,
                         "state": "READY",
                         "tradeable": False,
-                        "reason": "prior episode ended; waiting for fresh structure/re-arm evidence",
+                        "reason": fresh_episode_reason.replace("_", " "),
+                        "entry_blocked": True,
                     }
 
-            if state.get("state") == "TRADEABLE":
+            if state.get("state") == "TRADEABLE" and state.get("tradeable"):
                 direction_used[setup.get("direction") or direction] += 1
 
             # Start an entry episode when structure is READY or already
             # TRADEABLE and an executable option exists.  Contract selection
             # becomes sticky for this thesis; later re-routes are explicit.
             route_contract = (route or {}).get("contract") or {}
-            if fresh_episode_ok and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE") and (route or {}).get("tradeable") and route_contract.get("symbol"):
+            if (
+                fresh_episode_ok
+                and state.get("data_ok") is not False
+                and not state.get("execution_paused")
+                and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE")
+                and (route or {}).get("tradeable")
+                and route_contract.get("symbol")
+            ):
                 if not life.get("episode_open"):
                     life["episode_no"] = int(life.get("episode_no") or 0) + 1
                     life["episode_open"] = True
@@ -1202,7 +1232,8 @@ class TacticalStockStreamService:
                     life["contract_selection_reason"] = (route or {}).get("selection_reason")
                     life["contract_reroute_reason"] = (route or {}).get("reroute_reason")
 
-            state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
+            if state.get("data_ok") is not False:
+                state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
 
             # Freeze the option premium/delta reference at the actual underlying
             # trigger for consistent premium projections. READY-stage plans use
