@@ -852,8 +852,15 @@ def _candle_context(fr: Frame, raw):
     try:
         from . import indicators
         idx = pd.to_datetime(fr.t, unit="s", utc=True).tz_convert("Asia/Kolkata")
+        if fr.sign == 1:
+            o, h, l, c = fr.o, fr.h, fr.l, fr.c
+        else:
+            # Convert the mirrored bearish search frame back to real market
+            # prices before naming candles, so the UI never calls a real
+            # bearish engulfing candle "Bullish Engulfing".
+            o, h, l, c = -fr.o, -fr.l, -fr.h, -fr.c
         df = pd.DataFrame(
-            {"open": fr.o, "high": fr.h, "low": fr.l, "close": fr.c, "volume": fr.v},
+            {"open": o, "high": h, "low": l, "close": c, "volume": fr.v},
             index=idx,
         )
         direction, name = indicators._compute_candle_pattern(df)
@@ -1375,6 +1382,7 @@ def run_scan(kite, trigger="manual"):
 
     with _state_lock:
         if _state["running"]:
+            research_runtime.exit_live_scan()
             return False
         _state.update(running=True, done=0, total=0, error=None, trigger=trigger,
                       started_at=scanner.now_ist().isoformat(timespec="seconds"), finished_at=None)
