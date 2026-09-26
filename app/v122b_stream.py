@@ -1246,14 +1246,17 @@ class TacticalStockStreamService:
                     life["plan_option_entry_delta"] = _f(route_contract_now.get("delta"))
                     life["plan_option_entry_gamma"] = max(0.0, _f(route_contract_now.get("gamma"), 0.0))
 
-            if state.get("state") in ("EXIT", "TIME_EXIT") and life.get("episode_open"):
+            if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED") and life.get("episode_open"):
                 life["episode_open"] = False
                 life["episode_closed_at"] = now
                 best = _f(life.get("best_favourable"), 0.0)
                 expected = max(_f(setup.get("expected_move_abs"), 0.0), 1e-9)
                 life["episode_result"] = (
                     "PROVEN_MOVE" if best >= v122b_tactical.PROPOSED_PROFIT_PROTECT_FRACTION * expected
-                    else ("NO_FOLLOWTHROUGH" if state.get("state") == "TIME_EXIT" else "ENTRY_EXIT")
+                    else (
+                        "NO_FOLLOWTHROUGH" if state.get("state") == "TIME_EXIT"
+                        else ("ENTRY_CANCELLED" if state.get("state") == "CANCELLED" else "ENTRY_EXIT")
+                    )
                 )
                 life["episode_exit_reason"] = state.get("reason")
                 life["last_closed_signature"] = self._episode_signature(setup, candidate)
@@ -1294,7 +1297,9 @@ class TacticalStockStreamService:
 
             execution_window_open = bool(
                 life.get("episode_open")
-                and state.get("state") not in ("EXIT", "TIME_EXIT", "CANCELLED", "STALE", "BLOCKED_EXPOSURE")
+                and state.get("data_ok") is not False
+                and not state.get("execution_paused")
+                and state.get("state") not in ("EXIT", "TIME_EXIT", "CANCELLED", "BLOCKED_EXPOSURE")
                 and route_health.get("state") != "BLOCKED"
             )
             if not execution_window_open:
@@ -1323,6 +1328,14 @@ class TacticalStockStreamService:
                 "state": state.get("state"),
                 "reason": state.get("reason"),
                 "tradeable": bool(state.get("tradeable")),
+                "data_ok": state.get("data_ok", True),
+                "data_status": state.get("data_status", "LIVE"),
+                "execution_paused": bool(state.get("execution_paused")),
+                "soft_hold": bool(state.get("soft_hold")),
+                "soft_pending_state": state.get("soft_pending_state"),
+                "soft_pending_seconds": state.get("soft_pending_seconds"),
+                "entry_zone": entry_zone,
+                "session_entry_allowed": self._session_allows_new_entry(now),
                 "setup": setup.get("setup"),
                 "speed_class": setup.get("speed_class"),
                 "trigger": setup.get("trigger"),
@@ -1384,7 +1397,7 @@ class TacticalStockStreamService:
             # the episode clock before the next evaluation.  This prevents a
             # later breakout (or next-day breakout) from inheriting the first
             # trade's timer and entry price.
-            if state.get("state") in ("EXIT", "TIME_EXIT"):
+            if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"):
                 self._reset_trigger(life)
 
         priority = {
