@@ -933,7 +933,7 @@ class TacticalStockStreamService:
         if price is None:
             return state, life
 
-        if state.get("state") == "TRADEABLE" and life.get("triggered_at") is None:
+        if state.get("state") == "TRADEABLE" and state.get("tradeable") and life.get("triggered_at") is None:
             life.update({
                 "triggered_at": now,
                 "entry_underlying": price,
