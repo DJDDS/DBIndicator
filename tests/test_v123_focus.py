@@ -575,3 +575,68 @@ def test_new_continuation_watch_after_rearm_gets_fresh_45_minute_clock():
         and x.get("completed_at") == (second_watch_time + dt.timedelta(minutes=26)).isoformat()
         for x in state["recent"]
     )
+
+
+
+def test_focus_lifecycle_freezes_at_1530_even_if_callbacks_continue():
+    t0 = dt.datetime(2026, 9, 24, 15, 20)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("ABC", price=101.0)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{
+            "symbol": "ABC", "direction": "Bullish", "state": "TRADEABLE",
+            "live_price": 101.0, "trigger": 100.5, "invalidation": 99.5,
+            "data_ok": True,
+        }]},
+        [_scan("ABC", 101.0)], now=t0,
+    )
+    before = state["focus"]["ABC"]["lifecycle"]
+    state2 = v123_focus.update_focus(
+        state,
+        {"events": [_observer_event("ABC", direction="Bearish", price=98.0)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{
+            "symbol": "ABC", "direction": "Bullish", "state": "EXIT",
+            "live_price": 98.0, "trigger": 100.5, "invalidation": 99.5,
+            "data_ok": True,
+        }]},
+        [_scan("ABC", 98.0)], now=dt.datetime(2026, 9, 24, 15, 30),
+    )
+    assert state2["focus"]["ABC"]["lifecycle"] == before
+    assert state2["session_frozen_at"]
+
+
+def test_stale_tactical_data_holds_focus_lifecycle_and_pauses_vehicle():
+    t0 = dt.datetime(2026, 9, 24, 10, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("ABC", price=101.0)], "leaders": [], "laggards": []},
+        {"rows": []},
+        {"candidates": [{
+            "symbol": "ABC", "direction": "Bullish", "state": "TRADEABLE",
+            "live_price": 101.0, "trigger": 100.5, "invalidation": 99.5,
+            "future_tick_age_s": 1.0, "data_ok": True,
+            "option_route": {"tradeable": True, "contract": {"symbol": "ABCOPT"}},
+        }]},
+        [_scan("ABC", 101.0)], now=t0,
+    )
+    assert state["focus"]["ABC"]["lifecycle"] == "ACTIVE"
+
+    stale = {"candidates": [{
+        "symbol": "ABC", "direction": "Bullish", "state": "TRADEABLE",
+        "live_price": 98.0, "trigger": 100.5, "invalidation": 99.5,
+        "future_tick_age_s": 30.0, "data_ok": False,
+        "data_status": "STALE", "execution_paused": True,
+        "option_route": {"tradeable": True, "contract": {"symbol": "ABCOPT"}},
+    }]}
+    state = v123_focus.update_focus(
+        state, {"events": [], "leaders": [], "laggards": []},
+        {"rows": []}, stale, [_scan("ABC", 101.0)],
+        now=t0 + dt.timedelta(seconds=10),
+    )
+    row = state["focus"]["ABC"]
+    assert row["lifecycle"] == "ACTIVE"
+    assert row["data_ok"] is False
+    assert row["vehicles"]["option"] == "WAIT"
+    assert row["vehicles"]["future"] == "STALE"

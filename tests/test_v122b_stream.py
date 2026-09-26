@@ -339,16 +339,10 @@ def test_shadow_recorder_does_not_backfill_old_horizons_as_current_observations(
         rvol3=None, rvol3_accel=None, relative3=None,
         five_minute={"state": "SUPPORTIVE"}, cash_age=1.0, fut_age=1.0,
     )
-    rows = [
-        json.loads(x)
-        for x in (tmp_path / "v123_continuation_shadow.jsonl").read_text(encoding="utf-8").splitlines()
-        if x.strip()
-    ]
-    assert len(rows) == 1
-    assert rows[0]["sample_kind"] == "LATE_OBSERVATION"
-    assert rows[0]["horizon_min"] is None
-    assert rows[0]["target_horizon_min"] == 10
-    assert rows[0]["missed_horizons_min"] == [3, 6]
+    shadow = tmp_path / "v123_continuation_shadow.jsonl"
+    assert not shadow.exists()
+    assert life["shadow_t0_missed"] is True
+    assert life["shadow_missed_milestones"] == [60, 180, 360, 600]
 
 
 def test_shadow_close_observation_is_idempotent(tmp_path):
@@ -391,3 +385,171 @@ def test_shadow_close_observation_is_idempotent(tmp_path):
     assert len(rows) == 1
     assert rows[0]["sample_kind"] == "EPISODE_CLOSE"
     assert rows[0]["observation_id"]
+
+
+
+def test_stale_is_data_hold_not_tactical_state_transition():
+    t0 = dt.datetime(2026, 9, 26, 10, 0)
+    svc = _service(t0)
+    life = svc._lifecycle.setdefault("ABC", {})
+    live = svc._stabilize_tactical_state(
+        life, {"state": "READY", "tradeable": False, "reason": "ready"},
+        now=t0, stale=False, live_price=100.0,
+        candidate={"direction": "Bullish", "atr": 2.0},
+    )
+    assert live["state"] == "READY"
+
+    held = svc._stabilize_tactical_state(
+        life, {"state": "STALE", "tradeable": False, "reason": "feed stale"},
+        now=t0 + dt.timedelta(seconds=5), stale=True, live_price=100.0,
+        candidate={"direction": "Bullish", "atr": 2.0},
+    )
+    assert held["state"] == "READY"
+    assert held["data_ok"] is False
+    assert held["execution_paused"] is True
+
+    held_long = svc._stabilize_tactical_state(
+        life, {"state": "STALE", "tradeable": False, "reason": "feed stale"},
+        now=t0 + dt.timedelta(seconds=65), stale=True, live_price=100.0,
+        candidate={"direction": "Bullish", "atr": 2.0},
+    )
+    assert held_long["state"] == "READY"
+    assert life["shadow_void_reason"] == "STALE_GT_60S"
+
+
+def test_soft_deterioration_requires_20_second_dwell_but_hard_exit_is_immediate():
+    t0 = dt.datetime(2026, 9, 26, 10, 0)
+    svc = _service(t0)
+    life = svc._lifecycle.setdefault("ABC", {})
+    svc._stabilize_tactical_state(
+        life, {"state": "TRADEABLE", "tradeable": True, "reason": "triggered"},
+        now=t0, stale=False, live_price=100.0,
+        candidate={"direction": "Bullish", "atr": 2.0},
+    )
+
+    soft = {"state": "CANCELLED", "tradeable": False, "reason": "persistent futures depth opposes the setup"}
+    h1 = svc._stabilize_tactical_state(
+        life, soft, now=t0 + dt.timedelta(seconds=5), stale=False,
+        live_price=100.0, candidate={"direction": "Bullish", "atr": 2.0},
+    )
+    assert h1["state"] == "TRADEABLE"
+    assert h1["soft_hold"] is True
+
+    h2 = svc._stabilize_tactical_state(
+        life, soft, now=t0 + dt.timedelta(seconds=26), stale=False,
+        live_price=100.0, candidate={"direction": "Bullish", "atr": 2.0},
+    )
+    assert h2["state"] == "CANCELLED"
+    assert life["last_cancelled_at"] == t0 + dt.timedelta(seconds=26)
+
+    hard = svc._stabilize_tactical_state(
+        life, {"state": "EXIT", "tradeable": False, "reason": "underlying structural invalidation hit"},
+        now=t0 + dt.timedelta(seconds=27), stale=False,
+        live_price=99.0, candidate={"direction": "Bullish", "atr": 2.0},
+    )
+    assert hard["state"] == "EXIT"
+
+
+def test_cancel_rearm_cooldown_blocks_same_direction_for_180s_unless_price_resets():
+    t0 = dt.datetime(2026, 9, 26, 10, 0)
+    svc = _service(t0)
+    life = {
+        "last_cancelled_at": t0,
+        "last_cancelled_price": 100.0,
+        "last_cancelled_direction": "Bullish",
+        "last_cancelled_atr": 10.0,
+    }
+    setup = {"direction": "Bullish", "setup": "MICRO_BREAKOUT", "trigger": 100.0}
+    candidate = {"direction": "Bullish", "atr": 10.0}
+
+    ok, reason = svc._cancel_cooldown_allowed(
+        life, setup, candidate, 100.5, t0 + dt.timedelta(seconds=60)
+    )
+    assert ok is False
+    assert "REMAIN" in reason
+
+    ok, reason = svc._cancel_cooldown_allowed(
+        life, setup, candidate, 102.0, t0 + dt.timedelta(seconds=60)
+    )
+    assert ok is True
+    assert reason == "PRICE_RESET_GE_0_20_ATR"
+
+    ok, reason = svc._cancel_cooldown_allowed(
+        life, setup, candidate, 100.5, t0 + dt.timedelta(seconds=181)
+    )
+    assert ok is True
+    assert reason == "CANCEL_COOLDOWN_EXPIRED"
+
+
+def test_session_blocks_new_entries_at_1525_but_allows_management_before_close():
+    svc = _service(dt.datetime(2026, 9, 26, 15, 24, 59))
+    assert svc._session_allows_new_entry(dt.datetime(2026, 9, 26, 15, 24, 59)) is True
+    assert svc._session_allows_new_entry(dt.datetime(2026, 9, 26, 15, 25, 0)) is False
+
+
+def test_shadow_recorder_writes_genuine_t0_and_exact_one_minute_option_path(tmp_path):
+    t0 = dt.datetime(2026, 9, 26, 10, 0)
+    event_file = tmp_path / "v122b_events.jsonl"
+    svc = v122b_stream.TacticalStockStreamService(
+        candidate_provider=lambda: [], publish_callback=lambda payload: None,
+        access_token_getter=lambda: None, kite_client_getter=lambda: None,
+        api_key="test", earnings_state_file=None, state_file=None,
+        event_file=str(event_file), ticker_factory=lambda *args, **kwargs: None,
+        now_provider=lambda: t0, sleep_fn=lambda seconds: None,
+        reactor_getter=lambda: None,
+    )
+    life = {
+        "episode_no": 1, "episode_started_at": t0, "triggered_at": t0,
+        "entry_underlying": 100.0, "shadow_episode_direction": "Bullish",
+        "shadow_entry_atr": 10.0, "shadow_best_favourable": 0.0,
+        "shadow_worst_adverse": 0.0, "shadow_path_length_abs": 0.0,
+        "shadow_last_path_price": 100.0, "shadow_recorded_milestones": [],
+        "shadow_barrier_hits": {},
+    }
+    candidate = {"direction": "Bullish", "atr": 10.0}
+    setup = {"direction": "Bullish", "setup": "MICRO_BREAKOUT", "trigger": 100.0, "invalidation": 99.0}
+    route = {"contract": {
+        "symbol": "ABC100CE", "mid": 10.0, "bid": 9.9, "ask": 10.1,
+        "iv_pct": 24.0, "spread_pct": 2.0, "delta": 0.50,
+    }}
+
+    svc._record_continuation_shadow(
+        now=t0, symbol="ABC", candidate=candidate, setup=setup,
+        state={"state": "TRADEABLE"}, life=life, live_price=100.0,
+        route_health={"state": "HEALTHY"}, route=route, persistence={},
+        fast={"veto": False}, stale=False, rvol3=1.2, rvol3_accel=0.1,
+        relative3=0.05, five_minute={"state": "SUPPORTIVE"},
+        cash_age=1.0, fut_age=1.0,
+    )
+    svc._record_continuation_shadow(
+        now=t0 + dt.timedelta(seconds=61), symbol="ABC", candidate=candidate, setup=setup,
+        state={"state": "TRADEABLE"}, life=life, live_price=100.5,
+        route_health={"state": "HEALTHY"}, route=route, persistence={},
+        fast={"veto": False}, stale=False, rvol3=1.3, rvol3_accel=0.1,
+        relative3=0.06, five_minute={"state": "SUPPORTIVE"},
+        cash_age=1.0, fut_age=1.0,
+    )
+    rows = [
+        json.loads(x) for x in (tmp_path / "v123_continuation_shadow.jsonl").read_text().splitlines()
+        if x.strip()
+    ]
+    assert [x["sample_kind"] for x in rows] == ["T0", "MILESTONE"]
+    assert rows[0]["horizon_min"] == 0
+    assert rows[1]["horizon_min"] == 1
+    assert rows[1]["horizon_lag_seconds"] == 1.0
+    assert rows[0]["option_bid"] == 9.9
+    assert rows[0]["option_ask"] == 10.1
+    assert rows[0]["schema_version"] == 2
+
+
+def test_manage_lifecycle_does_not_trigger_from_soft_held_tradeable_name():
+    t0 = dt.datetime(2026, 9, 26, 10, 0)
+    svc = _service(t0)
+    setup = {
+        "direction": "Bullish", "setup": "MICRO_BREAKOUT",
+        "speed_class": "IMPULSE", "invalidation": 99.0, "expected_move_abs": 2.0,
+    }
+    row = {"direction": "Bullish", "live_price": 100.0, "atr": 2.0}
+    state = {"state": "TRADEABLE", "tradeable": False, "soft_hold": True}
+    _, life = svc._manage_lifecycle("ABC", row, setup, state, t0)
+    assert life.get("triggered_at") is None

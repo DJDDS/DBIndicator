@@ -23,6 +23,12 @@ from typing import Callable
 from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical
 
 
+SOFT_STATE_DWELL_SECONDS = 20.0
+CANCEL_REARM_COOLDOWN_SECONDS = 180.0
+STALE_VOID_SECONDS = 60.0
+NEW_ENTRY_CUTOFF_SECONDS = 15 * 3600 + 25 * 60
+
+
 def _f(v, default=None):
     try:
         x = float(v)
@@ -58,8 +64,8 @@ def _reactor_getter():
 def _market_open(now):
     if now.weekday() >= 5:
         return False
-    minute = now.hour * 60 + now.minute
-    return 9 * 60 + 15 <= minute <= 15 * 60 + 30
+    second = now.hour * 3600 + now.minute * 60 + now.second
+    return 9 * 3600 + 15 * 60 <= second < 15 * 3600 + 30 * 60
 
 
 def _iso(now):
@@ -139,6 +145,9 @@ class TacticalStockStreamService:
         self._basis_samples = defaultdict(lambda: deque(maxlen=180))
         self._lifecycle = {}
         self._last_states = {}
+        self._transition_ids = set()
+        self._transition_seq = 0
+        self._load_transition_history()
         self._snapshot = {
             "status": "WAITING",
             "validation_label": "INTERIM / NOT VALIDATED",
@@ -149,6 +158,36 @@ class TacticalStockStreamService:
         self._universe_signature = None
         self._last_tick_at = None
         self._session_date = None
+
+    def _load_transition_history(self):
+        """Restore today's latest tactical states and seen event IDs after restart."""
+        if not self.event_file:
+            return
+        path = Path(self.event_file)
+        if not path.exists():
+            return
+        now_fn = getattr(self, "now_provider", None) or scanner.now_ist
+        today = now_fn().date().isoformat()
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        row = json.loads(raw)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                    event_id = str(row.get("event_id") or "")
+                    if event_id:
+                        self._transition_ids.add(event_id)
+                    self._transition_seq = max(self._transition_seq, int(row.get("seq") or 0))
+                    ts = str(row.get("ts") or "")
+                    symbol = str(row.get("symbol") or "")
+                    if ts.startswith(today) and symbol and row.get("to_state"):
+                        self._last_states[symbol] = row.get("to_state")
+        except OSError:
+            pass
 
     @staticmethod
     def _shadow_observation_key(row):
@@ -212,6 +251,11 @@ class TacticalStockStreamService:
             "shadow_path_length_abs",
             "shadow_last_path_price",
             "shadow_direction_mismatch_seen",
+            "shadow_t0_recorded",
+            "shadow_t0_missed",
+            "shadow_missed_milestones",
+            "shadow_barrier_hits",
+            "shadow_void_reason",
             "plan_option_contract",
             "plan_option_entry_mid",
             "plan_option_entry_delta",
@@ -242,6 +286,8 @@ class TacticalStockStreamService:
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
             self._lifecycle = {}
             self._last_states = {}
+            self._transition_ids = set()
+            self._transition_seq = 0
             self._seeded = set()
             self._universe_signature = None
             self._last_tick_at = None
@@ -549,6 +595,108 @@ class TacticalStockStreamService:
             "event_family": str(candidate.get("focus_event_family") or ""),
         }
 
+    @staticmethod
+    def _session_allows_new_entry(now):
+        second = now.hour * 3600 + now.minute * 60 + now.second
+        return second < NEW_ENTRY_CUTOFF_SECONDS
+
+    @staticmethod
+    def _cancel_cooldown_allowed(life, setup, candidate, live_price, now):
+        cancelled_at = life.get("last_cancelled_at")
+        if not isinstance(cancelled_at, dt.datetime):
+            return True, "NO_CANCEL_COOLDOWN"
+        age = max(0.0, (now - cancelled_at).total_seconds())
+        if age >= CANCEL_REARM_COOLDOWN_SECONDS:
+            return True, "CANCEL_COOLDOWN_EXPIRED"
+        direction = str(setup.get("direction") or candidate.get("direction") or "")
+        if direction and direction != str(life.get("last_cancelled_direction") or direction):
+            return True, "DIRECTION_CHANGED"
+        atr = _f(life.get("last_cancelled_atr"), _f(candidate.get("atr")))
+        cancel_price = _f(life.get("last_cancelled_price"))
+        if atr and atr > 0 and live_price is not None and cancel_price is not None:
+            if abs(float(live_price) - cancel_price) / atr >= 0.20:
+                return True, "PRICE_RESET_GE_0_20_ATR"
+        return False, f"CANCEL_COOLDOWN_{int(CANCEL_REARM_COOLDOWN_SECONDS - age)}S_REMAIN"
+
+    def _stabilize_tactical_state(self, life, raw_state, *, now, stale, live_price, candidate):
+        """Hold feed gaps and soft deteriorations without delaying hard exits."""
+        raw_state = dict(raw_state or {})
+        prior = str(life.get("last_valid_tactical_state") or "")
+
+        if stale:
+            if not isinstance(life.get("stale_since"), dt.datetime):
+                life["stale_since"] = now
+            stale_for = max(0.0, (now - life["stale_since"]).total_seconds())
+            if stale_for >= STALE_VOID_SECONDS:
+                life["shadow_void_reason"] = "STALE_GT_60S"
+            held = prior or "FORMING"
+            return {
+                "state": held,
+                "tradeable": False,
+                "reason": "DATA HOLD — deep tactical feed stale; last valid state retained",
+                "data_ok": False,
+                "data_status": "STALE",
+                "stale_seconds": round(stale_for, 1),
+                "held_state": held,
+                "execution_paused": True,
+            }
+
+        life.pop("stale_since", None)
+        raw_state["data_ok"] = True
+        raw_state["data_status"] = "LIVE"
+        state_name = str(raw_state.get("state") or "FORMING")
+        reason = str(raw_state.get("reason") or "")
+
+        # Hard events are immediate: structural/time exits, fast-veto cancels,
+        # hard route blocks and profit-protection management must not wait.
+        hard = state_name in ("EXIT", "TIME_EXIT", "PROFIT_PROTECT", "BLOCKED_EXPOSURE")
+        if state_name == "CANCELLED" and "persistent futures depth opposes" not in reason.lower():
+            hard = True
+        if state_name in ("OPTION_NOT_TRADEABLE",) and "no valid option expiry" in reason.lower():
+            hard = True
+
+        soft_deterioration = bool(
+            prior in ("READY", "TRIGGERED", "TRADEABLE", "PROFIT_PROTECT")
+            and state_name in ("FORMING", "CANCELLED", "OPTION_NOT_TRADEABLE", "ROUTE_DEGRADED")
+            and not hard
+        )
+
+        if soft_deterioration:
+            pending_key = state_name + "|" + reason
+            if life.get("soft_pending_key") != pending_key:
+                life["soft_pending_key"] = pending_key
+                life["soft_pending_since"] = now
+            pending_since = life.get("soft_pending_since")
+            elapsed = (now - pending_since).total_seconds() if isinstance(pending_since, dt.datetime) else 0.0
+            if elapsed < SOFT_STATE_DWELL_SECONDS:
+                held = prior or state_name
+                return {
+                    "state": held,
+                    "tradeable": False,
+                    "reason": f"EXECUTION PAUSE — {reason or state_name}; confirming for {SOFT_STATE_DWELL_SECONDS:.0f}s",
+                    "data_ok": True,
+                    "data_status": "LIVE",
+                    "soft_hold": True,
+                    "soft_pending_state": state_name,
+                    "soft_pending_seconds": round(elapsed, 1),
+                    "execution_paused": True,
+                }
+        else:
+            life.pop("soft_pending_key", None)
+            life.pop("soft_pending_since", None)
+
+        # Accept the raw state after any required dwell.
+        life["last_valid_tactical_state"] = state_name
+        life["last_valid_tactical_reason"] = reason
+        life.pop("soft_pending_key", None)
+        life.pop("soft_pending_since", None)
+        if state_name == "CANCELLED":
+            life["last_cancelled_at"] = now
+            life["last_cancelled_price"] = _f(live_price)
+            life["last_cancelled_direction"] = str(candidate.get("direction") or "")
+            life["last_cancelled_atr"] = _f(candidate.get("atr"))
+        return raw_state
+
     def _fresh_episode_allowed(self, life, setup, candidate, live_price, now):
         """Require genuinely new market information after an episode closes.
 
@@ -560,6 +708,12 @@ class TacticalStockStreamService:
           * >=0.15 ATR structural-trigger shift,
           * renewed 5m relative acceleration.
         """
+        cooldown_ok, cooldown_reason = self._cancel_cooldown_allowed(
+            life, setup, candidate, live_price, now
+        )
+        if not cooldown_ok:
+            return False, cooldown_reason
+
         prior = life.get("last_closed_signature")
         if not prior:
             return True, "FIRST_EPISODE"
@@ -656,33 +810,29 @@ class TacticalStockStreamService:
                                     live_price, route_health, route, persistence, fast,
                                     stale, rvol3, rvol3_accel, relative3, five_minute,
                                     cash_age, fut_age, force_close=False):
-        """Write research-only post-trigger path snapshots. Never controls trading."""
+        """Recorder v2: T0 + exact milestones. Research-only; never controls trading."""
         metrics = self._continuation_math(life, candidate, live_price)
         trig = life.get("triggered_at")
         if metrics is None or not isinstance(trig, dt.datetime):
             return metrics
 
         age_s = max(0.0, (now - trig).total_seconds())
-        milestones = (180, 360, 600, 900, 1800)
+        # Option-path horizons from the audit, plus 30m for longer continuation.
+        milestones = (60, 180, 360, 600, 900, 1800)
         done = set(life.get("shadow_recorded_milestones") or [])
         due = [m for m in milestones if age_s >= m and m not in done]
-        if not due and not force_close:
-            return metrics
 
         option_contract = (route or {}).get("contract") or {}
         atr3_shadow = v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or []))
         entry_atr3_shadow = _f(life.get("shadow_entry_atr3"))
         shadow_mfe = max(_f(life.get("shadow_best_favourable"), _f(life.get("best_favourable"), 0.0)), 0.0)
         shadow_mae = max(_f(life.get("shadow_worst_adverse"), _f(life.get("worst_adverse"), 0.0)), 0.0)
-        mfe_atr3_shadow = (
-            round(shadow_mfe / entry_atr3_shadow, 4)
-            if entry_atr3_shadow else None
-        )
-        mae_atr3_shadow = (
-            round(shadow_mae / entry_atr3_shadow, 4)
-            if entry_atr3_shadow else None
-        )
+        mfe_atr3_shadow = round(shadow_mfe / entry_atr3_shadow, 4) if entry_atr3_shadow else None
+        mae_atr3_shadow = round(shadow_mae / entry_atr3_shadow, 4) if entry_atr3_shadow else None
+        void_reason = life.get("shadow_void_reason")
+
         base = {
+            "schema_version": 2,
             "ts": _iso(now),
             "trade_date": now.date().isoformat(),
             "symbol": symbol,
@@ -712,6 +862,9 @@ class TacticalStockStreamService:
             "route_health_reason": (route_health or {}).get("reason"),
             "option_contract": option_contract.get("symbol") or life.get("locked_option_contract"),
             "option_mid": option_contract.get("mid"),
+            "option_bid": option_contract.get("bid"),
+            "option_ask": option_contract.get("ask"),
+            "option_iv_pct": option_contract.get("iv_pct"),
             "option_spread_pct": option_contract.get("spread_pct"),
             "option_delta_abs": option_contract.get("delta_abs") or option_contract.get("delta"),
             "friction_to_expected_move": option_contract.get("friction_to_expected_move"),
@@ -730,33 +883,58 @@ class TacticalStockStreamService:
             "cash_tick_age_s": round(cash_age, 2) if cash_age is not None else None,
             "future_tick_age_s": round(fut_age, 2) if fut_age is not None else None,
             "tactical_state": state.get("state"),
+            "barrier_grid_first_hits": dict(life.get("shadow_barrier_hits") or {}),
+            "primary_preregistered_barrier": {"target_atr": 0.55, "stop_atr": 0.35},
+            "episode_void": bool(void_reason),
+            "void_reason": void_reason,
             "shadow_only": True,
             "controls_trading": False,
             "validation_label": "SHADOW CONTINUATION MATH / NOT A TRADE FILTER",
         }
 
         rows = []
-        if due:
-            milestone = max(due)
-            lag_s = max(0.0, age_s - milestone)
-            row = dict(base)
-            if lag_s <= 90.0:
-                row["sample_kind"] = "MILESTONE"
-                row["horizon_min"] = milestone // 60
+        if not life.get("shadow_t0_recorded") and not life.get("shadow_t0_missed"):
+            if age_s <= 5.0:
+                row = dict(base)
+                row["sample_kind"] = "T0"
+                row["horizon_min"] = 0
+                row["target_horizon_min"] = 0
+                row["horizon_lag_seconds"] = round(age_s, 1)
+                row["age_seconds"] = round(age_s, 1)
+                rows.append(row)
+                life["shadow_t0_recorded"] = True
             else:
-                row["sample_kind"] = "LATE_OBSERVATION"
-                row["horizon_min"] = None
-            row["target_horizon_min"] = milestone // 60
-            row["horizon_lag_seconds"] = round(lag_s, 1)
-            row["missed_horizons_min"] = [m // 60 for m in due if m != milestone]
-            row["age_seconds"] = round(age_s, 1)
-            rows.append(row)
+                # T0 must be genuine trigger-time evidence; never backfill it.
+                life["shadow_t0_missed"] = True
+
+        if due:
+            # Exact-time semantics: only a sample within +5s of its target is
+            # a milestone. Older due horizons are marked missed, never backfilled.
+            eligible = [m for m in due if 0.0 <= age_s - m <= 5.0]
+            selected = max(eligible) if eligible else None
+            missed = [m for m in due if m != selected]
+            if missed:
+                old_missed = set(life.get("shadow_missed_milestones") or [])
+                old_missed.update(missed)
+                life["shadow_missed_milestones"] = sorted(old_missed)
             done.update(due)
+            if selected is not None:
+                row = dict(base)
+                row["sample_kind"] = "MILESTONE"
+                row["horizon_min"] = selected // 60
+                row["target_horizon_min"] = selected // 60
+                row["horizon_lag_seconds"] = round(age_s - selected, 1)
+                row["missed_horizons_min"] = [m // 60 for m in missed]
+                row["age_seconds"] = round(age_s, 1)
+                rows.append(row)
+
         if force_close:
             row = dict(base)
             row["sample_kind"] = "EPISODE_CLOSE"
             row["horizon_min"] = None
+            row["target_horizon_min"] = None
             row["age_seconds"] = round(age_s, 1)
+            row["missed_horizons_min"] = [m // 60 for m in (life.get("shadow_missed_milestones") or [])]
             row["episode_result"] = life.get("episode_result")
             row["episode_exit_reason"] = life.get("episode_exit_reason")
             rows.append(row)
@@ -786,7 +964,7 @@ class TacticalStockStreamService:
         if price is None:
             return state, life
 
-        if state.get("state") == "TRADEABLE" and life.get("triggered_at") is None:
+        if state.get("state") == "TRADEABLE" and state.get("tradeable") and life.get("triggered_at") is None:
             life.update({
                 "triggered_at": now,
                 "entry_underlying": price,
@@ -805,6 +983,10 @@ class TacticalStockStreamService:
                 "shadow_path_length_abs": 0.0,
                 "shadow_last_path_price": price,
                 "shadow_direction_mismatch_seen": False,
+                "shadow_t0_recorded": False,
+                "shadow_missed_milestones": [],
+                "shadow_barrier_hits": {},
+                "shadow_void_reason": None,
                 "setup": setup.get("setup"),
                 "speed_class": setup.get("speed_class"),
             })
@@ -838,6 +1020,23 @@ class TacticalStockStreamService:
             _f(life.get("shadow_path_length_abs"), 0.0) + abs(price - shadow_prior)
         )
         life["shadow_last_path_price"] = price
+
+        # Pre-registered research barrier grid.  It records first touch order
+        # only; it never controls the live tactical state.
+        shadow_atr0 = _f(life.get("shadow_entry_atr"))
+        if shadow_atr0 and shadow_atr0 > 0:
+            hits = dict(life.get("shadow_barrier_hits") or {})
+            adverse = max(0.0, -shadow_favourable)
+            for target_atr in (0.30, 0.55, 0.80):
+                for stop_atr in (0.15, 0.35, 0.50):
+                    key = f"a{target_atr:.2f}_b{stop_atr:.2f}"
+                    if key in hits:
+                        continue
+                    if shadow_favourable >= target_atr * shadow_atr0:
+                        hits[key] = {"first": "TARGET", "ts": _iso(now)}
+                    elif adverse >= stop_atr * shadow_atr0:
+                        hits[key] = {"first": "STOP", "ts": _iso(now)}
+            life["shadow_barrier_hits"] = hits
 
         atr = _f(row.get("atr"))
         shadow_atr = _f(life.get("shadow_entry_atr"), atr)
@@ -877,16 +1076,36 @@ class TacticalStockStreamService:
     def _log_transition(self, symbol, old, new, payload):
         if old == new:
             return
+        now = self.now_provider()
+        ts = _iso(now)
+        episode_no = int(payload.get("entry_episode_no") or 0)
+        event_id = "|".join(str(x or "") for x in (
+            now.date().isoformat(), symbol, episode_no, old, new, ts
+        ))
+        if event_id in self._transition_ids:
+            return
+        self._transition_ids.add(event_id)
+        self._transition_seq += 1
         record = {
-            "ts": _iso(self.now_provider()), "symbol": symbol,
-            "from_state": old, "to_state": new,
-            "setup": payload.get("setup"), "direction": payload.get("direction"),
-            "trigger": payload.get("trigger"), "invalidation": payload.get("invalidation"),
+            "schema_version": 2,
+            "event_id": event_id,
+            "seq": self._transition_seq,
+            "ts": ts,
+            "symbol": symbol,
+            "from_state": old,
+            "to_state": new,
+            "setup": payload.get("setup"),
+            "direction": payload.get("direction"),
+            "trigger": payload.get("trigger"),
+            "invalidation": payload.get("invalidation"),
             "option_contract": ((payload.get("option_route") or {}).get("contract") or {}).get("symbol"),
             "underlying": payload.get("live_price"),
             "entry_episode_no": payload.get("entry_episode_no"),
             "execution_window_state": payload.get("execution_window_state"),
             "route_health": payload.get("route_health"),
+            "data_ok": payload.get("data_ok"),
+            "data_status": payload.get("data_status"),
+            "entry_zone": payload.get("entry_zone"),
             "ret_5m_pct": payload.get("ret_5m_pct"),
             "relative_5m_vs_nifty_pct": payload.get("relative_5m_vs_nifty_pct"),
             "rvol_3m": payload.get("rvol_3m"),
@@ -995,31 +1214,66 @@ class TacticalStockStreamService:
                     "reason": "entry window remains open; current option route degraded: " + str(route_health.get("reason") or "quote quality"),
                 }
 
+            # STALE is a data flag, not a published lifecycle transition.
+            # Soft deteriorations are execution-paused until they persist 20s;
+            # hard exits/vetoes remain immediate.
+            state = self._stabilize_tactical_state(
+                life, state, now=now, stale=stale,
+                live_price=live_price, candidate=candidate,
+            )
+
+            entry_zone = v122b_tactical.entry_price_zone(
+                setup.get("direction") or direction,
+                live_price, setup.get("trigger"), setup.get("invalidation"),
+                candidate.get("atr"),
+            )
+            max_option_entry_price = v122b_tactical.max_option_price_for_entry_zone(
+                (route or {}).get("contract"),
+                setup.get("direction") or direction,
+                live_price, setup.get("trigger"), candidate.get("atr"),
+            )
+
             fresh_episode_ok = True
             fresh_episode_reason = "OPEN_EPISODE_OR_FIRST_SIGNAL"
             if (
                 not life.get("episode_open")
                 and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE")
-                and life.get("last_closed_signature")
             ):
                 fresh_episode_ok, fresh_episode_reason = self._fresh_episode_allowed(
                     life, setup, candidate, live_price, now
                 )
+
+                if entry_zone.get("state") == "EXTENDED":
+                    fresh_episode_ok = False
+                    fresh_episode_reason = "PRICE_EXTENDED_GT_0_20_ATR_WAIT_RETEST"
+                elif not self._session_allows_new_entry(now):
+                    fresh_episode_ok = False
+                    fresh_episode_reason = "SESSION_ENTRY_CUTOFF_15_25"
+
                 if not fresh_episode_ok:
                     state = {
+                        **state,
                         "state": "READY",
                         "tradeable": False,
-                        "reason": "prior episode ended; waiting for fresh structure/re-arm evidence",
+                        "reason": fresh_episode_reason.replace("_", " "),
+                        "entry_blocked": True,
                     }
 
-            if state.get("state") == "TRADEABLE":
+            if state.get("state") == "TRADEABLE" and state.get("tradeable"):
                 direction_used[setup.get("direction") or direction] += 1
 
             # Start an entry episode when structure is READY or already
             # TRADEABLE and an executable option exists.  Contract selection
             # becomes sticky for this thesis; later re-routes are explicit.
             route_contract = (route or {}).get("contract") or {}
-            if fresh_episode_ok and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE") and (route or {}).get("tradeable") and route_contract.get("symbol"):
+            if (
+                fresh_episode_ok
+                and state.get("data_ok") is not False
+                and not state.get("execution_paused")
+                and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE")
+                and (route or {}).get("tradeable")
+                and route_contract.get("symbol")
+            ):
                 if not life.get("episode_open"):
                     life["episode_no"] = int(life.get("episode_no") or 0) + 1
                     life["episode_open"] = True
@@ -1039,7 +1293,11 @@ class TacticalStockStreamService:
                     life["contract_selection_reason"] = (route or {}).get("selection_reason")
                     life["contract_reroute_reason"] = (route or {}).get("reroute_reason")
 
-            state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
+            if state.get("data_ok") is not False:
+                state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
+                if state.get("state") in ("EXIT", "TIME_EXIT", "PROFIT_PROTECT"):
+                    life["last_valid_tactical_state"] = state.get("state")
+                    life["last_valid_tactical_reason"] = state.get("reason")
 
             # Freeze the option premium/delta reference at the actual underlying
             # trigger for consistent premium projections. READY-stage plans use
@@ -1052,14 +1310,17 @@ class TacticalStockStreamService:
                     life["plan_option_entry_delta"] = _f(route_contract_now.get("delta"))
                     life["plan_option_entry_gamma"] = max(0.0, _f(route_contract_now.get("gamma"), 0.0))
 
-            if state.get("state") in ("EXIT", "TIME_EXIT") and life.get("episode_open"):
+            if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED") and life.get("episode_open"):
                 life["episode_open"] = False
                 life["episode_closed_at"] = now
                 best = _f(life.get("best_favourable"), 0.0)
                 expected = max(_f(setup.get("expected_move_abs"), 0.0), 1e-9)
                 life["episode_result"] = (
                     "PROVEN_MOVE" if best >= v122b_tactical.PROPOSED_PROFIT_PROTECT_FRACTION * expected
-                    else ("NO_FOLLOWTHROUGH" if state.get("state") == "TIME_EXIT" else "ENTRY_EXIT")
+                    else (
+                        "NO_FOLLOWTHROUGH" if state.get("state") == "TIME_EXIT"
+                        else ("ENTRY_CANCELLED" if state.get("state") == "CANCELLED" else "ENTRY_EXIT")
+                    )
                 )
                 life["episode_exit_reason"] = state.get("reason")
                 life["last_closed_signature"] = self._episode_signature(setup, candidate)
@@ -1100,7 +1361,9 @@ class TacticalStockStreamService:
 
             execution_window_open = bool(
                 life.get("episode_open")
-                and state.get("state") not in ("EXIT", "TIME_EXIT", "CANCELLED", "STALE", "BLOCKED_EXPOSURE")
+                and state.get("data_ok") is not False
+                and not state.get("execution_paused")
+                and state.get("state") not in ("EXIT", "TIME_EXIT", "CANCELLED", "BLOCKED_EXPOSURE")
                 and route_health.get("state") != "BLOCKED"
             )
             if not execution_window_open:
@@ -1120,7 +1383,7 @@ class TacticalStockStreamService:
                 persistence=persistence, fast=fast, stale=stale, rvol3=rvol3,
                 rvol3_accel=rvol3_accel, relative3=relative3, five_minute=five_minute,
                 cash_age=cash_age, fut_age=fut_age,
-                force_close=state.get("state") in ("EXIT", "TIME_EXIT"),
+                force_close=state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"),
             )
 
             payload = {
@@ -1129,6 +1392,15 @@ class TacticalStockStreamService:
                 "state": state.get("state"),
                 "reason": state.get("reason"),
                 "tradeable": bool(state.get("tradeable")),
+                "data_ok": state.get("data_ok", True),
+                "data_status": state.get("data_status", "LIVE"),
+                "execution_paused": bool(state.get("execution_paused")),
+                "soft_hold": bool(state.get("soft_hold")),
+                "soft_pending_state": state.get("soft_pending_state"),
+                "soft_pending_seconds": state.get("soft_pending_seconds"),
+                "entry_zone": entry_zone,
+                "max_option_entry_price": max_option_entry_price,
+                "session_entry_allowed": self._session_allows_new_entry(now),
                 "setup": setup.get("setup"),
                 "speed_class": setup.get("speed_class"),
                 "trigger": setup.get("trigger"),
@@ -1190,7 +1462,7 @@ class TacticalStockStreamService:
             # the episode clock before the next evaluation.  This prevents a
             # later breakout (or next-day breakout) from inheriting the first
             # trade's timer and entry price.
-            if state.get("state") in ("EXIT", "TIME_EXIT"):
+            if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"):
                 self._reset_trigger(life)
 
         priority = {
