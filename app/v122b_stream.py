@@ -166,7 +166,8 @@ class TacticalStockStreamService:
         path = Path(self.event_file)
         if not path.exists():
             return
-        today = self.now_provider().date().isoformat()
+        now_fn = getattr(self, "now_provider", None) or scanner.now_ist
+        today = now_fn().date().isoformat()
         try:
             with path.open("r", encoding="utf-8") as handle:
                 for raw in handle:
