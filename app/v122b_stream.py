@@ -221,6 +221,7 @@ class TacticalStockStreamService:
             "shadow_last_path_price",
             "shadow_direction_mismatch_seen",
             "shadow_t0_recorded",
+            "shadow_t0_missed",
             "shadow_missed_milestones",
             "shadow_barrier_hits",
             "shadow_void_reason",
@@ -861,15 +862,19 @@ class TacticalStockStreamService:
         }
 
         rows = []
-        if not life.get("shadow_t0_recorded"):
-            row = dict(base)
-            row["sample_kind"] = "T0"
-            row["horizon_min"] = 0
-            row["target_horizon_min"] = 0
-            row["horizon_lag_seconds"] = round(age_s, 1)
-            row["age_seconds"] = round(age_s, 1)
-            rows.append(row)
-            life["shadow_t0_recorded"] = True
+        if not life.get("shadow_t0_recorded") and not life.get("shadow_t0_missed"):
+            if age_s <= 5.0:
+                row = dict(base)
+                row["sample_kind"] = "T0"
+                row["horizon_min"] = 0
+                row["target_horizon_min"] = 0
+                row["horizon_lag_seconds"] = round(age_s, 1)
+                row["age_seconds"] = round(age_s, 1)
+                rows.append(row)
+                life["shadow_t0_recorded"] = True
+            else:
+                # T0 must be genuine trigger-time evidence; never backfill it.
+                life["shadow_t0_missed"] = True
 
         if due:
             # Exact-time semantics: only a sample within +5s of its target is
