@@ -68,3 +68,27 @@ def test_1d_thesis_removal_requires_invalidation_not_ranking_change():
     invalid = row("A", close=99.0, prev=100.0, atr=2.0, hi20=100.8)
     state = v123_swing.update(state, [invalid], now=dt.datetime(2026, 9, 23, 10, 15))
     assert "A" not in state["selected"]
+
+
+
+def test_swing_move_consumed_is_measured_from_trigger_not_previous_close():
+    cand = v123_swing._candidate(
+        row("A", close=101.0, prev=100.0, atr=2.0, hi20=100.8)
+    )
+    assert cand["trigger"] == 100.8
+    assert cand["move_consumed_atr"] == 0.1
+
+
+def test_swing_invalidation_always_stays_on_adverse_side_with_half_atr_minimum():
+    bull = v123_swing._candidate(
+        row("BULL", close=101.0, prev=100.0, atr=2.0, hi20=100.8)
+    )
+    assert bull["invalidation"] <= bull["trigger"] - 1.0
+
+    bear_row = row(
+        "BEAR", close=99.0, prev=100.0, atr=2.0, htf="Bearish",
+        hi20=110.0, lo20=99.2, sector_lead=-0.5, oi="Short Buildup",
+    )
+    bear_row["avwap"] = 99.8
+    bear = v123_swing._candidate(bear_row)
+    assert bear["invalidation"] >= bear["trigger"] + 1.0
