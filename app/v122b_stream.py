@@ -1264,6 +1264,9 @@ class TacticalStockStreamService:
 
             if state.get("data_ok") is not False:
                 state, life = self._manage_lifecycle(symbol, candidate, setup, state, now)
+                if state.get("state") in ("EXIT", "TIME_EXIT", "PROFIT_PROTECT"):
+                    life["last_valid_tactical_state"] = state.get("state")
+                    life["last_valid_tactical_reason"] = state.get("reason")
 
             # Freeze the option premium/delta reference at the actual underlying
             # trigger for consistent premium projections. READY-stage plans use
