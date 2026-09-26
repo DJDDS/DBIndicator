@@ -59,7 +59,7 @@ def test_1d_final_phase_freezes_membership_into_close():
 
 def test_1d_marks_extended_move_do_not_chase():
     # Extension is now measured from the actionable trigger, not prev close.
-    cand = v123_swing._candidate(row("A", close=105.5, prev=100.0, atr=2.0, hi20=103.5))
+    cand = v123_swing._candidate(row("A", close=106.5, prev=100.0, atr=2.0, hi20=103.5))
     assert cand["runway"] == "EXTENDED"
     assert "DO NOT CHASE" in cand["action"]
 
