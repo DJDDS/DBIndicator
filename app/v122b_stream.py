@@ -778,33 +778,29 @@ class TacticalStockStreamService:
                                     live_price, route_health, route, persistence, fast,
                                     stale, rvol3, rvol3_accel, relative3, five_minute,
                                     cash_age, fut_age, force_close=False):
-        """Write research-only post-trigger path snapshots. Never controls trading."""
+        """Recorder v2: T0 + exact milestones. Research-only; never controls trading."""
         metrics = self._continuation_math(life, candidate, live_price)
         trig = life.get("triggered_at")
         if metrics is None or not isinstance(trig, dt.datetime):
             return metrics
 
         age_s = max(0.0, (now - trig).total_seconds())
-        milestones = (180, 360, 600, 900, 1800)
+        # Option-path horizons from the audit, plus 30m for longer continuation.
+        milestones = (60, 180, 360, 600, 900, 1800)
         done = set(life.get("shadow_recorded_milestones") or [])
         due = [m for m in milestones if age_s >= m and m not in done]
-        if not due and not force_close:
-            return metrics
 
         option_contract = (route or {}).get("contract") or {}
         atr3_shadow = v122b_tactical.three_minute_atr(list(self._bars.get(symbol) or []))
         entry_atr3_shadow = _f(life.get("shadow_entry_atr3"))
         shadow_mfe = max(_f(life.get("shadow_best_favourable"), _f(life.get("best_favourable"), 0.0)), 0.0)
         shadow_mae = max(_f(life.get("shadow_worst_adverse"), _f(life.get("worst_adverse"), 0.0)), 0.0)
-        mfe_atr3_shadow = (
-            round(shadow_mfe / entry_atr3_shadow, 4)
-            if entry_atr3_shadow else None
-        )
-        mae_atr3_shadow = (
-            round(shadow_mae / entry_atr3_shadow, 4)
-            if entry_atr3_shadow else None
-        )
+        mfe_atr3_shadow = round(shadow_mfe / entry_atr3_shadow, 4) if entry_atr3_shadow else None
+        mae_atr3_shadow = round(shadow_mae / entry_atr3_shadow, 4) if entry_atr3_shadow else None
+        void_reason = life.get("shadow_void_reason")
+
         base = {
+            "schema_version": 2,
             "ts": _iso(now),
             "trade_date": now.date().isoformat(),
             "symbol": symbol,
@@ -834,6 +830,9 @@ class TacticalStockStreamService:
             "route_health_reason": (route_health or {}).get("reason"),
             "option_contract": option_contract.get("symbol") or life.get("locked_option_contract"),
             "option_mid": option_contract.get("mid"),
+            "option_bid": option_contract.get("bid"),
+            "option_ask": option_contract.get("ask"),
+            "option_iv_pct": option_contract.get("iv_pct"),
             "option_spread_pct": option_contract.get("spread_pct"),
             "option_delta_abs": option_contract.get("delta_abs") or option_contract.get("delta"),
             "friction_to_expected_move": option_contract.get("friction_to_expected_move"),
@@ -852,33 +851,54 @@ class TacticalStockStreamService:
             "cash_tick_age_s": round(cash_age, 2) if cash_age is not None else None,
             "future_tick_age_s": round(fut_age, 2) if fut_age is not None else None,
             "tactical_state": state.get("state"),
+            "barrier_grid_first_hits": dict(life.get("shadow_barrier_hits") or {}),
+            "primary_preregistered_barrier": {"target_atr": 0.55, "stop_atr": 0.35},
+            "episode_void": bool(void_reason),
+            "void_reason": void_reason,
             "shadow_only": True,
             "controls_trading": False,
             "validation_label": "SHADOW CONTINUATION MATH / NOT A TRADE FILTER",
         }
 
         rows = []
-        if due:
-            milestone = max(due)
-            lag_s = max(0.0, age_s - milestone)
+        if not life.get("shadow_t0_recorded"):
             row = dict(base)
-            if lag_s <= 90.0:
-                row["sample_kind"] = "MILESTONE"
-                row["horizon_min"] = milestone // 60
-            else:
-                row["sample_kind"] = "LATE_OBSERVATION"
-                row["horizon_min"] = None
-            row["target_horizon_min"] = milestone // 60
-            row["horizon_lag_seconds"] = round(lag_s, 1)
-            row["missed_horizons_min"] = [m // 60 for m in due if m != milestone]
+            row["sample_kind"] = "T0"
+            row["horizon_min"] = 0
+            row["target_horizon_min"] = 0
+            row["horizon_lag_seconds"] = round(age_s, 1)
             row["age_seconds"] = round(age_s, 1)
             rows.append(row)
+            life["shadow_t0_recorded"] = True
+
+        if due:
+            # Exact-time semantics: only a sample within +5s of its target is
+            # a milestone. Older due horizons are marked missed, never backfilled.
+            eligible = [m for m in due if 0.0 <= age_s - m <= 5.0]
+            selected = max(eligible) if eligible else None
+            missed = [m for m in due if m != selected]
+            if missed:
+                old_missed = set(life.get("shadow_missed_milestones") or [])
+                old_missed.update(missed)
+                life["shadow_missed_milestones"] = sorted(old_missed)
             done.update(due)
+            if selected is not None:
+                row = dict(base)
+                row["sample_kind"] = "MILESTONE"
+                row["horizon_min"] = selected // 60
+                row["target_horizon_min"] = selected // 60
+                row["horizon_lag_seconds"] = round(age_s - selected, 1)
+                row["missed_horizons_min"] = [m // 60 for m in missed]
+                row["age_seconds"] = round(age_s, 1)
+                rows.append(row)
+
         if force_close:
             row = dict(base)
             row["sample_kind"] = "EPISODE_CLOSE"
             row["horizon_min"] = None
+            row["target_horizon_min"] = None
             row["age_seconds"] = round(age_s, 1)
+            row["missed_horizons_min"] = [m // 60 for m in (life.get("shadow_missed_milestones") or [])]
             row["episode_result"] = life.get("episode_result")
             row["episode_exit_reason"] = life.get("episode_exit_reason")
             rows.append(row)
