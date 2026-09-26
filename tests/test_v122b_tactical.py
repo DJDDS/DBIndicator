@@ -426,3 +426,53 @@ def test_dynamic_trade_plan_records_atr3_mae_mfe_only_as_shadow_calibration():
     assert plan["mae_atr3_shadow"] is not None
     assert plan["controls_trading"] is False
     assert plan["method"] == "STRUCTURE_SL + MEASURED_MOVE_T1_T2 + TIME_BARRIER + PROVEN_3M_STRUCTURE_TRAIL"
+
+
+
+def test_entry_price_zone_is_stable_geometry_not_state_flicker():
+    watch = t.entry_price_zone("Bullish", 99.4, 100.0, 98.0, 2.0)
+    approaching = t.entry_price_zone("Bullish", 99.7, 100.0, 98.0, 2.0)
+    in_zone = t.entry_price_zone("Bullish", 100.2, 100.0, 98.0, 2.0)
+    extended = t.entry_price_zone("Bullish", 100.5, 100.0, 98.0, 2.0)
+    invalid = t.entry_price_zone("Bullish", 97.9, 100.0, 98.0, 2.0)
+
+    assert watch["state"] == "WATCH"
+    assert approaching["state"] == "APPROACHING"
+    assert in_zone["state"] == "IN_ZONE"
+    assert extended["state"] == "EXTENDED"
+    assert invalid["state"] == "INVALID"
+    assert in_zone["far_edge_underlying"] == 100.4
+
+
+def test_entry_price_zone_is_direction_symmetric_for_bearish():
+    approaching = t.entry_price_zone("Bearish", 100.3, 100.0, 102.0, 2.0)
+    in_zone = t.entry_price_zone("Bearish", 99.8, 100.0, 102.0, 2.0)
+    extended = t.entry_price_zone("Bearish", 99.5, 100.0, 102.0, 2.0)
+    assert approaching["state"] == "APPROACHING"
+    assert in_zone["state"] == "IN_ZONE"
+    assert extended["state"] == "EXTENDED"
+
+
+def test_max_option_price_reference_projects_to_far_edge_and_never_controls_trade():
+    contract = {
+        "mid": 10.0, "bid": 9.8, "ask": 10.2,
+        "delta": 0.50, "gamma": 0.04,
+    }
+    value = t.max_option_price_for_entry_zone(
+        contract, "Bullish", 100.0, 100.0, 2.0
+    )
+    # +0.40 underlying to the +0.20 ATR edge, plus half-spread.
+    assert value == pytest.approx(10.50, abs=0.01)
+
+
+def test_tactical_opening_drive_expires_after_1015():
+    bars = [
+        _bar(dt.datetime(2026, 9, 24, 9, 15), 99.0, 100.0, 98.8, 99.7),
+        _bar(dt.datetime(2026, 9, 24, 9, 18), 99.7, 100.2, 99.4, 100.0),
+    ]
+    current = _bar(dt.datetime(2026, 9, 24, 10, 18), 100.0, 101.0, 99.9, 100.8)
+    candidate = {"symbol": "ABC", "direction": "Bullish", "atr": 2.0}
+    setup = t.detect_structural_setup(
+        bars, current, candidate, now=dt.datetime(2026, 9, 24, 10, 18)
+    )
+    assert setup.get("setup") != "OPENING_DRIVE"
