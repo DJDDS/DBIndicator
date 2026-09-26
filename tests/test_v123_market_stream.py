@@ -117,3 +117,32 @@ def test_mover_diagnostic_explains_why_event_was_missed():
     assert diag["qualified"] is False
     assert diag["reason"] == "NO_EVENT_FAMILY_QUALIFIED"
     assert diag["failed_gates"]
+
+
+
+def test_lookback_sample_must_be_close_to_requested_age():
+    svc = _service()
+    now = dt.datetime(2026, 9, 24, 11, 0, 0)
+    _append(svc, "ABC", now-dt.timedelta(minutes=20), 100.0, 1000)
+    _append(svc, "ABC", now, 101.0, 1200)
+
+    # A 20-minute-old point cannot masquerade as 3m/5m/10m history.
+    assert svc._sample_at("ABC", now, 180) is None
+    assert svc._sample_at("ABC", now, 300) is None
+    assert svc._sample_at("ABC", now, 600) is None
+
+
+def test_lookback_sample_accepts_nearby_timestamp_within_tolerance():
+    svc = _service()
+    now = dt.datetime(2026, 9, 24, 11, 0, 0)
+    _append(svc, "ABC", now-dt.timedelta(minutes=5, seconds=20), 100.0, 1000)
+    _append(svc, "ABC", now, 101.0, 1200)
+    sample = svc._sample_at("ABC", now, 300)
+    assert sample is not None
+    assert sample["price"] == 100.0
+
+
+def test_market_open_closes_exactly_at_1530():
+    from app import v123_market_stream as m
+    assert m._market_open(dt.datetime(2026, 9, 24, 15, 29, 59)) is True
+    assert m._market_open(dt.datetime(2026, 9, 24, 15, 30, 0)) is False
