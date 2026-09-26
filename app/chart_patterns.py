@@ -43,7 +43,12 @@ TF_LABEL = {"week": "Weekly", "day": "Daily", "4hour": "4H", "60minute": "1H"}
 # Weekly is slower context for a 2-10 session swing; 4H is setup maturation; 1H is
 # mainly an entry-refinement timeframe and does not inherit Daily statistics.
 TF_POINTS = {"week": 18, "day": 20, "4hour": 15, "60minute": 10}
-PIVOT_ORDER = {"week": 3, "day": 5, "4hour": 4, "60minute": 5}
+# Multi-scale pivot search. Daily is the only production pattern timeframe, but
+# three swing sensitivities are evaluated so one arbitrary pivot order cannot
+# decide whether a setup exists. The best-fitting candidate survives.
+PIVOT_ORDERS = {"week": (3,), "day": (3, 5, 8), "4hour": (4,), "60minute": (5,)}
+# Backward-compatible nominal pivot for any external diagnostics/tests.
+PIVOT_ORDER = {tf: vals[len(vals) // 2] for tf, vals in PIVOT_ORDERS.items()}
 MIN_BARS = {"week": 10, "day": 15, "4hour": 15, "60minute": 15}
 LOOKBACK_BARS = {"week": 150, "day": 260, "4hour": 200, "60minute": 220}
 
@@ -71,6 +76,15 @@ PATTERN_MATRIX = {
     "rectangle": {"day": "primary"},
     "flag": {"day": "primary"},
     "triangle": {"day": "primary"},
+}
+
+# Evidence from the 26-Sep-2026 research note warrants collecting these two
+# families, but not promoting them into the live production shortlist until our
+# own D1-D5 NSE ledger has enough resolved events. They are recorded as shadow
+# activations only and never appear in the live setup table.
+RESEARCH_SHADOW_MATRIX = {
+    "cup_handle": {"day": "shadow"},
+    "wedge": {"day": "shadow"},
 }
 
 # Global research basis. These are provenance labels, NOT grades, win rates or score inputs.
@@ -103,6 +117,14 @@ RESEARCH_BASIS = {
         "label": "LIMITED",
         "note": "Useful progressive swing structure, but direct peer-reviewed evidence is thinner than for flags/range breakouts.",
     },
+    "cup_handle": {
+        "label": "RESEARCH",
+        "note": "26-Sep-2026 NSE walk-forward study: strongest incremental bullish family versus shuffled null; shadow-only pending our D1-D5 validation.",
+    },
+    "wedge": {
+        "label": "RESEARCH",
+        "note": "26-Sep-2026 NSE walk-forward study: falling wedge showed borderline incremental structure versus shuffled null; shadow-only pending our D1-D5 validation.",
+    },
 }
 
 NSE_EVIDENCE_EARLY = 30
@@ -116,6 +138,8 @@ HORIZON = {
     "vcp": "1-5 trading days",
     "double": "1-5 trading days",
     "three_valleys": "1-5 trading days",
+    "cup_handle": "1-5 trading days (research shadow)",
+    "wedge": "1-5 trading days (research shadow)",
 }
 
 MATRIX_NOTES = {
@@ -518,6 +542,63 @@ def detect_line_patterns(fr: Frame, piv, tf):
     return best
 
 
+
+def detect_falling_wedge(fr: Frame, piv, tf):
+    """Research-only falling wedge in bullish orientation.
+
+    Both fitted boundaries slope down and converge, with the upper boundary
+    falling faster than the lower boundary. Mirroring yields the bearish rising
+    wedge. This detector is never part of PATTERN_MATRIX; it only feeds the
+    D1-D5 shadow ledger.
+    """
+    a = float(fr.atr[-1])
+    win = [p for p in piv if p[0] >= fr.n - LOOKBACK_BARS[tf] // 2]
+    best = None
+    for take in (4, 3, 2):
+        hs = [p for p in win if p[2] == "H"][-take:]
+        ls = [p for p in win if p[2] == "L"][-take:]
+        if len(hs) < 2 or len(ls) < 2 or len(hs) + len(ls) < 4:
+            continue
+        start = min(hs[0][0], ls[0][0])
+        end = max(hs[-1][0], ls[-1][0])
+        span = end - start
+        if span < MIN_BARS[tf] or fr.n - 1 - end > max(10, span // 2):
+            continue
+        up = FitLine([p[0] for p in hs], [p[1] for p in hs])
+        lo = FitLine([p[0] for p in ls], [p[1] for p in ls])
+        if up.resid > 0.7 * a or lo.resid > 0.7 * a:
+            continue
+        du, dl = up.slope * span / a, lo.slope * span / a
+        w0, w1 = up(start) - lo(start), up(end) - lo(end)
+        # Falling wedge: both lines fall; resistance falls faster; width contracts.
+        if not (du < dl < -0.15 and w0 >= 2 * a and 0 < w1 / w0 < 0.75):
+            continue
+        xs = np.arange(start, end + 1)
+        inside = fr.c[start:end + 1]
+        outside = np.sum((inside > up(xs) + 0.35 * a) | (inside < lo(xs) - 0.35 * a))
+        if outside > 2:
+            continue
+        stop = min(lo(fr.n - 1), ls[-1][1]) - 0.25 * a
+        st = _status(fr, up, end + 1, stop)
+        if not st:
+            continue
+        touches = len(hs) + len(ls)
+        convergence = 1 - min(1.0, max(0.0, w1 / w0))
+        fit = 0.5 * (1 - (up.resid + lo.resid) / (1.4 * a)) + 0.3 * min(1.0, (touches - 3) / 3) + 0.2 * convergence
+        res = {
+            "key": "wedge", "bull": "Falling Wedge", "bear": "Rising Wedge",
+            "line": up, "stop": stop, "height": w0, "start_i": start,
+            "fit": fit, **st,
+            "points": [(p[0], p[1], "") for p in hs + ls],
+            "segments": [[(start, up(start)), (fr.n - 1, up(fr.n - 1))],
+                         [(start, lo(start)), (fr.n - 1, lo(fr.n - 1))]],
+            "trigger_line": up, "trigger_from": start,
+        }
+        if best is None or res["fit"] > best["fit"]:
+            best = res
+    return best
+
+
 def detect_flag(fr: Frame, piv, tf):
     a = float(fr.atr[-1])
     max_pole = {"week": 8, "day": 15, "4hour": 15, "60minute": 20}[tf]
@@ -712,6 +793,100 @@ def _prior_trend(fr: Frame, start_i, height, kind):
     return float(prior / height)
 
 
+
+def _volatility_regime(fr: Frame):
+    """Current ATR% versus its trailing one-year (250-bar) median.
+
+    This is descriptive/research-only: it does not alter the live quality score.
+    """
+    price = np.maximum(np.abs(fr.c), 1e-9)
+    atr_pct = fr.atr / price
+    tail = atr_pct[-250:] if len(atr_pct) >= 20 else atr_pct
+    med = float(np.nanmedian(tail)) if len(tail) else 0.0
+    now = float(atr_pct[-1]) if len(atr_pct) else 0.0
+    ratio = now / med if med > 0 else None
+    if ratio is None:
+        label = "N/A"
+    elif ratio < 0.85:
+        label = "CALM"
+    elif ratio <= 1.15:
+        label = "NORMAL"
+    else:
+        label = "ELEVATED"
+    return now * 100.0, ratio, label
+
+
+def _breakout_thrust(fr: Frame, bi):
+    """No-lookahead breakout-bar force, expressed as raw components.
+
+    The combined score is for display/research only and carries zero live points.
+    """
+    if bi is None or bi < 0 or bi >= fr.n:
+        return {"score": None, "close_location": None, "body_fraction": None, "range_atr": None}
+    rng = float(fr.h[bi] - fr.l[bi])
+    atr = float(fr.atr[bi])
+    if rng <= 0 or atr <= 0:
+        return {"score": None, "close_location": None, "body_fraction": None, "range_atr": None}
+    close_location = float((fr.c[bi] - fr.l[bi]) / rng)
+    body_fraction = float(abs(fr.c[bi] - fr.o[bi]) / rng)
+    range_atr = float(rng / atr)
+    score = (
+        max(0.0, min(1.0, close_location)) +
+        max(0.0, min(1.0, body_fraction)) +
+        max(0.0, min(1.0, range_atr / 2.0))
+    ) / 3.0
+    return {
+        "score": round(score, 3),
+        "close_location": round(close_location, 3),
+        "body_fraction": round(body_fraction, 3),
+        "range_atr": round(range_atr, 3),
+    }
+
+
+def _candle_context(fr: Frame, raw):
+    """Display-only candle names near the structural pivot and at breakout.
+
+    Reuses the app's existing no-lookahead candle engine. No candle result
+    contributes to live pattern score or eligibility.
+    """
+    try:
+        from . import indicators
+        idx = pd.to_datetime(fr.t, unit="s", utc=True).tz_convert("Asia/Kolkata")
+        if fr.sign == 1:
+            o, h, l, c = fr.o, fr.h, fr.l, fr.c
+        else:
+            # Convert the mirrored bearish search frame back to real market
+            # prices before naming candles, so the UI never calls a real
+            # bearish engulfing candle "Bullish Engulfing".
+            o, h, l, c = -fr.o, -fr.l, -fr.h, -fr.c
+        df = pd.DataFrame(
+            {"open": o, "high": h, "low": l, "close": c, "volume": fr.v},
+            index=idx,
+        )
+        direction, name = indicators._compute_candle_pattern(df)
+    except Exception:
+        return {"pivot": None, "pivot_direction": None, "breakout": None, "breakout_direction": None}
+
+    points = raw.get("points") or []
+    pivot_i = max((int(p[0]) for p in points), default=int(raw.get("start_i") or 0))
+    candidates = []
+    for i in range(max(0, pivot_i - 2), min(fr.n, pivot_i + 3)):
+        nm = name.iloc[i]
+        if nm:
+            candidates.append((abs(i - pivot_i), i, nm, direction.iloc[i]))
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    pivot = candidates[0] if candidates else None
+    bi = raw.get("break_i")
+    breakout_name = name.iloc[bi] if bi is not None and 0 <= bi < fr.n else None
+    breakout_dir = direction.iloc[bi] if bi is not None and 0 <= bi < fr.n else None
+    return {
+        "pivot": pivot[2] if pivot else None,
+        "pivot_direction": pivot[3] if pivot else None,
+        "breakout": breakout_name,
+        "breakout_direction": breakout_dir,
+    }
+
+
 def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     s = fr.sign
     bull = s == 1
@@ -746,8 +921,14 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     aligned = (htf_trend == "UP" and bull) or (htf_trend == "DOWN" and not bull)
     opposed = (htf_trend == "UP" and not bull) or (htf_trend == "DOWN" and bull)
     research = RESEARCH_BASIS.get(fam, {"label": "LIMITED", "note": "NSE validation required."})
+    height_atr = float(raw["height"] / a) if a > 0 else None
+    atr_pct, regime_ratio, regime_label = _volatility_regime(fr)
+    thrust = _breakout_thrust(fr, bi)
+    candle_ctx = _candle_context(fr, raw)
+    pivot_k = int(raw.get("pivot_k") or PIVOT_ORDER.get(tf, 0))
 
-    # Global research basis and NSE outcomes are never used to manufacture the live score.
+    # Global research basis, candles and research features never manufacture the
+    # live score. They are captured so our own D1-D5 outcomes can validate them.
     # Quality is based only on the current underlying-price structure and context.
     fit_pts = 25 * max(0.0, min(1.0, raw["fit"]))
     if vol_ratio is None:
@@ -818,6 +999,21 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
         "htf_trend": htf_trend, "htf_aligned": aligned, "bars": int(bars),
         "formation_sessions": int(bars + 1), "pattern_timeframe": TF_LABEL[tf],
         "fit": round(max(0.0, min(1.0, raw["fit"])), 2),
+        "pivot_k": pivot_k,
+        "height_atr": round(height_atr, 3) if height_atr is not None else None,
+        "atr_pct": round(atr_pct, 3),
+        "volatility_regime_ratio": round(regime_ratio, 3) if regime_ratio is not None else None,
+        "volatility_regime": regime_label,
+        "breakout_thrust": thrust["score"],
+        "breakout_close_location": thrust["close_location"],
+        "breakout_body_fraction": thrust["body_fraction"],
+        "breakout_range_atr": thrust["range_atr"],
+        "candle_pivot": candle_ctx["pivot"],
+        "candle_pivot_direction": candle_ctx["pivot_direction"],
+        "candle_breakout": candle_ctx["breakout"],
+        "candle_breakout_direction": candle_ctx["breakout_direction"],
+        "candle_weight": 0.0,
+        "research_only": matrix_level == "shadow",
         "formation_start_time": int(fr.t[raw["start_i"]]),
         "bar_time": int(fr.t[last]),
         "breakout_time": int(fr.t[bi]) if bi is not None else None,
@@ -831,8 +1027,8 @@ def _package(symbol, tf, fr: Frame, raw, htf_trend, matrix_level):
     }
 
 
-def detect_all(symbol, frames: dict, tfs=None):
-    """frames: {tf: Frame}. Returns list of packaged pattern hits."""
+def _detect_matrix(symbol, frames: dict, matrix: dict, tfs=None):
+    """Run one pattern matrix across every configured pivot scale."""
     out = []
     htf_map = {"week": ("week", 40), "day": ("week", 20), "4hour": ("day", 20), "60minute": ("day", 20)}
     for tf in (tfs or TIMEFRAMES):
@@ -842,39 +1038,59 @@ def detect_all(symbol, frames: dict, tfs=None):
         hkey, hlen = htf_map[tf]
         htf = frames.get(hkey)
         trend = trend_of(htf, hlen)
-        k = PIVOT_ORDER[tf]
         for oriented in (fr, mirror(fr)):
-            piv = find_pivots(oriented.h, oriented.l, k)
-            for fam, level_map in PATTERN_MATRIX.items():
-                if tf not in level_map or fam in LINE_FAMILIES:
-                    continue
-                try:
-                    raw = DETECTORS[fam](oriented, piv, tf)
-                except Exception:  # noqa: BLE001 - one bad detector never kills the scan
-                    log.exception("detector %s failed for %s %s", fam, symbol, tf)
+            for k in PIVOT_ORDERS.get(tf, (PIVOT_ORDER[tf],)):
+                piv = find_pivots(oriented.h, oriented.l, k)
+                for fam, level_map in matrix.items():
+                    if tf not in level_map:
+                        continue
                     raw = None
-                if raw:
-                    pk = _package(symbol, tf, oriented, raw, trend, level_map[tf])
-                    if pk:
-                        out.append(pk)
-            if any(tf in PATTERN_MATRIX[f] for f in LINE_FAMILIES):
-                try:
-                    raw = detect_line_patterns(oriented, piv, tf)
-                except Exception:  # noqa: BLE001
-                    log.exception("line detector failed for %s %s", symbol, tf)
-                    raw = None
-                if raw and tf in PATTERN_MATRIX.get(raw["key"], {}):
-                    pk = _package(symbol, tf, oriented, raw, trend,
-                                  PATTERN_MATRIX[raw["key"]][tf])
-                    if pk:
-                        out.append(pk)
-    # one hit per (tf, family): keep the best-scoring direction
-    best = {}
+                    try:
+                        if fam in LINE_FAMILIES:
+                            candidate = detect_line_patterns(oriented, piv, tf)
+                            if candidate and candidate.get("key") == fam:
+                                raw = candidate
+                        elif fam == "wedge":
+                            raw = detect_falling_wedge(oriented, piv, tf)
+                        else:
+                            raw = DETECTORS[fam](oriented, piv, tf)
+                    except Exception:  # noqa: BLE001 - one detector/scale never kills scan
+                        log.exception("detector %s failed for %s %s k=%s", fam, symbol, tf, k)
+                    if raw:
+                        raw["pivot_k"] = k
+                        pk = _package(symbol, tf, oriented, raw, trend, level_map[tf])
+                        if pk:
+                            out.append(pk)
+
+    # First choose best structural fit across pivot scales for each direction.
+    by_direction = {}
     for r in out:
+        key = (r["timeframe"], r["family"], r["direction"])
+        if key not in by_direction or (r.get("fit", 0), r.get("score", 0)) > (
+            by_direction[key].get("fit", 0), by_direction[key].get("score", 0)
+        ):
+            by_direction[key] = r
+
+    # Preserve historical UI behaviour: one live row per (timeframe, family),
+    # taking the stronger direction after scale selection.
+    best = {}
+    for r in by_direction.values():
         key = (r["timeframe"], r["family"])
-        if key not in best or r["score"] > best[key]["score"]:
+        if key not in best or (r["score"], r.get("fit", 0)) > (
+            best[key]["score"], best[key].get("fit", 0)
+        ):
             best[key] = r
     return list(best.values())
+
+
+def detect_all(symbol, frames: dict, tfs=None):
+    """Production patterns only; research-shadow families are excluded."""
+    return _detect_matrix(symbol, frames, PATTERN_MATRIX, tfs=tfs)
+
+
+def detect_research_shadow(symbol, frames: dict, tfs=None):
+    """Cup/handle and wedge research candidates; never live shortlist rows."""
+    return _detect_matrix(symbol, frames, RESEARCH_SHADOW_MATRIX, tfs=tfs)
 
 
 
@@ -968,6 +1184,18 @@ def record_breakouts(ledger, rows, now_iso=None):
             "activation_state": r.get("status"), "latest_state": r.get("status"),
             "retest_time": r.get("retest_time"), "trigger": r["trigger"],
             "stop": r["stop"], "target": r["target"], "recorded_at": now_iso,
+            "research_only": bool(r.get("research_only")),
+            "pivot_k": r.get("pivot_k"), "height_atr": r.get("height_atr"),
+            "vol_ratio": r.get("vol_ratio"),
+            "volatility_regime_ratio": r.get("volatility_regime_ratio"),
+            "volatility_regime": r.get("volatility_regime"),
+            "breakout_thrust": r.get("breakout_thrust"),
+            "breakout_close_location": r.get("breakout_close_location"),
+            "breakout_body_fraction": r.get("breakout_body_fraction"),
+            "breakout_range_atr": r.get("breakout_range_atr"),
+            "candle_pivot": r.get("candle_pivot"),
+            "candle_breakout": r.get("candle_breakout"),
+            "candle_weight": 0.0,
             "outcome": "OPEN", "fast_outcome": "OPEN", "bars_seen": 0,
         }
         added += 1
@@ -1090,6 +1318,7 @@ def forward_summary(ledger=None):
         fast_wins = sum(1 for e in fast_done if e["fast_outcome"] == "SUCCESS")
         row = {
             "pattern": pattern, "direction": direction, "tf_label": "Daily",
+            "research_only": any(bool(e.get("research_only")) for e in evs),
             "events": len(evs), "resolved": len(done),
             "success_pct": round(100 * wins / len(done), 1) if done else None,
             "fast_success_pct": round(100 * fast_wins / len(fast_done), 1) if fast_done else None,
@@ -1101,12 +1330,16 @@ def forward_summary(ledger=None):
         rows.append(row)
 
     rows.sort(key=lambda r: (-r["resolved"], -r["events"], r["pattern"]))
-    total = [e for e in ledger.values() if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
-    fast_total = [e for e in ledger.values() if e.get("fast_outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    production_events = [e for e in ledger.values() if not e.get("research_only")]
+    shadow_events = [e for e in ledger.values() if e.get("research_only")]
+    total = [e for e in production_events if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    fast_total = [e for e in production_events if e.get("fast_outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    shadow_done = [e for e in shadow_events if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
     wins = sum(1 for e in total if e["outcome"] == "SUCCESS")
     fast_wins = sum(1 for e in fast_total if e["fast_outcome"] == "SUCCESS")
     return {
-        "rows": rows, "events": len(ledger), "resolved": len(total),
+        "rows": rows, "events": len(production_events), "resolved": len(total),
+        "shadow_events": len(shadow_events), "shadow_resolved": len(shadow_done),
         "success_pct": round(100 * wins / len(total), 1) if total else None,
         "fast_success_pct": round(100 * fast_wins / len(fast_total), 1) if fast_total else None,
         "rule": "+1 ATR before -0.75 ATR by D5; fast = +0.5 ATR before -0.5 ATR by D2; next-session-open entry",
@@ -1142,10 +1375,18 @@ def _save_results(payload):
 
 
 def run_scan(kite, trigger="manual"):
-    from . import scanner  # local import keeps this module testable offline
+    from . import research_runtime, scanner  # local imports keep module testable offline
+
+    # Pattern scans are heavy Kite-history users. Share the same exclusive slot
+    # as live/research jobs so the 15:45 scan cannot collide with V12/research.
+    if not research_runtime.live_scan_slot():
+        with _state_lock:
+            _state["error"] = "heavy scanner/research slot busy - will retry"
+        return False
 
     with _state_lock:
         if _state["running"]:
+            research_runtime.exit_live_scan()
             return False
         _state.update(running=True, done=0, total=0, error=None, trigger=trigger,
                       started_at=scanner.now_ist().isoformat(timespec="seconds"), finished_at=None)
@@ -1173,8 +1414,10 @@ def run_scan(kite, trigger="manual"):
                 time.sleep(throttle)
                 frames = build_frames(daily)
                 hits = detect_all(sym, frames)
+                shadow_hits = detect_research_shadow(sym, frames)
                 results.extend(hits)
                 record_breakouts(ledger, hits, now.isoformat(timespec="seconds"))
+                record_breakouts(ledger, shadow_hits, now.isoformat(timespec="seconds"))
                 update_forward(ledger, sym, frames)
             except Exception:  # noqa: BLE001
                 errors += 1
@@ -1199,6 +1442,7 @@ def run_scan(kite, trigger="manual"):
             _state["error"] = str(exc)
         return False
     finally:
+        research_runtime.exit_live_scan()
         with _state_lock:
             _state["running"] = False
             _state["finished_at"] = scanner.now_ist().isoformat(timespec="seconds")
@@ -1213,16 +1457,22 @@ def start_scan_async(kite, trigger="manual"):
 
 # Daily swing engine: one scan after the NSE cash close. Manual intraday scans use
 # the last completed Daily candle, so an unfinished candle can never repaint a setup.
-AUTO_SLOTS = [(15, 40)]
+# 15:45 IST deliberately sits after the V12 POST_CAS derivative recorder window
+# (which runs through 15:40) and after the Daily cash candle is final.
+AUTO_SLOTS = [(15, 45)]
 _scheduler_started = False
 
 
 def _scheduler_loop():
     from . import kite_auth, research_runtime, scanner
     done_slots = set()
+    active_date = None
     while True:
         try:
             now = scanner.now_ist()
+            if active_date != now.date():
+                done_slots.clear()
+                active_date = now.date()
             if now.weekday() < 5:
                 for hh, mm in AUTO_SLOTS:
                     key = (now.date(), hh, mm)
@@ -1231,12 +1481,15 @@ def _scheduler_loop():
                         kite = kite_auth.get_kite_client()
                         if kite is None or research_runtime.is_research_active():
                             continue
-                        done_slots.add(key)
-                        # skip earlier slots already superseded on a late boot
-                        for h2, m2 in AUTO_SLOTS:
-                            if (h2, m2) < (hh, mm):
-                                done_slots.add((now.date(), h2, m2))
-                        run_scan(kite, trigger=f"auto {hh:02d}:{mm:02d}")
+                        # Mark complete only after a successful scan. A busy heavy
+                        # slot or transient abort therefore retries next minute.
+                        ok = run_scan(kite, trigger=f"auto {hh:02d}:{mm:02d}")
+                        if ok:
+                            done_slots.add(key)
+                            # skip earlier slots already superseded on a late boot
+                            for h2, m2 in AUTO_SLOTS:
+                                if (h2, m2) < (hh, mm):
+                                    done_slots.add((now.date(), h2, m2))
         except Exception:  # noqa: BLE001
             log.exception("pattern scheduler iteration failed")
         time.sleep(60)

@@ -97,6 +97,7 @@
   .basis.DIRECT { background:rgba(46,204,113,.12); color:var(--green); }
   .basis.MECHANISM { background:rgba(59,130,246,.14); color:#93c5fd; }
   .basis.LIMITED { background:rgba(148,163,184,.14); color:#cbd5e1; }
+  .basis.RESEARCH { background:rgba(167,139,250,.14); color:var(--violet); }
   .fwd { margin-top: 14px; }
   .fwd-head { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
   .fwd-head h3 { margin: 0; font-size: 15px; }
@@ -178,7 +179,7 @@
     <summary>Core swing structures - why these six are kept</summary>
     <div class="guide-body">
       <p><b>Daily is the only pattern engine.</b> Weekly is context only. The scanner keeps six fast-swing structures: VCP/Tight Base, Rectangle/Flat Base, Flag/Pennant, Ascending/Descending Triangle, Double Top/Bottom, and Three Rising Valleys/Falling Peaks.</p>
-      <p><b>Pattern timeframe is Daily.</b> Weekly is context only. <b>Global research basis</b> describes outside research support; <b>NSE evidence</b> is built only from our own next-session-open D1-D5 outcomes. Neither changes the live quality score.</p>
+      <p><b>Pattern timeframe is Daily.</b> Weekly is context only. Daily pivots are now checked at <b>k=3/5/8</b> and the best structural fit is retained. <b>Global research basis</b> describes outside research support; <b>NSE evidence</b> is built only from our own next-session-open D1-D5 outcomes. Height/ATR, breakout volume, volatility regime, breakout thrust and candlestick names are captured as research features; they do not add live score points until our own D1-D5 evidence validates them.</p>
       <table class="matrix" id="matrix"></table>
     </div>
   </details>
@@ -237,7 +238,7 @@
         </div>
         <ul class="checks" id="p-checks"></ul>
         <div class="breakdown" id="p-breakdown"></div>
-        <div class="note">Pattern TF = Daily. Formation length = completed trading sessions used by the detected structure. Weekly is context only. NSE D1-D5 outcomes are the evidence layer.</div>
+        <div class="note">Pattern TF = Daily. Formation length = completed trading sessions used by the detected structure. Weekly is context only. The visible Quality breakdown remains the legacy structural score; new research features carry zero live points until D1-D5 validation is mature.</div>
         <div class="panel-foot"><a id="p-chart" href="#">Open full chart →</a></div>
       </div>
     </div>
@@ -280,7 +281,8 @@ async function load() {
 
 function renderForward(f) {
   const rows = f.rows || [];
-  $('fwd-meta').textContent = (f.events || 0) + ' activations · ' + (f.resolved || 0) + ' D5 resolved' +
+  $('fwd-meta').textContent = (f.events || 0) + ' production activations · ' + (f.resolved || 0) + ' D5 resolved' +
+    ((f.shadow_events || 0) ? ' · research shadow ' + f.shadow_events + ' (' + (f.shadow_resolved || 0) + ' resolved)' : '') +
     (f.fast_success_pct !== null && f.fast_success_pct !== undefined ? ' · fast ' + fmt(f.fast_success_pct, 1) + '%' : '') +
     (f.success_pct !== null && f.success_pct !== undefined ? ' · swing ' + fmt(f.success_pct, 1) + '%' : '') +
     ' · ' + (f.rule || '') + ' · trust pattern rows after ~100 resolved';
@@ -288,7 +290,7 @@ function renderForward(f) {
   $('fwd-rows').innerHTML = rows.map((r) => {
     const fast = r.fast_success_pct === null || r.fast_success_pct === undefined ? '—' : fmt(r.fast_success_pct, 1) + '%';
     const swing = r.success_pct === null || r.success_pct === undefined ? '—' : fmt(r.success_pct, 1) + '%';
-    return '<tr><td class="pat">' + esc(r.pattern) + '</td><td><span class="chip ' + r.direction + '">' +
+    return '<tr><td class="pat">' + esc(r.pattern) + (r.research_only ? ' <span class="basis RESEARCH">SHADOW</span>' : '') + '</td><td><span class="chip ' + r.direction + '">' +
       (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
       '<td class="num">' + r.events + '</td><td class="num">' + r.resolved + '</td>' +
       [1,2,3,4,5].map((d) => '<td class="num">' + fmt(r['median_mfe_d' + d]) + '</td>').join('') +
@@ -411,6 +413,14 @@ async function select(id) {
     ['NSE D1-D5 evidence', ne.stage === 'MATURE' ? 'ok-y' : 'ok-m', nseText],
     ['Prior trend', d.prior_trend >= 1 ? 'ok-y' : d.prior_trend >= 0.5 ? 'ok-m' : 'ok-n', fmt(d.prior_trend, 2) + '× pattern height ' + (d.kind === 'reversal' ? 'against' : 'with') + ' the break'],
     ['Volume', volCls, (d.vol_ratio === null ? 'n/a (index)' : fmt(d.vol_ratio, 2) + '× avg') + ' · ' + d.vol_note],
+    ['Pivot scale', 'ok-m', 'k=' + (d.pivot_k ?? '—') + ' · Daily candidates 3/5/8 · best fit retained'],
+    ['Pattern height', d.height_atr >= 2 ? 'ok-y' : 'ok-m', fmt(d.height_atr, 2) + ' ATR · research feature, 0 live points'],
+    ['Volatility regime', d.volatility_regime === 'CALM' ? 'ok-y' : d.volatility_regime === 'ELEVATED' ? 'ok-n' : 'ok-m',
+      (d.volatility_regime || 'N/A') + (d.volatility_regime_ratio == null ? '' : ' · ' + fmt(d.volatility_regime_ratio, 2) + '× 250D median ATR%') + ' · research feature'],
+    ['Breakout thrust', 'ok-m', d.breakout_thrust == null ? 'not activated yet' :
+      'score ' + fmt(d.breakout_thrust, 2) + ' · close ' + fmt((d.breakout_close_location || 0) * 100, 0) + '% · body ' +
+      fmt((d.breakout_body_fraction || 0) * 100, 0) + '% · range ' + fmt(d.breakout_range_atr, 2) + ' ATR · research only'],
+    ['Candles', 'ok-m', ((d.candle_pivot || 'none near pivot') + ' / ' + (d.candle_breakout || 'none on breakout')) + ' · display only · 0 score weight'],
     ['Weekly context', d.htf_aligned ? 'ok-y' : (d.htf_trend === 'NEUTRAL' ? 'ok-m' : 'ok-n'), d.htf_trend + (d.htf_aligned ? ' - aligned' : '')],
     ['Geometry fit', d.fit >= 0.65 ? 'ok-y' : d.fit >= 0.4 ? 'ok-m' : 'ok-n', Math.round(d.fit * 100) + '%'],
     ['Distance to trigger', (d.status === 'EXTENDED' || d.status === 'FAILED') ? 'ok-n' : 'ok-y', (d.dist_atr > 0 ? fmt(d.dist_atr) + ' ATR to go' : fmt(-d.dist_atr) + ' ATR past') + ' (ATR ' + fmt(d.atr) + ')'],
