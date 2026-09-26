@@ -1562,6 +1562,14 @@ div.card:has(> #early-radar-card) { display:none !important; }
     function setText(id,value){var el=document.getElementById(id);if(el)el.textContent=value;}
     function action(row){
       var st=String(row.lifecycle||'DISCOVERED').toUpperCase();
+      var zone=String(((row||{}).entry_zone||{}).state||'').toUpperCase();
+      if(['DISCOVERED','BUILDING','READY','REENTRY_READY','PULLBACK','WEAKENING'].indexOf(st)>=0){
+        if(zone==='APPROACHING') return 'Approaching trigger — prepare, do not chase';
+        if(zone==='IN_ZONE') return 'In entry zone — act only within the defined zone';
+        if(zone==='EXTENDED') return 'Extended — wait for retest / fresh structure';
+        if(zone==='WATCH') return 'Watch — price not yet close enough to trigger';
+        if(zone==='INVALID') return 'Entry structure invalid — wait for a new setup';
+      }
       var map={
         'DISCOVERED':'Observing the underlying',
         'BUILDING':'Wait for exact price structure',
@@ -1605,6 +1613,11 @@ div.card:has(> #early-radar-card) { display:none !important; }
       var window=String(row.execution_window_state||v.execution_window_state||(v.execution_window_open?'OPEN':'CLOSED')).toUpperCase();
       var fresh=row.fresh_entry_gate;
       var freshReason=String(row.fresh_entry_reason||'');
+      var zoneObj=row.entry_zone||{};
+      var zoneState=String(zoneObj.state||'UNAVAILABLE').toUpperCase();
+      var zoneDistance=Number(zoneObj.distance_atr);
+      var maxOptionPay=Number(row.max_option_entry_price);
+      var signalAge=Number(row.signal_age_seconds);
       var freshLine=fresh===false
         ? '<div class="focus-fresh wait">Fresh-entry gate: waiting for new structure / re-arm evidence</div>'
         : (freshReason && freshReason!=='OPEN_EPISODE_OR_FIRST_SIGNAL'
@@ -1626,18 +1639,22 @@ div.card:has(> #early-radar-card) { display:none !important; }
         '<span class="focus-life">'+v12Esc(String(row.lifecycle||'').replaceAll('_',' '))+'</span></div>' +
         '<div class="focus-action">'+v12Esc(action(row))+'</div>' +
         '<div class="focus-card-grid">' +
-          '<div class="focus-mini"><span class="label">Underlying</span><span class="value">CMP '+n(row.live_price,2)+'</span><span class="subvalue">'+
+          '<div class="focus-mini"><span class="label">Underlying / Entry zone</span><span class="value">CMP '+n(row.live_price,2)+' · '+v12Esc(zoneState.replaceAll('_',' '))+'</span><span class="subvalue">'+
             (row.trigger!=null?'Trigger '+n(row.trigger,2):'Trigger forming')+
-            (Number.isFinite(triggerAtr)?' · Δ '+s(triggerAtr,2)+' ATR':'')+
-            (row.invalidation!=null?' · invalid '+n(row.invalidation,2):'')+'</span></div>'+
+            (Number.isFinite(zoneDistance)?' · Δ '+s(zoneDistance,2)+' ATR':'')+
+            (row.invalidation!=null?' · invalid '+n(row.invalidation,2):'')+
+            (Number.isFinite(signalAge)?' · signal '+n(signalAge,0)+'s':'')+'</span></div>'+
           '<div class="focus-mini"><span class="label">Execution</span><span class="value">Route '+v12Esc(route)+' · '+v12Esc(window)+'</span><span class="subvalue">'+
-            v12Esc(optionContract)+(row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+'</span></div>'+
+            v12Esc(optionContract)+(row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
+            (Number.isFinite(maxOptionPay)?' · max pay '+n(maxOptionPay,2):'')+'</span></div>'+
           '<div class="focus-mini"><span class="label">Context</span><span class="value">5m '+v12Esc(witness)+'</span><span class="subvalue">'+
             v12Esc(row.event_family||'UNDERLYING EVENT')+
             (row.relative_5m_vs_nifty_pct!=null?' · Rel '+s(row.relative_5m_vs_nifty_pct,2)+'%':'')+
             (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
         '</div>'+
-        '<div class="focus-vehicles">'+vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
+        '<div class="focus-vehicles">'+
+          '<span class="focus-vehicle'+(zoneState==='IN_ZONE'?' good':(zoneState==='EXTENDED'||zoneState==='INVALID'?' bad':' warn'))+'">ZONE '+v12Esc(zoneState.replaceAll('_',' '))+'</span>'+
+          vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
           (v.execution_window_open?'<span class="focus-vehicle good">ENTRY WINDOW '+v12Esc(window)+'</span>':'')+
           '<span class="focus-vehicle'+(witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn'))+'">5m '+v12Esc(witness)+'</span>'+
           (route!=='WAIT'?'<span class="focus-vehicle'+(route==='HEALTHY'?' good':(route==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(route)+'</span>':'')+
