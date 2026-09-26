@@ -563,6 +563,108 @@ class TacticalStockStreamService:
             "event_family": str(candidate.get("focus_event_family") or ""),
         }
 
+    @staticmethod
+    def _session_allows_new_entry(now):
+        second = now.hour * 3600 + now.minute * 60 + now.second
+        return second < NEW_ENTRY_CUTOFF_SECONDS
+
+    @staticmethod
+    def _cancel_cooldown_allowed(life, setup, candidate, live_price, now):
+        cancelled_at = life.get("last_cancelled_at")
+        if not isinstance(cancelled_at, dt.datetime):
+            return True, "NO_CANCEL_COOLDOWN"
+        age = max(0.0, (now - cancelled_at).total_seconds())
+        if age >= CANCEL_REARM_COOLDOWN_SECONDS:
+            return True, "CANCEL_COOLDOWN_EXPIRED"
+        direction = str(setup.get("direction") or candidate.get("direction") or "")
+        if direction and direction != str(life.get("last_cancelled_direction") or direction):
+            return True, "DIRECTION_CHANGED"
+        atr = _f(life.get("last_cancelled_atr"), _f(candidate.get("atr")))
+        cancel_price = _f(life.get("last_cancelled_price"))
+        if atr and atr > 0 and live_price is not None and cancel_price is not None:
+            if abs(float(live_price) - cancel_price) / atr >= 0.20:
+                return True, "PRICE_RESET_GE_0_20_ATR"
+        return False, f"CANCEL_COOLDOWN_{int(CANCEL_REARM_COOLDOWN_SECONDS - age)}S_REMAIN"
+
+    def _stabilize_tactical_state(self, life, raw_state, *, now, stale, live_price, candidate):
+        """Hold feed gaps and soft deteriorations without delaying hard exits."""
+        raw_state = dict(raw_state or {})
+        prior = str(life.get("last_valid_tactical_state") or "")
+
+        if stale:
+            if not isinstance(life.get("stale_since"), dt.datetime):
+                life["stale_since"] = now
+            stale_for = max(0.0, (now - life["stale_since"]).total_seconds())
+            if stale_for >= STALE_VOID_SECONDS:
+                life["shadow_void_reason"] = "STALE_GT_60S"
+            held = prior or "FORMING"
+            return {
+                "state": held,
+                "tradeable": False,
+                "reason": "DATA HOLD — deep tactical feed stale; last valid state retained",
+                "data_ok": False,
+                "data_status": "STALE",
+                "stale_seconds": round(stale_for, 1),
+                "held_state": held,
+                "execution_paused": True,
+            }
+
+        life.pop("stale_since", None)
+        raw_state["data_ok"] = True
+        raw_state["data_status"] = "LIVE"
+        state_name = str(raw_state.get("state") or "FORMING")
+        reason = str(raw_state.get("reason") or "")
+
+        # Hard events are immediate: structural/time exits, fast-veto cancels,
+        # hard route blocks and profit-protection management must not wait.
+        hard = state_name in ("EXIT", "TIME_EXIT", "PROFIT_PROTECT", "BLOCKED_EXPOSURE")
+        if state_name == "CANCELLED" and "persistent futures depth opposes" not in reason.lower():
+            hard = True
+        if state_name in ("OPTION_NOT_TRADEABLE",) and "no valid option expiry" in reason.lower():
+            hard = True
+
+        soft_deterioration = bool(
+            prior in ("READY", "TRIGGERED", "TRADEABLE", "PROFIT_PROTECT")
+            and state_name in ("FORMING", "CANCELLED", "OPTION_NOT_TRADEABLE", "ROUTE_DEGRADED")
+            and not hard
+        )
+
+        if soft_deterioration:
+            pending_key = state_name + "|" + reason
+            if life.get("soft_pending_key") != pending_key:
+                life["soft_pending_key"] = pending_key
+                life["soft_pending_since"] = now
+            pending_since = life.get("soft_pending_since")
+            elapsed = (now - pending_since).total_seconds() if isinstance(pending_since, dt.datetime) else 0.0
+            if elapsed < SOFT_STATE_DWELL_SECONDS:
+                held = prior or state_name
+                return {
+                    "state": held,
+                    "tradeable": False,
+                    "reason": f"EXECUTION PAUSE — {reason or state_name}; confirming for {SOFT_STATE_DWELL_SECONDS:.0f}s",
+                    "data_ok": True,
+                    "data_status": "LIVE",
+                    "soft_hold": True,
+                    "soft_pending_state": state_name,
+                    "soft_pending_seconds": round(elapsed, 1),
+                    "execution_paused": True,
+                }
+        else:
+            life.pop("soft_pending_key", None)
+            life.pop("soft_pending_since", None)
+
+        # Accept the raw state after any required dwell.
+        life["last_valid_tactical_state"] = state_name
+        life["last_valid_tactical_reason"] = reason
+        life.pop("soft_pending_key", None)
+        life.pop("soft_pending_since", None)
+        if state_name == "CANCELLED":
+            life["last_cancelled_at"] = now
+            life["last_cancelled_price"] = _f(live_price)
+            life["last_cancelled_direction"] = str(candidate.get("direction") or "")
+            life["last_cancelled_atr"] = _f(candidate.get("atr"))
+        return raw_state
+
     def _fresh_episode_allowed(self, life, setup, candidate, live_price, now):
         """Require genuinely new market information after an episode closes.
 
