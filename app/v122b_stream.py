@@ -1339,7 +1339,7 @@ class TacticalStockStreamService:
                 persistence=persistence, fast=fast, stale=stale, rvol3=rvol3,
                 rvol3_accel=rvol3_accel, relative3=relative3, five_minute=five_minute,
                 cash_age=cash_age, fut_age=fut_age,
-                force_close=state.get("state") in ("EXIT", "TIME_EXIT"),
+                force_close=state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"),
             )
 
             payload = {
