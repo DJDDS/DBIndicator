@@ -1330,12 +1330,16 @@ def forward_summary(ledger=None):
         rows.append(row)
 
     rows.sort(key=lambda r: (-r["resolved"], -r["events"], r["pattern"]))
-    total = [e for e in ledger.values() if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
-    fast_total = [e for e in ledger.values() if e.get("fast_outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    production_events = [e for e in ledger.values() if not e.get("research_only")]
+    shadow_events = [e for e in ledger.values() if e.get("research_only")]
+    total = [e for e in production_events if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    fast_total = [e for e in production_events if e.get("fast_outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
+    shadow_done = [e for e in shadow_events if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
     wins = sum(1 for e in total if e["outcome"] == "SUCCESS")
     fast_wins = sum(1 for e in fast_total if e["fast_outcome"] == "SUCCESS")
     return {
-        "rows": rows, "events": len(ledger), "resolved": len(total),
+        "rows": rows, "events": len(production_events), "resolved": len(total),
+        "shadow_events": len(shadow_events), "shadow_resolved": len(shadow_done),
         "success_pct": round(100 * wins / len(total), 1) if total else None,
         "fast_success_pct": round(100 * fast_wins / len(fast_total), 1) if fast_total else None,
         "rule": "+1 ATR before -0.75 ATR by D5; fast = +0.5 ATR before -0.5 ATR by D2; next-session-open entry",
