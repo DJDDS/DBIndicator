@@ -23,6 +23,12 @@ from typing import Callable
 from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical
 
 
+SOFT_STATE_DWELL_SECONDS = 20.0
+CANCEL_REARM_COOLDOWN_SECONDS = 180.0
+STALE_VOID_SECONDS = 60.0
+NEW_ENTRY_CUTOFF_SECONDS = 15 * 3600 + 25 * 60
+
+
 def _f(v, default=None):
     try:
         x = float(v)
@@ -58,8 +64,8 @@ def _reactor_getter():
 def _market_open(now):
     if now.weekday() >= 5:
         return False
-    minute = now.hour * 60 + now.minute
-    return 9 * 60 + 15 <= minute <= 15 * 60 + 30
+    second = now.hour * 3600 + now.minute * 60 + now.second
+    return 9 * 3600 + 15 * 60 <= second < 15 * 3600 + 30 * 60
 
 
 def _iso(now):
@@ -139,6 +145,8 @@ class TacticalStockStreamService:
         self._basis_samples = defaultdict(lambda: deque(maxlen=180))
         self._lifecycle = {}
         self._last_states = {}
+        self._transition_ids = set()
+        self._transition_seq = 0
         self._snapshot = {
             "status": "WAITING",
             "validation_label": "INTERIM / NOT VALIDATED",
@@ -212,6 +220,10 @@ class TacticalStockStreamService:
             "shadow_path_length_abs",
             "shadow_last_path_price",
             "shadow_direction_mismatch_seen",
+            "shadow_t0_recorded",
+            "shadow_missed_milestones",
+            "shadow_barrier_hits",
+            "shadow_void_reason",
             "plan_option_contract",
             "plan_option_entry_mid",
             "plan_option_entry_delta",
@@ -242,6 +254,8 @@ class TacticalStockStreamService:
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
             self._lifecycle = {}
             self._last_states = {}
+            self._transition_ids = set()
+            self._transition_seq = 0
             self._seeded = set()
             self._universe_signature = None
             self._last_tick_at = None
