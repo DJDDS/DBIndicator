@@ -33,6 +33,7 @@ from . import scanner, v123_state
 SAMPLE_SECONDS = 5
 MAX_SAMPLE_MINUTES = 45
 PUBLISH_SECONDS = 2
+MAX_LOOKBACK_LAG_SECONDS = 45
 MAX_DISCOVERY_EVENTS = 30
 MAX_MOVER_ROWS = 30
 
@@ -63,8 +64,8 @@ def _iso(value):
 def _market_open(now):
     if now.weekday() >= 5:
         return False
-    minute = now.hour * 60 + now.minute
-    return 9 * 60 + 15 <= minute <= 15 * 60 + 30
+    second = now.hour * 3600 + now.minute * 60 + now.second
+    return 9 * 3600 + 15 * 60 <= second < 15 * 3600 + 30 * 60
 
 
 def _ticker_factory(api_key, access_token):
@@ -267,7 +268,7 @@ class UniverseMomentumStreamService:
         self._samples[symbol].append(sample)
         self._last_sample_at[symbol] = now
 
-    def _sample_at(self, symbol, now, seconds):
+    def _sample_at(self, symbol, now, seconds, *, max_lag_seconds=MAX_LOOKBACK_LAG_SECONDS):
         target = now - dt.timedelta(seconds=seconds)
         rows = self._samples.get(symbol) or ()
         best = None
@@ -275,6 +276,14 @@ class UniverseMomentumStreamService:
             if sample["ts"] <= target:
                 best = sample
                 break
+        if best is None:
+            return None
+        # Never reuse an arbitrarily old sample for several lookback windows
+        # after a restart/data gap.  If the requested timestamp is not
+        # represented closely enough, the feature is unavailable.
+        lag = (target - best["ts"]).total_seconds()
+        if lag < 0 or lag > float(max_lag_seconds):
+            return None
         return best
 
     def _return(self, symbol, now, seconds):
@@ -500,7 +509,7 @@ class UniverseMomentumStreamService:
         if rel5 is not None and sign * rel5 < 0.08:
             failed.append("relative 5m < 0.08%")
         if day is not None and sign * day < 0.75:
-            failed.append("day move < 0.75%")
+            failed.append(f"direction-aligned day move {sign * day:.2f}% < 0.75%")
         if r3 is None or sign * r3 < 0.10:
             failed.append("3m continuation < 0.10%")
         if r10 is None or sign * r10 < 0.35:
