@@ -38,6 +38,9 @@ jobs:
       - name: Run Phase A security regression tests
         run: PYTHONPATH=. pytest -q tests/test_security_phase_a.py
 
+      - name: Run complete DBIndicator regression suite
+        run: PYTHONPATH=. pytest -q
+
       - name: Audit pinned Python dependencies
         # KiteConnect currently pins autobahn[twisted]==19.11.2 exactly. The two
         # Autobahn advisories are tracked as a temporary upstream exception;
