@@ -120,8 +120,8 @@ class LocalLinearTrend:
 
         x_pred = F @ x
         P_pred = F @ self.covariance @ F.T + Q
-        innovation = y - float(H @ x_pred)
-        S = float(H @ P_pred @ H.T) + max(self.obs_var, 1e-10)
+        innovation = y - float((H @ x_pred).item())
+        S = float((H @ P_pred @ H.T).item()) + max(self.obs_var, 1e-10)
         K = (P_pred @ H.T / S).reshape(2)
         x_new = x_pred + K * innovation
         P_new = (np.eye(2) - np.outer(K, H.reshape(2))) @ P_pred
