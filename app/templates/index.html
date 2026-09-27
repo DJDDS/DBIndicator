@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="legacy-research-provenance" content="Early Radar; Shadow Early Radar; Energy Building; RESEARCH / SHADOW">
 <title>Scanner Dashboard</title>
 <style>
@@ -529,6 +529,286 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-note-links a{text-decoration:none}
 @media(max-width:1050px){.focus-kpis{grid-template-columns:repeat(3,1fr)}.focus-workspace{grid-template-columns:1fr}.focus-sidebar{border-left:0;border-top:1px solid #21303d}.focus-card-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:720px){.focus-kpis{grid-template-columns:repeat(2,1fr)}.focus-card-grid{grid-template-columns:1fr}.focus-math-grid{grid-template-columns:repeat(3,1fr)}.focus-audit-grid{grid-template-columns:1fr}.focus-audit-pane+.focus-audit-pane{border-left:0;border-top:1px solid #21303d}.focus-pro .focus-note{align-items:flex-start;flex-direction:column}}
+
+
+/* MOBILE-RESPONSIVE-2026-09-27: presentation only; no scanner/research logic */
+html { -webkit-text-size-adjust: 100%; }
+body { min-width: 0; overflow-x: hidden; }
+.table-scroll, .scan-failure-body { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+button, a, summary, input, select { touch-action: manipulation; }
+
+@media (max-width: 720px) {
+  body { font-size: 14px; }
+
+  header {
+    padding: 10px max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left));
+    align-items: flex-start;
+    gap: 7px;
+  }
+  header .brand {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+  header h1 { font-size: 15px; line-height: 1.25; }
+  header .tagline { font-size: 10.5px; line-height: 1.35; white-space: normal; }
+  header .hdr-right {
+    width: 100%;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 7px;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  header .hdr-right::-webkit-scrollbar { display: none; }
+  header nav {
+    order: -1;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+  header nav a {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 10px;
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+  .hdr-pill, .alert-toggle-wrap {
+    flex: 0 0 auto;
+    min-height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0 8px;
+    background: #0b1018;
+  }
+  .hdr-pill {
+    font-size: 10px;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .alert-toggle-label { font-size: 10px; }
+
+  .wrap {
+    padding: 10px max(8px, env(safe-area-inset-right)) 24px max(8px, env(safe-area-inset-left));
+  }
+  .card { padding: 12px; margin-bottom: 10px; border-radius: 10px; }
+  .card h2 { font-size: 13px; line-height: 1.35; }
+  .card h2 .sub {
+    display: block;
+    margin: 4px 0 0;
+    font-size: 10.5px;
+    line-height: 1.4;
+  }
+  .warn { padding: 10px 11px; font-size: 12px; }
+
+  .toolbar {
+    position: static;
+    padding: 8px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+  }
+  .toolbar-row {
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .toolbar-row::-webkit-scrollbar { display: none; }
+  .tb-status { flex: 0 0 auto; margin-left: 0; font-size: 10.5px; }
+  .tb-timeframe-form { flex: 0 0 auto; }
+  .pill-chk span, .tb-btn, .tb-clear, .tb-timeframe-form select { min-height: 38px; }
+  .pill-chk span, .tb-btn { display: inline-flex; align-items: center; }
+
+  .qs-popover { margin-left: 0; }
+  .qs-popover-body {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    top: 84px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .quick-settings-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .qs-field select, .qs-field input[type="number"], .qs-apply-btn {
+    min-height: 42px;
+    font-size: 16px;
+  }
+  .qs-field input[type="number"] { width: 100%; }
+  .qs-apply-btn { grid-column: 1 / -1; }
+
+  .table-card-head { padding: 10px 12px; }
+  .table-scroll { max-width: 100%; overflow-x: auto; }
+  table { min-width: 780px; font-size: 11.5px; }
+  th { font-size: 10px; }
+  td { padding: 7px 8px; }
+  tr.filter-row input, tr.filter-row select { font-size: 16px; min-height: 40px; }
+
+  .focus-desk { margin: 10px 0 12px; border-radius: 10px; }
+  .focus-head, .focus-pro .focus-head {
+    padding: 13px 12px;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .focus-pro .focus-head h2 { font-size: 19px; }
+  .focus-kicker { font-size: 9.5px; line-height: 1.4; }
+  .focus-sub { font-size: 11.5px; line-height: 1.55; }
+  .focus-status {
+    align-self: flex-start;
+    font-size: 10px;
+    padding: 5px 8px;
+    white-space: normal;
+  }
+  .focus-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 9px;
+  }
+  .focus-kpi { padding: 9px; }
+  .focus-kpi span { font-size: 9.5px; }
+  .focus-kpi strong { font-size: 16px; }
+  .focus-kpi small { font-size: 9.5px; white-space: normal; line-height: 1.3; }
+  .focus-primary, .focus-sidebar, .focus-audit-pane, .focus-pane { padding: 11px; }
+  .focus-section-head { align-items: flex-end; }
+  .focus-section-head h3, .focus-audit-pane h3 { font-size: 10.5px; }
+  .focus-section-head span { font-size: 9.5px; text-align: right; }
+  .focus-pro .focus-row { padding: 11px; border-radius: 9px; }
+  .focus-pro .focus-symbol { font-size: 17px; }
+  .focus-pro .focus-action { font-size: 12px; line-height: 1.4; }
+  .focus-meta { font-size: 10.5px; line-height: 1.55; }
+  .focus-vehicle { font-size: 9.5px; padding: 4px 6px; }
+  .focus-history { font-size: 9.5px; }
+  .focus-card-grid { grid-template-columns: 1fr; gap: 6px; }
+  .focus-mini { padding: 9px; }
+  .focus-mini .label { font-size: 9px; }
+  .focus-mini .value { font-size: 11.5px; }
+  .focus-mini .subvalue { font-size: 9.5px; }
+  .focus-math-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .focus-math-head { align-items: flex-start; }
+  .focus-math-head strong { font-size: 9px; }
+  .focus-math-head span { font-size: 8.5px; text-align: right; }
+  .focus-math-cell span, .focus-risk-cell span { font-size: 8.5px; }
+  .focus-math-cell b, .focus-risk-cell b { font-size: 11px; }
+  .focus-risk-grid { grid-template-columns: repeat(2, 1fr); }
+  .focus-risk-cell small { font-size: 8.5px; }
+  .focus-note, .focus-pro .focus-note { padding: 10px 11px; font-size: 10.5px; }
+  .focus-note-links { width: 100%; white-space: normal; gap: 6px; }
+  .focus-note-links a {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    padding: 5px 7px;
+    border: 1px solid #263746;
+    border-radius: 6px;
+  }
+  .focus-miss, .focus-pro .focus-miss {
+    grid-template-columns: minmax(82px, .8fr) 58px minmax(0, 1.5fr);
+    font-size: 9.5px;
+  }
+
+  .v12-head { gap: 8px; }
+  .v12-kicker { font-size: 9.5px; line-height: 1.4; }
+  .v12-lock { font-size: 9.5px; white-space: normal; line-height: 1.35; }
+  .v12-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .v12-metric { padding: 8px; }
+  .v12-metric span { font-size: 9.5px; line-height: 1.25; }
+  .v12-metric strong { font-size: 12px; overflow-wrap: anywhere; }
+  .v12-note, .v12-links { font-size: 10.5px; }
+  .v12-links a, .v12-links button {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .v12-row .sym { font-size: 14px; }
+  .v12-row .state { font-size: 9.5px; }
+  .v12-row .detail { font-size: 11px; }
+
+  .v8-console-head { padding: 12px; }
+  .v8-console h2 { font-size: 15px; }
+  .v8-tabs { width: 100%; }
+  .v8-tab { min-height: 40px; flex: 1; }
+  .v8-metric { padding: 10px; }
+  .v8-metric-label { font-size: 9.5px; }
+  .v8-metric-value { font-size: 13px; }
+  .lms-head, .lor-head { align-items: flex-start; flex-direction: column; }
+  .live-market-state, .lor-head, .lor-side { padding-left: 11px; padding-right: 11px; }
+  .lms-title, .lor-kicker { font-size: 10.5px; line-height: 1.4; }
+  .lms-label { font-size: 9.5px; }
+  .lms-value { font-size: 10.5px; }
+  .lor-sub { font-size: 10.5px; }
+  .lor-card {
+    grid-template-columns: 22px minmax(92px, 1fr) auto;
+    gap: 7px;
+    padding: 10px;
+  }
+  .lor-evidence { grid-column: 2 / -1; }
+  .lor-symbol a { font-size: 13px; }
+  .lor-symbol small { font-size: 9.5px; }
+  .lor-metrics { font-size: 9.5px; }
+  .lor-reason { font-size: 9px; padding: 3px 5px; }
+  .lor-score strong { font-size: 16px; }
+  .lor-score span { font-size: 8.5px; }
+  .lor-note, .lor-forward, .v8-method {
+    font-size: 10px;
+    line-height: 1.5;
+    padding-left: 11px;
+    padding-right: 11px;
+  }
+  .v8-side { padding: 11px; }
+  .v8-side-head {
+    font-size: 10.5px;
+    align-items: flex-start;
+    gap: 6px;
+    flex-direction: column;
+  }
+  .v8-side-head span { font-size: 9.5px; }
+  .v8-symbol a { font-size: 13px; }
+  .v8-symbol .v8-meta { font-size: 9.5px; }
+  .v8-component-top { font-size: 9px; }
+  .v8-state, .v8-reason { font-size: 9px; }
+  .v82-option { grid-template-columns: 1fr 1fr; grid-column: 2 / -1; }
+  .v82-option-action { grid-column: 1 / -1; }
+  .v82-option-value { font-size: 10.5px; }
+
+  .scan-failure-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    font-size: 10.5px;
+  }
+  .scan-failure-summary button { min-height: 36px; font-size: 10.5px; }
+
+  #toast-wrap {
+    left: 8px;
+    right: 8px;
+    top: max(8px, env(safe-area-inset-top));
+    max-width: none;
+  }
+  .toast { font-size: 12px; }
+}
+
+@media (max-width: 390px) {
+  .quick-settings-form { grid-template-columns: 1fr; }
+  .qs-apply-btn { grid-column: 1; }
+  .focus-miss, .focus-pro .focus-miss { grid-template-columns: 1fr auto; }
+  .focus-miss > :last-child { grid-column: 1 / -1; }
+}
 
 </style>
 </head>
