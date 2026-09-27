@@ -24,6 +24,7 @@ _ALLOWED_TOP_LEVEL = {
     "TRIAL25_STAGE_D_RELEASE.md",
     "RESEARCH_BUILD.txt",
     "PRODUCTION_BUILD.txt",
+    "SECURITY_PHASE_A.md",
 }
 
 
