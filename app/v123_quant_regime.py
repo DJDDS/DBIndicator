@@ -390,6 +390,36 @@ class GaussianRegimeHMM:
         if any(x is None for x in (self.means, self.variances, self.transition, self.initial)):
             raise RuntimeError("regime model is not fitted")
 
+    def filter_step(self, row: Sequence[float], posterior=None) -> tuple[dict, np.ndarray]:
+        """One causal filtering step, optionally continuing a symbol posterior."""
+        self._require_fit()
+        obs = np.asarray(row, dtype=float).reshape(1, -1)
+        if obs.shape[1] != self.means.shape[1]:
+            raise ValueError("feature dimension mismatch")
+        if posterior is None:
+            prior_state = np.asarray(self.initial, dtype=float)
+        else:
+            prior_state = np.asarray(posterior, dtype=float)
+            if prior_state.shape != (3,) or not np.all(np.isfinite(prior_state)):
+                raise ValueError("invalid prior posterior")
+            prior_state = prior_state / max(float(np.sum(prior_state)), EPS)
+
+        log_b = self._log_emission(obs, self.means, self.variances)[0]
+        prior = prior_state @ self.transition
+        log_post = np.log(np.maximum(prior, EPS)) + log_b
+        log_post -= _logsumexp(log_post)
+        next_posterior = np.exp(log_post)
+        state = int(np.argmax(next_posterior))
+        result = {
+            "latent_state": STATE_NAMES[state],
+            "posterior": {
+                "DOWN": float(next_posterior[STATE_DOWN]),
+                "FLAT": float(next_posterior[STATE_FLAT]),
+                "UP": float(next_posterior[STATE_UP]),
+            },
+        }
+        return result, next_posterior
+
     def filter(self, x: Sequence[Sequence[float]]) -> list[dict]:
         """Causal posterior filter; does not use future observations."""
         self._require_fit()
@@ -400,22 +430,10 @@ class GaussianRegimeHMM:
             raise ValueError("feature dimension mismatch")
 
         out = []
-        posterior = np.asarray(self.initial, dtype=float)
+        posterior = None
         for row in arr:
-            log_b = self._log_emission(row.reshape(1, -1), self.means, self.variances)[0]
-            prior = posterior @ self.transition
-            log_post = np.log(np.maximum(prior, EPS)) + log_b
-            log_post -= _logsumexp(log_post)
-            posterior = np.exp(log_post)
-            state = int(np.argmax(posterior))
-            out.append({
-                "latent_state": STATE_NAMES[state],
-                "posterior": {
-                    "DOWN": float(posterior[STATE_DOWN]),
-                    "FLAT": float(posterior[STATE_FLAT]),
-                    "UP": float(posterior[STATE_UP]),
-                },
-            })
+            result, posterior = self.filter_step(row, posterior=posterior)
+            out.append(result)
         return out
 
     def expected_dwell_observations(self) -> dict:
@@ -525,3 +543,17 @@ def posterior_lifecycle_step(previous: str | None, posterior: dict) -> str:
     if probs["DOWN"] > probs["UP"]:
         return "BUILDING_DOWN"
     return "CLOSED"
+
+
+def model_from_snapshot(snapshot: dict) -> GaussianRegimeHMM:
+    """Restore a fitted research model from its serializable snapshot."""
+    snap = dict(snapshot or {})
+    if snap.get("model_kind") != "causal_three_state_diagonal_gaussian_hmm":
+        raise ValueError("unsupported quant regime model snapshot")
+    model = GaussianRegimeHMM()
+    model.means = np.asarray(snap["means"], dtype=float)
+    model.variances = np.asarray(snap["variances"], dtype=float)
+    model.transition = np.asarray(snap["transition"], dtype=float)
+    model.initial = np.asarray(snap["initial"], dtype=float)
+    model._require_fit()
+    return model
