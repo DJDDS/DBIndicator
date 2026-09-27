@@ -11,9 +11,10 @@ from .config import settings
 from .insights import generate_insights, insights_enabled
 from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar, event_driven_early_radar
 from .security import (
-    AUDITOR, MEMBER, OWNER, current_role, install_security_headers,
-    issue_kite_callback_token, kite_callback_cookie_secure,
-    require_dashboard_password, require_roles, verify_kite_callback_token,
+    AUDITOR, MEMBER, OWNER, authenticate_credentials, clear_login_session,
+    current_role, install_security_headers, issue_kite_callback_token,
+    kite_callback_cookie_secure, require_dashboard_password, require_roles,
+    start_login_session, verify_kite_callback_token,
 )
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,30 @@ def _ensure_scanner_running():
     if not _scanner_started:
         start_background_scanner()
         _scanner_started = True
+
+
+@app.route("/login", methods=["GET", "POST"])
+def app_login():
+    error = None
+    retry_after = 0
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        credential, retry_after = authenticate_credentials(username, password)
+        if credential is not None:
+            start_login_session(credential)
+            return redirect("/audit" if credential.role == AUDITOR else "/")
+        if retry_after:
+            error = f"Too many failed attempts. Try again in about {retry_after} seconds."
+        else:
+            error = "Invalid username or password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def app_logout():
+    clear_login_session()
+    return redirect("/login")
 
 
 @app.route("/")
