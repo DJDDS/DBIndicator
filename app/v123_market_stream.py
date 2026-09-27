@@ -570,6 +570,7 @@ class UniverseMomentumStreamService:
                     "ret_10m_pct": diagnostic.get("ret_10m_pct"),
                     "relative_5m_vs_nifty_pct": diagnostic.get("relative_5m_vs_nifty_pct"),
                     "volume_rate_accel": diagnostic.get("volume_rate_accel"),
+                    "sector": (meta.get(symbol) or {}).get("sector"),
                     "near_session_extreme": diagnostic.get("near_session_extreme"),
                     "discovery_qualified": diagnostic.get("qualified"),
                     "discovery_reason": diagnostic.get("reason"),
@@ -601,10 +602,23 @@ class UniverseMomentumStreamService:
             "status": "STREAMING" if connected else "CONNECTING",
             "universe_count": max(0, len(self._tokens) - (1 if "NIFTY 50" in self._tokens else 0)),
             "nifty": {
+                "live_price": _f((latest.get("NIFTY 50") or {}).get("last_price")),
                 "ret_3m_pct": nifty_returns["3m"],
                 "ret_5m_pct": nifty_returns["5m"],
                 "ret_10m_pct": nifty_returns["10m"],
             },
+            # Internal whole-universe feed for the research-only quant shadow.
+            # background.py removes this before publishing/storing the normal
+            # observer payload, so it cannot enlarge public dashboard/API data.
+            "quant_rows": [
+                {
+                    "symbol": row.get("symbol"),
+                    "live_price": row.get("live_price"),
+                    "volume_rate_accel": row.get("volume_rate_accel"),
+                    "sector": row.get("sector"),
+                }
+                for row in movers
+            ],
             "events": events[:MAX_DISCOVERY_EVENTS],
             "leaders": leaders,
             "laggards": laggards,
