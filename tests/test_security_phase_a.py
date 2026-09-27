@@ -89,6 +89,24 @@ def test_wrong_password_is_rejected_and_username_is_not_ignored():
     assert client.get("/scanner", headers=_auth("anything", "owner-secret")).status_code == 401
 
 
+def test_browser_unauthenticated_challenges_never_trigger_lockout():
+    client = _app().test_client()
+    for _ in range(20):
+        assert client.get("/scanner").status_code == 401
+    assert client.get("/scanner", headers=_auth("owner", "owner-secret")).status_code == 200
+
+
+def test_valid_credentials_bypass_and_clear_existing_lockout():
+    client = _app().test_client()
+    statuses = [
+        client.get("/scanner", headers=_auth("owner", "wrong-secret")).status_code
+        for _ in range(8)
+    ]
+    assert statuses[-1] == 429
+    assert client.get("/scanner", headers=_auth("owner", "owner-secret")).status_code == 200
+    assert client.get("/scanner", headers=_auth("owner", "wrong-secret")).status_code == 401
+
+
 def test_security_headers_are_present():
     client = _app().test_client()
     response = client.get("/scanner", headers=_auth("owner", "owner-secret"))
