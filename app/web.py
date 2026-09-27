@@ -62,10 +62,10 @@ def _ensure_scanner_running():
 
 
 @app.route("/")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def dashboard():
     logged_in = kite_auth.is_logged_in_today()
-    login_url = kite_auth.get_login_url() if not logged_in else None
+    login_url = "/kite/login" if not logged_in and current_role() == OWNER else None
     state = get_state()
     all_results = state["results"]
     scan_health = v9_playbooks.scan_health_counts(all_results)
@@ -179,7 +179,7 @@ def dashboard():
 
 
 @app.route("/api/dashboard-state")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_dashboard_state():
     state = get_state()
     rows = state.get("results") or []
@@ -256,7 +256,7 @@ def api_dashboard_state():
 
 
 @app.route("/api/v8-dashboard")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_v8_dashboard():
     state = get_state()
     payload = v9_playbooks.dashboard_payload(state)
@@ -289,7 +289,7 @@ def api_v8_dashboard():
 
 
 @app.route("/api/opportunity-forward/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_opportunity_forward_export():
     """Download the raw V9.3.0 live-opportunity forward-validation state."""
     state = get_state().get("opportunity_forward") or opportunity_forward.empty_state()
@@ -299,7 +299,7 @@ def api_opportunity_forward_export():
 
 
 @app.route("/api/option-shadow/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_option_shadow_export():
     """Download forward option-validation state before a Railway redeploy."""
     state = derivative_intelligence.load_shadow_state()
@@ -316,7 +316,7 @@ def _v12_export(path, filename, mimetype):
 
 
 @app.route("/api/v12-recorder-health")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v12_recorder_health():
     health = v12_option_recorder.recorder_health(
         config.V12_OPTION_SNAPSHOT_FILE, config.V12_OPTION_STATE_FILE,
@@ -326,7 +326,7 @@ def api_v12_recorder_health():
 
 
 @app.route("/api/v123-focus-state")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_v123_focus_state():
     state = get_state()
     return jsonify({
@@ -337,19 +337,19 @@ def api_v123_focus_state():
 
 
 @app.route("/api/v122b-tactical-state/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v122b_tactical_state_export():
     return _v12_export(config.V122B_TACTICAL_STATE_FILE, "v122b_tactical_state.json", "application/json")
 
 
 @app.route("/api/v122b-tactical-events/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v122b_tactical_events_export():
     return _v12_export(config.V122B_TACTICAL_EVENT_FILE, "v122b_tactical_events.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v123-continuation-shadow/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v123_continuation_shadow_export():
     """Download research-only continuation-path observations."""
     path = str(__import__("pathlib").Path(config.V122B_TACTICAL_EVENT_FILE).with_name("v123_continuation_shadow.jsonl"))
@@ -357,38 +357,38 @@ def api_v123_continuation_shadow_export():
 
 
 @app.route("/api/v12-option-state/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v12_option_state_export():
     return _v12_export(config.V12_OPTION_STATE_FILE, "v12_option_state.json", "application/json")
 
 
 @app.route("/api/v12-option-snapshots/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v12_option_snapshots_export():
     return _v12_export(config.V12_OPTION_SNAPSHOT_FILE, "v12_option_snapshots.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v12-earnings-state/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v12_earnings_state_export():
     return _v12_export(config.V12_EARNINGS_STATE_FILE, "v12_earnings_state.json", "application/json")
 
 
 @app.route("/api/v12-earnings-ledger/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v12_earnings_ledger_export():
     return _v12_export(config.V12_EARNINGS_LEDGER_FILE, "v12_earnings_ledger.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v121-index-vol-health")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v121_index_vol_health():
     health, backup, development = _v121_surfaces()
     return jsonify({"index_vol": health, "backup": backup, "development": development, "trial25_locked": True})
 
 
 @app.route("/api/v121-development-status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v121_development_status():
     return jsonify(v121_development.development_status(config.V121_RV_LAB_STATE_FILE))
 
@@ -416,13 +416,13 @@ def _v121_current_file(kind):
 
 
 @app.route("/api/v121-index-micro/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v121_index_micro_export():
     return _v12_export(_v121_current_file("micro"), "v121_nifty_micro_today.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v121-index-depth/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v121_index_depth_export():
     return _v12_export(_v121_current_file("depth"), "v121_nifty_depth_today.jsonl", "application/x-ndjson")
 
@@ -606,7 +606,7 @@ def _chart_fetch_candles(kite, instrument_token, timeframe):
 
 
 @app.route("/chart/<symbol>")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def chart_page(symbol):
     requested = request.args.get("timeframe", _CHART_DEFAULT_TF)
     if requested not in _CHART_TF:
@@ -620,7 +620,7 @@ def chart_page(symbol):
 
 
 @app.route("/api/chart/<symbol>")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def chart_data(symbol):
     kite = kite_auth.get_kite_client()
     if kite is None:
@@ -673,7 +673,7 @@ def _candles(df):
 
 
 @app.route("/api/insights")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_insights():
     state = get_state()
     result = generate_insights(
@@ -683,14 +683,14 @@ def api_insights():
 
 
 @app.route("/api/alerts/recent")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_alerts_recent():
     return jsonify({"alerts": alerts.get_recent(limit=20)})
 
 
 
 @app.route("/oi-screener")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def oi_screener_page():
     return render_template(
         "oi_screener.html",
@@ -701,7 +701,7 @@ def oi_screener_page():
 
 
 @app.route("/api/oi-screener")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_oi_screener():
     # Base universe = the live NSE stock-F&O universe with a valid futures
     # OI quote. OI can lead price/technical alignment, so the OI radar must
@@ -735,7 +735,7 @@ def api_alerts_discover_chat_id():
 
 
 @app.route("/backtest")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def backtest_page():
     _bt_bounds = backtest.backtest_day_bounds(config.WATCHLIST_TIMEFRAME)
     return render_template(
@@ -789,13 +789,13 @@ def api_v111_development_start():
 
 
 @app.route("/api/v111/development/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v111_development_status():
     return jsonify(backtest.get_v111_development_state())
 
 
 @app.route("/api/v11/feasibility")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v11_feasibility():
     return jsonify(backtest.get_v11_feasibility())
 
@@ -807,7 +807,7 @@ def api_v11_trial24_start():
 
 
 @app.route("/api/v11/trial24/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v11_trial24_status():
     return jsonify(backtest.get_v11_trial24_state())
 
@@ -827,7 +827,7 @@ def api_v10_start():
     return jsonify(backtest.start_v10_directional_lab(kite, symbols=symbols))
 
 @app.route("/api/v10/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v10_status():
     return jsonify(backtest.get_v10_directional_state())
 
@@ -848,7 +848,7 @@ def api_v99_start():
 
 
 @app.route("/api/v99/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v99_status():
     return jsonify(backtest.get_v99_trial20_state())
 
@@ -869,7 +869,7 @@ def api_v97_start():
 
 
 @app.route("/api/v97/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v97_status():
     return jsonify(backtest.get_v97_trial19_state())
 
@@ -890,7 +890,7 @@ def api_v96_start():
 
 
 @app.route("/api/v96/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v96_status():
     return jsonify(backtest.get_v96_trial17_state())
 
@@ -918,7 +918,7 @@ def api_v95_start():
 
 
 @app.route("/api/v95/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_v95_status():
     return jsonify(backtest.get_v95_daily_oi_state())
 
@@ -965,7 +965,7 @@ def api_early_research_start():
 
 
 @app.route("/api/early-research/status")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_early_research_status():
     return jsonify(backtest.get_early_research_state())
 
@@ -974,13 +974,13 @@ def api_early_research_status():
 # Chart Pattern Scanner (timeframe-matched classical patterns)
 # ---------------------------------------------------------------------------
 @app.route("/patterns")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def patterns_page():
     return render_template("patterns.html", logged_in=kite_auth.is_logged_in_today())
 
 
 @app.route("/api/patterns")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_patterns():
     payload = chart_patterns.load_results()
     return jsonify({
@@ -1000,14 +1000,14 @@ def api_patterns():
 
 
 @app.route("/api/patterns/forward/export")
-@require_dashboard_password
+@require_roles(OWNER, AUDITOR)
 def api_pattern_forward_export():
     """Raw forward-validation ledger (every activated breakout and its outcome)."""
     return jsonify(list(chart_patterns.load_forward().values()))
 
 
 @app.route("/api/patterns/detail")
-@require_dashboard_password
+@require_roles(OWNER, MEMBER)
 def api_pattern_detail():
     pid = request.args.get("id", "")
     for row in chart_patterns.load_results().get("results", []):
