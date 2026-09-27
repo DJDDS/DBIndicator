@@ -465,3 +465,49 @@ class QuantRegimeShadowWorker:
 
     def status(self):
         return dict(self._latest_status)
+
+
+def list_shadow_artifacts(root):
+    """Return a read-only manifest of quant-shadow research artifacts."""
+    base = Path(root)
+    out = []
+    if not base.exists():
+        return out
+    for path in sorted(base.iterdir()):
+        if not path.is_file():
+            continue
+        name = path.name
+        kind = None
+        if name.startswith("features_") and name.endswith(".jsonl.gz"):
+            kind = "features"
+        elif name.startswith("regimes_") and name.endswith(".jsonl.gz"):
+            kind = "regimes"
+        elif name.startswith("model_for_") and name.endswith(".json"):
+            kind = "model"
+        elif name == "shadow_state.json":
+            kind = "status"
+        if kind is None:
+            continue
+        out.append({
+            "name": name,
+            "kind": kind,
+            "size_bytes": path.stat().st_size,
+        })
+    return out
+
+
+def resolve_shadow_artifact(root, name):
+    """Resolve only a manifest-listed artifact; traversal and secrets are excluded."""
+    candidate_name = str(name or "")
+    if "/" in candidate_name or "\\" in candidate_name or candidate_name in {"", ".", ".."}:
+        return None
+    allowed = {row["name"] for row in list_shadow_artifacts(root)}
+    if candidate_name not in allowed:
+        return None
+    base = Path(root).resolve()
+    path = (base / candidate_name).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return None
+    return path if path.is_file() else None
