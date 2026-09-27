@@ -184,3 +184,49 @@ It provides:
 This phase is intentionally not wired into background.py or the live dashboard.
 A later separately approved shadow-recorder patch may feed it live data while
 still leaving production decisions untouched.
+
+
+## Phase 2 shadow-recorder implementation
+
+The approved shadow stage adds a whole-universe, underlying-only recorder while
+preserving production authority in the existing V12.3 desk.
+
+Runtime rules:
+
+1. The existing market stream publishes a private `quant_rows` payload containing
+   all observed F&O underlyings, not just leaders or current event candidates.
+2. `background.py` submits that private payload to a bounded asynchronous worker,
+   then removes `quant_rows` before storing/publishing the normal observer state.
+3. The shadow worker samples at one-minute cadence during NSE cash-session
+   weekdays only. There is no weekend/midnight lifecycle rollover.
+4. Raw causal feature rows are persisted separately under
+   `V123_QUANT_REGIME_ROOT`.
+5. A session's HMM may be fitted only from completed shadow feature sessions
+   strictly earlier than the evaluation date.
+6. With fewer than two completed prior shadow sessions, status is
+   `COLLECTING_BASELINE`; no ACTIONABLE regime output is produced.
+7. Once the prior-session requirement is met, the model is frozen for that
+   trading date and live observations use incremental causal filtering only.
+8. The worker cannot call Focus Desk, tactical, option, alert, scanner, or
+   execution functions. Its result is observability only.
+9. OWNER and AUDITOR may read status/artifacts. MEMBER does not receive this
+   research surface.
+10. The feature ledger, regime-transition ledger and frozen daily model are
+    available as read-only audit artifacts; no secrets or Railway variables are
+    included.
+
+The shadow worker is deliberately bounded to a one-item latest-snapshot queue.
+If research computation falls behind, an older pending snapshot may be dropped
+rather than blocking the market-stream callback. Production scanning therefore
+has priority over research recording.
+
+### Initial live chronology
+
+Because the shadow feature definition did not exist before this preregistration,
+historical V12.3 event files are not silently converted into training samples.
+That would mix incompatible feature-generation processes.
+
+The first two clean completed live shadow sessions are baseline collection.
+The first subsequent session may use a prior-session-fitted ACTIVE_SHADOW model.
+This chronology is part of the preregistration and must not be shortened after
+seeing outcomes.
