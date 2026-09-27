@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
-from . import alerts, audit_access, backtest, chart_patterns, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development
+from . import alerts, audit_access, backtest, chart_patterns, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development, v123_quant_shadow
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -335,6 +335,35 @@ def api_v123_focus_state():
         "focus_desk": state.get("v123_focus_desk") or {},
         "focus_state": state.get("v123_focus_state") or {},
     })
+
+
+@app.route("/api/v123-quant-regime-shadow")
+@require_roles(OWNER, AUDITOR)
+def api_v123_quant_regime_shadow():
+    state = get_state()
+    payload = dict(state.get("v123_quant_regime_shadow") or {})
+    payload["research_only"] = True
+    payload["production_controls"] = False
+    return jsonify(payload)
+
+
+@app.route("/api/v123-quant-regime-shadow/artifacts")
+@require_roles(OWNER, AUDITOR)
+def api_v123_quant_regime_shadow_artifacts():
+    return jsonify({
+        "research_only": True,
+        "production_controls": False,
+        "artifacts": v123_quant_shadow.list_shadow_artifacts(config.V123_QUANT_REGIME_ROOT),
+    })
+
+
+@app.route("/api/v123-quant-regime-shadow/artifact/<name>")
+@require_roles(OWNER, AUDITOR)
+def api_v123_quant_regime_shadow_artifact(name):
+    path = v123_quant_shadow.resolve_shadow_artifact(config.V123_QUANT_REGIME_ROOT, name)
+    if path is None:
+        return jsonify({"error": "Shadow artifact not found or not permitted."}), 404
+    return send_file(path, as_attachment=True, download_name=path.name)
 
 
 @app.route("/api/v122b-tactical-state/export")

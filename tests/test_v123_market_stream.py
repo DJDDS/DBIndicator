@@ -146,3 +146,42 @@ def test_market_open_closes_exactly_at_1530():
     from app import v123_market_stream as m
     assert m._market_open(dt.datetime(2026, 9, 24, 15, 29, 59)) is True
     assert m._market_open(dt.datetime(2026, 9, 24, 15, 30, 0)) is False
+
+
+def test_snapshot_carries_private_whole_universe_quant_rows():
+    svc = _service()
+    now = dt.datetime(2026, 9, 24, 11, 0)
+    svc._connected = True
+    svc._latest = {
+        "ABC": {
+            "last_price": 101.0,
+            "volume_traded": 1500,
+            "ohlc": {"open": 100.0, "high": 101.0, "low": 99.5, "close": 100.0},
+        },
+        "XYZ": {
+            "last_price": 98.0,
+            "volume_traded": 1800,
+            "ohlc": {"open": 100.0, "high": 100.2, "low": 97.8, "close": 100.0},
+        },
+        "NIFTY 50": {
+            "last_price": 25020.0,
+            "volume_traded": 2,
+            "ohlc": {"open": 25000.0, "high": 25030.0, "low": 24990.0, "close": 25000.0},
+        },
+    }
+    for symbol, price, volume, prev in (
+        ("ABC", 101.0, 1500, 100.0),
+        ("XYZ", 98.0, 1800, 100.0),
+        ("NIFTY 50", 25020.0, 2, 25000.0),
+    ):
+        _append(svc, symbol, now-dt.timedelta(minutes=5), prev, max(1, volume-200), prev=prev)
+        _append(svc, symbol, now, price, volume, prev=prev)
+
+    svc.metadata_provider = lambda: [
+        {"symbol": "ABC", "prev_close": 100.0, "sector": "TEST1"},
+        {"symbol": "XYZ", "prev_close": 100.0, "sector": "TEST2"},
+    ]
+    snap = svc._build_snapshot(now)
+    assert snap["nifty"]["live_price"] == 25020.0
+    assert {row["symbol"] for row in snap["quant_rows"]} == {"ABC", "XYZ"}
+    assert {row["sector"] for row in snap["quant_rows"]} == {"TEST1", "TEST2"}

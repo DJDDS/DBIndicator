@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_state, v123_swing, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_quant_shadow, v123_state, v123_swing, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -27,6 +27,9 @@ log = logging.getLogger(__name__)
 # redeploy even when they occur between normal scanner saves.
 _v123_focus_store = v123_state.FocusStateStore(config.V123_FOCUS_STATE_FILE)
 _v123_forensic_recorder = v123_state.ForensicFlightRecorder(config.V123_FORENSIC_ROOT)
+_v123_quant_shadow_worker = v123_quant_shadow.QuantRegimeShadowWorker(
+    v123_quant_shadow.QuantRegimeShadowRecorder(config.V123_QUANT_REGIME_ROOT)
+)
 
 LIVE_RELIABILITY_BUILD_ID = "2026-09-04-INSTITUTIONAL-V10.2.2-LIVE-RELIABILITY-HOTFIX"
 
@@ -1377,6 +1380,11 @@ _state = {
     },
     "v123_focus_state": v123_focus.empty_state(),
     "v123_focus_desk": v123_focus.dashboard(v123_focus.empty_state()),
+    "v123_quant_regime_shadow": {
+        "status": "NOT_STARTED",
+        "research_only": True,
+        "production_controls": False,
+    },
 }
 
 # Set by web.py whenever a Quick Settings / Settings change is applied
@@ -2135,9 +2143,22 @@ def _update_v123_swing(results, now=None):
 
 def _v123_market_publish(payload):
     now = now_ist()
+    raw_payload = dict(payload or {})
+
+    # Quant regime research runs asynchronously and receives the private
+    # all-symbol payload. It has no callback into Focus/tactical/execution.
+    try:
+        _v123_quant_shadow_worker.submit(raw_payload, now)
+    except Exception:
+        log.exception("Failed to submit V12.3 quant-regime shadow snapshot")
+
+    # Keep the large all-symbol research feed out of normal dashboard/API state.
+    observer_payload = dict(raw_payload)
+    observer_payload.pop("quant_rows", None)
     with _state_lock:
-        _state["v123_market_observer"] = dict(payload or {})
-    _update_v123_focus(observer=payload or {}, now=now)
+        _state["v123_market_observer"] = observer_payload
+        _state["v123_quant_regime_shadow"] = _v123_quant_shadow_worker.status()
+    _update_v123_focus(observer=observer_payload, now=now)
 
 
 def _v123_metadata_provider():
