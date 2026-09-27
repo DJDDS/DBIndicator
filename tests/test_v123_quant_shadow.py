@@ -129,3 +129,13 @@ def test_fit_sequences_does_not_create_cross_symbol_transition():
     assert snap["production_controls"] is False
     assert model.transition.shape == (3, 3)
     assert np.allclose(model.transition.sum(axis=1), 1.0)
+
+
+def test_shadow_artifact_manifest_is_read_only_and_traversal_safe(tmp_path):
+    (tmp_path / "shadow_state.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "secret.env").write_text("no", encoding="utf-8")
+    rows = v123_quant_shadow.list_shadow_artifacts(tmp_path)
+    assert [row["name"] for row in rows] == ["shadow_state.json"]
+    assert v123_quant_shadow.resolve_shadow_artifact(tmp_path, "shadow_state.json") is not None
+    assert v123_quant_shadow.resolve_shadow_artifact(tmp_path, "../secret.env") is None
+    assert v123_quant_shadow.resolve_shadow_artifact(tmp_path, "secret.env") is None
