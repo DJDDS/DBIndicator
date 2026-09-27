@@ -119,6 +119,23 @@ def test_audit_path_traversal_is_blocked():
     assert audit_access.resolve_audit_file("top/.env") is None
 
 
+def test_phase_a_contains_no_broker_order_execution_calls():
+    from pathlib import Path
+
+    forbidden = (
+        ".place_order(", ".modify_order(", ".cancel_order(",
+        ".place_gtt(", ".modify_gtt(", ".delete_gtt(",
+        ".place_autoslice_order(", ".place_mf_order(",
+    )
+    offenders = []
+    for path in Path("app").glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for needle in forbidden:
+            if needle in text:
+                offenders.append(f"{path}:{needle}")
+    assert offenders == [], "Phase A must remain scanner/research-only: " + ", ".join(offenders)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are not meaningful on Windows")
 def test_kite_token_cache_is_owner_only(tmp_path, monkeypatch):
     token_file = tmp_path / "kite-token.json"
