@@ -32,8 +32,20 @@ def _load_cache():
 
 
 def _save_cache(access_token):
-    with open(config.TOKEN_CACHE_FILE, "w") as f:
-        json.dump({"date": date.today().isoformat(), "access_token": access_token}, f)
+    """Persist the daily Kite token with owner-only filesystem permissions."""
+    parent = os.path.dirname(os.path.abspath(config.TOKEN_CACHE_FILE))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    fd = os.open(config.TOKEN_CACHE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump({"date": date.today().isoformat(), "access_token": access_token}, f)
+    finally:
+        # Existing files may have been created before Phase A; enforce 0600.
+        try:
+            os.chmod(config.TOKEN_CACHE_FILE, 0o600)
+        except OSError:
+            pass
 
 
 def get_login_url():
