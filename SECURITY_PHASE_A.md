@@ -77,6 +77,19 @@ A stricter nonce-based CSP, session authentication and MFA/TOTP are deliberately
 reserved for Phase B because the current UI contains substantial inline scripts
 and the application is still under active development.
 
+## Dependency audit status
+
+Phase A upgrades the direct vulnerable pins identified by pip-audit:
+- Flask 3.0.3 -> 3.1.3
+- python-dotenv 1.0.1 -> 1.2.2
+- requests 2.32.3 -> 2.33.0
+
+KiteConnect currently pins `autobahn[twisted]==19.11.2` exactly upstream. The
+security workflow records PYSEC-2020-25 and CVE-2026-77528 as temporary,
+explicit exceptions so that every other dependency vulnerability remains a hard
+CI failure. Replacing or overriding KiteConnect's WebSocket dependency is deferred
+until compatibility can be validated against live ticker/recorder behaviour.
+
 ## Production deployment preconditions
 
 Before Phase A is deployed:
