@@ -1,20 +1,25 @@
 import datetime as dt
-import functools
 import logging
 import json
 
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
-from . import alerts, backtest, chart_patterns, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development
+from . import alerts, audit_access, backtest, chart_patterns, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
 from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar, event_driven_early_radar
+from .security import (
+    AUDITOR, MEMBER, OWNER, current_role, install_security_headers,
+    issue_kite_callback_token, kite_callback_cookie_secure,
+    require_dashboard_password, require_roles, verify_kite_callback_token,
+)
 
 log = logging.getLogger(__name__)
 
 app = Flask(__name__)
+install_security_headers(app)
 _scanner_started = False
 _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
@@ -46,36 +51,6 @@ def _dashboard_counts(results, *, index_direction=None, index_chg_pct=None, mark
         "bearish": sum(1 for r in rows if (r.get("trade_direction") or r.get("direction")) == "Bearish"),
     }
 
-
-def _check_auth(username, password):
-    # Single shared password, not a real user system - fine for a
-    # personal single-user dashboard. Username is ignored.
-    return config.DASHBOARD_PASSWORD and password == config.DASHBOARD_PASSWORD
-
-
-def _authenticate():
-    return Response(
-        "Login required.", 401, {"WWW-Authenticate": 'Basic realm="Scanner Dashboard"'}
-    )
-
-
-def require_dashboard_password(view):
-    @functools.wraps(view)
-    def wrapped(*args, **kwargs):
-        if not config.DASHBOARD_PASSWORD:
-            # No password configured - warn loudly rather than silently
-            # running an open dashboard. Set DASHBOARD_PASSWORD in .env.
-            return (
-                "DASHBOARD_PASSWORD is not set in your .env file. "
-                "Set one before exposing this app publicly, then restart.",
-                500,
-            )
-        auth = request.authorization
-        if not auth or not _check_auth(auth.username, auth.password):
-            return _authenticate()
-        return view(*args, **kwargs)
-
-    return wrapped
 
 
 @app.before_request
