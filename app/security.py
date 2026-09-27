@@ -298,7 +298,8 @@ def install_security_headers(app) -> None:
         origin = request.headers.get("Origin")
         if not origin:
             return None
-        expected = request.host_url.rstrip("/")
+        scheme = "https" if _request_is_https() else request.scheme
+        expected = f"{scheme}://{request.host}".rstrip("/")
         if not hmac.compare_digest(origin.rstrip("/"), expected):
             log.warning(
                 "security.cross_site_write_blocked path=%s origin=%s",
