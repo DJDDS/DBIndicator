@@ -337,6 +337,16 @@ def api_v123_focus_state():
     })
 
 
+@app.route("/api/v123-quant-regime-shadow")
+@require_roles(OWNER, AUDITOR)
+def api_v123_quant_regime_shadow():
+    state = get_state()
+    payload = dict(state.get("v123_quant_regime_shadow") or {})
+    payload["research_only"] = True
+    payload["production_controls"] = False
+    return jsonify(payload)
+
+
 @app.route("/api/v122b-tactical-state/export")
 @require_roles(OWNER, AUDITOR)
 def api_v122b_tactical_state_export():
