@@ -278,18 +278,34 @@ class GaussianRegimeHMM:
         )
 
     def fit(self, x: Sequence[Sequence[float]]) -> "GaussianRegimeHMM":
-        arr = self._check_matrix(x)
-        n, d = arr.shape
+        return self.fit_sequences([x])
 
-        # Deterministic unsupervised initialisation from the two directional
-        # coordinates only.  This is not a runtime score or threshold.
-        axis = arr[:, 0] + arr[:, 1]
+    def fit_sequences(self, sequences: Sequence[Sequence[Sequence[float]]]) -> "GaussianRegimeHMM":
+        """Fit independent sequences without creating fake cross-symbol transitions."""
+        seqs = []
+        for seq in sequences:
+            arr = np.asarray(seq, dtype=float)
+            if arr.ndim != 2 or arr.shape[0] < 2:
+                continue
+            if not np.all(np.isfinite(arr)):
+                raise ValueError("feature sequence contains non-finite values")
+            seqs.append(arr)
+        if not seqs:
+            raise ValueError("no usable feature sequences")
+        combined = np.vstack(seqs)
+        if combined.shape[0] < 12:
+            raise ValueError("need at least 12 observations across feature sequences")
+        d = combined.shape[1]
+        if any(arr.shape[1] != d for arr in seqs):
+            raise ValueError("feature dimension mismatch across sequences")
+
+        axis = combined[:, 0] + combined[:, 1]
         order = np.argsort(axis)
         groups = np.array_split(order, 3)
-        means = np.vstack([np.mean(arr[g], axis=0) for g in groups])
-        global_var = np.maximum(np.var(arr, axis=0), 1e-3)
+        means = np.vstack([np.mean(combined[g], axis=0) for g in groups])
+        global_var = np.maximum(np.var(combined, axis=0), 1e-3)
         variances = np.vstack([
-            np.maximum(np.var(arr[g], axis=0), global_var * 0.10)
+            np.maximum(np.var(combined[g], axis=0), global_var * 0.10)
             if len(g) > 1 else global_var.copy()
             for g in groups
         ])
@@ -298,72 +314,76 @@ class GaussianRegimeHMM:
 
         last_ll = None
         for _ in range(self.max_iter):
-            log_b = self._log_emission(arr, means, variances)
             log_a = np.log(np.maximum(transition, EPS))
-            log_pi = np.log(np.maximum(initial, EPS))
-
-            alpha = np.zeros((n, 3), dtype=float)
-            alpha[0] = log_pi + log_b[0]
-            for t in range(1, n):
-                alpha[t] = log_b[t] + np.array([
-                    _logsumexp(alpha[t - 1] + log_a[:, j]) for j in range(3)
-                ])
-            ll = _logsumexp(alpha[-1])
-
-            beta = np.zeros((n, 3), dtype=float)
-            for t in range(n - 2, -1, -1):
-                beta[t] = np.array([
-                    _logsumexp(log_a[i] + log_b[t + 1] + beta[t + 1])
-                    for i in range(3)
-                ])
-
-            log_gamma = alpha + beta - ll
-            gamma = np.exp(log_gamma)
-            gamma /= np.maximum(np.sum(gamma, axis=1, keepdims=True), EPS)
-
+            gamma_sum = np.zeros(3, dtype=float)
+            gamma_x = np.zeros((3, d), dtype=float)
+            gamma_x2 = np.zeros((3, d), dtype=float)
             xi_sum = np.zeros((3, 3), dtype=float)
-            for t in range(n - 1):
-                lx = (
-                    alpha[t][:, None]
-                    + log_a
-                    + log_b[t + 1][None, :]
-                    + beta[t + 1][None, :]
-                    - ll
-                )
-                xit = np.exp(lx)
-                xit /= max(float(np.sum(xit)), EPS)
-                xi_sum += xit
+            initial_sum = np.zeros(3, dtype=float)
+            total_ll = 0.0
 
-            weights = np.maximum(np.sum(gamma, axis=0), EPS)
-            means = (gamma.T @ arr) / weights[:, None]
-            for k in range(3):
-                diff = arr - means[k]
-                variances[k] = np.maximum(
-                    np.sum(gamma[:, k][:, None] * diff * diff, axis=0) / weights[k],
-                    1e-4,
-                )
+            for arr in seqs:
+                n = arr.shape[0]
+                log_b = self._log_emission(arr, means, variances)
+                log_pi = np.log(np.maximum(initial, EPS))
+
+                alpha = np.zeros((n, 3), dtype=float)
+                alpha[0] = log_pi + log_b[0]
+                for t in range(1, n):
+                    alpha[t] = log_b[t] + np.array([
+                        _logsumexp(alpha[t - 1] + log_a[:, j]) for j in range(3)
+                    ])
+                ll = _logsumexp(alpha[-1])
+                total_ll += ll
+
+                beta = np.zeros((n, 3), dtype=float)
+                for t in range(n - 2, -1, -1):
+                    beta[t] = np.array([
+                        _logsumexp(log_a[i] + log_b[t + 1] + beta[t + 1])
+                        for i in range(3)
+                    ])
+
+                gamma = np.exp(alpha + beta - ll)
+                gamma /= np.maximum(np.sum(gamma, axis=1, keepdims=True), EPS)
+                initial_sum += gamma[0]
+                gamma_sum += np.sum(gamma, axis=0)
+                gamma_x += gamma.T @ arr
+                gamma_x2 += gamma.T @ (arr * arr)
+
+                for t in range(n - 1):
+                    lx = (
+                        alpha[t][:, None]
+                        + log_a
+                        + log_b[t + 1][None, :]
+                        + beta[t + 1][None, :]
+                        - ll
+                    )
+                    xit = np.exp(lx)
+                    xit /= max(float(np.sum(xit)), EPS)
+                    xi_sum += xit
+
+            weights = np.maximum(gamma_sum, EPS)
+            means = gamma_x / weights[:, None]
+            variances = np.maximum(
+                gamma_x2 / weights[:, None] - means * means,
+                1e-4,
+            )
             transition = xi_sum + 1e-6
             transition /= np.maximum(np.sum(transition, axis=1, keepdims=True), EPS)
-            initial = np.maximum(gamma[0], EPS)
+            initial = np.maximum(initial_sum, EPS)
             initial /= np.sum(initial)
 
-            if last_ll is not None and abs(ll - last_ll) <= self.tol * (1.0 + abs(last_ll)):
+            if last_ll is not None and abs(total_ll - last_ll) <= self.tol * (1.0 + abs(last_ll)):
                 break
-            last_ll = ll
+            last_ll = total_ll
 
-        # Relabel states by learned directional centre: negative, flat, positive.
         directional_centres = means[:, 0] + means[:, 1]
         relabel = np.argsort(directional_centres)
-        means = means[relabel]
-        variances = variances[relabel]
-        transition = transition[np.ix_(relabel, relabel)]
-        initial = initial[relabel]
-        initial /= np.sum(initial)
-
-        self.means = means
-        self.variances = variances
-        self.transition = transition
-        self.initial = initial
+        self.means = means[relabel]
+        self.variances = variances[relabel]
+        self.transition = transition[np.ix_(relabel, relabel)]
+        self.initial = initial[relabel]
+        self.initial /= np.sum(self.initial)
         return self
 
     def _require_fit(self):
@@ -474,3 +494,34 @@ def model_snapshot(model: GaussianRegimeHMM) -> dict:
         "model_kind": "causal_three_state_diagonal_gaussian_hmm",
         "production_controls": False,
     }
+
+
+def posterior_lifecycle_step(previous: str | None, posterior: dict) -> str:
+    """Posterior-driven lifecycle with no elapsed-time rule or hand score.
+
+    ACTIONABLE is exactly the most likely directional latent regime. BUILDING
+    is the directional lean while FLAT remains the most likely regime.
+    DECAYING preserves the side of the immediately preceding actionable regime
+    when FLAT takes over.  No numeric probability threshold is introduced.
+    """
+    prev = str(previous or "CLOSED").upper()
+    probs = {name: _as_float((posterior or {}).get(name), 0.0) for name in STATE_NAMES}
+    latent = max(STATE_NAMES, key=lambda name: probs[name])
+
+    if latent == "UP":
+        return "ACTIONABLE_UP"
+    if latent == "DOWN":
+        return "ACTIONABLE_DOWN"
+
+    if prev == "ACTIONABLE_UP" or prev == "DECAYING_UP":
+        if probs["UP"] >= probs["DOWN"]:
+            return "DECAYING_UP"
+    if prev == "ACTIONABLE_DOWN" or prev == "DECAYING_DOWN":
+        if probs["DOWN"] >= probs["UP"]:
+            return "DECAYING_DOWN"
+
+    if probs["UP"] > probs["DOWN"]:
+        return "BUILDING_UP"
+    if probs["DOWN"] > probs["UP"]:
+        return "BUILDING_DOWN"
+    return "CLOSED"
