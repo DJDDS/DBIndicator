@@ -98,6 +98,7 @@ def dashboard():
         "index.html",
         logged_in=logged_in,
         login_url=login_url,
+        security_role=current_role(),
         results=all_results,
         total_scanned=scan_health["attempted"],
         valid_scanned=scan_health["valid"],
