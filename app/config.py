@@ -174,6 +174,13 @@ V123_FORENSIC_ROOT = os.getenv(
     os.path.join(V12_STORAGE_ROOT, "v123_forensics"),
 )
 
+# V12.3 quantitative regime SHADOW recorder. Research-only: it cannot control
+# Focus Desk, tactical states, options, alerts or execution.
+V123_QUANT_REGIME_ROOT = os.getenv(
+    "V123_QUANT_REGIME_ROOT",
+    os.path.join(V12_STORAGE_ROOT, "v123_quant_regime_shadow"),
+)
+
 # Trial 25 forward earnings-volatility shadow recorder. All files live under
 # the same persistent V12 Railway volume and are research-only.
 TRIAL25_ROOT = _V12_STORAGE["trial25_root"]
