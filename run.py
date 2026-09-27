@@ -12,6 +12,7 @@ from flask import jsonify
 
 from app import config, recorder_observability, scanner, v12_feasibility_freeze
 from app.web import create_app
+from app.security import OWNER, require_roles
 
 
 # Freeze the completed first-ten-day stock-option feasibility sample at
@@ -50,6 +51,7 @@ app = create_app()
 
 
 @app.route("/api/recorder-operational-health")
+@require_roles(OWNER)
 def recorder_operational_health():
     """Low-sensitivity, read-only recorder health for external auditing."""
     return jsonify(recorder_observability.operational_health(
