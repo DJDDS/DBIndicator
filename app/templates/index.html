@@ -836,7 +836,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       </button>
     </div>
     {% endif %}
-    <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a></nav>
+    <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a>{% if security_role == "owner" %}<a href="/backtest">Backtest</a><a href="/settings">Settings</a>{% endif %}</nav>
   </div>
 </header>
 <div class="wrap">
@@ -878,7 +878,11 @@ button, a, summary, input, select { touch-action: manipulation; }
        (Zerodha requires a fresh login every trading day - see the README) - click below,
        sign in with your Zerodha password + 2FA, and the dashboard will start scanning
        automatically.</p>
+    {% if login_url %}
     <a class="login-btn" href="{{ login_url }}">Login to Kite</a>
+    {% else %}
+    <p class="muted">Waiting for the owner to complete today's Kite login. Your scanner access remains read-only.</p>
+    {% endif %}
   </div>
   {% else %}
 
@@ -902,7 +906,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       <span class="tb-status" title="Evidence-gated production radar; remains zero while no playbook is validated">Prod Radar <strong id="radar-count">{{ live_counts.radar }}</strong></span>
       <span class="tb-status">Validated Intraday <strong id="intraday-count">{{ live_counts.intraday }}</strong></span>
       <span class="tb-status">Validated Swing <strong id="swing-count">{{ live_counts.swing }}</strong></span>
-      <span class="tb-status" title="Legacy RSI/MACD/BB tuning no longer drives the live shortlist.">Stock-in-Play thresholds are validated on the Backtest page &middot; <a href="/backtest">Open research</a></span>
+      {% if security_role == "owner" %}<span class="tb-status" title="Legacy RSI/MACD/BB tuning no longer drives the live shortlist.">Stock-in-Play thresholds are validated on the Backtest page &middot; <a href="/backtest">Open research</a></span>{% endif %}
     </div>
   </div>
 
