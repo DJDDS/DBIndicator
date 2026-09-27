@@ -459,13 +459,64 @@ def quick_settings():
     return redirect("/")
 
 
+@app.route("/kite/login")
+@require_roles(OWNER)
+def kite_login():
+    token = issue_kite_callback_token()
+    response = redirect(kite_auth.get_login_url())
+    response.set_cookie(
+        "dbi_kite_callback",
+        token,
+        max_age=600,
+        secure=kite_callback_cookie_secure(),
+        httponly=True,
+        samesite="Lax",
+    )
+    return response
+
+
 @app.route("/kite/callback")
 def kite_callback():
+    callback_cookie = request.cookies.get("dbi_kite_callback")
+    if not verify_kite_callback_token(callback_cookie):
+        return "Kite login callback was not initiated from an authorized DBIndicator session.", 403
     request_token = request.args.get("request_token")
     if not request_token:
         return "No request_token received from Kite - please try logging in again.", 400
     kite_auth.exchange_request_token(request_token)
-    return redirect("/")
+    response = redirect("/")
+    response.delete_cookie("dbi_kite_callback")
+    return response
+
+
+@app.route("/audit")
+@require_roles(OWNER, AUDITOR)
+def audit_portal():
+    files = audit_access.list_audit_files()
+    return jsonify({
+        "access": "read-only",
+        "role": current_role(),
+        "file_count": len(files),
+        "files": [
+            {**item, "download": "/api/audit/file/" + item["id"]}
+            for item in files
+        ],
+    })
+
+
+@app.route("/api/audit/files")
+@require_roles(OWNER, AUDITOR)
+def api_audit_files():
+    return jsonify({"files": audit_access.list_audit_files(), "read_only": True})
+
+
+@app.route("/api/audit/file/<path:file_id>")
+@require_roles(OWNER, AUDITOR)
+def api_audit_file(file_id):
+    path = audit_access.resolve_audit_file(file_id)
+    if path is None:
+        return jsonify({"error": "Audit file not found or not permitted."}), 404
+    return send_file(path, as_attachment=True, download_name=path.name)
 
 
 @app.route("/settings", methods=["GET", "POST"])
