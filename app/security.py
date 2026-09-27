@@ -154,37 +154,52 @@ def require_roles(*allowed_roles: str):
                 )
 
             auth = request.authorization
-            username = auth.username if auth else ""
-            key = _failure_key(username)
-            limited, retry_after = _is_rate_limited(key)
-            if limited:
-                log.warning(
-                    "security.auth_rate_limited path=%s client=%s",
-                    request.path,
-                    key[0],
-                )
-                response = jsonify({"error": "Too many failed login attempts. Try again later."})
-                response.status_code = 429
-                response.headers["Retry-After"] = str(retry_after)
-                return response
 
-            if not auth:
+            # Browsers using HTTP Basic Auth commonly make an unauthenticated
+            # request first and then retry after the 401 challenge. That is not
+            # a failed password attempt and must never contribute to lockout.
+            if not auth or not (auth.username or "") or not (auth.password or ""):
                 return _challenge()
 
-            credential = _match_credential(auth.username or "", auth.password or "")
-            if credential is None:
+            username = auth.username or ""
+            password = auth.password or ""
+            key = _failure_key(username)
+
+            # Always validate supplied credentials before consulting lockout
+            # state. A legitimate user must be able to recover immediately from
+            # a temporary lock caused by earlier bad attempts.
+            credential = _match_credential(username, password)
+            if credential is not None:
+                _clear_failures(key)
+                g.security_role = credential.role
+                g.security_username = credential.username
+            else:
+                limited, retry_after = _is_rate_limited(key)
+                if limited:
+                    log.warning(
+                        "security.auth_rate_limited path=%s client=%s",
+                        request.path,
+                        key[0],
+                    )
+                    response = jsonify({"error": "Too many failed login attempts. Try again later."})
+                    response.status_code = 429
+                    response.headers["Retry-After"] = str(retry_after)
+                    return response
+
                 _record_failure(key)
+                limited, retry_after = _is_rate_limited(key)
                 log.warning(
                     "security.auth_failed path=%s client=%s username_hash=%s",
                     request.path,
                     key[0],
                     key[1],
                 )
+                if limited:
+                    response = jsonify({"error": "Too many failed login attempts. Try again later."})
+                    response.status_code = 429
+                    response.headers["Retry-After"] = str(retry_after)
+                    return response
                 return _challenge("Invalid credentials.")
-
-            _clear_failures(key)
-            g.security_role = credential.role
-            g.security_username = credential.username
 
             if credential.role not in roles:
                 log.warning(
