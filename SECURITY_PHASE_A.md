@@ -90,6 +90,20 @@ explicit exceptions so that every other dependency vulnerability remains a hard
 CI failure. Replacing or overriding KiteConnect's WebSocket dependency is deferred
 until compatibility can be validated against live ticker/recorder behaviour.
 
+## Regression-gate note
+
+A full-suite run on the deployed code line currently contains nine stale/failing
+expectations in untouched stock-in-play, V12 trade-console and market-regime
+areas. Their implementation blob hashes are unchanged by Phase A. Security CI
+therefore:
+- hard-fails every other DBIndicator regression,
+- runs those nine exact known node IDs separately as visible non-blocking debt,
+- includes the recorder-health test in the hard gate after updating its expected
+  behavior from public access to OWNER-authenticated access.
+
+This prevents Phase A from masking any new failure while keeping unrelated,
+pre-existing test debt visible for later cleanup.
+
 ## Production deployment preconditions
 
 Before Phase A is deployed:
