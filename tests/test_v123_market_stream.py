@@ -185,3 +185,8 @@ def test_snapshot_carries_private_whole_universe_quant_rows():
     assert snap["nifty"]["live_price"] == 25020.0
     assert {row["symbol"] for row in snap["quant_rows"]} == {"ABC", "XYZ"}
     assert {row["sector"] for row in snap["quant_rows"]} == {"TEST1", "TEST2"}
+    by_symbol = {row["symbol"]: row for row in snap["quant_rows"]}
+    assert by_symbol["ABC"]["day_change_pct"] == 1.0
+    assert by_symbol["XYZ"]["day_change_pct"] == -2.0
+    assert "discovery_reason" in by_symbol["ABC"]
+    assert "ret_5m_pct" in by_symbol["XYZ"]
