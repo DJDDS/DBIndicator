@@ -971,6 +971,7 @@ button, a, summary, input, select { touch-action: manipulation; }
     <div class="focus-audit-grid">
       <div id="v123-focus-missed-section" class="focus-audit-pane focus-jump-target">
         <h3>Missed-Mover Forensics</h3>
+        <div id="v123-forensic-coverage" class="focus-meta" style="margin:0 0 8px 0;">Coverage warming up…</div>
         <div id="v123-focus-missed"><div class="focus-empty">No important mover is currently failing the pipeline.</div></div>
       </div>
       <div class="focus-audit-pane">
@@ -1972,12 +1973,15 @@ button, a, summary, input, select { touch-action: manipulation; }
     var building=Array.isArray(desk.building_next)?desk.building_next:[];
     var continuation=Array.isArray(desk.continuation_watch)?desk.continuation_watch:[];
     var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
-    var misses=forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
+    var misses=Array.isArray(desk.missed_movers)?desk.missed_movers:
+      forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
+    var coverage=desk.forensic_coverage||{};
+    var coverageMisses=Number(coverage.pipeline_misses);
 
     setText('v123-kpi-active',active.length);
     setText('v123-kpi-building',building.length);
     setText('v123-kpi-continuation',continuation.length);
-    setText('v123-kpi-missed',misses.length);
+    setText('v123-kpi-missed',Number.isFinite(coverageMisses)?coverageMisses:misses.length);
     var shadow=tactical.continuation_shadow||{};
     setText('v123-kpi-shadow',shadow.status==='RECORDING_SHADOW'?'LIVE':'SHADOW');
     setText('v123-kpi-shadow-sub',shadow.status==='RECORDING_SHADOW'
@@ -1995,6 +1999,19 @@ button, a, summary, input, select { touch-action: manipulation; }
       recentSeen[key]=true; return true;
     });
     fill('v123-focus-recent',recentRows,'No completed/invalidated focus thesis yet.');
+
+    var coverageBox=document.getElementById('v123-forensic-coverage');
+    if(coverageBox){
+      if(String(coverage.mode||'')==='WHOLE_UNIVERSE'){
+        coverageBox.textContent=
+          'Whole-universe audit · '+String(coverage.observed_rows||0)+'/'+String(coverage.universe_count||0)+
+          ' live rows · '+String(coverage.meaningful_movers||0)+' movers ≥0.75% · '+
+          String(coverage.captured_movers||0)+' in Focus/Continuation · '+
+          String(coverage.pipeline_misses||0)+' pipeline misses';
+      }else{
+        coverageBox.textContent='Forensic coverage fallback active · waiting for whole-universe observer rows.';
+      }
+    }
 
     var missed=document.getElementById('v123-focus-missed');
     if(missed){
