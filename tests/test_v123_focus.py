@@ -640,3 +640,87 @@ def test_stale_tactical_data_holds_focus_lifecycle_and_pauses_vehicle():
     assert row["data_ok"] is False
     assert row["vehicles"]["option"] == "WAIT"
     assert row["vehicles"]["future"] == "STALE"
+
+
+def test_whole_universe_forensics_catches_mover_outside_top30_slices():
+    t0 = dt.datetime(2026, 9, 28, 11, 30)
+    observer = {
+        "universe_count": 213,
+        "events": [],
+        "leaders": [{"symbol": "TOP", "day_change_pct": 4.0}],
+        "laggards": [{"symbol": "BOTTOM", "day_change_pct": -4.0}],
+        "quant_rows": [
+            {
+                "symbol": "HIDDENMISS",
+                "live_price": 97.2,
+                "day_change_pct": -2.8,
+                "ret_3m_pct": -0.06,
+                "ret_5m_pct": -0.14,
+                "ret_10m_pct": -0.48,
+                "relative_5m_vs_nifty_pct": -0.04,
+                "volume_rate_accel": 0.92,
+                "near_session_extreme": True,
+                "discovery_qualified": False,
+                "discovery_reason": "NO_EVENT_FAMILY_QUALIFIED",
+                "discovery_failed_gates": ["5m move < 0.20%", "volume rate < 1.20x"],
+            },
+            {
+                "symbol": "SMALL",
+                "live_price": 99.7,
+                "day_change_pct": -0.3,
+                "discovery_qualified": False,
+                "discovery_reason": "NO_EVENT_FAMILY_QUALIFIED",
+                "discovery_failed_gates": [],
+            },
+        ],
+    }
+    state = v123_focus.update_focus(
+        None, observer, {"rows": []}, {"candidates": []},
+        [_scan("HIDDENMISS", 97.2), _scan("SMALL", 99.7)], now=t0,
+    )
+
+    assert "HIDDENMISS" in state["missed"]
+    assert state["missed"]["HIDDENMISS"]["stage"] == "DISCOVERY"
+    coverage = state["forensic_coverage"]
+    assert coverage["mode"] == "WHOLE_UNIVERSE"
+    assert coverage["universe_count"] == 213
+    assert coverage["observed_rows"] == 2
+    assert coverage["meaningful_movers"] == 1
+    assert coverage["pipeline_misses"] == 1
+
+
+def test_tactical_callback_does_not_replace_whole_universe_coverage_with_fallback():
+    t0 = dt.datetime(2026, 9, 28, 11, 30)
+    observer = {
+        "universe_count": 213,
+        "events": [],
+        "leaders": [],
+        "laggards": [],
+        "quant_rows": [{
+            "symbol": "MISS",
+            "live_price": 98.0,
+            "day_change_pct": -2.0,
+            "ret_3m_pct": -0.08,
+            "ret_5m_pct": -0.15,
+            "ret_10m_pct": -0.4,
+            "relative_5m_vs_nifty_pct": -0.05,
+            "volume_rate_accel": 0.9,
+            "discovery_qualified": False,
+            "discovery_reason": "NO_EVENT_FAMILY_QUALIFIED",
+            "discovery_failed_gates": ["5m move < 0.20%"],
+        }],
+    }
+    state = v123_focus.update_focus(
+        None, observer, {"rows": []}, {"candidates": []},
+        [_scan("MISS", 98.0)], now=t0,
+    )
+    assert state["forensic_coverage"]["mode"] == "WHOLE_UNIVERSE"
+
+    state = v123_focus.update_focus(
+        state,
+        {"universe_count": 213, "events": [], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []},
+        [_scan("MISS", 98.0)], now=t0 + dt.timedelta(seconds=5),
+    )
+    assert state["forensic_coverage"]["mode"] == "WHOLE_UNIVERSE"
+    assert state["forensic_coverage"]["pipeline_misses"] == 1
