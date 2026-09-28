@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 import threading
 import time
 from pathlib import Path
 from typing import Callable
+
+
+log = logging.getLogger(__name__)
 
 
 def _date(value):
@@ -577,6 +581,7 @@ class IndexVolStreamService:
                 connection_count=int(prior.get("connection_count") or 0) + 1,
                 last_connect_at=self.now_provider().isoformat(timespec="seconds"), last_error=None,
             )
+            log.info("V121_WS connected tokens=%s", len(universe["tokens"]))
 
         def on_ticks(ws, ticks):
             if not self._is_current_ticker(ticker):
@@ -613,11 +618,13 @@ class IndexVolStreamService:
                 last_disconnect_at=self.now_provider().isoformat(timespec="seconds"),
                 last_error=str(reason or "websocket closed"),
             )
+            log.warning("V121_WS closed code=%s reason=%s", code, reason)
 
         def on_error(ws, code, reason):
             if not self._is_current_ticker(ticker):
                 return
             _update_state(self.state_file, status="ERROR", last_error=str(reason or code or "websocket error"))
+            log.warning("V121_WS error code=%s reason=%s", code, reason)
 
         def on_reconnect(ws, attempts):
             if not self._is_current_ticker(ticker):
@@ -629,6 +636,7 @@ class IndexVolStreamService:
                 reconnect_attempt=int(attempts or 0),
                 last_error=None,
             )
+            log.warning("V121_WS reconnect attempt=%s", attempts)
 
         def on_noreconnect(ws):
             if not self._is_current_ticker(ticker):
@@ -639,6 +647,7 @@ class IndexVolStreamService:
                 last_disconnect_at=self.now_provider().isoformat(timespec="seconds"),
                 last_error="websocket reconnect attempts exhausted",
             )
+            log.error("V121_WS reconnect attempts exhausted")
 
         ticker.on_connect = on_connect
         ticker.on_ticks = on_ticks

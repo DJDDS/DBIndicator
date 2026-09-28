@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 import os
 import threading
@@ -23,10 +24,14 @@ from typing import Callable
 from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical
 
 
+log = logging.getLogger(__name__)
+
 SOFT_STATE_DWELL_SECONDS = 20.0
 CANCEL_REARM_COOLDOWN_SECONDS = 180.0
 STALE_VOID_SECONDS = 60.0
 NEW_ENTRY_CUTOFF_SECONDS = 15 * 3600 + 25 * 60
+WS_FEED_STALE_SECONDS = 30
+RECONNECT_COOLDOWN_SECONDS = 10
 
 
 def _f(v, default=None):
@@ -157,6 +162,12 @@ class TacticalStockStreamService:
         self._seeded = set()
         self._universe_signature = None
         self._last_tick_at = None
+        self._last_connect_at = None
+        self._last_disconnect_at = None
+        self._last_ws_error = None
+        self._connection_count = 0
+        self._reconnect_count = 0
+        self._next_connect_at = None
         self._session_date = None
 
     def _load_transition_history(self):
@@ -291,6 +302,7 @@ class TacticalStockStreamService:
             self._seeded = set()
             self._universe_signature = None
             self._last_tick_at = None
+            self._last_ws_error = None
         return True
 
     def _drop_symbol_market_state(self, symbol):
@@ -1121,8 +1133,37 @@ class TacticalStockStreamService:
         except OSError:
             pass
 
+    def _feed_health(self, now):
+        with self._lock:
+            connected = self._connected
+            active = self._active
+            last_tick = self._last_tick_at
+            last_connect = self._last_connect_at
+            last_disconnect = self._last_disconnect_at
+            last_error = self._last_ws_error
+            connection_count = self._connection_count
+            reconnect_count = self._reconnect_count
+        tick_age = None
+        if isinstance(last_tick, dt.datetime):
+            tick_age = max(0.0, (now - last_tick).total_seconds())
+        fresh = bool(connected and tick_age is not None and tick_age <= WS_FEED_STALE_SECONDS)
+        return {
+            "stream": "V122B_TACTICAL",
+            "active": bool(active),
+            "connected": bool(connected),
+            "fresh": fresh,
+            "last_tick_at": _iso(last_tick) if isinstance(last_tick, dt.datetime) else None,
+            "last_tick_age_seconds": round(tick_age, 1) if tick_age is not None else None,
+            "last_connect_at": _iso(last_connect) if isinstance(last_connect, dt.datetime) else None,
+            "last_disconnect_at": _iso(last_disconnect) if isinstance(last_disconnect, dt.datetime) else None,
+            "connection_count": int(connection_count),
+            "reconnect_count": int(reconnect_count),
+            "last_error": last_error,
+        }
+
     def _evaluate(self, now):
         self._maybe_reset_session(now)
+        feed_health = self._feed_health(now)
         with self._lock:
             candidates = [dict(x) for x in self._candidates.values()]
             metadata = dict(self._metadata)
@@ -1476,7 +1517,8 @@ class TacticalStockStreamService:
         for row in output:
             counts[row["state"]] = counts.get(row["state"], 0) + 1
         self._publish({
-            "status": "STREAMING" if self._connected else ("WAITING_CANDIDATES" if not candidates else "CONNECTING"),
+            "status": "STREAMING" if feed_health.get("fresh") else ("WAITING_CANDIDATES" if not candidates else ("CONNECTING" if feed_health.get("active") else "DISCONNECTED")),
+            "feed_health": feed_health,
             "candidate_count": len(output),
             "candidates": output,
             "counts": counts,
@@ -1540,7 +1582,8 @@ class TacticalStockStreamService:
                             break
                         self._depth_samples[symbol].popleft()
 
-        self._evaluate(now)
+        # Keep the shared Twisted reactor callback lightweight.  The service
+        # loop evaluates the tactical state every two seconds.
 
     def _connect(self, token):
         ticker = self.ticker_factory(self.api_key, token)
@@ -1557,10 +1600,15 @@ class TacticalStockStreamService:
             if tokens:
                 ws.subscribe(tokens)
                 ws.set_mode(ws.MODE_FULL, tokens)
+            now = self.now_provider()
             with self._lock:
                 self._subscribed = set(tokens)
                 self._connected = True
-            self._evaluate(self.now_provider())
+                self._last_connect_at = now
+                self._last_ws_error = None
+                self._connection_count += 1
+                self._next_connect_at = None
+            log.info("V122B_WS connected tokens=%s", len(tokens))
 
         def on_ticks(ws, ticks):
             with self._lock:
@@ -1569,36 +1617,58 @@ class TacticalStockStreamService:
             self._handle_ticks(ticks, self.now_provider())
 
         def on_close(ws, code, reason):
+            now = self.now_provider()
             with self._lock:
                 if ws is self._ticker:
                     self._connected = False
-            self._publish({**self.snapshot(), "status": "STALE", "last_error": str(reason or "websocket closed")})
+                    self._last_disconnect_at = now
+                    self._last_ws_error = str(reason or "websocket closed")
+            log.warning("V122B_WS closed code=%s reason=%s", code, reason)
 
         def on_error(ws, code, reason):
-            self._publish({**self.snapshot(), "status": "ERROR", "last_error": str(reason or code)})
+            with self._lock:
+                if ws is self._ticker:
+                    self._last_ws_error = str(reason or code)
+            log.warning("V122B_WS error code=%s reason=%s", code, reason)
+
+        def on_reconnect(ws, attempts):
+            with self._lock:
+                if ws is self._ticker:
+                    self._reconnect_count += 1
+                    self._connected = False
+            log.warning("V122B_WS reconnect attempt=%s", attempts)
 
         def on_noreconnect(ws):
+            now = self.now_provider()
             with self._lock:
                 if ws is self._ticker:
                     self._connected = False
                     self._active = False
                     self._ticker = None
+                    self._last_disconnect_at = now
+                    self._next_connect_at = now + dt.timedelta(seconds=RECONNECT_COOLDOWN_SECONDS)
+            log.error("V122B_WS reconnect attempts exhausted")
 
         ticker.on_connect = on_connect
         ticker.on_ticks = on_ticks
         ticker.on_close = on_close
         ticker.on_error = on_error
+        ticker.on_reconnect = on_reconnect
         ticker.on_noreconnect = on_noreconnect
 
         def connect():
             try:
                 ticker.connect(threaded=True)
             except Exception as exc:
+                now = self.now_provider()
                 with self._lock:
                     self._active = False
                     self._ticker = None
                     self._connected = False
-                self._publish({**self.snapshot(), "status": "ERROR", "last_error": str(exc)})
+                    self._last_disconnect_at = now
+                    self._last_ws_error = str(exc)
+                    self._next_connect_at = now + dt.timedelta(seconds=RECONNECT_COOLDOWN_SECONDS)
+                log.exception("V122B_WS connect failed")
         self._dispatch(connect)
 
     def _close(self):
@@ -1637,8 +1707,10 @@ class TacticalStockStreamService:
                 with self._lock:
                     has_candidates = bool(self._candidates)
                     active = self._active
+                    next_connect_at = self._next_connect_at
                 if has_candidates and not active:
-                    self._connect(token)
+                    if next_connect_at is None or now >= next_connect_at:
+                        self._connect(token)
                 elif not has_candidates:
                     self._publish({"status": "WAITING_CANDIDATES", "candidate_count": 0, "candidates": [], "counts": {}})
                 else:

@@ -185,3 +185,51 @@ def test_snapshot_carries_private_whole_universe_quant_rows():
     assert snap["nifty"]["live_price"] == 25020.0
     assert {row["symbol"] for row in snap["quant_rows"]} == {"ABC", "XYZ"}
     assert {row["sector"] for row in snap["quant_rows"]} == {"TEST1", "TEST2"}
+    by_symbol = {row["symbol"]: row for row in snap["quant_rows"]}
+    assert by_symbol["ABC"]["day_change_pct"] == 1.0
+    assert by_symbol["XYZ"]["day_change_pct"] == -2.0
+    assert "discovery_reason" in by_symbol["ABC"]
+    assert "ret_5m_pct" in by_symbol["XYZ"]
+
+
+def test_tick_callback_path_is_lightweight_and_defers_publish():
+    svc = _service()
+    now = dt.datetime(2026, 9, 28, 12, 0)
+    svc._token_to_symbol = {1: "ABC"}
+    called = {"publish": 0}
+
+    def _unexpected(*args, **kwargs):
+        called["publish"] += 1
+
+    svc._maybe_publish = _unexpected
+    svc._handle_ticks([{
+        "instrument_token": 1,
+        "last_price": 101.0,
+        "volume_traded": 1500,
+        "ohlc": {"open": 100.0, "high": 101.0, "low": 99.5, "close": 100.0},
+    }], now)
+
+    assert called["publish"] == 0
+    assert svc._latest["ABC"]["last_price"] == 101.0
+    assert svc._last_tick_at == now
+
+
+def test_snapshot_excludes_stale_symbols_and_reports_feed_health():
+    svc = _service()
+    now = dt.datetime(2026, 9, 28, 12, 0)
+    svc._connected = True
+    svc._active = True
+    svc._last_tick_at = now - dt.timedelta(seconds=60)
+    svc._tokens = {"ABC": 1, "NIFTY 50": 2}
+    svc._latest = {
+        "ABC": {"last_price": 101.0},
+        "NIFTY 50": {"last_price": 25000.0},
+    }
+    _append(svc, "ABC", now-dt.timedelta(seconds=60), 101.0, 1500, prev=100.0)
+    _append(svc, "NIFTY 50", now-dt.timedelta(seconds=60), 25000.0, 2, prev=24900.0)
+
+    snap = svc._build_snapshot(now)
+    assert snap["feed_health"]["fresh"] is False
+    assert snap["fresh_symbol_count"] == 0
+    assert snap["quant_rows"] == []
+    assert snap["status"] == "CONNECTING"

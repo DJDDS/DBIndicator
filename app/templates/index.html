@@ -476,6 +476,12 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-kpi span{display:block;color:#718397;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:750}
 .focus-kpi strong{display:block;margin-top:4px;font:800 17px var(--mono);color:#dce7ef}
 .focus-kpi small{display:block;margin-top:2px;color:#627487;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.focus-kpi-button{width:100%;font:inherit;text-align:left;color:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.focus-kpi-button:hover{border-color:#41647b;background:#111d28;transform:translateY(-1px)}
+.focus-kpi-button:focus-visible{outline:2px solid #6ea8fe;outline-offset:2px}
+.focus-jump-target{scroll-margin-top:88px}
+.focus-jump-target.focus-jump-flash{animation:focus-jump-flash .9s ease-out}
+@keyframes focus-jump-flash{0%{box-shadow:0 0 0 2px rgba(110,168,254,.62)}100%{box-shadow:none}}
 .focus-workspace{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.78fr);gap:0}
 .focus-primary{padding:14px 16px 16px;min-width:0}
 .focus-sidebar{padding:14px;border-left:1px solid #21303d;background:rgba(7,11,16,.35);min-width:0}
@@ -938,24 +944,24 @@ button, a, summary, input, select { touch-action: manipulation; }
     </div>
 
     <div class="focus-kpis" aria-label="Live Focus Desk summary">
-      <div class="focus-kpi"><span>Actionable desk</span><strong id="v123-kpi-active">0</strong><small>ready / active / manage</small></div>
-      <div class="focus-kpi"><span>Building</span><strong id="v123-kpi-building">0</strong><small>developing underlying events</small></div>
-      <div class="focus-kpi"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></div>
-      <div class="focus-kpi"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></div>
+      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-active-section" aria-label="Go to Actionable desk"><span>Actionable desk</span><strong id="v123-kpi-active">0</strong><small>ready / active / manage</small></button>
+      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Building"><span>Building</span><strong id="v123-kpi-building">0</strong><small>developing underlying events</small></button>
+      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
+      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
       <div class="focus-kpi"><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
     </div>
 
     <div class="focus-workspace">
-      <main class="focus-primary">
+      <main id="v123-focus-active-section" class="focus-primary focus-jump-target">
         <div class="focus-section-head"><h3>Active / Ready / Manage</h3><span>highest attention first</span></div>
         <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for a persistent underlying opportunity…</div></div>
       </main>
       <aside class="focus-sidebar">
-        <div class="focus-sidebar-block">
+        <div id="v123-focus-building-section" class="focus-sidebar-block focus-jump-target">
           <div class="focus-section-head"><h3>Building Next</h3><span>pre-entry observation</span></div>
           <div id="v123-focus-building" class="focus-list"><div class="focus-empty">Observer is looking for opening drive, range expansion, relative separation and continuation/reclaim events.</div></div>
         </div>
-        <div class="focus-sidebar-block">
+        <div id="v123-focus-continuation-section" class="focus-sidebar-block focus-jump-target">
           <div class="focus-section-head"><h3>Continuation Watch</h3><span>fresh evidence required</span></div>
           <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">No important alumni is waiting for re-entry.</div></div>
         </div>
@@ -963,8 +969,9 @@ button, a, summary, input, select { touch-action: manipulation; }
     </div>
 
     <div class="focus-audit-grid">
-      <div class="focus-audit-pane">
+      <div id="v123-focus-missed-section" class="focus-audit-pane focus-jump-target">
         <h3>Missed-Mover Forensics</h3>
+        <div id="v123-forensic-coverage" class="focus-meta" style="margin:0 0 8px 0;">Coverage warming up…</div>
         <div id="v123-focus-missed"><div class="focus-empty">No important mover is currently failing the pipeline.</div></div>
       </div>
       <div class="focus-audit-pane">
@@ -1838,8 +1845,16 @@ button, a, summary, input, select { touch-action: manipulation; }
   function renderV123Focus(desk, observer, tactical) {
     desk = desk || {}; observer = observer || {}; tactical = tactical || {};
     var status = document.getElementById('v123-focus-status');
+    var ws = observer.feed_health || {};
+    var wsAge = Number(ws.last_tick_age_seconds);
+    var wsLabel = ws.fresh ? 'WS LIVE' : (ws.active ? 'WS DEGRADED' : 'WS DOWN');
+    var freshCount = Number(observer.fresh_symbol_count);
     if (status) status.innerHTML = '<span class="focus-live-dot"></span>' +
-      v12Esc(observer.status || 'WAITING') + ' · ' + v12Esc(observer.universe_count || 0) + ' F&O · Focus ' + v12Esc(desk.focus_count || 0);
+      v12Esc(observer.status || 'WAITING') + ' · ' + v12Esc(observer.universe_count || 0) + ' F&O · ' +
+      v12Esc(wsLabel) +
+      (Number.isFinite(wsAge) ? ' ' + v12Esc(wsAge.toFixed(0)) + 's' : '') +
+      (Number.isFinite(freshCount) ? ' · fresh ' + v12Esc(freshCount) : '') +
+      ' · Focus ' + v12Esc(desk.focus_count || 0);
 
     function n(v,d){ var x=Number(v); return Number.isFinite(x)?x.toFixed(d==null?2:d):'—'; }
     function s(v,d){ var x=Number(v); return Number.isFinite(x)?(x>=0?'+':'')+x.toFixed(d==null?2:d):'—'; }
@@ -1966,12 +1981,15 @@ button, a, summary, input, select { touch-action: manipulation; }
     var building=Array.isArray(desk.building_next)?desk.building_next:[];
     var continuation=Array.isArray(desk.continuation_watch)?desk.continuation_watch:[];
     var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
-    var misses=forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
+    var misses=Array.isArray(desk.missed_movers)?desk.missed_movers:
+      forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
+    var coverage=desk.forensic_coverage||{};
+    var coverageMisses=Number(coverage.pipeline_misses);
 
     setText('v123-kpi-active',active.length);
     setText('v123-kpi-building',building.length);
     setText('v123-kpi-continuation',continuation.length);
-    setText('v123-kpi-missed',misses.length);
+    setText('v123-kpi-missed',Number.isFinite(coverageMisses)?coverageMisses:misses.length);
     var shadow=tactical.continuation_shadow||{};
     setText('v123-kpi-shadow',shadow.status==='RECORDING_SHADOW'?'LIVE':'SHADOW');
     setText('v123-kpi-shadow-sub',shadow.status==='RECORDING_SHADOW'
@@ -1989,6 +2007,19 @@ button, a, summary, input, select { touch-action: manipulation; }
       recentSeen[key]=true; return true;
     });
     fill('v123-focus-recent',recentRows,'No completed/invalidated focus thesis yet.');
+
+    var coverageBox=document.getElementById('v123-forensic-coverage');
+    if(coverageBox){
+      if(String(coverage.mode||'')==='WHOLE_UNIVERSE'){
+        coverageBox.textContent=
+          'Whole-universe audit · '+String(coverage.observed_rows||0)+'/'+String(coverage.universe_count||0)+
+          ' live rows · '+String(coverage.meaningful_movers||0)+' movers ≥0.75% · '+
+          String(coverage.captured_movers||0)+' in Focus/Continuation · '+
+          String(coverage.pipeline_misses||0)+' pipeline misses';
+      }else{
+        coverageBox.textContent='Forensic coverage fallback active · waiting for whole-universe observer rows.';
+      }
+    }
 
     var missed=document.getElementById('v123-focus-missed');
     if(missed){
@@ -2498,6 +2529,21 @@ button, a, summary, input, select { touch-action: manipulation; }
 
   pollV8Dashboard();
   setInterval(pollV8Dashboard, DASHBOARD_REFRESH_MS);
+
+
+  (function bindFocusKpiNavigation() {
+    document.querySelectorAll('.focus-kpi-button[data-scroll-target]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var target = document.getElementById(button.getAttribute('data-scroll-target'));
+        if (!target) return;
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        target.classList.remove('focus-jump-flash');
+        void target.offsetWidth;
+        target.classList.add('focus-jump-flash');
+        window.setTimeout(function () { target.classList.remove('focus-jump-flash'); }, 950);
+      });
+    });
+  })();
 
 </script>
 </body>

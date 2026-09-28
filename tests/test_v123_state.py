@@ -204,3 +204,41 @@ def test_forensic_flight_recorder_keeps_only_two_sessions(tmp_path):
         "v123_forensic_2026-09-22.jsonl",
         "v123_forensic_2026-09-23.jsonl",
     ]
+
+
+def test_forensic_flight_recorder_prefers_private_whole_universe_rows(tmp_path):
+    root = tmp_path / "forensics"
+    rec = v123_state.ForensicFlightRecorder(str(root), snapshot_seconds=60)
+    now = dt.datetime(2026, 9, 28, 11, 45)
+    observer = {
+        "leaders": [],
+        "laggards": [],
+        "quant_rows": [{
+            "symbol": "HIDDENMISS",
+            "live_price": 97.0,
+            "day_change_pct": -3.0,
+            "ret_3m_pct": -0.08,
+            "ret_5m_pct": -0.18,
+            "ret_10m_pct": -0.55,
+            "relative_5m_vs_nifty_pct": -0.07,
+            "volume_rate_accel": 0.95,
+            "near_session_extreme": True,
+            "discovery_qualified": False,
+            "discovery_reason": "NO_EVENT_FAMILY_QUALIFIED",
+            "discovery_failed_gates": ["5m move < 0.20%"],
+        }],
+    }
+    focus = {"forensics": {
+        "HIDDENMISS": {
+            "stage": "DISCOVERY",
+            "reason": "NO_EVENT_FAMILY_QUALIFIED",
+            "discovery_failed_gates": ["5m move < 0.20%"],
+        }
+    }}
+
+    assert rec.record(observer, focus, now=now) == 1
+    path = root / "v123_forensic_2026-09-28.jsonl"
+    rows = [__import__("json").loads(line) for line in path.read_text().splitlines()]
+    assert rows[0]["symbol"] == "HIDDENMISS"
+    assert rows[0]["stage"] == "DISCOVERY"
+    assert rows[0]["day_change_pct"] == -3.0

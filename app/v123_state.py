@@ -323,8 +323,12 @@ class ForensicFlightRecorder:
     def _important_rows(observer):
         seen = set()
         rows = []
-        for mover in list((observer or {}).get("leaders") or []) + list((observer or {}).get("laggards") or []):
-            symbol = str(mover.get("symbol") or "")
+        private_rows = list((observer or {}).get("quant_rows") or [])
+        source_rows = private_rows if private_rows else (
+            list((observer or {}).get("leaders") or []) + list((observer or {}).get("laggards") or [])
+        )
+        for mover in source_rows:
+            symbol = str((mover or {}).get("symbol") or "")
             if not symbol or symbol in seen:
                 continue
             seen.add(symbol)
