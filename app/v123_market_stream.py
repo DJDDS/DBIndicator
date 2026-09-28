@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 import threading
 import time
@@ -30,12 +31,16 @@ from typing import Callable
 from . import scanner, v123_state
 
 
+log = logging.getLogger(__name__)
+
 SAMPLE_SECONDS = 5
 MAX_SAMPLE_MINUTES = 45
 PUBLISH_SECONDS = 2
 MAX_LOOKBACK_LAG_SECONDS = 45
 MAX_DISCOVERY_EVENTS = 30
 MAX_MOVER_ROWS = 30
+LIVE_SAMPLE_STALE_SECONDS = 45
+RECONNECT_COOLDOWN_SECONDS = 10
 
 
 def _f(value, default=None):
@@ -139,6 +144,12 @@ class UniverseMomentumStreamService:
         self._last_checkpoint_at = None
         self._checkpoint_restored = False
         self._last_error = None
+        self._last_tick_at = None
+        self._last_connect_at = None
+        self._last_disconnect_at = None
+        self._connection_count = 0
+        self._reconnect_count = 0
+        self._next_connect_at = None
         self._snapshot = {
             "status": "WAITING",
             "universe_count": 0,
@@ -530,12 +541,42 @@ class UniverseMomentumStreamService:
         }
 
 
+    def _feed_health(self, now):
+        with self._lock:
+            connected = self._connected
+            active = self._active
+            last_tick = self._last_tick_at
+            last_connect = self._last_connect_at
+            last_disconnect = self._last_disconnect_at
+            last_error = self._last_error
+            connection_count = self._connection_count
+            reconnect_count = self._reconnect_count
+        tick_age = None
+        if isinstance(last_tick, dt.datetime):
+            tick_age = max(0.0, (now - last_tick).total_seconds())
+        fresh = bool(connected and tick_age is not None and tick_age <= LIVE_SAMPLE_STALE_SECONDS)
+        return {
+            "stream": "V123_FULL_FNO",
+            "active": bool(active),
+            "connected": bool(connected),
+            "fresh": fresh,
+            "last_tick_at": _iso(last_tick),
+            "last_tick_age_seconds": round(tick_age, 1) if tick_age is not None else None,
+            "last_connect_at": _iso(last_connect),
+            "last_disconnect_at": _iso(last_disconnect),
+            "connection_count": int(connection_count),
+            "reconnect_count": int(reconnect_count),
+            "last_error": last_error,
+        }
+
     def _build_snapshot(self, now):
         meta = self._metadata()
         with self._lock:
             latest = {k: dict(v) for k, v in self._latest.items()}
             connected = self._connected
+            active = self._active
             last_error = self._last_error
+        feed_health = self._feed_health(now)
 
         nifty_returns = {
             "3m": self._return("NIFTY 50", now, 180),
@@ -552,6 +593,9 @@ class UniverseMomentumStreamService:
             if not sample_rows:
                 continue
             sample = sample_rows[-1]
+            sample_ts = _dt(sample.get("ts"))
+            if sample_ts is None or (now - sample_ts).total_seconds() > LIVE_SAMPLE_STALE_SECONDS:
+                continue
             prev = _f(sample.get("prev_close"), _f((meta.get(symbol) or {}).get("prev_close")))
             price = _f(sample.get("price"))
             day = _pct(price, prev)
@@ -599,8 +643,10 @@ class UniverseMomentumStreamService:
         laggards = sorted(movers, key=lambda x: _f(x.get("day_change_pct"), 999))[:MAX_MOVER_ROWS]
 
         return {
-            "status": "STREAMING" if connected else "CONNECTING",
+            "status": "STREAMING" if feed_health.get("fresh") else ("CONNECTING" if active else "DISCONNECTED"),
             "universe_count": max(0, len(self._tokens) - (1 if "NIFTY 50" in self._tokens else 0)),
+            "fresh_symbol_count": len(movers),
+            "feed_health": feed_health,
             "nifty": {
                 "live_price": _f((latest.get("NIFTY 50") or {}).get("last_price")),
                 "ret_3m_pct": nifty_returns["3m"],
@@ -647,8 +693,12 @@ class UniverseMomentumStreamService:
             tick["_received_at"] = _iso(now)
             with self._lock:
                 self._latest[symbol] = tick
+                self._last_tick_at = now
             self._append_sample(symbol, tick, now)
-        self._maybe_publish(now)
+        # Keep the shared Twisted reactor callback lightweight.  Snapshot
+        # building, Focus updates and forensic I/O run from run_forever(),
+        # not from on_ticks().
+
 
     def _connect(self, access_token):
         ticker = self.ticker_factory(self.api_key, access_token)
@@ -662,10 +712,14 @@ class UniverseMomentumStreamService:
             if tokens:
                 ws.subscribe(tokens)
                 ws.set_mode(ws.MODE_QUOTE, tokens)
+            now = self.now_provider()
             with self._lock:
                 self._connected = True
                 self._last_error = None
-            self._maybe_publish(self.now_provider(), force=True)
+                self._last_connect_at = now
+                self._connection_count += 1
+                self._next_connect_at = None
+            log.info("V123_WS connected tokens=%s", len(tokens))
 
         def on_ticks(ws, ticks):
             with self._lock:
@@ -674,40 +728,57 @@ class UniverseMomentumStreamService:
             self._handle_ticks(ticks, self.now_provider())
 
         def on_close(ws, code, reason):
+            now = self.now_provider()
             with self._lock:
                 if ws is self._ticker:
                     self._connected = False
+                    self._last_disconnect_at = now
                     self._last_error = str(reason or "websocket closed")
-            self._maybe_publish(self.now_provider(), force=True)
+            log.warning("V123_WS closed code=%s reason=%s", code, reason)
 
         def on_error(ws, code, reason):
             with self._lock:
                 self._last_error = str(reason or code)
-            self._maybe_publish(self.now_provider(), force=True)
+            log.warning("V123_WS error code=%s reason=%s", code, reason)
+
+        def on_reconnect(ws, attempts):
+            with self._lock:
+                if ws is self._ticker:
+                    self._reconnect_count += 1
+                    self._connected = False
+            log.warning("V123_WS reconnect attempt=%s", attempts)
 
         def on_noreconnect(ws):
+            now = self.now_provider()
             with self._lock:
                 if ws is self._ticker:
                     self._connected = False
                     self._active = False
                     self._ticker = None
+                    self._last_disconnect_at = now
+                    self._next_connect_at = now + dt.timedelta(seconds=RECONNECT_COOLDOWN_SECONDS)
+            log.error("V123_WS reconnect attempts exhausted")
 
         ticker.on_connect = on_connect
         ticker.on_ticks = on_ticks
         ticker.on_close = on_close
         ticker.on_error = on_error
+        ticker.on_reconnect = on_reconnect
         ticker.on_noreconnect = on_noreconnect
 
         def connect():
             try:
                 ticker.connect(threaded=True)
             except Exception as exc:
+                now = self.now_provider()
                 with self._lock:
                     self._active = False
                     self._connected = False
                     self._ticker = None
                     self._last_error = str(exc)
-                self._maybe_publish(self.now_provider(), force=True)
+                    self._last_disconnect_at = now
+                    self._next_connect_at = now + dt.timedelta(seconds=RECONNECT_COOLDOWN_SECONDS)
+                log.exception("V123_WS connect failed")
 
         self._dispatch(connect)
 
@@ -753,10 +824,13 @@ class UniverseMomentumStreamService:
                         self._tokens = dict(tokens)
                         self._token_to_symbol = {int(tok): sym for sym, tok in tokens.items()}
 
-                if self._tokens and not self._active:
-                    self._connect(access_token)
-                else:
-                    self._maybe_publish(now)
+                with self._lock:
+                    next_connect_at = self._next_connect_at
+                    active = self._active
+                if self._tokens and not active:
+                    if next_connect_at is None or now >= next_connect_at:
+                        self._connect(access_token)
+                self._maybe_publish(now)
                 self.sleep_fn(2)
             except Exception as exc:
                 with self._lock:
