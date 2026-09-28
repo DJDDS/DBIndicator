@@ -21,6 +21,10 @@
   @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(3, 1fr); } }
   @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
   .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile-button { width: 100%; color: inherit; font: inherit; text-align: left; cursor: pointer; appearance: none; -webkit-appearance: none; transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease; }
+  .tile-button:hover { border-color: var(--accent); background: #151a27; transform: translateY(-1px); }
+  .tile-button:focus-visible { outline: 2px solid #6ea8fe; outline-offset: 2px; }
+  .tile-button.active { border-color: #6ea8fe; box-shadow: 0 0 0 1px rgba(110,168,254,0.24); }
   .tile-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
   .tile-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
   .tile-value.green { color: var(--green); }
@@ -98,12 +102,12 @@
   </div>
   {% else %}
 
-  <div class="tiles" id="tiles">
-    <div class="tile"><div class="tile-label">Long Buildup</div><div class="tile-value green" id="tile-long-buildup">—</div></div>
-    <div class="tile"><div class="tile-label">Short Buildup</div><div class="tile-value red" id="tile-short-buildup">—</div></div>
-    <div class="tile"><div class="tile-label">Strong Accel</div><div class="tile-value green" id="tile-strong-accel">—</div></div>
-    <div class="tile"><div class="tile-label">Moderate Accel</div><div class="tile-value amber" id="tile-moderate-accel">—</div></div>
-    <div class="tile"><div class="tile-label">Weakening / Unwinding</div><div class="tile-value red" id="tile-weakening">—</div></div>
+  <div class="tiles" id="tiles" aria-label="Quick OI filters">
+    <button type="button" class="tile tile-button" data-tile-filter="long-buildup" aria-pressed="false"><div class="tile-label">Long Buildup</div><div class="tile-value green" id="tile-long-buildup">—</div></button>
+    <button type="button" class="tile tile-button" data-tile-filter="short-buildup" aria-pressed="false"><div class="tile-label">Short Buildup</div><div class="tile-value red" id="tile-short-buildup">—</div></button>
+    <button type="button" class="tile tile-button" data-tile-filter="strong-accel" aria-pressed="false"><div class="tile-label">Strong Accel</div><div class="tile-value green" id="tile-strong-accel">—</div></button>
+    <button type="button" class="tile tile-button" data-tile-filter="moderate-accel" aria-pressed="false"><div class="tile-label">Moderate Accel</div><div class="tile-value amber" id="tile-moderate-accel">—</div></button>
+    <button type="button" class="tile tile-button" data-tile-filter="weakening" aria-pressed="false"><div class="tile-label">Weakening / Unwinding</div><div class="tile-value red" id="tile-weakening">—</div></button>
   </div>
 
   <div class="toolbar">
@@ -267,6 +271,40 @@
     }).join('');
   }
 
+  var activeTileFilter = '';
+
+  function clearTileSelection() {
+    activeTileFilter = '';
+    document.querySelectorAll('.tile-button').forEach(function (button) {
+      button.classList.remove('active');
+      button.setAttribute('aria-pressed', 'false');
+    });
+  }
+
+  function activateTileFilter(button) {
+    var next = button.getAttribute('data-tile-filter') || '';
+    clearTileSelection();
+    activeTileFilter = next;
+
+    document.getElementById('f-symbol').value = '';
+    document.getElementById('f-structure').value = '';
+    document.getElementById('f-accel').value = '';
+    document.getElementById('f-oimove').value = '';
+    document.getElementById('f-unusual').value = '';
+
+    if (next === 'long-buildup') document.getElementById('f-structure').value = 'Long Buildup';
+    if (next === 'short-buildup') document.getElementById('f-structure').value = 'Short Buildup';
+    if (next === 'strong-accel') document.getElementById('f-accel').value = 'Strong acceleration';
+    if (next === 'moderate-accel') document.getElementById('f-accel').value = 'Moderate acceleration';
+
+    button.classList.add('active');
+    button.setAttribute('aria-pressed', 'true');
+    applyFilters();
+
+    var table = document.getElementById('oi-table');
+    if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function updateTiles(results) {
     var valid = results.filter(function (r) { return !r.error; });
     var count = function (fn) { return valid.filter(fn).length; };
@@ -289,6 +327,10 @@
       if (symbolQ && (row.getAttribute('data-symbol') || '').indexOf(symbolQ) === -1) ok = false;
       if (ok && structureQ && row.getAttribute('data-structure') !== structureQ) ok = false;
       if (ok && accelQ && row.getAttribute('data-accel') !== accelQ) ok = false;
+      if (ok && activeTileFilter === 'weakening') {
+        var accel = row.getAttribute('data-accel');
+        if (accel !== 'Weakening' && accel !== 'Possible exit/unwinding') ok = false;
+      }
       if (ok && unusualQ) {
         var zAttr = row.getAttribute('data-z');
         var z = zAttr === '' ? NaN : parseFloat(zAttr);
@@ -337,9 +379,21 @@
     });
   });
 
-  ['f-symbol'].forEach(function (id) { document.getElementById(id).addEventListener('input', applyFilters); });
+  document.querySelectorAll('.tile-button').forEach(function (button) {
+    button.addEventListener('click', function () { activateTileFilter(button); });
+  });
+
+  ['f-symbol'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', function () {
+      clearTileSelection();
+      applyFilters();
+    });
+  });
   ['f-structure', 'f-accel', 'f-oimove', 'f-unusual'].forEach(function (id) {
-    document.getElementById(id).addEventListener('change', applyFilters);
+    document.getElementById(id).addEventListener('change', function () {
+      clearTileSelection();
+      applyFilters();
+    });
   });
 
   function loadData() {
