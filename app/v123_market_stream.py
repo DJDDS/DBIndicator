@@ -611,12 +611,11 @@ class UniverseMomentumStreamService:
             # background.py removes this before publishing/storing the normal
             # observer payload, so it cannot enlarge public dashboard/API data.
             "quant_rows": [
-                {
-                    "symbol": row.get("symbol"),
-                    "live_price": row.get("live_price"),
-                    "volume_rate_accel": row.get("volume_rate_accel"),
-                    "sector": row.get("sector"),
-                }
+                # Private whole-universe rows.  The quant shadow still consumes
+                # only its locked feature vector, while the extra diagnostics
+                # let observability explain every meaningful mover rather than
+                # only the top-30 leader/laggard slices.
+                dict(row)
                 for row in movers
             ],
             "events": events[:MAX_DISCOVERY_EVENTS],
