@@ -1845,8 +1845,16 @@ button, a, summary, input, select { touch-action: manipulation; }
   function renderV123Focus(desk, observer, tactical) {
     desk = desk || {}; observer = observer || {}; tactical = tactical || {};
     var status = document.getElementById('v123-focus-status');
+    var ws = observer.feed_health || {};
+    var wsAge = Number(ws.last_tick_age_seconds);
+    var wsLabel = ws.fresh ? 'WS LIVE' : (ws.active ? 'WS DEGRADED' : 'WS DOWN');
+    var freshCount = Number(observer.fresh_symbol_count);
     if (status) status.innerHTML = '<span class="focus-live-dot"></span>' +
-      v12Esc(observer.status || 'WAITING') + ' · ' + v12Esc(observer.universe_count || 0) + ' F&O · Focus ' + v12Esc(desk.focus_count || 0);
+      v12Esc(observer.status || 'WAITING') + ' · ' + v12Esc(observer.universe_count || 0) + ' F&O · ' +
+      v12Esc(wsLabel) +
+      (Number.isFinite(wsAge) ? ' ' + v12Esc(wsAge.toFixed(0)) + 's' : '') +
+      (Number.isFinite(freshCount) ? ' · fresh ' + v12Esc(freshCount) : '') +
+      ' · Focus ' + v12Esc(desk.focus_count || 0);
 
     function n(v,d){ var x=Number(v); return Number.isFinite(x)?x.toFixed(d==null?2:d):'—'; }
     function s(v,d){ var x=Number(v); return Number.isFinite(x)?(x>=0?'+':'')+x.toFixed(d==null?2:d):'—'; }
