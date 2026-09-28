@@ -80,6 +80,7 @@ def empty_state():
         "continuation_watch": {},
         "missed": {},
         "forensics": {},
+        "forensic_coverage": {},
         "last_update": None,
         "trade_date": None,
         "swing_1d": {},
@@ -96,6 +97,7 @@ def _normalise(state):
     out.setdefault("continuation_watch", {})
     out.setdefault("missed", {})
     out.setdefault("forensics", {})
+    out.setdefault("forensic_coverage", {})
     out.setdefault("last_update", None)
     out.setdefault("trade_date", None)
     out.setdefault("swing_1d", {})
@@ -610,19 +612,40 @@ def _continuation_rearm_decision(item, event, trow, scan, now):
 
 
 def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_by_key, scan_map, tactical_by_key, promotion_trace, now):
-    """Forensic audit of actual movers, not only selected candidates."""
+    """Forensic audit of actual movers, not only selected candidates.
+
+    When the private whole-universe observer rows are present, audit every F&O
+    underlying with a valid day move.  The public leader/laggard slices remain
+    only as a backwards-compatible fallback for non-market-stream callbacks.
+    """
     missed = dict(state.get("missed") or {})
     forensics = dict(state.get("forensics") or {})
-    rows = list((observer or {}).get("leaders") or []) + list((observer or {}).get("laggards") or [])
+
+    private_rows = list((observer or {}).get("quant_rows") or [])
+    whole_universe = bool(private_rows)
+    source_rows = private_rows if whole_universe else (
+        list((observer or {}).get("leaders") or []) + list((observer or {}).get("laggards") or [])
+    )
+
+    rows = []
     seen = set()
-    for mover in rows:
-        symbol = str(mover.get("symbol") or "")
+    for mover in source_rows:
+        symbol = str((mover or {}).get("symbol") or "")
         if not symbol or symbol in seen:
             continue
         seen.add(symbol)
+        rows.append(mover)
+
+    meaningful = 0
+    stage_counts = {}
+    current_misses = 0
+
+    for mover in rows:
+        symbol = str(mover.get("symbol") or "")
         day = _f(mover.get("day_change_pct"))
         if day is None or abs(day) < 0.75:
             continue
+        meaningful += 1
 
         direction = "Bullish" if day > 0 else "Bearish"
         event = event_by_key.get((symbol, direction))
@@ -650,6 +673,10 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         else:
             stage, reason = "PROMOTION", "EVENT_SEEN_BUT_NOT_PROMOTED"
 
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        if stage not in ("FOCUS", "CONTINUATION"):
+            current_misses += 1
+
         entry = dict(forensics.get(symbol) or {})
         history = list(entry.get("history") or [])
         stamp = (stage, reason)
@@ -664,6 +691,8 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
             "ret_10m_pct": mover.get("ret_10m_pct"),
             "relative_5m_vs_nifty_pct": mover.get("relative_5m_vs_nifty_pct"),
             "volume_rate_accel": mover.get("volume_rate_accel"),
+            "near_session_extreme": mover.get("near_session_extreme"),
+            "discovery_qualified": mover.get("discovery_qualified"),
             "discovery_failed_gates": mover.get("discovery_failed_gates"),
             "stage": stage,
             "reason": reason,
@@ -680,6 +709,19 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         if symbol not in focus_symbols and symbol not in continuation_symbols:
             missed[symbol] = dict(entry)
 
+    coverage = {
+        "mode": "WHOLE_UNIVERSE" if whole_universe else "TOP_MOVER_FALLBACK",
+        "universe_count": int(_f((observer or {}).get("universe_count"), 0.0) or 0),
+        "observed_rows": len(rows),
+        "meaningful_movers": meaningful,
+        "focus_movers": stage_counts.get("FOCUS", 0),
+        "continuation_movers": stage_counts.get("CONTINUATION", 0),
+        "captured_movers": stage_counts.get("FOCUS", 0) + stage_counts.get("CONTINUATION", 0),
+        "pipeline_misses": current_misses,
+        "stage_counts": stage_counts,
+        "asof": _iso(now),
+    }
+
     cutoff = now - dt.timedelta(hours=4)
     def fresh_map(src):
         out = {}
@@ -694,7 +736,7 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
             if ts >= cutoff:
                 out[symbol] = row
         return out
-    return fresh_map(missed), fresh_map(forensics)
+    return fresh_map(missed), fresh_map(forensics), coverage
 
 
 
@@ -1064,7 +1106,7 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
 
     focus_symbols = set(focus)
     continuation_symbols = set(continuation)
-    missed, forensics = _missed_movers(
+    missed, forensics, forensic_coverage = _missed_movers(
         state, observer, focus_symbols, continuation_symbols,
         event_by_key, scans, tactical_by_key, promotion_trace, now
     )
@@ -1074,6 +1116,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
     state["recent"] = _recent_cleanup(recent, now)
     state["missed"] = missed
     state["forensics"] = forensics
+    # Only the market-stream callback has the private whole-universe rows.
+    # Tactical callbacks keep the latest complete coverage rather than
+    # replacing it with the public top-mover fallback.
+    if forensic_coverage.get("mode") == "WHOLE_UNIVERSE" or not state.get("forensic_coverage"):
+        state["forensic_coverage"] = forensic_coverage
     state["last_update"] = _iso(now)
     return state
 
@@ -1164,6 +1211,7 @@ def dashboard(state):
         "continuation_watch": continuation,
         "missed_movers": missed,
         "mover_forensics": forensics,
+        "forensic_coverage": state.get("forensic_coverage") or {},
         "all_focus": focus,
         "last_update": state.get("last_update"),
         "swing_1d": state.get("swing_1d") or {},
