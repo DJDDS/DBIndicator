@@ -2153,12 +2153,15 @@ def _v123_market_publish(payload):
         log.exception("Failed to submit V12.3 quant-regime shadow snapshot")
 
     # Keep the large all-symbol research feed out of normal dashboard/API state.
+    # The live Focus update still receives the private rows in this callback so
+    # missed-mover forensics can audit the whole F&O universe.  Those rows never
+    # become public dashboard state and never feed trading controls.
     observer_payload = dict(raw_payload)
     observer_payload.pop("quant_rows", None)
     with _state_lock:
         _state["v123_market_observer"] = observer_payload
         _state["v123_quant_regime_shadow"] = _v123_quant_shadow_worker.status()
-    _update_v123_focus(observer=observer_payload, now=now)
+    _update_v123_focus(observer=raw_payload, now=now)
 
 
 def _v123_metadata_provider():
