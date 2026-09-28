@@ -553,3 +553,39 @@ def test_manage_lifecycle_does_not_trigger_from_soft_held_tradeable_name():
     state = {"state": "TRADEABLE", "tradeable": False, "soft_hold": True}
     _, life = svc._manage_lifecycle("ABC", row, setup, state, t0)
     assert life.get("triggered_at") is None
+
+
+def test_tactical_tick_callback_defers_evaluation_to_service_loop():
+    now = dt.datetime(2026, 9, 28, 12, 0)
+    svc = _service(now)
+    svc._metadata = {
+        1: {"kind": "CASH", "symbol": "ABC", "tradingsymbol": "ABC"},
+    }
+    called = {"evaluate": 0}
+
+    def _unexpected(*args, **kwargs):
+        called["evaluate"] += 1
+
+    svc._evaluate = _unexpected
+    svc._handle_ticks([{
+        "instrument_token": 1,
+        "last_price": 100.5,
+        "volume_traded": 1000,
+    }], now)
+
+    assert called["evaluate"] == 0
+    assert svc._last_tick_at == now
+    assert svc._latest_ticks[1]["last_price"] == 100.5
+
+
+def test_tactical_feed_health_marks_old_heartbeat_degraded():
+    now = dt.datetime(2026, 9, 28, 12, 0)
+    svc = _service(now)
+    svc._active = True
+    svc._connected = True
+    svc._last_tick_at = now - dt.timedelta(seconds=45)
+    health = svc._feed_health(now)
+    assert health["stream"] == "V122B_TACTICAL"
+    assert health["connected"] is True
+    assert health["fresh"] is False
+    assert health["last_tick_age_seconds"] == 45.0
