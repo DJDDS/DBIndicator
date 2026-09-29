@@ -1223,6 +1223,7 @@ class TacticalStockStreamService:
                 builder = self._bar_builders.get(symbol)
                 current = dict(builder.current) if builder is not None and builder.current else None
                 depth_samples = list(self._depth_samples.get(symbol) or [])
+                price_samples = list(self._cash_samples.get(symbol) or [])
 
             cash_age = self._tick_age(cash_tick, now)
             fut_age = self._tick_age(fut_tick, now)
@@ -1236,16 +1237,15 @@ class TacticalStockStreamService:
             locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
             route = None
 
-            # Strict ordering: live directional option feasibility first.
-            # Only an eligible name is allowed into the 3m structural detector.
+            # Underlying movement was already found by the full-universe
+            # multiscale detector. Option feasibility gates expensive deep
+            # execution work; structure uses the market-selected horizon.
             if precheck.get("eligible"):
-                setup = v122b_tactical.detect_structural_setup(
-                    bars, current, candidate, now=now
+                setup = v122b_tactical.detect_adaptive_structure(
+                    price_samples, candidate, now=now
                 )
                 setup_direction = setup.get("direction") or direction
-                fast = v122b_tactical.fast_trend_veto(
-                    (bars + ([current] if current else []))[-80:], setup_direction
-                )
+                fast = {"veto": False, "reason": None, "method": "NO_TECHNICAL_INDICATOR_VETO"}
                 persistence = v122b_tactical.depth_persistence(
                     depth_samples, setup_direction, now=now
                 )
@@ -1255,11 +1255,11 @@ class TacticalStockStreamService:
                         direction=setup_direction,
                         spot=live_price,
                         now=now,
-                        speed_class=setup.get("speed_class") or "IMPULSE",
+                        speed_class=setup.get("speed_class") or "ADAPTIVE",
                         expected_underlying_move_abs=max(
-                            _f(setup.get("expected_move_abs"), 0.0),
-                            0.25 * max(_f(candidate.get("atr"), 0.0), 0.0),
+                            _f(setup.get("expected_move_abs"), 0.0), 1e-9
                         ),
+                        expected_horizon_seconds=setup.get("horizon_seconds"),
                         earnings=event,
                         locked_contract_symbol=locked_contract,
                     )
@@ -1278,29 +1278,34 @@ class TacticalStockStreamService:
                     "setup": None,
                     "ready": False,
                     "triggered": False,
-                    "speed_class": None,
+                    "speed_class": "ADAPTIVE",
                     "trigger": None,
                     "invalidation": None,
                     "expected_move_abs": None,
+                    "structure_p_value": None,
+                    "horizon_seconds": candidate.get("movement_horizon_seconds"),
                 }
-                fast = {"veto": False, "reason": None}
+                fast = {"veto": False, "reason": None, "method": "NO_TECHNICAL_INDICATOR_VETO"}
                 persistence = v122b_tactical.depth_persistence(
                     depth_samples, direction, now=now
                 )
-                reason = "PRE-3M OPTION BLOCK — " + str(
+                reason = "PRE-STRUCTURE OPTION BLOCK — " + str(
                     precheck.get("reason") or "live option feasibility unavailable"
                 )
                 route = {
                     "tradeable": False,
                     "reason": reason,
-                    "pre_3m_option_block": True,
+                    "pre_structure_option_block": True,
                 }
                 route_health = {"state": "BLOCKED", "reason": reason}
                 state = {
                     "state": "OPTION_NOT_TRADEABLE",
                     "tradeable": False,
                     "reason": reason,
-                    "pre_3m_option_block": True,
+                    "pre_structure_option_block": True,
+                    "structure_p_value": None,
+                    "structure_horizon_seconds": candidate.get("movement_horizon_seconds"),
+                    "route_tradeable": False,
                 }
 
             five_minute = v122b_tactical.five_minute_witness(
