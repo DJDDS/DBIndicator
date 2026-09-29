@@ -528,8 +528,12 @@ def _derive_lifecycle(item, event, trow, now):
         if prior in ("ACTIVE", "MANAGE") and tstate in ("FORMING", ""):
             return "PULLBACK", "original move active; waiting for next continuation entry"
         if estate == "PRESSURE_SHIFT" or family in (
-            "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION", "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
+            "REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION",
+            "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION",
+            "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
         ):
+            if family in ("REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION"):
+                return "BUILDING", "persistent underlying direction established"
             return "BUILDING", "underlying event is developing"
 
     # Persistence: absence from the latest snapshot is not invalidation.
