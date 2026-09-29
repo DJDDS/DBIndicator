@@ -87,7 +87,7 @@ def test_micro_breakout_requires_structure_not_score():
     assert setup["invalidation"] == pytest.approx(99.0)
 
 
-def test_pre_result_lte_8_dte_defaults_to_next_month():
+def test_option_expiry_is_chosen_by_net_economics_not_calendar_rule():
     now = dt.datetime(2026, 9, 22, 10, 0)
     near = {
         "symbol":"ABC29SEP100CE","type":"CE","strike":100,"expiry":"2026-09-29","dte":7,
@@ -103,9 +103,9 @@ def test_pre_result_lte_8_dte_defaults_to_next_month():
         earnings={"pre_result": True},
     )
     assert route["tradeable"] is True
-    assert route["preferred_expiry"] == "2026-10-27"
-    assert route["pre_result_next_month"] is True
-    assert route["contract"]["symbol"] == "ABC27OCT100CE"
+    assert route["selection_method"] == "MAX_EXPECTED_NET_ROI_AFTER_FRICTION_THETA_IV"
+    assert route["preferred_expiry"] == route["contract"]["expiry"]
+    assert route["contract"]["symbol"] == "ABC29SEP100CE"
 
 
 def test_friction_gate_can_reject_thin_option_even_with_good_stock_setup():
@@ -194,7 +194,7 @@ def test_option_contract_lock_reroutes_only_with_explicit_reason():
     now = dt.datetime(2026, 9, 23, 10, 0)
     stale_lock = {
         "symbol":"ABC29SEP90CE","type":"CE","strike":90,"expiry":"2026-09-29","dte":6,
-        "mid":15.0,"spread_pct":0.5,"delta":0.90,"lot_size":500,
+        "mid":15.0,"spread_pct":80.0,"delta":0.90,"lot_size":500,
     }
     replacement = {
         "symbol":"ABC29SEP100CE","type":"CE","strike":100,"expiry":"2026-09-29","dte":6,
