@@ -137,6 +137,11 @@ class UniverseMomentumStreamService:
         self._connected = False
         self._tokens = {}
         self._token_to_symbol = {}
+        # Context indices share the lightweight QUOTE socket but are never
+        # eligible as stock movers.  This gives Spotting a contemporaneous
+        # market + sector frame without adding a separate data connection.
+        self._underlying_symbols = set()
+        self._context_symbols = {"NIFTY 50"}
         self._samples = defaultdict(lambda: deque(maxlen=max(120, int(MAX_SAMPLE_MINUTES * 60 / SAMPLE_SECONDS) + 20)))
         self._latest = {}
         self._last_sample_at = {}
@@ -245,12 +250,31 @@ class UniverseMomentumStreamService:
         # get_fno_stock_list() has already loaded the cash map.  Skip any
         # derivative name that still lacks a cash token rather than guessing.
         tokens = {str(sym): int(tok) for sym, tok in token_map.items() if tok}
+        underlying_symbols = set(tokens)
+        context_symbols = {"NIFTY 50"}
+
         try:
             nifty = scanner.get_index_token(kite, "NIFTY 50")
         except Exception:
             nifty = None
         if nifty:
             tokens["NIFTY 50"] = int(nifty)
+
+        # Reuse the sector map already maintained by the scanner. Sector
+        # indices are context-only: subscribed in QUOTE mode, excluded from
+        # discovery/mover rows, and consumed by the quant shadow as factors.
+        for sector in getattr(scanner, "SECTOR_INDEXES", ()):
+            try:
+                token = scanner.get_index_token(kite, sector)
+            except Exception:
+                token = None
+            if token:
+                tokens[str(sector)] = int(token)
+                context_symbols.add(str(sector))
+
+        with self._lock:
+            self._underlying_symbols = underlying_symbols
+            self._context_symbols = context_symbols
         return tokens
 
     def _metadata(self):
@@ -583,11 +607,23 @@ class UniverseMomentumStreamService:
             "5m": self._return("NIFTY 50", now, 300),
             "10m": self._return("NIFTY 50", now, 600),
         }
+        with self._lock:
+            context_symbols = set(self._context_symbols)
+            underlying_count = len(self._underlying_symbols)
+
+        sector_contexts = {}
+        for sector in sorted(context_symbols - {"NIFTY 50"}):
+            sector_contexts[sector] = {
+                "live_price": _f((latest.get(sector) or {}).get("last_price")),
+                "ret_3m_pct": self._return(sector, now, 180),
+                "ret_5m_pct": self._return(sector, now, 300),
+                "ret_10m_pct": self._return(sector, now, 600),
+            }
 
         events = []
         movers = []
         for symbol, tick in latest.items():
-            if symbol == "NIFTY 50":
+            if symbol in context_symbols:
                 continue
             sample_rows = self._samples.get(symbol) or ()
             if not sample_rows:
@@ -600,10 +636,23 @@ class UniverseMomentumStreamService:
             price = _f(sample.get("price"))
             day = _pct(price, prev)
             r5 = self._return(symbol, now, 300)
-            event = self._event_for(symbol, sample, meta.get(symbol) or {}, nifty_returns, now)
-            diagnostic = self._event_diagnostic(
-                symbol, sample, meta.get(symbol) or {}, nifty_returns, now, event=event
+            symbol_meta = meta.get(symbol) or {}
+            sector = symbol_meta.get("sector") or scanner.SYMBOL_SECTOR_MAP.get(symbol)
+            sector_ctx = sector_contexts.get(str(sector)) if sector else None
+            sector_r5 = _f((sector_ctx or {}).get("ret_5m_pct"))
+            rel_sector5 = (
+                round(r5 - sector_r5, 4)
+                if r5 is not None and sector_r5 is not None else None
             )
+            event = self._event_for(symbol, sample, symbol_meta, nifty_returns, now)
+            diagnostic = self._event_diagnostic(
+                symbol, sample, symbol_meta, nifty_returns, now, event=event
+            )
+            if event is not None:
+                event["sector_index"] = sector
+                event["sector_ret_5m_pct"] = sector_r5
+                event["relative_5m_vs_sector_pct"] = rel_sector5
+                event["market_ret_5m_pct"] = nifty_returns.get("5m")
             if day is not None:
                 movers.append({
                     "symbol": symbol,
@@ -613,8 +662,12 @@ class UniverseMomentumStreamService:
                     "ret_5m_pct": round(r5, 4) if r5 is not None else None,
                     "ret_10m_pct": diagnostic.get("ret_10m_pct"),
                     "relative_5m_vs_nifty_pct": diagnostic.get("relative_5m_vs_nifty_pct"),
+                    "market_ret_5m_pct": nifty_returns.get("5m"),
                     "volume_rate_accel": diagnostic.get("volume_rate_accel"),
-                    "sector": (meta.get(symbol) or {}).get("sector"),
+                    "sector": sector,
+                    "sector_index": sector,
+                    "sector_ret_5m_pct": sector_r5,
+                    "relative_5m_vs_sector_pct": rel_sector5,
                     "near_session_extreme": diagnostic.get("near_session_extreme"),
                     "discovery_qualified": diagnostic.get("qualified"),
                     "discovery_reason": diagnostic.get("reason"),
@@ -644,7 +697,9 @@ class UniverseMomentumStreamService:
 
         return {
             "status": "STREAMING" if feed_health.get("fresh") else ("CONNECTING" if active else "DISCONNECTED"),
-            "universe_count": max(0, len(self._tokens) - (1 if "NIFTY 50" in self._tokens else 0)),
+            "universe_count": underlying_count if underlying_count else max(
+                0, len(self._tokens) - len(context_symbols)
+            ),
             "fresh_symbol_count": len(movers),
             "feed_health": feed_health,
             "nifty": {
@@ -653,6 +708,7 @@ class UniverseMomentumStreamService:
                 "ret_5m_pct": nifty_returns["5m"],
                 "ret_10m_pct": nifty_returns["10m"],
             },
+            "sector_contexts": sector_contexts,
             # Internal whole-universe feed for the research-only quant shadow.
             # background.py removes this before publishing/storing the normal
             # observer payload, so it cannot enlarge public dashboard/API data.
