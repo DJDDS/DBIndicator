@@ -1282,6 +1282,8 @@ class UniverseMomentumStreamService:
                     "direction_factor_status": direction_info.get("factor_status"),
                     "direction_beta_market": direction_info.get("beta_market"),
                     "direction_beta_sector": direction_info.get("beta_sector"),
+                    "movement_direction": movement_info.get("direction"),
+                    "movement_significant": movement_info.get("significant"),
                     "movement_horizon_seconds": movement_info.get("natural_horizon_seconds"),
                     "movement_z": movement_info.get("movement_z"),
                     "movement_p_value": movement_info.get("movement_p_value"),
@@ -1299,8 +1301,8 @@ class UniverseMomentumStreamService:
         events.sort(
             key=lambda x: (
                 priority.get(x.get("event_family"), 0),
-                abs(_f(x.get("relative_5m_vs_nifty_pct"), 0.0)),
-                abs(_f(x.get("ret_5m_pct"), 0.0)),
+                abs(_f(x.get("movement_z"), 0.0)),
+                _f(x.get("direction_evidence"), 0.0),
             ),
             reverse=True,
         )
