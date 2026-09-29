@@ -44,7 +44,7 @@ LIVE_SAMPLE_STALE_SECONDS = 45
 RECONNECT_COOLDOWN_SECONDS = 10
 
 # Persistent Directional Travel (PDT) v2.
-// Direction is a slow underlying regime; 3m remains execution-only.
+# Direction is a slow underlying regime; 3m remains execution-only.
 DIRECTION_UPDATE_SECONDS = 55
 DIRECTION_PATH_MINUTES = 15
 DIRECTION_PATH_EFFICIENCY_MIN = 0.35
