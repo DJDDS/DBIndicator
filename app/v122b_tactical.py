@@ -775,6 +775,72 @@ def option_route_health(option_route: dict | None) -> dict:
     return {"state": "DEGRADED", "reason": reason}
 
 
+
+LIVE_PRECHECK_MAX_SPREAD_PCT = 4.0
+LIVE_PRECHECK_DELTA_MIN = 0.25
+LIVE_PRECHECK_DELTA_MAX = 0.85
+
+
+def option_pre_feasibility(snapshots: list[dict], direction: str) -> dict:
+    """Broad live option gate before any 3-minute structural calculation.
+
+    This is intentionally not the full execution router. It only verifies that
+    the directional option neighborhood is live enough to justify spending a
+    scarce deep/3m slot. Final friction-vs-expected-move remains downstream
+    because the expected underlying move comes from the 3m setup itself.
+    """
+    typ = "CE" if direction == "Bullish" else "PE"
+    directional = [dict(x) for x in (snapshots or []) if x.get("type") == typ]
+    if not directional:
+        return {"eligible": False, "reason": "no live directional option snapshot", "contract": None}
+
+    valid = []
+    failures = []
+    for row in directional:
+        bid = _f(row.get("bid"))
+        ask = _f(row.get("ask"))
+        mid = _f(row.get("mid"))
+        spread = _f(row.get("spread_pct"))
+        delta = abs(_f(row.get("delta"), 0.0))
+        dte = _i(row.get("dte"), -1)
+
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid or mid is None or mid <= 0:
+            failures.append("missing/invalid bid-ask")
+            continue
+        if spread is None or spread > LIVE_PRECHECK_MAX_SPREAD_PCT:
+            failures.append("live spread above 4%")
+            continue
+        if dte < 0:
+            failures.append("invalid expiry")
+            continue
+        if not (LIVE_PRECHECK_DELTA_MIN <= delta <= LIVE_PRECHECK_DELTA_MAX):
+            failures.append("delta outside broad 0.25-0.85 corridor")
+            continue
+        row["delta_abs"] = round(delta, 4)
+        valid.append(row)
+
+    if not valid:
+        reason = failures[0] if failures else "no live option passed broad precheck"
+        return {"eligible": False, "reason": reason, "contract": None}
+
+    valid.sort(
+        key=lambda x: (
+            abs(abs(_f(x.get("delta"), 0.0)) - PROPOSED_OPTION_DELTA_TARGET),
+            _f(x.get("spread_pct"), 999.0),
+            abs(_f(x.get("strike"), 0.0)),
+        )
+    )
+    chosen = valid[0]
+    return {
+        "eligible": True,
+        "reason": None,
+        "contract": chosen,
+        "candidate_count": len(valid),
+        "max_spread_pct": LIVE_PRECHECK_MAX_SPREAD_PCT,
+        "delta_corridor": [LIVE_PRECHECK_DELTA_MIN, LIVE_PRECHECK_DELTA_MAX],
+    }
+
+
 def classify_state(
     setup: dict,
     *,
