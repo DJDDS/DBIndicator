@@ -999,7 +999,7 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         if (
             item.get("lifecycle") in ("DISCOVERED", "BUILDING")
             and since_seen is not None and since_seen >= BUILDING_STALE_MINUTES
-            and not same and not trow
+            and not same and not opposite and not trow
         ):
             _history(item, "COMPLETED", now, "building evidence expired; direction/event no longer persistent")
         elif (
