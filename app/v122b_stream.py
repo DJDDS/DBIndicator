@@ -1544,6 +1544,14 @@ class TacticalStockStreamService:
                 "rvol_3m_accel": rvol3_accel,
                 "rvol_3m_previous": rvol3_prev,
                 "relative_3m_vs_nifty_pct": relative3,
+                "movement_horizon_seconds": candidate.get("movement_horizon_seconds"),
+                "movement_z": candidate.get("movement_z"),
+                "movement_p_value": candidate.get("movement_p_value"),
+                "movement_coherence": candidate.get("movement_coherence"),
+                "structure_p_value": setup.get("structure_p_value"),
+                "structure_horizon_seconds": setup.get("horizon_seconds"),
+                "structure_aligned_increment_fraction": setup.get("aligned_increment_fraction"),
+                "structure_path_coherence": setup.get("path_coherence"),
                 "ret_5m_pct": candidate.get("ret_5m_pct"),
                 "relative_5m_vs_nifty_pct": candidate.get("relative_5m_vs_nifty_pct"),
                 "five_minute_witness": five_minute,
@@ -1650,6 +1658,23 @@ class TacticalStockStreamService:
             symbol = meta.get("symbol")
             if kind in ("CASH", "INDEX"):
                 with self._lock:
+                    if kind == "CASH":
+                        px = _f(tick.get("last_price"))
+                        if px is not None and px > 0:
+                            bucket = self._cash_samples[symbol]
+                            sample = {
+                                "ts": now,
+                                "price": px,
+                                "volume": _f(tick.get("volume_traded", tick.get("volume"))),
+                            }
+                            if (
+                                bucket
+                                and isinstance(bucket[-1].get("ts"), dt.datetime)
+                                and (now - bucket[-1]["ts"]).total_seconds() < 1.0
+                            ):
+                                bucket[-1] = sample
+                            else:
+                                bucket.append(sample)
                     builder = self._bar_builders.get(symbol)
                     if builder is None:
                         builder = v122b_tactical.ThreeMinuteBarBuilder()
