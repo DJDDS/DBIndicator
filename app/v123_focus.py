@@ -836,11 +836,32 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
     for mover in rows:
         symbol = str(mover.get("symbol") or "")
         day = _f(mover.get("day_change_pct"))
-        if day is None or abs(day) < 0.75:
-            continue
+        movement_direction = str(mover.get("movement_direction") or "")
+        movement_p = _f(mover.get("movement_p_value"))
+        movement_alpha = _f(mover.get("movement_familywise_alpha"))
+        has_quant_fields = (
+            mover.get("movement_significant") is not None
+            or movement_p is not None
+            or mover.get("movement_horizon_seconds") is not None
+        )
+        quant_meaningful = bool(
+            movement_direction in ("Bullish", "Bearish")
+            and movement_p is not None
+            and movement_alpha is not None
+            and movement_p <= movement_alpha
+        )
+        # Production audit: a "pipeline miss" means a statistically significant
+        # underlying move was outside Focus/Continuation. Legacy callers without
+        # multiscale fields retain the historical ±0.75% day-move fallback.
+        if has_quant_fields:
+            if not quant_meaningful:
+                continue
+            direction = movement_direction
+        else:
+            if day is None or abs(day) < 0.75:
+                continue
+            direction = "Bullish" if day > 0 else "Bearish"
         meaningful += 1
-
-        direction = "Bullish" if day > 0 else "Bearish"
         event = event_by_key.get((symbol, direction))
         trow = tactical_by_key.get((symbol, direction))
         trace = list(promotion_trace.get(symbol) or [])
@@ -879,7 +900,12 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         entry.update({
             "symbol": symbol,
             "direction": direction,
-            "day_change_pct": round(day, 3),
+            "day_change_pct": round(day, 3) if day is not None else None,
+            "movement_direction": mover.get("movement_direction"),
+            "movement_horizon_seconds": mover.get("movement_horizon_seconds"),
+            "movement_z": mover.get("movement_z"),
+            "movement_p_value": mover.get("movement_p_value"),
+            "movement_coherence": mover.get("movement_coherence"),
             "ret_3m_pct": mover.get("ret_3m_pct"),
             "ret_5m_pct": mover.get("ret_5m_pct"),
             "ret_10m_pct": mover.get("ret_10m_pct"),
@@ -908,6 +934,10 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         "universe_count": int(_f((observer or {}).get("universe_count"), 0.0) or 0),
         "observed_rows": len(rows),
         "meaningful_movers": meaningful,
+        "meaningful_definition": (
+            "FAMILYWISE_SIGNIFICANT_MULTISCALE_MOVE"
+            if whole_universe else "LEGACY_ABS_DAY_MOVE_GE_0_75"
+        ),
         "focus_movers": stage_counts.get("FOCUS", 0),
         "continuation_movers": stage_counts.get("CONTINUATION", 0),
         "captured_movers": stage_counts.get("FOCUS", 0) + stage_counts.get("CONTINUATION", 0),
