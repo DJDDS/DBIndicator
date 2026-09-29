@@ -18,7 +18,7 @@ STATE_VERSION = 1
 MAX_FOCUS = 6
 MAX_CONTINUATION_WATCH = 6
 MAX_DEEP_MONITORED = 12
-MIN_FOCUS_MINUTES = 45
+BUILDING_STALE_MINUTES = 6
 CONTINUATION_WATCH_MINUTES = 45
 STALE_REARM_BLOCK_SECONDS = 90
 RECENT_KEEP_MINUTES = 90
@@ -978,17 +978,18 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         item["vehicles"] = _vehicle_state(item, trow)
         item["focus_age_min"] = round(_focus_age_minutes(item, now), 1)
 
-        # Persistence is deliberate, but not immortality.  A focus survives
-        # short ranking/data gaps; after its minimum observation commitment,
-        # an unproductive thesis can leave the desk so a new mover can enter.
+        # Building persistence now comes from continuing evidence, not a fixed
+        # 45-minute reservation.  If neither the locked-direction observer nor
+        # the tactical stream has refreshed the thesis for six minutes, free
+        # the Focus slot.  Strong names can remain indefinitely while evidence
+        # continues; weak one-off spots rotate out quickly.
         since_seen = _minutes_since(item.get("last_seen_at"), now)
         if (
             item.get("lifecycle") in ("DISCOVERED", "BUILDING")
-            and item["focus_age_min"] >= MIN_FOCUS_MINUTES
-            and since_seen is not None and since_seen >= 15.0
+            and since_seen is not None and since_seen >= BUILDING_STALE_MINUTES
             and not same and not trow
         ):
-            _history(item, "COMPLETED", now, "focus observation expired without an actionable structure")
+            _history(item, "COMPLETED", now, "building evidence expired; direction/event no longer persistent")
         elif (
             item.get("lifecycle") in ("PULLBACK", "WEAKENING", "PROVEN_MOVER")
             and item["focus_age_min"] >= 90.0
@@ -1343,7 +1344,7 @@ def dashboard(state):
         "rules": {
             "max_focus": MAX_FOCUS,
             "max_continuation_watch": MAX_CONTINUATION_WATCH,
-            "minimum_observation_minutes": MIN_FOCUS_MINUTES,
+            "building_stale_minutes": BUILDING_STALE_MINUTES,
             "continuation_watch_minutes": CONTINUATION_WATCH_MINUTES,
             "direction_flip": "requires invalidation; opposite event alone does not flip thesis",
             "vehicle_separation": "underlying thesis is independent of option/future/cash eligibility",
