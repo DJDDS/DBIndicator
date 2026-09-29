@@ -635,3 +635,117 @@ def test_tradeable_micro_confirm_resets_when_executability_breaks():
     )
     assert restarted["state"] == "TRIGGERED"
     assert restarted["micro_confirm_seconds"] == 0.0
+
+
+def test_evaluate_skips_3m_detector_when_live_option_precheck_fails(monkeypatch):
+    now = dt.datetime(2026, 9, 29, 14, 0)
+    published = []
+    svc = v122b_stream.TacticalStockStreamService(
+        candidate_provider=lambda: [],
+        publish_callback=lambda payload: published.append(payload),
+        access_token_getter=lambda: None,
+        kite_client_getter=lambda: None,
+        api_key="test",
+        earnings_state_file=None,
+        state_file=None,
+        event_file=None,
+        ticker_factory=lambda *args, **kwargs: None,
+        now_provider=lambda: now,
+        sleep_fn=lambda seconds: None,
+        reactor_getter=lambda: None,
+    )
+    svc._connected = True
+    svc._active = True
+    svc._last_tick_at = now
+    svc._candidates = {
+        "ABC": {
+            "symbol": "ABC", "direction": "Bearish", "trade_direction": "Bearish",
+            "close": 100.0, "atr": 2.0, "ret_5m_pct": -0.4,
+            "relative_5m_vs_nifty_pct": -0.2,
+        }
+    }
+    svc._metadata = {
+        1: {"kind": "CASH", "symbol": "ABC", "tradingsymbol": "ABC"},
+        2: {"kind": "FUTURE", "symbol": "ABC", "tradingsymbol": "ABCFUT"},
+    }
+    stamp = now.isoformat(timespec="seconds")
+    svc._latest_ticks = {
+        1: {"last_price": 100.0, "volume_traded": 1000, "_received_at": stamp},
+        2: {"last_price": 100.1, "_received_at": stamp, "depth": {"buy": [], "sell": []}},
+    }
+    svc._option_snapshots = lambda *args, **kwargs: [{
+        "symbol": "ABCPE", "type": "PE", "strike": 100, "expiry": "2026-10-29",
+        "dte": 30, "mid": 5.0, "bid": 4.0, "ask": 6.0,
+        "spread_pct": 40.0, "delta": -0.55,
+    }]
+    monkeypatch.setattr(v122b_stream.v12_earnings_calendar, "_load_state", lambda path: {})
+
+    called = {"count": 0}
+    def forbidden(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("3m detector must not run before live option eligibility")
+    monkeypatch.setattr(v122b_tactical, "detect_structural_setup", forbidden)
+
+    svc._evaluate(now)
+    assert called["count"] == 0
+    assert svc._last_states["ABC"] == "OPTION_NOT_TRADEABLE"
+    assert published[-1]["candidates"][0]["option_preeligible_live"] is False
+    assert published[-1]["candidates"][0]["setup"] is None
+
+
+def test_evaluate_allows_3m_detector_after_live_option_precheck_passes(monkeypatch):
+    now = dt.datetime(2026, 9, 29, 14, 5)
+    published = []
+    svc = v122b_stream.TacticalStockStreamService(
+        candidate_provider=lambda: [],
+        publish_callback=lambda payload: published.append(payload),
+        access_token_getter=lambda: None,
+        kite_client_getter=lambda: None,
+        api_key="test",
+        earnings_state_file=None,
+        state_file=None,
+        event_file=None,
+        ticker_factory=lambda *args, **kwargs: None,
+        now_provider=lambda: now,
+        sleep_fn=lambda seconds: None,
+        reactor_getter=lambda: None,
+    )
+    svc._connected = True
+    svc._active = True
+    svc._last_tick_at = now
+    svc._candidates = {
+        "ABC": {
+            "symbol": "ABC", "direction": "Bearish", "trade_direction": "Bearish",
+            "close": 100.0, "atr": 2.0, "ret_5m_pct": -0.4,
+            "relative_5m_vs_nifty_pct": -0.2,
+        }
+    }
+    svc._metadata = {
+        1: {"kind": "CASH", "symbol": "ABC", "tradingsymbol": "ABC"},
+        2: {"kind": "FUTURE", "symbol": "ABC", "tradingsymbol": "ABCFUT"},
+    }
+    stamp = now.isoformat(timespec="seconds")
+    svc._latest_ticks = {
+        1: {"last_price": 100.0, "volume_traded": 1000, "_received_at": stamp},
+        2: {"last_price": 100.1, "_received_at": stamp, "depth": {"buy": [], "sell": []}},
+    }
+    svc._option_snapshots = lambda *args, **kwargs: [{
+        "symbol": "ABCPE", "type": "PE", "strike": 100, "expiry": "2026-10-29",
+        "dte": 30, "mid": 5.0, "bid": 4.95, "ask": 5.05,
+        "spread_pct": 2.0, "delta": -0.55, "lot_size": 100,
+    }]
+    monkeypatch.setattr(v122b_stream.v12_earnings_calendar, "_load_state", lambda path: {})
+
+    called = {"count": 0}
+    def detector(*args, **kwargs):
+        called["count"] += 1
+        return {
+            "direction": "Bearish", "setup": None, "ready": False,
+            "triggered": False, "speed_class": None, "trigger": None,
+            "invalidation": None, "expected_move_abs": None,
+        }
+    monkeypatch.setattr(v122b_tactical, "detect_structural_setup", detector)
+
+    svc._evaluate(now)
+    assert called["count"] == 1
+    assert published[-1]["candidates"][0]["option_preeligible_live"] is True
