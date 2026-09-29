@@ -1221,43 +1221,89 @@ class TacticalStockStreamService:
                 current = dict(builder.current) if builder is not None and builder.current else None
                 depth_samples = list(self._depth_samples.get(symbol) or [])
 
-            setup = v122b_tactical.detect_structural_setup(bars, current, candidate, now=now)
-            fast = v122b_tactical.fast_trend_veto((bars + ([current] if current else []))[-80:], setup.get("direction") or direction)
-            persistence = v122b_tactical.depth_persistence(depth_samples, setup.get("direction") or direction, now=now)
             cash_age = self._tick_age(cash_tick, now)
             fut_age = self._tick_age(fut_tick, now)
             stale = cash_age is None or cash_age > self.stale_seconds or fut_age is None or fut_age > self.stale_seconds
             event = v122b_tactical.earnings_context(earnings_state, symbol, now)
-            option_snaps = self._option_snapshots(symbol, live_price or _f(candidate.get("close"), 0.0), now)
-            route = None
+            option_snaps = self._option_snapshots(
+                symbol, live_price or _f(candidate.get("close"), 0.0), now
+            )
+            precheck = v122b_tactical.option_pre_feasibility(option_snaps, direction)
             life = self._lifecycle.setdefault(symbol, {})
             locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
-            if setup.get("setup") and live_price:
-                route = v122b_tactical.route_option(
-                    option_snaps,
-                    direction=setup.get("direction") or direction,
-                    spot=live_price,
-                    now=now,
-                    speed_class=setup.get("speed_class") or "IMPULSE",
-                    expected_underlying_move_abs=max(_f(setup.get("expected_move_abs"), 0.0), 0.25 * max(_f(candidate.get("atr"), 0.0), 0.0)),
-                    earnings=event,
-                    locked_contract_symbol=locked_contract,
+            route = None
+
+            # Strict ordering: live directional option feasibility first.
+            # Only an eligible name is allowed into the 3m structural detector.
+            if precheck.get("eligible"):
+                setup = v122b_tactical.detect_structural_setup(
+                    bars, current, candidate, now=now
                 )
+                setup_direction = setup.get("direction") or direction
+                fast = v122b_tactical.fast_trend_veto(
+                    (bars + ([current] if current else []))[-80:], setup_direction
+                )
+                persistence = v122b_tactical.depth_persistence(
+                    depth_samples, setup_direction, now=now
+                )
+                if setup.get("setup") and live_price:
+                    route = v122b_tactical.route_option(
+                        option_snaps,
+                        direction=setup_direction,
+                        spot=live_price,
+                        now=now,
+                        speed_class=setup.get("speed_class") or "IMPULSE",
+                        expected_underlying_move_abs=max(
+                            _f(setup.get("expected_move_abs"), 0.0),
+                            0.25 * max(_f(candidate.get("atr"), 0.0), 0.0),
+                        ),
+                        earnings=event,
+                        locked_contract_symbol=locked_contract,
+                    )
+                route_health = v122b_tactical.option_route_health(route)
+                state = v122b_tactical.classify_state(
+                    setup,
+                    fast_veto=fast,
+                    stale=stale,
+                    depth_persist=persistence,
+                    option_route=route,
+                    active_same_direction=direction_used[setup_direction],
+                )
+            else:
+                setup = {
+                    "direction": direction,
+                    "setup": None,
+                    "ready": False,
+                    "triggered": False,
+                    "speed_class": None,
+                    "trigger": None,
+                    "invalidation": None,
+                    "expected_move_abs": None,
+                }
+                fast = {"veto": False, "reason": None}
+                persistence = v122b_tactical.depth_persistence(
+                    depth_samples, direction, now=now
+                )
+                reason = "PRE-3M OPTION BLOCK — " + str(
+                    precheck.get("reason") or "live option feasibility unavailable"
+                )
+                route = {
+                    "tradeable": False,
+                    "reason": reason,
+                    "pre_3m_option_block": True,
+                }
+                route_health = {"state": "BLOCKED", "reason": reason}
+                state = {
+                    "state": "OPTION_NOT_TRADEABLE",
+                    "tradeable": False,
+                    "reason": reason,
+                    "pre_3m_option_block": True,
+                }
 
             five_minute = v122b_tactical.five_minute_witness(
                 setup.get("direction") or direction,
                 candidate.get("ret_5m_pct"),
                 candidate.get("relative_5m_vs_nifty_pct"),
-            )
-            route_health = v122b_tactical.option_route_health(route)
-
-            state = v122b_tactical.classify_state(
-                setup,
-                fast_veto=fast,
-                stale=stale,
-                depth_persist=persistence,
-                option_route=route,
-                active_same_direction=direction_used[setup.get("direction") or direction],
             )
 
             # Keep current execution honesty separate from opportunity
@@ -1495,6 +1541,8 @@ class TacticalStockStreamService:
                 "ret_5m_pct": candidate.get("ret_5m_pct"),
                 "relative_5m_vs_nifty_pct": candidate.get("relative_5m_vs_nifty_pct"),
                 "five_minute_witness": five_minute,
+                "option_precheck": precheck,
+                "option_preeligible_live": bool(precheck.get("eligible")),
                 "route_health": route_health.get("state"),
                 "route_health_reason": route_health.get("reason"),
                 "route_degraded_seconds": round(route_degraded_seconds, 1) if route_degraded_seconds is not None else None,
