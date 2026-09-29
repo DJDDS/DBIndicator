@@ -51,6 +51,14 @@ PROPOSED_MAX_BASIS_SKEW_SECONDS = 2.5
 PROPOSED_MICRO_PERSIST_SECONDS = 30.0
 PROPOSED_OPPOSING_DEPTH_PERSISTENCE = 0.60
 
+# Adaptive structure significance. The movement horizon is supplied by the
+# full-universe multiscale detector; these are hypothesis-test levels, not
+# chart timeframes.
+ADAPTIVE_STRUCTURE_READY_ALPHA = 0.05
+ADAPTIVE_STRUCTURE_TRIGGER_ALPHA = 0.01
+ADAPTIVE_STRUCTURE_EXIT_ALPHA = 0.10
+ADAPTIVE_STRUCTURE_SAMPLE_SECONDS = 5
+
 # Forensic entry-timing fix: this is price geometry, not an alpha score.
 # A fresh entry may approach from 0.25 ATR before the trigger and is
 # chase-extended beyond 0.20 ATR after the trigger.
@@ -594,6 +602,153 @@ def max_option_price_for_entry_zone(contract: dict | None, direction: str, spot,
     return round(max(0.0, premium), 2)
 
 
+def _binomial_upper_tail(n: int, k: int) -> float:
+    """P[X>=k] for X~Binomial(n, 0.5), computed exactly."""
+    n = max(0, int(n))
+    k = max(0, min(n, int(k)))
+    if n <= 0:
+        return 1.0
+    denom = float(2 ** n)
+    return min(1.0, max(0.0, sum(math.comb(n, j) for j in range(k, n + 1)) / denom))
+
+
+def _resample_last_price(samples: list[dict] | None, *, now: dt.datetime, seconds: int) -> list[tuple[dt.datetime, float]]:
+    """Collapse raw cash ticks to regular 5-second last-price observations."""
+    rows = []
+    for row in samples or []:
+        ts = _dt(row.get("ts"))
+        px = _f(row.get("price"))
+        if ts is None or px is None or px <= 0:
+            continue
+        if ts.tzinfo is not None and now.tzinfo is None:
+            ts = ts.replace(tzinfo=None)
+        elif ts.tzinfo is None and now.tzinfo is not None:
+            ts = ts.replace(tzinfo=now.tzinfo)
+        age = (now - ts).total_seconds()
+        if age < -2 or age > max(5, int(seconds) + 5):
+            continue
+        rows.append((ts, px))
+    if not rows:
+        return []
+    rows.sort(key=lambda x: x[0])
+    buckets = {}
+    for ts, px in rows:
+        key = int(ts.timestamp()) // ADAPTIVE_STRUCTURE_SAMPLE_SECONDS
+        buckets[key] = (ts, px)
+    return [buckets[key] for key in sorted(buckets)]
+
+
+def detect_adaptive_structure(
+    price_samples: list[dict] | None,
+    candidate: dict,
+    *,
+    now: dt.datetime,
+) -> dict:
+    """Statistical execution structure on the market-selected natural horizon.
+
+    No named pattern, EMA, RSI, MACD or VWAP enters this function. A structure
+    is READY when same-direction 5-second increments are unlikely under a
+    p=0.5 sign null (alpha=0.05); it becomes TRIGGERED at alpha=0.01.
+    """
+    direction = _candidate_direction(candidate)
+    sign = _sign(direction)
+    horizon = _i(candidate.get("movement_horizon_seconds"), 0)
+    if not sign or horizon <= 0:
+        return {
+            "direction": direction,
+            "setup": None,
+            "ready": False,
+            "triggered": False,
+            "reason": "adaptive movement horizon unavailable",
+            "structure_p_value": None,
+            "horizon_seconds": horizon or None,
+        }
+
+    points = _resample_last_price(price_samples, now=now, seconds=horizon)
+    if len(points) < 5:
+        return {
+            "direction": direction,
+            "setup": None,
+            "ready": False,
+            "triggered": False,
+            "reason": "adaptive structure history not ready",
+            "structure_p_value": None,
+            "horizon_seconds": horizon,
+            "sample_count": len(points),
+        }
+
+    prices = [px for _, px in points]
+    increments = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
+    signed = [sign * x for x in increments if abs(x) > 1e-12]
+    n = len(signed)
+    if n < 4:
+        return {
+            "direction": direction,
+            "setup": None,
+            "ready": False,
+            "triggered": False,
+            "reason": "too few non-zero adaptive increments",
+            "structure_p_value": None,
+            "horizon_seconds": horizon,
+            "sample_count": n,
+        }
+
+    aligned = sum(1 for x in signed if x > 0)
+    p_value = _binomial_upper_tail(n, aligned)
+    net_signed = sign * (prices[-1] - prices[0])
+    path = sum(abs(x) for x in increments)
+    coherence = net_signed / path if path > 1e-12 else 0.0
+
+    # Independent half-window agreement reduces the chance that one isolated
+    # early impulse is mistaken for a continuing execution structure.
+    split = max(1, len(prices) // 2)
+    first_net = sign * (prices[split] - prices[0]) if split < len(prices) else 0.0
+    second_net = sign * (prices[-1] - prices[split]) if split < len(prices) else 0.0
+    halves_agree = first_net > 0 and second_net >= 0
+
+    ready = bool(
+        net_signed > 0
+        and halves_agree
+        and p_value <= ADAPTIVE_STRUCTURE_READY_ALPHA
+    )
+    triggered = bool(
+        ready and p_value <= ADAPTIVE_STRUCTURE_TRIGGER_ALPHA
+    )
+
+    current = prices[-1]
+    adverse_boundary = min(prices) if sign > 0 else max(prices)
+    expected_move = max(0.0, net_signed)
+    return {
+        "direction": direction,
+        "setup": "ADAPTIVE_QUANT_STRUCTURE" if ready else None,
+        "ready": ready,
+        "triggered": triggered,
+        "research_only": False,
+        "speed_class": "ADAPTIVE",
+        "trigger": current if ready else None,
+        "invalidation": adverse_boundary if ready else None,
+        "expected_move_abs": expected_move if ready else None,
+        "structure_p_value": round(p_value, 8),
+        "structure_ready_alpha": ADAPTIVE_STRUCTURE_READY_ALPHA,
+        "structure_trigger_alpha": ADAPTIVE_STRUCTURE_TRIGGER_ALPHA,
+        "structure_exit_alpha": ADAPTIVE_STRUCTURE_EXIT_ALPHA,
+        "horizon_seconds": horizon,
+        "sample_count": n,
+        "aligned_increment_count": aligned,
+        "aligned_increment_fraction": round(aligned / float(n), 4),
+        "path_coherence": round(coherence, 4),
+        "first_half_progress_abs": round(first_net, 6),
+        "second_half_progress_abs": round(second_net, 6),
+        "reason": (
+            "adaptive sign persistence reached trigger significance"
+            if triggered else (
+                "adaptive sign persistence statistically ready"
+                if ready else "adaptive structure not statistically persistent"
+            )
+        ),
+    }
+
+
 def detect_structural_setup(
     completed_bars: list[dict],
     current_bar: dict | None,
@@ -850,32 +1005,39 @@ def classify_state(
     option_route: dict | None = None,
     active_same_direction: int = 0,
 ) -> dict:
+    p_value = _f((setup or {}).get("structure_p_value"))
+    route_tradeable = bool((option_route or {}).get("tradeable"))
+    base = {
+        "structure_p_value": p_value,
+        "structure_horizon_seconds": (setup or {}).get("horizon_seconds"),
+        "route_tradeable": route_tradeable,
+    }
     if stale:
-        return {"state": "STALE", "tradeable": False, "reason": "live tactical feed is stale"}
+        return {**base, "state": "STALE", "tradeable": False, "reason": "live tactical feed is stale"}
     if not setup.get("setup"):
-        return {"state": "FORMING", "tradeable": False, "reason": "15m candidate; no 3m structure yet"}
+        return {**base, "state": "FORMING", "tradeable": False, "reason": "adaptive statistical structure not ready"}
     if setup.get("research_only"):
-        return {"state": "RESEARCH_ONLY", "tradeable": False, "reason": "failed-break reversal is observable but not yet promoted"}
+        return {**base, "state": "RESEARCH_ONLY", "tradeable": False, "reason": "research-only structure"}
     if fast_veto.get("veto"):
-        return {"state": "CANCELLED", "tradeable": False, "reason": fast_veto.get("reason")}
+        return {**base, "state": "CANCELLED", "tradeable": False, "reason": fast_veto.get("reason")}
 
     persistence = depth_persist or {}
     oppose = _f(persistence.get("oppose_fraction"))
     if _i(persistence.get("count"), 0) >= 3 and oppose is not None and oppose >= PROPOSED_OPPOSING_DEPTH_PERSISTENCE:
-        return {"state": "CANCELLED", "tradeable": False, "reason": "persistent futures depth opposes the setup"}
+        return {**base, "state": "CANCELLED", "tradeable": False, "reason": "persistent futures depth opposes the setup"}
 
     if setup.get("triggered"):
         if active_same_direction >= PROPOSED_MAX_SAME_DIRECTION_ACTIVE:
-            return {"state": "BLOCKED_EXPOSURE", "tradeable": False, "reason": "same-direction tactical exposure cap reached"}
+            return {**base, "state": "BLOCKED_EXPOSURE", "tradeable": False, "reason": "same-direction tactical exposure cap reached"}
         if option_route is None:
-            return {"state": "TRIGGERED", "tradeable": False, "reason": "underlying triggered; waiting for option route"}
+            return {**base, "state": "TRIGGERED", "tradeable": False, "reason": "underlying structure significant; waiting for option route"}
         if not option_route.get("tradeable"):
-            return {"state": "OPTION_NOT_TRADEABLE", "tradeable": False, "reason": option_route.get("reason")}
-        return {"state": "TRADEABLE", "tradeable": True, "reason": "underlying trigger + executable option route"}
+            return {**base, "state": "OPTION_NOT_TRADEABLE", "tradeable": False, "reason": option_route.get("reason")}
+        return {**base, "state": "TRADEABLE", "tradeable": True, "reason": "adaptive structure + executable option route"}
 
     if setup.get("ready"):
-        return {"state": "READY", "tradeable": False, "reason": "structure defined; waiting for actual price trigger"}
-    return {"state": "FORMING", "tradeable": False, "reason": "candidate still forming"}
+        return {**base, "state": "READY", "tradeable": False, "reason": "adaptive structure statistically ready"}
+    return {**base, "state": "FORMING", "tradeable": False, "reason": "adaptive structure still forming"}
 
 
 def _quote_top(quote: dict | None) -> tuple[float | None, float | None, float | None]:
@@ -921,6 +1083,21 @@ def expected_premium_move_pct(contract: dict, spot: float, expected_underlying_m
     return round(delta * move / mid * 100.0, 4)
 
 
+def _expected_iv_change_points(now: dt.datetime, horizon_seconds: float) -> float:
+    """Intraday IV drift prior measured in the 14-session option recorder."""
+    minutes = max(0.0, float(horizon_seconds or 0.0) / 60.0)
+    clock = now.hour * 60 + now.minute
+    if clock < 13 * 60:
+        # Median ATM IV -0.60 points from 09:30 to 13:00 (~210 min).
+        rate = -0.60 / 210.0
+    elif clock < 15 * 60 + 10:
+        # Median ATM IV -0.06 points from 13:00 to 15:10 (~130 min).
+        rate = -0.06 / 130.0
+    else:
+        rate = 0.0
+    return rate * minutes
+
+
 def route_option(
     snapshots: list[dict],
     *,
@@ -929,6 +1106,7 @@ def route_option(
     now: dt.datetime,
     speed_class: str,
     expected_underlying_move_abs: float,
+    expected_horizon_seconds: float | None = None,
     earnings: dict | None = None,
     max_friction_ratio: float = PROPOSED_MAX_FRICTION_TO_EXPECTED_MOVE,
     locked_contract_symbol: str | None = None,
@@ -980,54 +1158,70 @@ def route_option(
         mid = _f(contract.get("mid"))
         spread = _f(contract.get("spread_pct"))
         delta = abs(_f(contract.get("delta"), 0.0))
-        if mid is None or spread is None:
+        gamma = max(0.0, _f(contract.get("gamma"), 0.0))
+        theta = _f(contract.get("theta"), 0.0)
+        vega = _f(contract.get("vega"), 0.0)
+        if mid is None or mid <= 0 or spread is None:
             return None, "missing bid/ask"
-        friction = estimated_round_trip_cost_pct(mid, _i(contract.get("lot_size"), 1), spread)
-        expected = expected_premium_move_pct(contract, spot, expected_underlying_move_abs)
-        if friction is None or expected is None or expected <= 0:
-            return None, "cannot estimate friction/expected move"
-        ratio = friction / expected
+        friction_pct = estimated_round_trip_cost_pct(mid, _i(contract.get("lot_size"), 1), spread)
+        move = abs(_f(expected_underlying_move_abs, 0.0))
+        if friction_pct is None or delta <= 0 or move <= 0:
+            return None, "cannot estimate option economics"
+
+        horizon_s = max(1.0, _f(expected_horizon_seconds, 0.0) or 0.0)
+        favourable_abs = delta * move + 0.5 * gamma * move * move
+        theta_abs = theta * (horizon_s / 86400.0)
+        iv_change = _expected_iv_change_points(now, horizon_s)
+        vega_abs = vega * iv_change
+        gross_abs = favourable_abs + theta_abs + vega_abs
+        friction_abs = mid * friction_pct / 100.0
+        net_abs = gross_abs - friction_abs
+        gross_pct = gross_abs / mid * 100.0
+        net_roi = net_abs / mid * 100.0
+        ratio = friction_abs / gross_abs if gross_abs > 1e-12 else float("inf")
+
         strike = _f(contract.get("strike"))
         moneyness = None
         if strike is not None and spot:
             moneyness = (strike - spot) / spot * 100.0
-        contract["estimated_round_trip_friction_pct"] = friction
-        contract["expected_premium_move_pct"] = expected
-        contract["friction_to_expected_move"] = round(ratio, 4)
-        contract["moneyness_vs_spot_pct"] = round(moneyness, 3) if moneyness is not None else None
-        contract["delta_abs"] = round(delta, 4) if delta else None
-        if ratio > float(max_friction_ratio):
-            return None, f"friction consumes {ratio*100:.1f}% of expected premium move"
+
+        contract.update({
+            "estimated_round_trip_friction_pct": round(friction_pct, 4),
+            "expected_premium_move_pct": round(gross_pct, 4),
+            "expected_premium_gain_abs": round(gross_abs, 4),
+            "expected_net_gain_abs": round(net_abs, 4),
+            "expected_net_roi_pct": round(net_roi, 4),
+            "expected_horizon_seconds": round(horizon_s, 1),
+            "expected_iv_change_points": round(iv_change, 5),
+            "theta_contribution_abs": round(theta_abs, 4),
+            "vega_contribution_abs": round(vega_abs, 4),
+            "friction_to_expected_move": round(ratio, 4) if math.isfinite(ratio) else None,
+            "moneyness_vs_spot_pct": round(moneyness, 3) if moneyness is not None else None,
+            "delta_abs": round(delta, 4),
+        })
+        if gross_abs <= 0 or net_abs <= 0:
+            return None, "expected premium gain does not clear live friction"
         return contract, None
 
     reroute_reason = None
     if locked is not None:
-        locked_delta = abs(_f(locked.get("delta"), 0.0))
-        if not (PROPOSED_OPTION_DELTA_LOCK_MIN <= locked_delta <= PROPOSED_OPTION_DELTA_LOCK_MAX):
-            reroute_reason = (
-                f"locked contract delta {locked_delta:.2f} left "
-                f"{PROPOSED_OPTION_DELTA_LOCK_MIN:.2f}-{PROPOSED_OPTION_DELTA_LOCK_MAX:.2f} guard"
-            )
-        else:
-            assessed, rejected = assess(locked)
-            if assessed is not None:
-                return {
-                    "tradeable": True,
-                    "reason": None,
-                    "contract": assessed,
-                    "preferred_expiry": preferred_expiry,
-                    "pre_result_next_month": bool(pre_result and preferred_expiry != expiries[0]),
-                    "atm_strike": atm_strike,
-                    "locked": True,
-                    "locked_contract_requested": locked_contract_symbol,
-                    "selection_reason": "ENTRY CONTRACT LOCK — original READY contract remains executable",
-                    "reroute_reason": None,
-                    "delta_preferred_band": [PROPOSED_OPTION_DELTA_PREFERRED_MIN, PROPOSED_OPTION_DELTA_PREFERRED_MAX],
-                    "delta_lock_guard": [PROPOSED_OPTION_DELTA_LOCK_MIN, PROPOSED_OPTION_DELTA_LOCK_MAX],
-                }
-            reroute_reason = rejected or "locked contract no longer executable"
+        assessed, rejected = assess(locked)
+        if assessed is not None:
+            return {
+                "tradeable": True,
+                "reason": None,
+                "contract": assessed,
+                "preferred_expiry": str(locked.get("expiry") or preferred_expiry),
+                "pre_result_next_month": bool(pre_result and str(locked.get("expiry")) != expiries[0]),
+                "atm_strike": atm_strike,
+                "locked": True,
+                "locked_contract_requested": locked_contract_symbol,
+                "selection_reason": "ACTIONABLE CONTRACT LOCK — selected contract remains net-positive after friction",
+                "reroute_reason": None,
+            }
+        reroute_reason = rejected or "locked contract no longer economically executable"
     elif locked_contract_symbol:
-        reroute_reason = "locked contract is no longer in the live subscribed/quoted universe"
+        reroute_reason = "locked contract is no longer in the live quoted universe"
 
     if not pool:
         return {
@@ -1038,36 +1232,26 @@ def route_option(
             "reroute_reason": reroute_reason,
         }
 
-    # Prefer ATM/modest ITM, then the target-delta corridor and tighter spread.
-    # OTM is not forbidden, but it loses to an executable ATM/ITM contract.
-    def strike_key(x):
-        strike = _f(x.get("strike"), spot)
-        itm_penalty = 0
-        if direction == "Bullish" and strike > spot:
-            itm_penalty = 1
-        if direction == "Bearish" and strike < spot:
-            itm_penalty = 1
-        delta = abs(_f(x.get("delta"), 0.0))
-        preferred_penalty = 0 if PROPOSED_OPTION_DELTA_PREFERRED_MIN <= delta <= PROPOSED_OPTION_DELTA_PREFERRED_MAX else 1
-        spread = _f(x.get("spread_pct"), 999.0)
-        return (
-            itm_penalty,
-            preferred_penalty,
-            abs(delta - PROPOSED_OPTION_DELTA_TARGET),
-            abs(strike - spot),
-            spread,
-        )
-
-    pool.sort(key=strike_key)
-    chosen = None
+    # Evaluate every quoted directional contract in the preferred expiry.
+    # Selection is the contract with the highest expected net ROI after live
+    # spread/statutory friction, theta and the measured intraday IV-drift prior.
+    assessed_rows = []
     reject_reasons = []
     for raw in pool:
         contract, rejected = assess(raw)
         if contract is None:
             reject_reasons.append(rejected)
             continue
-        chosen = contract
-        break
+        assessed_rows.append(contract)
+
+    assessed_rows.sort(
+        key=lambda x: (
+            _f(x.get("expected_net_roi_pct"), -999.0),
+            -_f(x.get("estimated_round_trip_friction_pct"), 999.0),
+        ),
+        reverse=True,
+    )
+    chosen = assessed_rows[0] if assessed_rows else None
 
     if chosen is None:
         return {
@@ -1081,11 +1265,9 @@ def route_option(
             "reroute_reason": reroute_reason,
         }
 
-    delta = abs(_f(chosen.get("delta"), 0.0))
     selection_reason = (
-        f"selected {chosen.get('symbol')} near ATM/modest ITM; "
-        f"delta {delta:.2f}, ATM {atm_strike:g}" if atm_strike is not None
-        else f"selected {chosen.get('symbol')} from executable directional options"
+        f"selected {chosen.get('symbol')} by maximum expected net ROI "
+        f"{_f(chosen.get('expected_net_roi_pct'), 0.0):.2f}% after friction/theta/IV prior"
     )
     if reroute_reason:
         selection_reason = "RE-ROUTED — " + reroute_reason + "; " + selection_reason
@@ -1101,8 +1283,19 @@ def route_option(
         "locked_contract_requested": locked_contract_symbol,
         "selection_reason": selection_reason,
         "reroute_reason": reroute_reason,
-        "delta_preferred_band": [PROPOSED_OPTION_DELTA_PREFERRED_MIN, PROPOSED_OPTION_DELTA_PREFERRED_MAX],
-        "delta_lock_guard": [PROPOSED_OPTION_DELTA_LOCK_MIN, PROPOSED_OPTION_DELTA_LOCK_MAX],
+        "selection_method": "MAX_EXPECTED_NET_ROI_AFTER_FRICTION_THETA_IV",
+        "evaluated_contract_count": len(assessed_rows),
+        "top_contracts": [
+            {
+                "symbol": row.get("symbol"),
+                "strike": row.get("strike"),
+                "expiry": row.get("expiry"),
+                "delta_abs": row.get("delta_abs"),
+                "expected_net_roi_pct": row.get("expected_net_roi_pct"),
+                "estimated_round_trip_friction_pct": row.get("estimated_round_trip_friction_pct"),
+            }
+            for row in assessed_rows[:5]
+        ],
     }
 
 
