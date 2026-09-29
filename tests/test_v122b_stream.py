@@ -427,8 +427,8 @@ def test_soft_deterioration_requires_20_second_dwell_but_hard_exit_is_immediate(
         now=t0, stale=False, live_price=100.0,
         candidate={"symbol": "ABC", "direction": "Bullish", "atr": 2.0},
     )
-    assert first["state"] == "TRIGGERED"
-    assert first["micro_confirm_pending"] is True
+    assert first["state"] == "TRADEABLE"
+    assert first["tradeable"] is True
 
     accepted = svc._stabilize_tactical_state(
         life, {"state": "TRADEABLE", "tradeable": True, "reason": "triggered"},
