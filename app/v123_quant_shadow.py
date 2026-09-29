@@ -89,6 +89,9 @@ class QuantRegimeShadowRecorder:
         self._trade_date = None
         self._last_sample_at = None
         self._last_nifty_price = None
+        self._last_sector_price = {}
+        self._sector_factor_status = "UNAVAILABLE"
+        self._sector_factor_coverage = 0.0
         self._features = {}
         self._posterior = {}
         self._lifecycle = {}
@@ -198,6 +201,15 @@ class QuantRegimeShadowRecorder:
                     price = row.get("price")
                     if not symbol or price is None:
                         continue
+                    sector = str(row.get("sector") or row.get("sector_index") or "")
+                    sector_price = row.get("sector_price")
+                    if sector and sector_price is not None:
+                        try:
+                            sector_price = float(sector_price)
+                        except (TypeError, ValueError):
+                            sector_price = None
+                        if sector_price is not None and math.isfinite(sector_price) and sector_price > 0:
+                            self._last_sector_price[sector] = sector_price
                     q = self._features.setdefault(symbol, QuantFeatureState())
                     x = q.update(
                         price=price,
@@ -230,6 +242,9 @@ class QuantRegimeShadowRecorder:
         self._trade_date = day
         self._last_sample_at = None
         self._last_nifty_price = None
+        self._last_sector_price = {}
+        self._sector_factor_status = "UNAVAILABLE"
+        self._sector_factor_coverage = 0.0
         self._features = {}
         self._posterior = {}
         self._lifecycle = {}
@@ -299,6 +314,28 @@ class QuantRegimeShadowRecorder:
                     market_return = 0.0
                 self._last_nifty_price = nifty_price
 
+                # Compute one sector return per sector per sample.  Do this
+                # before the stock loop so all stocks in the same sector see
+                # exactly the same contemporaneous factor return.
+                sector_contexts = dict((payload or {}).get("sector_contexts") or {})
+                sector_returns = {}
+                sector_prices = {}
+                for sector, ctx in sector_contexts.items():
+                    try:
+                        sector_price = float((ctx or {}).get("live_price"))
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(sector_price) or sector_price <= 0:
+                        continue
+                    sector = str(sector)
+                    prior_sector_price = self._last_sector_price.get(sector)
+                    if prior_sector_price and prior_sector_price > 0:
+                        sector_returns[sector] = math.log(sector_price / prior_sector_price)
+                    else:
+                        sector_returns[sector] = 0.0
+                    sector_prices[sector] = sector_price
+                self._last_sector_price.update(sector_prices)
+
                 feature_rows = []
                 regime_rows = []
                 latest = {}
@@ -314,11 +351,14 @@ class QuantRegimeShadowRecorder:
                     if not math.isfinite(price) or price <= 0:
                         continue
                     participation = row.get("volume_rate_accel")
+                    sector = str(row.get("sector_index") or row.get("sector") or "")
+                    sector_return = sector_returns.get(sector) if sector else None
+                    sector_price = sector_prices.get(sector) if sector else None
                     q = self._features.setdefault(symbol, QuantFeatureState())
                     x = q.update(
                         price=price,
                         market_return=market_return,
-                        sector_return=None,
+                        sector_return=sector_return,
                         participation=participation,
                     )
                     base = {
@@ -328,8 +368,10 @@ class QuantRegimeShadowRecorder:
                         "symbol": symbol,
                         "price": price,
                         "market_return": market_return,
-                        "sector_return": None,
-                        "sector_status": "UNAVAILABLE",
+                        "sector": sector or None,
+                        "sector_price": sector_price,
+                        "sector_return": sector_return,
+                        "sector_status": "ACTIVE" if sector_return is not None else "UNAVAILABLE",
                         "participation": participation,
                         "x": [float(v) for v in x],
                         "production_controls": False,
@@ -370,6 +412,16 @@ class QuantRegimeShadowRecorder:
                         regime_rows.append(state_row)
                         self._last_lifecycle[symbol] = life
 
+                with_sector = sum(1 for row in feature_rows if row.get("sector_return") is not None)
+                if feature_rows:
+                    self._sector_factor_coverage = with_sector / len(feature_rows)
+                    if with_sector == len(feature_rows):
+                        self._sector_factor_status = "ACTIVE"
+                    elif with_sector:
+                        self._sector_factor_status = "PARTIAL"
+                    else:
+                        self._sector_factor_status = "UNAVAILABLE"
+
                 self._append_gzip_rows(self._feature_path(now.date()), feature_rows)
                 self._append_gzip_rows(self._event_path(now.date()), regime_rows)
                 self._last_sample_at = now
@@ -409,7 +461,8 @@ class QuantRegimeShadowRecorder:
             "lifecycle_counts": dict(counts),
             "actionable_count": len(actionable),
             "actionable": actionable[:30],
-            "sector_factor_status": "UNAVAILABLE",
+            "sector_factor_status": self._sector_factor_status,
+            "sector_factor_coverage": round(self._sector_factor_coverage, 4),
             "last_error": self._last_error,
             "asof": _iso(now),
         }
