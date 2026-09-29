@@ -28,7 +28,6 @@ import time
 from collections import defaultdict, deque
 from typing import Callable
 
-import numpy as np
 
 from . import scanner, v123_state
 
@@ -44,19 +43,17 @@ MAX_MOVER_ROWS = 30
 LIVE_SAMPLE_STALE_SECONDS = 45
 RECONNECT_COOLDOWN_SECONDS = 10
 
-# Direction Lock v1: sequential evidence, not a latest-3m vote.
-# Percent returns are standardized by an EW RMS scale; CUSUM requires repeated
-# same-direction evidence.  A reversal needs a larger opposite boundary and
-# must pass through NEUTRAL before the opposite lock can be shown.
+# Persistent Directional Travel (PDT) v2.
+// Direction is a slow underlying regime; 3m remains execution-only.
 DIRECTION_UPDATE_SECONDS = 55
-DIRECTION_MIN_OBS = 4
-DIRECTION_CUSUM_K = 0.25
-DIRECTION_ENTRY_H = 2.5
-DIRECTION_FLIP_H = 4.0
-DIRECTION_EXIT_H = 1.25
-DIRECTION_Z_CAP = 3.0
-DIRECTION_SCALE_ALPHA = 0.20
-DIRECTION_SCALE_FLOOR = 0.00020
+DIRECTION_PATH_MINUTES = 15
+DIRECTION_PATH_EFFICIENCY_MIN = 0.35
+DIRECTION_MOVE_ATR_MIN = 0.20
+DIRECTION_ENTER_VOTES = 3
+DIRECTION_VOTE_WINDOW = 4
+DIRECTION_EMA_FAST = 9
+DIRECTION_EMA_SLOW = 20
+DIRECTION_EMA_SLOPE_POINTS = 3
 
 
 def _f(value, default=None):
@@ -220,6 +217,10 @@ class UniverseMomentumStreamService:
                 if isinstance(tick, dict):
                     self._latest[symbol] = dict(tick)
 
+            for symbol, state in (payload.get("direction_locks") or {}).items():
+                if isinstance(state, dict):
+                    self._direction_locks[str(symbol)] = dict(state)
+
         if restored:
             self._snapshot["checkpoint_restored_samples"] = restored
             self._snapshot["checkpoint_saved_at"] = payload.get("saved_at")
@@ -234,8 +235,9 @@ class UniverseMomentumStreamService:
             samples = {symbol: list(rows) for symbol, rows in self._samples.items() if rows}
             latest = {symbol: dict(tick) for symbol, tick in self._latest.items()}
         try:
+            locks = {symbol: dict(state) for symbol, state in self._direction_locks.items()}
             v123_state.save_observer_checkpoint(
-                self.checkpoint_path, samples, latest, now=now
+                self.checkpoint_path, samples, latest, direction_locks=locks, now=now
             )
             self._last_checkpoint_at = now
         except Exception as exc:
@@ -374,26 +376,125 @@ class UniverseMomentumStreamService:
 
 
     @staticmethod
-    def _clip_z(value):
-        return max(-DIRECTION_Z_CAP, min(DIRECTION_Z_CAP, float(value)))
+    def _ema_values(values, span):
+        alpha = 2.0 / (float(span) + 1.0)
+        out = []
+        level = None
+        for value in values:
+            value = float(value)
+            level = value if level is None else alpha * value + (1.0 - alpha) * level
+            out.append(level)
+        return out
 
-    @staticmethod
-    def _rms_z(state, prefix, value):
-        """Causal zero-centred volatility scaling for signed returns."""
-        x = float(value)
-        key = prefix + "_scale2"
-        scale2 = float(state.get(key) or 0.0)
-        if scale2 <= 0.0:
-            scale2 = max(DIRECTION_SCALE_FLOOR ** 2, x * x)
-        else:
-            scale2 = (
-                (1.0 - DIRECTION_SCALE_ALPHA) * scale2
-                + DIRECTION_SCALE_ALPHA * x * x
-            )
-        state[key] = scale2
-        return UniverseMomentumStreamService._clip_z(
-            x / math.sqrt(max(scale2, DIRECTION_SCALE_FLOOR ** 2))
+    def _minute_prices(self, symbol, now, minutes):
+        rows = self._samples.get(symbol) or ()
+        if not rows:
+            return []
+        points = []
+        current = rows[-1]
+        cts = _dt(current.get("ts"))
+        cp = _f(current.get("price"))
+        if cts is not None and cp is not None:
+            points.append((cts, cp))
+        for minute in range(1, int(minutes) + 1):
+            sample = self._sample_at(symbol, now, minute * 60)
+            if sample is None:
+                continue
+            ts = _dt(sample.get("ts"))
+            px = _f(sample.get("price"))
+            if ts is None or px is None:
+                continue
+            points.append((ts, px))
+        # One point per represented minute, chronological. Samples can repeat
+        # after a small feed gap, so timestamp dedupe is required.
+        dedup = {}
+        for ts, px in points:
+            dedup[ts] = px
+        return sorted(dedup.items())
+
+    def _direction_regime_features(
+        self, symbol, now, *, atr=None, market_15m_pct=None, sector_15m_pct=None
+    ):
+        points = self._minute_prices(symbol, now, DIRECTION_EMA_SLOW + 4)
+        if len(points) < 12:
+            return {
+                "candidate": None,
+                "path_efficiency": None,
+                "move_15m_atr": None,
+                "ret_15m_pct": None,
+                "ema9": None,
+                "ema20": None,
+                "ema9_slope": None,
+                "relative_residual_15m_pct": None,
+                "reason": "REGIME_HISTORY_NOT_READY",
+            }
+
+        # Keep the most recent ~15 one-minute intervals for efficiency.
+        recent = points[-(DIRECTION_PATH_MINUTES + 1):]
+        if len(recent) < 12:
+            return {"candidate": None, "reason": "REGIME_HISTORY_NOT_READY"}
+
+        prices = [px for _, px in recent]
+        first = prices[0]
+        last = prices[-1]
+        path = sum(abs(prices[i] - prices[i - 1]) for i in range(1, len(prices)))
+        signed_eff = (last - first) / path if path > 0 else 0.0
+        ret15 = (last / first - 1.0) * 100.0 if first > 0 else None
+
+        all_prices = [px for _, px in points]
+        ema9s = self._ema_values(all_prices, DIRECTION_EMA_FAST)
+        ema20s = self._ema_values(all_prices, DIRECTION_EMA_SLOW)
+        ema9 = ema9s[-1]
+        ema20 = ema20s[-1]
+        slope_idx = max(0, len(ema9s) - 1 - DIRECTION_EMA_SLOPE_POINTS)
+        ema9_slope = ema9s[-1] - ema9s[slope_idx]
+
+        atr = _f(atr)
+        move_atr = abs(last - first) / atr if atr and atr > 0 else None
+        move_ok = (
+            move_atr is not None and move_atr >= DIRECTION_MOVE_ATR_MIN
+        ) or (
+            move_atr is None and ret15 is not None and abs(ret15) >= 0.20
         )
+
+        candidate = None
+        bull = (
+            signed_eff >= DIRECTION_PATH_EFFICIENCY_MIN
+            and move_ok
+            and ema9 > ema20
+            and ema9_slope > 0
+            and last >= ema20
+        )
+        bear = (
+            signed_eff <= -DIRECTION_PATH_EFFICIENCY_MIN
+            and move_ok
+            and ema9 < ema20
+            and ema9_slope < 0
+            and last <= ema20
+        )
+        if bull:
+            candidate = "Bullish"
+        elif bear:
+            candidate = "Bearish"
+
+        residuals = []
+        if ret15 is not None and market_15m_pct is not None:
+            residuals.append(ret15 - float(market_15m_pct))
+        if ret15 is not None and sector_15m_pct is not None:
+            residuals.append(ret15 - float(sector_15m_pct))
+        residual = sum(residuals) / len(residuals) if residuals else None
+
+        return {
+            "candidate": candidate,
+            "path_efficiency": round(signed_eff, 4),
+            "move_15m_atr": round(move_atr, 4) if move_atr is not None else None,
+            "ret_15m_pct": round(ret15, 4) if ret15 is not None else None,
+            "ema9": round(ema9, 4),
+            "ema20": round(ema20, 4),
+            "ema9_slope": round(ema9_slope, 6),
+            "relative_residual_15m_pct": round(residual, 4) if residual is not None else None,
+            "reason": "PERSISTENT_DIRECTIONAL_TRAVEL" if candidate else "REGIME_STRUCTURE_NOT_ALIGNED",
+        }
 
     @staticmethod
     def _new_direction_lock():
@@ -403,155 +504,107 @@ class UniverseMomentumStreamService:
             "since": None,
             "last_eval_at": None,
             "observations": 0,
-            "up": 0.0,
-            "down": 0.0,
-            "residual_up": 0.0,
-            "residual_down": 0.0,
-            "weak_votes": 0,
+            "recent_candidates": [],
             "pending_direction": None,
-            "recent_signs": [],
-            "beta": np.zeros(3, dtype=float),
-            "covariance": np.eye(3, dtype=float) * 100.0,
-            "stock_scale2": 0.0,
-            "residual_scale2": 0.0,
+            "path_efficiency": None,
+            "move_15m_atr": None,
+            "ret_15m_pct": None,
+            "ema9": None,
+            "ema20": None,
+            "ema9_slope": None,
+            "relative_residual_15m_pct": None,
         }
 
     def _update_direction_lock(
-        self, symbol, now, stock_return_pct, market_return_pct=None, sector_return_pct=None
+        self, symbol, now, *, atr=None, market_15m_pct=None, sector_15m_pct=None
     ):
-        """Sequential direction regime with hysteresis.
+        """Persistent Directional Travel lock.
 
-        The latest 3m candle never sets direction.  We update at roughly
-        one-minute cadence from signed 1m returns. Market and sector returns
-        feed a causal RLS residual that is recorded as an independent-move
-        witness, while the stock CUSUM controls the visible direction lock.
+        Direction is inferred from 15m path efficiency + ATR-normalised travel
+        + EMA9/20 structure sampled on one-minute points.  The lock needs 3 of
+        the last 4 regime observations.  Opposite direction first moves the
+        state through NEUTRAL/REVERSAL_PENDING, so a short pullback cannot
+        directly flip the desk.
         """
         state = self._direction_locks.setdefault(symbol, self._new_direction_lock())
         last_eval = _dt(state.get("last_eval_at"))
         if last_eval is not None and (now - last_eval).total_seconds() < DIRECTION_UPDATE_SECONDS:
             return self._direction_lock_summary(state)
 
-        sr = _f(stock_return_pct)
-        if sr is None:
-            return self._direction_lock_summary(state)
-
-        # Use decimal returns for the factor model; all factors share units.
-        y = sr / 100.0
-        m = (_f(market_return_pct, 0.0) or 0.0) / 100.0
-        s = (_f(sector_return_pct, 0.0) or 0.0) / 100.0
-        x = np.array([1.0, m, s], dtype=float)
-        beta = state["beta"]
-        P = state["covariance"]
-        Px = P @ x
-        denom = 0.995 + float(x.T @ Px)
-        gain = Px / max(denom, 1e-12)
-        prediction = float(x.T @ beta)
-        residual = y - prediction
-        state["beta"] = beta + gain * residual
-        state["covariance"] = (P - np.outer(gain, x) @ P) / 0.995
-
-        z_stock = self._rms_z(state, "stock", y)
-        z_residual = self._rms_z(state, "residual", residual)
+        feat = self._direction_regime_features(
+            symbol, now, atr=atr,
+            market_15m_pct=market_15m_pct,
+            sector_15m_pct=sector_15m_pct,
+        )
+        candidate = feat.get("candidate")
+        vote = 1 if candidate == "Bullish" else (-1 if candidate == "Bearish" else 0)
+        votes = list(state.get("recent_candidates") or [])
+        votes.append(vote)
+        votes = votes[-DIRECTION_VOTE_WINDOW:]
+        state["recent_candidates"] = votes
         state["observations"] = int(state.get("observations") or 0) + 1
         state["last_eval_at"] = _iso(now)
-        signs = list(state.get("recent_signs") or [])
-        signs.append(1 if z_stock > 0.15 else (-1 if z_stock < -0.15 else 0))
-        state["recent_signs"] = signs[-4:]
+        for key in (
+            "path_efficiency", "move_15m_atr", "ret_15m_pct",
+            "ema9", "ema20", "ema9_slope", "relative_residual_15m_pct",
+        ):
+            state[key] = feat.get(key)
 
-        state["up"] = max(0.0, float(state.get("up") or 0.0) + z_stock - DIRECTION_CUSUM_K)
-        state["down"] = max(0.0, float(state.get("down") or 0.0) - z_stock - DIRECTION_CUSUM_K)
-        state["residual_up"] = max(
-            0.0, float(state.get("residual_up") or 0.0) + z_residual - DIRECTION_CUSUM_K
-        )
-        state["residual_down"] = max(
-            0.0, float(state.get("residual_down") or 0.0) - z_residual - DIRECTION_CUSUM_K
-        )
+        bull_votes = sum(v > 0 for v in votes)
+        bear_votes = sum(v < 0 for v in votes)
         prior = str(state.get("state") or "NEUTRAL")
-        obs = int(state["observations"])
-        up = float(state["up"])
-        down = float(state["down"])
-        recent_signs = list(state.get("recent_signs") or [])
-        bull_support = sum(1 for x in recent_signs if x > 0) >= 3
-        bear_support = sum(1 for x in recent_signs if x < 0) >= 3
+        pending = state.get("pending_direction")
 
-        # A locked direction cannot directly reverse.  Strong opposite
-        # evidence first neutralises it; the next evaluation may establish the
-        # opposite regime if that evidence remains above the entry boundary.
         if prior == "BULLISH":
-            if down >= DIRECTION_FLIP_H and bear_support:
+            if bear_votes >= DIRECTION_ENTER_VOTES:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BEARISH"
                 state["since"] = None
-                state["weak_votes"] = 0
-            else:
-                if up < DIRECTION_EXIT_H and down < DIRECTION_ENTRY_H:
-                    state["weak_votes"] = int(state.get("weak_votes") or 0) + 1
-                else:
-                    state["weak_votes"] = 0
-                if int(state["weak_votes"]) >= 3:
-                    state["state"] = "NEUTRAL"
-                    state["phase"] = "NEUTRAL"
-                    state["pending_direction"] = None
-                    state["since"] = None
-                else:
-                    state["phase"] = "PULLBACK" if z_stock < -0.35 else (
-                        "CONTINUING" if up >= DIRECTION_ENTRY_H else "WEAKENING"
-                    )
+            elif candidate == "Bullish":
+                state["phase"] = "CONTINUING"
+            elif candidate is None:
+                state["phase"] = "PULLBACK" if (_f(self._return(symbol, now, 60), 0.0) or 0.0) < 0 else "WEAKENING"
         elif prior == "BEARISH":
-            if up >= DIRECTION_FLIP_H and bull_support:
+            if bull_votes >= DIRECTION_ENTER_VOTES:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BULLISH"
                 state["since"] = None
-                state["weak_votes"] = 0
-            else:
-                if down < DIRECTION_EXIT_H and up < DIRECTION_ENTRY_H:
-                    state["weak_votes"] = int(state.get("weak_votes") or 0) + 1
-                else:
-                    state["weak_votes"] = 0
-                if int(state["weak_votes"]) >= 3:
-                    state["state"] = "NEUTRAL"
-                    state["phase"] = "NEUTRAL"
-                    state["pending_direction"] = None
-                    state["since"] = None
-                else:
-                    state["phase"] = "PULLBACK" if z_stock > 0.35 else (
-                        "CONTINUING" if down >= DIRECTION_ENTRY_H else "WEAKENING"
-                    )
+            elif candidate == "Bearish":
+                state["phase"] = "CONTINUING"
+            elif candidate is None:
+                state["phase"] = "PULLBACK" if (_f(self._return(symbol, now, 60), 0.0) or 0.0) > 0 else "WEAKENING"
         else:
-            pending = state.get("pending_direction")
-            if obs >= DIRECTION_MIN_OBS:
-                if pending == "BULLISH":
-                    if up >= DIRECTION_ENTRY_H and bull_support:
-                        state["state"] = "BULLISH"
-                        state["phase"] = "CONTINUING"
-                        state["since"] = _iso(now)
-                        state["pending_direction"] = None
-                elif pending == "BEARISH":
-                    if down >= DIRECTION_ENTRY_H and bear_support:
-                        state["state"] = "BEARISH"
-                        state["phase"] = "CONTINUING"
-                        state["since"] = _iso(now)
-                        state["pending_direction"] = None
-                elif up >= DIRECTION_ENTRY_H and up > down and bull_support:
+            if pending == "BULLISH":
+                if bull_votes >= DIRECTION_ENTER_VOTES:
                     state["state"] = "BULLISH"
                     state["phase"] = "CONTINUING"
                     state["since"] = _iso(now)
-                elif down >= DIRECTION_ENTRY_H and down > up and bear_support:
+                    state["pending_direction"] = None
+            elif pending == "BEARISH":
+                if bear_votes >= DIRECTION_ENTER_VOTES:
                     state["state"] = "BEARISH"
                     state["phase"] = "CONTINUING"
                     state["since"] = _iso(now)
+                    state["pending_direction"] = None
+            elif bull_votes >= DIRECTION_ENTER_VOTES:
+                state["state"] = "BULLISH"
+                state["phase"] = "CONTINUING"
+                state["since"] = _iso(now)
+            elif bear_votes >= DIRECTION_ENTER_VOTES:
+                state["state"] = "BEARISH"
+                state["phase"] = "CONTINUING"
+                state["since"] = _iso(now)
+            else:
+                state["phase"] = "NEUTRAL"
 
-        state["z_stock"] = z_stock
-        state["z_residual"] = z_residual
-        state["beta_market"] = float(state["beta"][1])
-        state["beta_sector"] = float(state["beta"][2])
         return self._direction_lock_summary(state)
 
     @staticmethod
     def _direction_lock_summary(state):
         locked = str(state.get("state") or "NEUTRAL")
+        votes = list(state.get("recent_candidates") or [])
         return {
             "state": locked,
             "direction": "Bullish" if locked == "BULLISH" else (
@@ -560,17 +613,16 @@ class UniverseMomentumStreamService:
             "phase": state.get("phase") or "NEUTRAL",
             "since": state.get("since"),
             "observations": int(state.get("observations") or 0),
-            "up_evidence": round(float(state.get("up") or 0.0), 3),
-            "down_evidence": round(float(state.get("down") or 0.0), 3),
-            "residual_up_evidence": round(float(state.get("residual_up") or 0.0), 3),
-            "residual_down_evidence": round(float(state.get("residual_down") or 0.0), 3),
-            "z_stock": round(float(state.get("z_stock") or 0.0), 3),
-            "z_residual": round(float(state.get("z_residual") or 0.0), 3),
-            "beta_market": round(float(state.get("beta_market") or 0.0), 3),
-            "beta_sector": round(float(state.get("beta_sector") or 0.0), 3),
+            "up_evidence": sum(v > 0 for v in votes),
+            "down_evidence": sum(v < 0 for v in votes),
             "pending_direction": state.get("pending_direction"),
-            "bull_support_votes": sum(1 for x in (state.get("recent_signs") or []) if x > 0),
-            "bear_support_votes": sum(1 for x in (state.get("recent_signs") or []) if x < 0),
+            "path_efficiency": state.get("path_efficiency"),
+            "move_15m_atr": state.get("move_15m_atr"),
+            "ret_15m_pct": state.get("ret_15m_pct"),
+            "ema9": state.get("ema9"),
+            "ema20": state.get("ema20"),
+            "ema9_slope": state.get("ema9_slope"),
+            "relative_residual_15m_pct": state.get("relative_residual_15m_pct"),
         }
 
     def _near_extreme(self, sample, direction):
@@ -633,9 +685,24 @@ class UniverseMomentumStreamService:
         event_family = None
         why = []
 
+        # Primary production lane: a persistent underlying regime can enter
+        # Focus without waiting for a legacy event label.  Legacy families
+        # remain useful for entry/re-entry context, but they no longer decide
+        # whether an obvious trend exists.
+        if (
+            str((direction_info or {}).get("phase") or "") == "CONTINUING"
+            and abs(_f((direction_info or {}).get("path_efficiency"), 0.0) or 0.0) >= DIRECTION_PATH_EFFICIENCY_MIN
+            and (
+                _f((direction_info or {}).get("move_15m_atr")) is None
+                or _f((direction_info or {}).get("move_15m_atr"), 0.0) >= DIRECTION_MOVE_ATR_MIN
+            )
+        ):
+            event_family = "REGIME_PERSISTENCE"
+            why = ["15m directional path efficient", "EMA9/20 structure aligned", "direction lock persistent"]
+
         # Opening-drive: price is already pressing the session extreme while
         # both short return and participation are expanding.
-        if (
+        elif (
             opening and _signed_ok(direction, r5, 0.30)
             and vol_accel is not None and vol_accel >= 1.20
             and at_extreme
@@ -716,7 +783,13 @@ class UniverseMomentumStreamService:
             "direction_lock_since": (direction_info or {}).get("since"),
             "direction_up_evidence": (direction_info or {}).get("up_evidence"),
             "direction_down_evidence": (direction_info or {}).get("down_evidence"),
-            "direction_residual_z": (direction_info or {}).get("z_residual"),
+            "direction_residual_z": (direction_info or {}).get("relative_residual_15m_pct"),
+            "path_efficiency_15m": (direction_info or {}).get("path_efficiency"),
+            "move_15m_atr": (direction_info or {}).get("move_15m_atr"),
+            "ret_15m_pct": (direction_info or {}).get("ret_15m_pct"),
+            "ema9_live": (direction_info or {}).get("ema9"),
+            "ema20_live": (direction_info or {}).get("ema20"),
+            "ema9_slope_live": (direction_info or {}).get("ema9_slope"),
             "why": why,
         }
 
@@ -841,6 +914,7 @@ class UniverseMomentumStreamService:
             "3m": self._return("NIFTY 50", now, 180),
             "5m": self._return("NIFTY 50", now, 300),
             "10m": self._return("NIFTY 50", now, 600),
+            "15m": self._return("NIFTY 50", now, 900),
             "day": _pct(nifty_live, nifty_prev),
         }
         with self._lock:
@@ -859,6 +933,7 @@ class UniverseMomentumStreamService:
                 "ret_3m_pct": self._return(sector, now, 180),
                 "ret_5m_pct": self._return(sector, now, 300),
                 "ret_10m_pct": self._return(sector, now, 600),
+                "ret_15m_pct": self._return(sector, now, 900),
             }
 
         events = []
@@ -884,6 +959,7 @@ class UniverseMomentumStreamService:
             sector_r1 = _f((sector_ctx or {}).get("ret_1m_pct"))
             sector_r5 = _f((sector_ctx or {}).get("ret_5m_pct"))
             sector_r10 = _f((sector_ctx or {}).get("ret_10m_pct"))
+            sector_r15 = _f((sector_ctx or {}).get("ret_15m_pct"))
             rel_sector5 = (
                 round(r5 - sector_r5, 4)
                 if r5 is not None and sector_r5 is not None else None
@@ -891,9 +967,9 @@ class UniverseMomentumStreamService:
             direction_info = self._update_direction_lock(
                 symbol,
                 now,
-                self._return(symbol, now, 60),
-                nifty_returns.get("1m"),
-                sector_r1,
+                atr=symbol_meta.get("atr"),
+                market_15m_pct=nifty_returns.get("15m"),
+                sector_15m_pct=sector_r15,
             )
             event = self._event_for(
                 symbol, sample, symbol_meta, nifty_returns, now, direction_info=direction_info
@@ -939,7 +1015,13 @@ class UniverseMomentumStreamService:
                     "direction_lock_since": direction_info.get("since"),
                     "direction_up_evidence": direction_info.get("up_evidence"),
                     "direction_down_evidence": direction_info.get("down_evidence"),
-                    "direction_residual_z": direction_info.get("z_residual"),
+                    "direction_residual_z": direction_info.get("relative_residual_15m_pct"),
+                    "path_efficiency_15m": direction_info.get("path_efficiency"),
+                    "move_15m_atr": direction_info.get("move_15m_atr"),
+                    "ret_15m_pct": direction_info.get("ret_15m_pct"),
+                    "ema9_live": direction_info.get("ema9"),
+                    "ema20_live": direction_info.get("ema20"),
+                    "ema9_slope_live": direction_info.get("ema9_slope"),
                 })
             if event:
                 events.append(event)
@@ -977,6 +1059,7 @@ class UniverseMomentumStreamService:
                 "ret_3m_pct": nifty_returns["3m"],
                 "ret_5m_pct": nifty_returns["5m"],
                 "ret_10m_pct": nifty_returns["10m"],
+                "ret_15m_pct": nifty_returns["15m"],
             },
             "sector_contexts": sector_contexts,
             # Internal whole-universe feed for the research-only quant shadow.
