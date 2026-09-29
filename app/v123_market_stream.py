@@ -602,10 +602,14 @@ class UniverseMomentumStreamService:
             last_error = self._last_error
         feed_health = self._feed_health(now)
 
+        nifty_tick = latest.get("NIFTY 50") or {}
+        nifty_live = _f(nifty_tick.get("last_price"))
+        nifty_prev = _f((nifty_tick.get("ohlc") or {}).get("close"))
         nifty_returns = {
             "3m": self._return("NIFTY 50", now, 180),
             "5m": self._return("NIFTY 50", now, 300),
             "10m": self._return("NIFTY 50", now, 600),
+            "day": _pct(nifty_live, nifty_prev),
         }
         with self._lock:
             context_symbols = set(self._context_symbols)
@@ -613,8 +617,12 @@ class UniverseMomentumStreamService:
 
         sector_contexts = {}
         for sector in sorted(context_symbols - {"NIFTY 50"}):
+            sector_tick = latest.get(sector) or {}
+            sector_live = _f(sector_tick.get("last_price"))
+            sector_prev = _f((sector_tick.get("ohlc") or {}).get("close"))
             sector_contexts[sector] = {
-                "live_price": _f((latest.get(sector) or {}).get("last_price")),
+                "live_price": sector_live,
+                "day_change_pct": _pct(sector_live, sector_prev),
                 "ret_3m_pct": self._return(sector, now, 180),
                 "ret_5m_pct": self._return(sector, now, 300),
                 "ret_10m_pct": self._return(sector, now, 600),
@@ -639,6 +647,7 @@ class UniverseMomentumStreamService:
             symbol_meta = meta.get(symbol) or {}
             sector = symbol_meta.get("sector") or scanner.SYMBOL_SECTOR_MAP.get(symbol)
             sector_ctx = sector_contexts.get(str(sector)) if sector else None
+            sector_day = _f((sector_ctx or {}).get("day_change_pct"))
             sector_r5 = _f((sector_ctx or {}).get("ret_5m_pct"))
             sector_r10 = _f((sector_ctx or {}).get("ret_10m_pct"))
             rel_sector5 = (
@@ -651,9 +660,11 @@ class UniverseMomentumStreamService:
             )
             if event is not None:
                 event["sector_index"] = sector
+                event["sector_day_change_pct"] = sector_day
                 event["sector_ret_5m_pct"] = sector_r5
                 event["sector_ret_10m_pct"] = sector_r10
                 event["relative_5m_vs_sector_pct"] = rel_sector5
+                event["market_day_change_pct"] = nifty_returns.get("day")
                 event["market_ret_5m_pct"] = nifty_returns.get("5m")
                 event["market_ret_10m_pct"] = nifty_returns.get("10m")
             if day is not None:
@@ -665,11 +676,13 @@ class UniverseMomentumStreamService:
                     "ret_5m_pct": round(r5, 4) if r5 is not None else None,
                     "ret_10m_pct": diagnostic.get("ret_10m_pct"),
                     "relative_5m_vs_nifty_pct": diagnostic.get("relative_5m_vs_nifty_pct"),
+                    "market_day_change_pct": nifty_returns.get("day"),
                     "market_ret_5m_pct": nifty_returns.get("5m"),
                     "market_ret_10m_pct": nifty_returns.get("10m"),
                     "volume_rate_accel": diagnostic.get("volume_rate_accel"),
                     "sector": sector,
                     "sector_index": sector,
+                    "sector_day_change_pct": sector_day,
                     "sector_ret_5m_pct": sector_r5,
                     "sector_ret_10m_pct": sector_r10,
                     "relative_5m_vs_sector_pct": rel_sector5,
@@ -708,7 +721,8 @@ class UniverseMomentumStreamService:
             "fresh_symbol_count": len(movers),
             "feed_health": feed_health,
             "nifty": {
-                "live_price": _f((latest.get("NIFTY 50") or {}).get("last_price")),
+                "live_price": nifty_live,
+                "day_change_pct": nifty_returns["day"],
                 "ret_3m_pct": nifty_returns["3m"],
                 "ret_5m_pct": nifty_returns["5m"],
                 "ret_10m_pct": nifty_returns["10m"],
