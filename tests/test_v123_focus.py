@@ -862,7 +862,7 @@ def test_building_slot_expires_without_renewed_evidence_after_six_minutes():
     assert any(
         row.get("symbol") == "ABC"
         and row.get("lifecycle") == "COMPLETED"
-        and "building evidence expired" in str((row.get("history") or [{}])[-1].get("reason") or "")
+        and "building evidence expired" in str((row.get("history") or [{}])[-1].get("note") or "")
         for row in state["recent"]
     )
 
