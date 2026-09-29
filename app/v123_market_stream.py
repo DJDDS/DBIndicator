@@ -1040,12 +1040,20 @@ class UniverseMomentumStreamService:
         vol_accel = self._volume_accel(symbol, now)
         n5 = nifty_returns.get("5m")
         rel5 = None if r5 is None or n5 is None else round(r5 - n5, 4)
+
+        # Production path: multiscale movement can establish direction before
+        # the slower CUSUM lock. Historical unit/replay callers omit
+        # movement_info and keep the prior diagnostic semantics below.
         direction = str((movement_info or {}).get("direction") or (direction_info or {}).get("direction") or "")
         if direction not in ("Bullish", "Bearish"):
+            legacy = movement_info is None
             return {
                 "qualified": False,
-                "reason": "NO_SIGNIFICANT_MULTISCALE_MOVE",
-                "failed_gates": ["no family-wise-significant residual move yet"],
+                "reason": "DIRECTION_NOT_LOCKED" if legacy else "NO_SIGNIFICANT_MULTISCALE_MOVE",
+                "failed_gates": (
+                    ["sequential direction evidence below lock boundary"]
+                    if legacy else ["no family-wise-significant residual move yet"]
+                ),
                 "direction": None,
                 "direction_lock_state": (direction_info or {}).get("state", "NEUTRAL"),
                 "direction_lock_phase": (direction_info or {}).get("phase", "NEUTRAL"),
@@ -1056,6 +1064,7 @@ class UniverseMomentumStreamService:
                 "movement_z": (movement_info or {}).get("movement_z"),
                 "movement_p_value": (movement_info or {}).get("movement_p_value"),
             }
+
         at_extreme = self._near_extreme(sample, direction)
         sign = 1.0 if direction == "Bullish" else -1.0
 
@@ -1064,6 +1073,41 @@ class UniverseMomentumStreamService:
                 "qualified": True,
                 "reason": str(event.get("event_family") or "QUALIFIED_EVENT"),
                 "failed_gates": [],
+                "direction": direction,
+                "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
+                "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
+                "near_session_extreme": at_extreme,
+                "movement_horizon_seconds": (movement_info or {}).get("natural_horizon_seconds"),
+                "movement_z": (movement_info or {}).get("movement_z"),
+                "movement_p_value": (movement_info or {}).get("movement_p_value"),
+            }
+
+        if movement_info is None:
+            failed = []
+            if r5 is None:
+                failed.append("5m history not ready")
+            elif sign * r5 < 0.20:
+                failed.append("5m move < 0.20%")
+            if vol_accel is None:
+                failed.append("volume acceleration unavailable")
+            elif vol_accel < 1.20:
+                failed.append("volume rate < 1.20x")
+            if not at_extreme:
+                failed.append("not near session extreme")
+            if rel5 is not None and sign * rel5 < 0.08:
+                failed.append("relative 5m < 0.08%")
+            if day is not None and sign * day < 0.75:
+                failed.append(f"direction-aligned day move {sign * day:.2f}% < 0.75%")
+            if r3 is None or sign * r3 < 0.10:
+                failed.append("3m continuation < 0.10%")
+            if r10 is None or sign * r10 < 0.35:
+                failed.append("10m continuation < 0.35%")
+            if not self._continuation_reclaim(symbol, direction, now, day):
+                failed.append("no fresh pullback-reclaim")
+            return {
+                "qualified": False,
+                "reason": "NO_EVENT_FAMILY_QUALIFIED",
+                "failed_gates": failed[:5],
                 "direction": direction,
                 "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
                 "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
