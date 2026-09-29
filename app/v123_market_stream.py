@@ -947,6 +947,33 @@ class UniverseMomentumStreamService:
             event_family = "REGIME_PERSISTENCE"
             why = ["sequential quant direction remains persistent"]
 
+        # Backwards-compatible deterministic fallback for unit/research
+        # callers that do not supply multiscale data. Production snapshot
+        # building always supplies movement_info and therefore never uses this
+        # legacy branch.
+        if event_family is None and movement_info is None:
+            at_extreme_legacy = self._near_extreme(sample, direction)
+            minute = now.hour * 60 + now.minute
+            opening = 9 * 60 + 15 <= minute <= 10 * 60 + 15
+            if (
+                opening and _signed_ok(direction, r5, 0.30)
+                and vol_accel is not None and vol_accel >= 1.20
+                and at_extreme_legacy
+            ):
+                event_family = "OPENING_DRIVE"
+                why = ["legacy test/research fallback"]
+            elif self._continuation_reclaim(symbol, direction, now, day):
+                event_family = "PULLBACK_RECLAIM"
+                why = ["legacy test/research fallback"]
+            elif (
+                day is not None and _signed_ok(direction, day, 1.0)
+                and r3 is not None and r10 is not None
+                and _signed_ok(direction, r3, 0.12)
+                and _signed_ok(direction, r10, 0.35)
+            ):
+                event_family = "MOMENTUM_CONTINUATION"
+                why = ["legacy test/research fallback"]
+
         if event_family is None:
             return None
 
