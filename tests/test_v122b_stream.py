@@ -602,42 +602,38 @@ def test_tactical_feed_health_marks_old_heartbeat_degraded():
     assert health["last_tick_age_seconds"] == 45.0
 
 
-def test_tradeable_micro_confirm_resets_when_executability_breaks():
+def test_tradeable_uses_statistical_evidence_hysteresis_not_fixed_clock():
     t0 = dt.datetime(2026, 9, 29, 13, 0)
     svc = _service(t0)
     life = svc._lifecycle.setdefault("ABC", {})
     candidate = {"symbol": "ABC", "direction": "Bearish", "atr": 4.0}
-    raw = {"state": "TRADEABLE", "tradeable": True, "reason": "underlying trigger + executable option route"}
+    raw = {
+        "state": "TRADEABLE", "tradeable": True,
+        "reason": "adaptive structure + executable option route",
+        "structure_p_value": 0.005, "route_tradeable": True,
+    }
 
-    p0 = svc._stabilize_tactical_state(
+    first = svc._stabilize_tactical_state(
         life, raw, now=t0, stale=False, live_price=100.0, candidate=candidate
     )
-    assert p0["state"] == "TRIGGERED"
-    assert p0["micro_confirm_seconds"] == 0.0
+    assert first["state"] == "TRADEABLE"
 
-    p1 = svc._stabilize_tactical_state(
-        life, raw, now=t0 + dt.timedelta(seconds=20),
-        stale=False, live_price=99.8, candidate=candidate
+    life["last_valid_tactical_state"] = "TRADEABLE"
+    weaker = svc._stabilize_tactical_state(
+        life,
+        {
+            "state": "READY", "tradeable": False,
+            "reason": "adaptive structure statistically ready",
+            "structure_p_value": 0.05, "route_tradeable": True,
+        },
+        now=t0 + dt.timedelta(seconds=3),
+        stale=False, live_price=99.9, candidate=candidate,
     )
-    assert p1["state"] == "TRIGGERED"
-    assert p1["micro_confirm_seconds"] == 20.0
-
-    svc._stabilize_tactical_state(
-        life, {"state": "READY", "tradeable": False, "reason": "waiting"},
-        now=t0 + dt.timedelta(seconds=21),
-        stale=False, live_price=99.9, candidate=candidate
-    )
-    assert "tradeable_pending_since" not in life
-
-    restarted = svc._stabilize_tactical_state(
-        life, raw, now=t0 + dt.timedelta(seconds=25),
-        stale=False, live_price=99.7, candidate=candidate
-    )
-    assert restarted["state"] == "TRIGGERED"
-    assert restarted["micro_confirm_seconds"] == 0.0
+    assert weaker["state"] == "TRADEABLE"
+    assert weaker["evidence_hysteresis"] is True
 
 
-def test_evaluate_skips_3m_detector_when_live_option_precheck_fails(monkeypatch):
+def test_evaluate_skips_adaptive_structure_when_live_option_precheck_fails(monkeypatch):
     now = dt.datetime(2026, 9, 29, 14, 0)
     published = []
     svc = v122b_stream.TacticalStockStreamService(
@@ -675,16 +671,16 @@ def test_evaluate_skips_3m_detector_when_live_option_precheck_fails(monkeypatch)
     }
     svc._option_snapshots = lambda *args, **kwargs: [{
         "symbol": "ABCPE", "type": "PE", "strike": 100, "expiry": "2026-10-29",
-        "dte": 30, "mid": 5.0, "bid": 4.0, "ask": 6.0,
-        "spread_pct": 40.0, "delta": -0.55,
+        "dte": 30, "mid": 5.0, "bid": None, "ask": 6.0,
+        "spread_pct": None, "delta": -0.55,
     }]
     monkeypatch.setattr(v122b_stream.v12_earnings_calendar, "_load_state", lambda path: {})
 
     called = {"count": 0}
     def forbidden(*args, **kwargs):
         called["count"] += 1
-        raise AssertionError("3m detector must not run before live option eligibility")
-    monkeypatch.setattr(v122b_tactical, "detect_structural_setup", forbidden)
+        raise AssertionError("adaptive structure must not run before live option eligibility")
+    monkeypatch.setattr(v122b_tactical, "detect_adaptive_structure", forbidden)
 
     svc._evaluate(now)
     assert called["count"] == 0
@@ -693,7 +689,7 @@ def test_evaluate_skips_3m_detector_when_live_option_precheck_fails(monkeypatch)
     assert published[-1]["candidates"][0]["setup"] is None
 
 
-def test_evaluate_allows_3m_detector_after_live_option_precheck_passes(monkeypatch):
+def test_evaluate_allows_adaptive_structure_after_live_option_precheck_passes(monkeypatch):
     now = dt.datetime(2026, 9, 29, 14, 5)
     published = []
     svc = v122b_stream.TacticalStockStreamService(
@@ -744,7 +740,7 @@ def test_evaluate_allows_3m_detector_after_live_option_precheck_passes(monkeypat
             "triggered": False, "speed_class": None, "trigger": None,
             "invalidation": None, "expected_move_abs": None,
         }
-    monkeypatch.setattr(v122b_tactical, "detect_structural_setup", detector)
+    monkeypatch.setattr(v122b_tactical, "detect_adaptive_structure", detector)
 
     svc._evaluate(now)
     assert called["count"] == 1
