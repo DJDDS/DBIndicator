@@ -233,3 +233,54 @@ def test_snapshot_excludes_stale_symbols_and_reports_feed_health():
     assert snap["fresh_symbol_count"] == 0
     assert snap["quant_rows"] == []
     assert snap["status"] == "CONNECTING"
+
+
+def test_sector_index_is_context_only_and_enriches_stock_rows():
+    svc = _service()
+    now = dt.datetime(2026, 9, 29, 10, 15)
+    svc._connected = True
+    svc._active = True
+    svc._last_tick_at = now
+    svc._underlying_symbols = {"HEROMOTOCO"}
+    svc._context_symbols = {"NIFTY 50", "NIFTY AUTO"}
+    svc._tokens = {"HEROMOTOCO": 1, "NIFTY 50": 2, "NIFTY AUTO": 3}
+    svc._latest = {
+        "HEROMOTOCO": {
+            "last_price": 540.5,
+            "volume_traded": 1500,
+            "ohlc": {"open": 538.0, "high": 541.0, "low": 536.0, "close": 538.0},
+        },
+        "NIFTY 50": {
+            "last_price": 22450.0,
+            "volume_traded": 1,
+            "ohlc": {"open": 22550.0, "high": 22560.0, "low": 22440.0, "close": 22550.0},
+        },
+        "NIFTY AUTO": {
+            "last_price": 25100.0,
+            "volume_traded": 1,
+            "ohlc": {"open": 25300.0, "high": 25320.0, "low": 25090.0, "close": 25300.0},
+        },
+    }
+    for symbol, old_price, new_price, old_vol, new_vol, prev in (
+        ("HEROMOTOCO", 539.0, 540.5, 1300, 1500, 538.0),
+        ("NIFTY 50", 22500.0, 22450.0, 1, 1, 22550.0),
+        ("NIFTY AUTO", 25250.0, 25100.0, 1, 1, 25300.0),
+    ):
+        _append(svc, symbol, now-dt.timedelta(minutes=5), old_price, old_vol, prev=prev)
+        _append(svc, symbol, now, new_price, new_vol, prev=prev)
+
+    svc.metadata_provider = lambda: [{
+        "symbol": "HEROMOTOCO",
+        "prev_close": 538.0,
+        "sector": "NIFTY AUTO",
+    }]
+    snap = svc._build_snapshot(now)
+
+    assert snap["universe_count"] == 1
+    assert set(snap["sector_contexts"]) == {"NIFTY AUTO"}
+    assert snap["sector_contexts"]["NIFTY AUTO"]["ret_5m_pct"] < 0
+    assert {row["symbol"] for row in snap["quant_rows"]} == {"HEROMOTOCO"}
+    row = snap["quant_rows"][0]
+    assert row["sector_index"] == "NIFTY AUTO"
+    assert row["sector_ret_5m_pct"] < 0
+    assert row["relative_5m_vs_sector_pct"] > 0
