@@ -724,3 +724,93 @@ def test_tactical_callback_does_not_replace_whole_universe_coverage_with_fallbac
     )
     assert state["forensic_coverage"]["mode"] == "WHOLE_UNIVERSE"
     assert state["forensic_coverage"]["pipeline_misses"] == 1
+
+
+def test_spotting_context_blocks_hero_like_countertrend_bounce():
+    event = _observer_event("HEROMOTOCO", direction="Bullish", family="RELATIVE_SEPARATION", price=5400.0)
+    event.update({
+        "ret_10m_pct": 0.18,
+        "market_ret_5m_pct": -0.32,
+        "market_ret_10m_pct": -0.55,
+        "sector_index": "NIFTY AUTO",
+        "sector_ret_5m_pct": -0.48,
+        "sector_ret_10m_pct": -0.72,
+        "relative_5m_vs_nifty_pct": 0.34,
+        "relative_5m_vs_sector_pct": 0.22,
+        "volume_rate_accel": 1.08,
+        "near_session_extreme": False,
+    })
+    allowed, state, reason = v123_focus._spotting_context_decision(event)
+    assert allowed is False
+    assert state == "CONTEXT_REJECTED"
+    assert "10m continuation" in reason
+    assert "vs sector" in reason
+
+
+def test_spotting_context_allows_true_independent_breakaway_against_market_and_sector():
+    event = _observer_event("LEADER", direction="Bullish", family="RANGE_EXPANSION", price=105.0)
+    event.update({
+        "ret_10m_pct": 0.62,
+        "market_ret_5m_pct": -0.28,
+        "market_ret_10m_pct": -0.44,
+        "sector_index": "NIFTY AUTO",
+        "sector_ret_5m_pct": -0.40,
+        "sector_ret_10m_pct": -0.61,
+        "relative_5m_vs_nifty_pct": 0.55,
+        "relative_5m_vs_sector_pct": 0.67,
+        "volume_rate_accel": 1.45,
+        "near_session_extreme": True,
+    })
+    allowed, state, reason = v123_focus._spotting_context_decision(event)
+    assert allowed is True
+    assert state == "INDEPENDENT_BREAKAWAY"
+    assert "residual move sustained" in reason
+
+
+def test_spotting_context_keeps_aligned_bearish_candidate_on_normal_lane():
+    event = _observer_event("WEAK", direction="Bearish", family="OPENING_DRIVE", price=95.0)
+    event.update({
+        "ret_10m_pct": -0.45,
+        "market_ret_5m_pct": -0.22,
+        "market_ret_10m_pct": -0.31,
+        "sector_ret_5m_pct": -0.35,
+        "sector_ret_10m_pct": -0.50,
+    })
+    allowed, state, _ = v123_focus._spotting_context_decision(event)
+    assert allowed is True
+    assert state == "CONTEXT_SUPPORTED"
+
+
+def test_context_rejected_event_never_enters_focus_and_is_auditable():
+    t0 = dt.datetime(2026, 9, 29, 10, 15)
+    event = _observer_event("HEROMOTOCO", direction="Bullish", family="RELATIVE_SEPARATION", price=5400.0)
+    event.update({
+        "ret_10m_pct": 0.18,
+        "market_ret_5m_pct": -0.32,
+        "market_ret_10m_pct": -0.55,
+        "sector_index": "NIFTY AUTO",
+        "sector_ret_5m_pct": -0.48,
+        "sector_ret_10m_pct": -0.72,
+        "relative_5m_vs_nifty_pct": 0.34,
+        "relative_5m_vs_sector_pct": 0.22,
+        "volume_rate_accel": 1.08,
+        "near_session_extreme": False,
+    })
+    observer = {
+        "events": [event],
+        "leaders": [],
+        "laggards": [],
+        "quant_rows": [{
+            "symbol": "HEROMOTOCO",
+            "live_price": 5400.0,
+            "day_change_pct": 1.2,
+            **{k: v for k, v in event.items() if k not in ("symbol", "live_price", "day_change_pct")},
+        }],
+    }
+    state = v123_focus.update_focus(
+        None, observer, {"rows": []}, {"candidates": []},
+        [_scan("HEROMOTOCO", 5400.0)], now=t0,
+    )
+    assert "HEROMOTOCO" not in state["focus"]
+    assert state["forensics"]["HEROMOTOCO"]["stage"] == "SPOTTING_CONTEXT"
+    assert "SPOTTING_CONTEXT_BLOCK:" in state["forensics"]["HEROMOTOCO"]["reason"]
