@@ -1906,9 +1906,15 @@ button, a, summary, input, select { touch-action: manipulation; }
       var dir=String(row.direction||'');
       var sign=dir==='Bearish'?-1:1;
       var triggerAtr=(Number.isFinite(cmp)&&Number.isFinite(trigger)&&Number.isFinite(atr)&&atr>0)?sign*(cmp-trigger)/atr:NaN;
-      var optionContract=row.locked_option_contract||v.option_contract||'—';
+      var optionContract=row.best_option_contract||row.locked_option_contract||v.option_contract||'—';
       var route=String(row.route_health||v.route_health||'WAIT').toUpperCase();
-      var witness=String(row.five_minute_witness||v.five_minute_witness||'UNMEASURED').toUpperCase();
+      var bestStrike=Number(row.best_option_strike);
+      var bestRoi=Number(row.best_option_expected_net_roi_pct);
+      var bestFriction=Number(row.best_option_friction_pct);
+      var movementH=Number(row.movement_horizon_seconds);
+      var movementZ=Number(row.movement_z);
+      var movementP=Number(row.movement_p_value);
+      var structureP=Number(row.structure_p_value);
       var window=String(row.execution_window_state||v.execution_window_state||(v.execution_window_open?'OPEN':'CLOSED')).toUpperCase();
       var fresh=row.fresh_entry_gate;
       var freshReason=String(row.fresh_entry_reason||'');
@@ -1943,22 +1949,26 @@ button, a, summary, input, select { touch-action: manipulation; }
             (Number.isFinite(zoneDistance)?' · Δ '+s(zoneDistance,2)+' ATR':'')+
             (row.invalidation!=null?' · invalid '+n(row.invalidation,2):'')+
             (Number.isFinite(signalAge)?' · signal '+n(signalAge,0)+'s':'')+'</span></div>'+
-          '<div class="focus-mini"><span class="label">Execution</span><span class="value">Route '+v12Esc(route)+' · '+v12Esc(window)+'</span><span class="subvalue">'+
-            v12Esc(optionContract)+(row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
+          '<div class="focus-mini"><span class="label">Execution / Best option</span><span class="value">Route '+v12Esc(route)+' · '+v12Esc(window)+'</span><span class="subvalue">'+
+            v12Esc(optionContract)+
+            (Number.isFinite(bestStrike)?' · K '+n(bestStrike,2):'')+
+            (Number.isFinite(bestRoi)?' · net ROI '+s(bestRoi,2)+'%':'')+
+            (Number.isFinite(bestFriction)?' · friction '+n(bestFriction,2)+'%':'')+
             (Number.isFinite(maxOptionPay)?' · max pay '+n(maxOptionPay,2):'')+'</span></div>'+
-          '<div class="focus-mini"><span class="label">Direction lock</span><span class="value">'+
-            v12Esc(row.direction_lock_state||row.direction||'NEUTRAL')+' · '+v12Esc(row.direction_lock_phase||'')+
+          '<div class="focus-mini"><span class="label">Underlying movement / structure</span><span class="value">'+
+            (Number.isFinite(movementH)?n(movementH,0)+'s natural horizon':'Horizon forming')+
+            (Number.isFinite(movementZ)?' · Z '+s(movementZ,2):'')+
             '</span><span class="subvalue">'+
-            v12Esc(row.event_family||'UNDERLYING EVENT')+
-            (row.direction_up_evidence!=null?' · U '+n(row.direction_up_evidence,1):'')+
-            (row.direction_down_evidence!=null?' · D '+n(row.direction_down_evidence,1):'')+
+            (Number.isFinite(movementP)?'move p '+movementP.toExponential(2):'move p —')+
+            (Number.isFinite(structureP)?' · structure p '+structureP.toExponential(2):' · structure forming')+
             (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
         '</div>'+
         '<div class="focus-vehicles">'+
           '<span class="focus-vehicle'+(zoneState==='IN_ZONE'?' good':(zoneState==='EXTENDED'||zoneState==='INVALID'?' bad':' warn'))+'">ZONE '+v12Esc(zoneState.replaceAll('_',' '))+'</span>'+
           vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
           (v.execution_window_open?'<span class="focus-vehicle good">ENTRY WINDOW '+v12Esc(window)+'</span>':'')+
-          '<span class="focus-vehicle'+(witness==='SUPPORTIVE'?' good':(witness==='OPPOSING'?' bad':' warn'))+'">5m '+v12Esc(witness)+'</span>'+
+          (Number.isFinite(movementH)?'<span class="focus-vehicle good">H* '+n(movementH,0)+'s</span>':'')+
+          (Number.isFinite(structureP)?'<span class="focus-vehicle'+(structureP<=0.01?' good':(structureP<=0.10?' warn':' bad'))+'">STRUCT p '+structureP.toExponential(1)+'</span>':'')+
           (route!=='WAIT'?'<span class="focus-vehicle'+(route==='HEALTHY'?' good':(route==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(route)+'</span>':'')+
         '</div>'+
         freshLine+mathHtml+
