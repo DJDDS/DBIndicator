@@ -478,7 +478,7 @@ def test_tactical_opening_drive_expires_after_1015():
     assert setup.get("setup") != "OPENING_DRIVE"
 
 
-def test_live_option_precheck_requires_real_directional_bid_ask_spread_and_delta():
+def test_live_option_precheck_requires_real_directional_two_sided_quote():
     good = {
         "symbol": "ABC26OCT100PE", "type": "PE", "strike": 100,
         "expiry": "2026-10-29", "dte": 30,
@@ -496,7 +496,7 @@ def test_live_option_precheck_requires_real_directional_bid_ask_spread_and_delta
     assert out["contract"]["symbol"] == "ABC26OCT100PE"
 
 
-def test_live_option_precheck_blocks_wide_or_unpriced_contract_before_3m():
+def test_live_option_precheck_accepts_wide_but_valid_quote_for_later_economic_test():
     wide = {
         "symbol": "ABC26OCT100PE", "type": "PE", "strike": 100,
         "expiry": "2026-10-29", "dte": 30,
@@ -510,11 +510,12 @@ def test_live_option_precheck_blocks_wide_or_unpriced_contract_before_3m():
         "spread_pct": None, "delta": -0.40,
     }
     out = t.option_pre_feasibility([wide, missing_bid], "Bearish")
-    assert out["eligible"] is False
-    assert out["contract"] is None
+    assert out["eligible"] is True
+    assert out["contract"]["symbol"] == "ABC26OCT100PE"
+    assert out["method"] == "TWO_SIDED_QUOTE_ONLY"
 
 
-def test_live_option_precheck_blocks_missing_greek_needed_by_full_router():
+def test_live_option_precheck_does_not_require_greeks_before_structure():
     no_delta = {
         "symbol": "ABC26OCT100CE", "type": "CE", "strike": 100,
         "expiry": "2026-10-29", "dte": 30,
@@ -522,5 +523,73 @@ def test_live_option_precheck_blocks_missing_greek_needed_by_full_router():
         "spread_pct": 2.5, "delta": None,
     }
     out = t.option_pre_feasibility([no_delta], "Bullish")
-    assert out["eligible"] is False
-    assert "delta" in out["reason"]
+    assert out["eligible"] is True
+
+
+def test_adaptive_structure_uses_candidate_horizon_and_binomial_persistence():
+    now = dt.datetime(2026, 9, 29, 11, 0)
+    samples = []
+    price = 100.0
+    for i in range(18):
+        price += 0.05 if i not in (5, 12) else -0.01
+        samples.append({
+            "ts": now - dt.timedelta(seconds=(17-i)*5),
+            "price": price,
+        })
+    candidate = {
+        "symbol": "ABC",
+        "direction": "Bullish",
+        "movement_horizon_seconds": 80,
+    }
+    setup = t.detect_adaptive_structure(samples, candidate, now=now)
+    assert setup["setup"] == "ADAPTIVE_QUANT_STRUCTURE"
+    assert setup["horizon_seconds"] == 80
+    assert setup["ready"] is True
+    assert setup["triggered"] is True
+    assert setup["structure_p_value"] <= 0.01
+    assert setup["aligned_increment_fraction"] > 0.75
+
+
+def test_adaptive_structure_rejects_alternating_chop():
+    now = dt.datetime(2026, 9, 29, 11, 0)
+    samples = []
+    price = 100.0
+    for i in range(20):
+        price += 0.05 if i % 2 else -0.05
+        samples.append({
+            "ts": now - dt.timedelta(seconds=(19-i)*5),
+            "price": price,
+        })
+    candidate = {
+        "symbol": "CHOP",
+        "direction": "Bullish",
+        "movement_horizon_seconds": 80,
+    }
+    setup = t.detect_adaptive_structure(samples, candidate, now=now)
+    assert setup["triggered"] is False
+    assert setup["setup"] is None
+
+
+def test_option_router_selects_highest_expected_net_roi_not_target_delta():
+    now = dt.datetime(2026, 9, 29, 13, 30)
+    snapshots = [
+        {
+            "symbol":"ABC26OCT100CE","type":"CE","strike":100,"expiry":"2026-10-29",
+            "dte":30,"mid":10.0,"bid":9.9,"ask":10.1,"spread_pct":2.0,
+            "delta":0.55,"gamma":0.01,"theta":-0.05,"vega":0.10,"lot_size":100,
+        },
+        {
+            "symbol":"ABC26OCT105CE","type":"CE","strike":105,"expiry":"2026-10-29",
+            "dte":30,"mid":4.0,"bid":3.95,"ask":4.05,"spread_pct":2.5,
+            "delta":0.35,"gamma":0.02,"theta":-0.03,"vega":0.06,"lot_size":100,
+        },
+    ]
+    route = t.route_option(
+        snapshots, direction="Bullish", spot=100.0, now=now,
+        speed_class="ADAPTIVE", expected_underlying_move_abs=3.0,
+        expected_horizon_seconds=160,
+    )
+    assert route["tradeable"] is True
+    assert route["selection_method"] == "MAX_EXPECTED_NET_ROI_AFTER_FRICTION_THETA_IV"
+    assert route["contract"]["symbol"] == "ABC26OCT105CE"
+    assert route["evaluated_contract_count"] == 2
