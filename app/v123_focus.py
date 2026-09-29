@@ -136,9 +136,15 @@ def _event_candidates(observer, event_radar):
     """Merge price-led universe events with the evidence event lane.
 
     No composite score is built. Duplicates are resolved by concrete event
-    family priority and recency.
+    family priority and recency. Whole-universe rows carry the live market/
+    sector context so an evidence-lane event cannot accidentally discard it.
     """
     merged = {}
+    context_by_symbol = {
+        str(row.get("symbol")): dict(row)
+        for row in list((observer or {}).get("quant_rows") or [])
+        if row.get("symbol")
+    }
     for row in list((observer or {}).get("events") or []):
         symbol = str(row.get("symbol") or "")
         direction = str(row.get("direction") or "")
@@ -171,7 +177,21 @@ def _event_candidates(observer, event_radar):
         if prior is None or EVENT_PRIORITY.get(mapped_family, 0) > EVENT_PRIORITY.get(prior.get("event_family"), 0):
             merged[key] = item
 
+    context_keys = (
+        "ret_3m_pct", "ret_5m_pct", "ret_10m_pct",
+        "relative_5m_vs_nifty_pct", "market_day_change_pct",
+        "market_ret_5m_pct", "market_ret_10m_pct",
+        "sector", "sector_index", "sector_day_change_pct",
+        "sector_ret_5m_pct", "sector_ret_10m_pct",
+        "relative_5m_vs_sector_pct", "volume_rate_accel", "near_session_extreme",
+    )
     rows = list(merged.values())
+    for item in rows:
+        ctx = context_by_symbol.get(str(item.get("symbol") or "")) or {}
+        for key in context_keys:
+            if item.get(key) is None and ctx.get(key) is not None:
+                item[key] = ctx.get(key)
+
     rows.sort(
         key=lambda x: (
             EVENT_PRIORITY.get(str(x.get("event_family") or ""), 0),
@@ -181,6 +201,94 @@ def _event_candidates(observer, event_radar):
         reverse=True,
     )
     return rows
+
+
+
+CONTEXT_NOISE_FLOOR_PCT = 0.05
+
+
+def _directional_ok(direction, value, minimum=0.0):
+    value = _f(value)
+    if value is None:
+        return False
+    return value >= minimum if direction == "Bullish" else value <= -minimum
+
+
+def _context_relation(direction, ret_5m, ret_10m, day_change=None):
+    """Classify one context without turning it into a score.
+
+    0.05% is not a tuned alpha threshold; it is the same noise floor already
+    used by the V12.3 live-axis direction logic.  Conflicting 5m/10m context is
+    MIXED rather than being silently called supportive.
+    """
+    labels = []
+    for value in (ret_5m, ret_10m, day_change):
+        value = _f(value)
+        if value is None or abs(value) < CONTEXT_NOISE_FLOOR_PCT:
+            continue
+        labels.append("ALIGNED" if _directional_ok(direction, value) else "OPPOSED")
+    if not labels:
+        return "UNKNOWN"
+    if all(label == "ALIGNED" for label in labels):
+        return "ALIGNED"
+    if all(label == "OPPOSED" for label in labels):
+        return "OPPOSED"
+    return "MIXED"
+
+
+def _spotting_context_decision(event):
+    """Causal Spotting admission: trend lane or independent-breakaway lane.
+
+    This deliberately has no weighted score and no elapsed-time hold rule.
+    A candidate aligned with its live market/sector context keeps the normal
+    event path.  A candidate fighting either context must prove that it is a
+    real stock-specific breakaway using the same thresholds already present in
+    V12.3 event discovery: 10m continuation (0.35%), 5m relative separation
+    (0.30%), volume-rate acceleration (1.20x), and session-extreme pressure.
+    """
+    event = dict(event or {})
+    direction = str(event.get("direction") or "")
+    if direction not in ("Bullish", "Bearish"):
+        return False, "INVALID", "missing directional event"
+
+    market = _context_relation(
+        direction,
+        event.get("market_ret_5m_pct"),
+        event.get("market_ret_10m_pct"),
+        event.get("market_day_change_pct"),
+    )
+    sector = _context_relation(
+        direction,
+        event.get("sector_ret_5m_pct"),
+        event.get("sector_ret_10m_pct"),
+        event.get("sector_day_change_pct"),
+    )
+    opposed = market in ("OPPOSED", "MIXED") or sector in ("OPPOSED", "MIXED")
+
+    if not opposed:
+        if market == "UNKNOWN" and sector == "UNKNOWN":
+            return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
+        return True, "CONTEXT_SUPPORTED", f"market={market}; sector={sector}"
+
+    checks = {
+        "10m continuation": _directional_ok(direction, event.get("ret_10m_pct"), 0.35),
+        "vs NIFTY": _directional_ok(direction, event.get("relative_5m_vs_nifty_pct"), 0.30),
+        "vs sector": _directional_ok(direction, event.get("relative_5m_vs_sector_pct"), 0.30),
+        "volume acceleration": (
+            _f(event.get("volume_rate_accel")) is not None
+            and _f(event.get("volume_rate_accel")) >= 1.20
+        ),
+        "session extreme": bool(event.get("near_session_extreme")),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    if not failed:
+        return True, "INDEPENDENT_BREAKAWAY", f"market={market}; sector={sector}; residual move sustained"
+
+    return (
+        False,
+        "CONTEXT_REJECTED",
+        f"market={market}; sector={sector}; missing " + ", ".join(failed),
+    )
 
 
 def _tactical_map(tactical):
@@ -402,6 +510,13 @@ def _new_focus_item(event, scan, now):
         "day_change_pct": event.get("day_change_pct"),
         "ret_5m_pct": event.get("ret_5m_pct"),
         "relative_5m_vs_nifty_pct": event.get("relative_5m_vs_nifty_pct"),
+        "spotting_context_state": event.get("spotting_context_state"),
+        "spotting_context_reason": event.get("spotting_context_reason"),
+        "market_day_change_pct": event.get("market_day_change_pct"),
+        "market_ret_5m_pct": event.get("market_ret_5m_pct"),
+        "sector_day_change_pct": event.get("sector_day_change_pct"),
+        "sector_ret_5m_pct": event.get("sector_ret_5m_pct"),
+        "relative_5m_vs_sector_pct": event.get("relative_5m_vs_sector_pct"),
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
@@ -667,7 +782,8 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         elif trow and str(trow.get("state") or "") == "OPTION_NOT_TRADEABLE":
             stage, reason = "OPTION_ROUTE", str(trow.get("reason") or "OPTION_NOT_TRADEABLE")
         elif trace:
-            stage, reason = "PROMOTION", trace[-1]
+            reason = trace[-1]
+            stage = "SPOTTING_CONTEXT" if str(reason).startswith("SPOTTING_CONTEXT_BLOCK:") else "PROMOTION"
         elif len(focus_symbols) >= MAX_FOCUS:
             stage, reason = "FOCUS_CAPACITY", "FOCUS_CAPACITY_WHILE_COMMITTED_THESIS_PERSISTED"
         else:
@@ -997,6 +1113,15 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         symbol = str(event.get("symbol") or "")
         direction = str(event.get("direction") or "")
         if not symbol or symbol in focus or symbol in continuation:
+            continue
+
+        context_allowed, context_state, context_reason = _spotting_context_decision(event)
+        event["spotting_context_state"] = context_state
+        event["spotting_context_reason"] = context_reason
+        if not context_allowed:
+            promotion_trace.setdefault(symbol, []).append(
+                "SPOTTING_CONTEXT_BLOCK: " + str(context_reason)
+            )
             continue
 
         trow = tactical_by_key.get((symbol, direction))
