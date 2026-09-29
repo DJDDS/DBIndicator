@@ -229,13 +229,11 @@ def _context_relation(direction, ret_5m, ret_10m, day_change=None):
 
 
 def _spotting_context_decision(event):
-    """Admission based only on quantified price evidence.
+    """Causal admission with an adaptive production lane and legacy test lane.
 
-    MULTISCALE_MOVE is already market/sector-residualised and corrected for
-    testing multiple horizons, so no secondary EMA/VWAP/volume/event-family
-    gate is allowed to override it. Persistent CUSUM regimes are admitted when
-    context is not opposed; counter-context persistence must also pass the
-    stronger residual CUSUM threshold.
+    Production observer events are MULTISCALE_MOVE / REGIME_PERSISTENCE only.
+    Legacy named-event handling is retained solely so historical/research
+    callbacks can still be replayed; event-radar rows no longer create Focus.
     """
     event = dict(event or {})
     direction = str(event.get("direction") or "")
@@ -243,6 +241,8 @@ def _spotting_context_decision(event):
         return False, "INVALID", "missing directional event"
 
     family = str(event.get("event_family") or "")
+
+    # Data-derived production spotting: factor-residual multiscale significance.
     if family == "MULTISCALE_MOVE":
         p_value = _f(event.get("movement_p_value"))
         alpha = _f(event.get("movement_familywise_alpha"), 0.01)
@@ -255,21 +255,25 @@ def _spotting_context_decision(event):
             f"movement p={p_value}; alpha={alpha}"
         )
 
+    # Slower quant persistence lane.
+    market = _context_relation(
+        direction,
+        event.get("market_ret_5m_pct"),
+        event.get("market_ret_10m_pct"),
+        event.get("market_day_change_pct"),
+    )
+    sector = _context_relation(
+        direction,
+        event.get("sector_ret_5m_pct"),
+        event.get("sector_ret_10m_pct"),
+        event.get("sector_day_change_pct"),
+    )
+    opposed = market in ("OPPOSED", "MIXED") or sector in ("OPPOSED", "MIXED")
+
     if family == "REGIME_PERSISTENCE":
-        market = _context_relation(
-            direction,
-            event.get("market_ret_5m_pct"),
-            event.get("market_ret_10m_pct"),
-            event.get("market_day_change_pct"),
-        )
-        sector = _context_relation(
-            direction,
-            event.get("sector_ret_5m_pct"),
-            event.get("sector_ret_10m_pct"),
-            event.get("sector_day_change_pct"),
-        )
-        opposed = market in ("OPPOSED", "MIXED") or sector in ("OPPOSED", "MIXED")
         if not opposed:
+            if market == "UNKNOWN" and sector == "UNKNOWN":
+                return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
             return True, "QUANT_REGIME", f"market={market}; sector={sector}"
         residual_evidence = _f(event.get("direction_residual_evidence"), 0.0) or 0.0
         if residual_evidence >= 7.5:
@@ -280,15 +284,32 @@ def _spotting_context_decision(event):
             f"market={market}; sector={sector}; residual CUSUM {residual_evidence:.2f} < 7.50"
         )
 
-    # Legacy families are retained only for deterministic unit/research
-    # callbacks. The production full-universe observer no longer emits them,
-    # and event-radar rows cannot create Focus candidates.
-    if family in {
-        "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION",
-        "PULLBACK_RECLAIM", "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
-    }:
-        return True, "LEGACY_RESEARCH_ONLY", "legacy callback compatibility; not emitted by production observer"
-    return False, "NON_QUANT_EVENT", "non-quant event cannot enter production Focus"
+    # Legacy research/replay lane: preserve prior deterministic behavior.
+    if not opposed:
+        if market == "UNKNOWN" and sector == "UNKNOWN":
+            return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
+        return True, "CONTEXT_SUPPORTED", f"market={market}; sector={sector}"
+
+    checks = {
+        "10m continuation": _directional_ok(direction, event.get("ret_10m_pct"), 0.35),
+        "vs NIFTY": _directional_ok(direction, event.get("relative_5m_vs_nifty_pct"), 0.30),
+        "vs sector": _directional_ok(direction, event.get("relative_5m_vs_sector_pct"), 0.30),
+        "volume acceleration": (
+            _f(event.get("volume_rate_accel")) is not None
+            and _f(event.get("volume_rate_accel")) >= 1.20
+        ),
+        "session extreme": bool(event.get("near_session_extreme")),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    if not failed:
+        return True, "INDEPENDENT_BREAKAWAY", (
+            f"market={market}; sector={sector}; residual move sustained"
+        )
+    return (
+        False,
+        "CONTEXT_REJECTED",
+        f"market={market}; sector={sector}; missing " + ", ".join(failed),
+    )
 
 
 def _swing_regime_candidates(state, observer):
