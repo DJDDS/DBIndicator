@@ -640,6 +640,7 @@ class UniverseMomentumStreamService:
             sector = symbol_meta.get("sector") or scanner.SYMBOL_SECTOR_MAP.get(symbol)
             sector_ctx = sector_contexts.get(str(sector)) if sector else None
             sector_r5 = _f((sector_ctx or {}).get("ret_5m_pct"))
+            sector_r10 = _f((sector_ctx or {}).get("ret_10m_pct"))
             rel_sector5 = (
                 round(r5 - sector_r5, 4)
                 if r5 is not None and sector_r5 is not None else None
@@ -651,8 +652,10 @@ class UniverseMomentumStreamService:
             if event is not None:
                 event["sector_index"] = sector
                 event["sector_ret_5m_pct"] = sector_r5
+                event["sector_ret_10m_pct"] = sector_r10
                 event["relative_5m_vs_sector_pct"] = rel_sector5
                 event["market_ret_5m_pct"] = nifty_returns.get("5m")
+                event["market_ret_10m_pct"] = nifty_returns.get("10m")
             if day is not None:
                 movers.append({
                     "symbol": symbol,
@@ -663,10 +666,12 @@ class UniverseMomentumStreamService:
                     "ret_10m_pct": diagnostic.get("ret_10m_pct"),
                     "relative_5m_vs_nifty_pct": diagnostic.get("relative_5m_vs_nifty_pct"),
                     "market_ret_5m_pct": nifty_returns.get("5m"),
+                    "market_ret_10m_pct": nifty_returns.get("10m"),
                     "volume_rate_accel": diagnostic.get("volume_rate_accel"),
                     "sector": sector,
                     "sector_index": sector,
                     "sector_ret_5m_pct": sector_r5,
+                    "sector_ret_10m_pct": sector_r10,
                     "relative_5m_vs_sector_pct": rel_sector5,
                     "near_session_extreme": diagnostic.get("near_session_extreme"),
                     "discovery_qualified": diagnostic.get("qualified"),
