@@ -884,13 +884,13 @@ def test_building_slot_persists_when_locked_direction_event_keeps_refreshing():
         assert "ABC" in state["focus"]
 
 
-def test_persistent_regime_can_survive_opposed_market_without_spike_gate():
+def test_persistent_quant_regime_needs_strong_residual_when_context_opposes():
     event = _observer_event(
         "LEADER", direction="Bearish", family="REGIME_PERSISTENCE", price=95.0
     )
     event.update({
-        "path_efficiency_15m": -0.72,
-        "move_15m_atr": 0.64,
+        "direction_evidence": 8.2,
+        "direction_residual_evidence": 8.0,
         "market_day_change_pct": 0.80,
         "market_ret_5m_pct": 0.22,
         "market_ret_10m_pct": 0.31,
@@ -904,11 +904,17 @@ def test_persistent_regime_can_survive_opposed_market_without_spike_gate():
     })
     allowed, state, reason = v123_focus._spotting_context_decision(event)
     assert allowed is True
-    assert state == "PERSISTENT_REGIME"
-    assert "15m path regime sustained" in reason
+    assert state == "INDEPENDENT_QUANT_REGIME"
+    assert "residual CUSUM" in reason
+
+    event["direction_residual_evidence"] = 5.0
+    allowed, state, reason = v123_focus._spotting_context_decision(event)
+    assert allowed is False
+    assert state == "CONTEXT_REJECTED"
+    assert "< 7.50" in reason
 
 
-def test_swing_regime_bridge_requires_live_pdt_agreement():
+def test_swing_regime_bridge_requires_live_quant_lock_agreement():
     state = {
         "swing_1d": {
             "selected": {
@@ -928,8 +934,8 @@ def test_swing_regime_bridge_requires_live_pdt_agreement():
             "direction_lock_state": "BEARISH",
             "direction_lock_phase": "CONTINUING",
             "direction_lock_since": "2026-09-29T09:46:00",
-            "path_efficiency_15m": -0.68,
-            "move_15m_atr": 0.55,
+            "direction_evidence": 7.4,
+            "direction_residual_evidence": 6.8,
             "ret_15m_pct": -0.90,
         }]
     }
@@ -949,8 +955,8 @@ def test_regime_persistence_enters_building_without_legacy_event_family():
         "PREMIERENE", direction="Bearish", family="REGIME_PERSISTENCE", price=890.0
     )
     event.update({
-        "path_efficiency_15m": -0.75,
-        "move_15m_atr": 0.70,
+        "direction_evidence": 7.3,
+        "direction_residual_evidence": 6.9,
         "direction_lock_state": "BEARISH",
         "direction_lock_phase": "CONTINUING",
     })
