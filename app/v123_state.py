@@ -263,7 +263,7 @@ def save_observer_checkpoint(path: str, samples: dict, latest: dict, *, directio
             key: value for key, value in state.items()
             if key in {
                 "model_version", "state", "phase", "since", "last_eval_at",
-                "observations", "pending_direction",
+                "observations", "pending_direction", "cusum_initialized",
                 "stock_up", "stock_down", "residual_up", "residual_down",
                 "stock_z", "residual_z", "ret_15m_pct", "factor_status",
                 "beta_market", "beta_sector",
