@@ -244,7 +244,7 @@ def test_forensic_flight_recorder_prefers_private_whole_universe_rows(tmp_path):
     assert rows[0]["day_change_pct"] == -3.0
 
 
-def test_observer_checkpoint_restores_pdt_direction_lock(tmp_path):
+def test_observer_checkpoint_restores_quant_cusum_direction_lock(tmp_path):
     now = dt.datetime(2026, 9, 29, 12, 0)
     path = tmp_path / "v123_market_checkpoint.json"
     samples = {
@@ -261,20 +261,23 @@ def test_observer_checkpoint_restores_pdt_direction_lock(tmp_path):
     }
     locks = {
         "ABC": {
+            "model_version": 3,
             "state": "BEARISH",
             "phase": "CONTINUING",
             "since": "2026-09-29T10:15:00",
             "last_eval_at": "2026-09-29T11:59:00",
             "observations": 50,
-            "recent_candidates": [-1, -1, -1, -1],
             "pending_direction": None,
-            "path_efficiency": -0.78,
-            "move_15m_atr": 0.62,
+            "stock_up": 0.0,
+            "stock_down": 8.4,
+            "residual_up": 0.0,
+            "residual_down": 7.9,
+            "stock_z": -1.3,
+            "residual_z": -1.1,
             "ret_15m_pct": -1.1,
-            "ema9": 100.0,
-            "ema20": 102.0,
-            "ema9_slope": -0.4,
-            "relative_residual_15m_pct": -0.55,
+            "factor_status": "MARKET+SECTOR",
+            "beta_market": 0.8,
+            "beta_sector": 0.4,
         }
     }
     v123_state.save_observer_checkpoint(
@@ -293,4 +296,5 @@ def test_observer_checkpoint_restores_pdt_direction_lock(tmp_path):
     svc._restore_checkpoint(now + dt.timedelta(seconds=20))
     assert svc._direction_locks["ABC"]["state"] == "BEARISH"
     assert svc._direction_locks["ABC"]["since"] == "2026-09-29T10:15:00"
-    assert svc._direction_locks["ABC"]["path_efficiency"] == -0.78
+    assert svc._direction_locks["ABC"]["stock_down"] == 8.4
+    assert svc._direction_locks["ABC"]["model_version"] == 3
