@@ -43,17 +43,18 @@ MAX_MOVER_ROWS = 30
 LIVE_SAMPLE_STALE_SECONDS = 45
 RECONNECT_COOLDOWN_SECONDS = 10
 
-# Persistent Directional Travel (PDT) v2.
-# Direction is a slow underlying regime; 3m remains execution-only.
+# Quant Direction Regime v3 — indicator-free.
+# A one-minute robust z-return feeds two-sided CUSUM. Monte-Carlo calibration
+# under N(0,1) no-drift returns gave ~4% probability of any false lock in a
+# 60-minute window at k=0.5, h=6. Counter-context moves need residual h=7.5
+# (~<1% false-lock probability in the same calibration).
 DIRECTION_UPDATE_SECONDS = 55
-DIRECTION_PATH_MINUTES = 15
-DIRECTION_PATH_EFFICIENCY_MIN = 0.35
-DIRECTION_MOVE_ATR_MIN = 0.20
-DIRECTION_ENTER_VOTES = 3
-DIRECTION_VOTE_WINDOW = 4
-DIRECTION_EMA_FAST = 9
-DIRECTION_EMA_SLOW = 20
-DIRECTION_EMA_SLOPE_POINTS = 3
+DIRECTION_HISTORY_MINUTES = 15
+DIRECTION_CUSUM_K = 0.50
+DIRECTION_CUSUM_H = 6.00
+DIRECTION_RESIDUAL_H = 7.50
+DIRECTION_SCALE_FLOOR = 1e-6
+DIRECTION_MODEL_VERSION = 3
 
 
 def _f(value, default=None):
@@ -375,17 +376,6 @@ class UniverseMomentumStreamService:
         return round(recent / prior, 3)
 
 
-    @staticmethod
-    def _ema_values(values, span):
-        alpha = 2.0 / (float(span) + 1.0)
-        out = []
-        level = None
-        for value in values:
-            value = float(value)
-            level = value if level is None else alpha * value + (1.0 - alpha) * level
-            out.append(level)
-        return out
-
     def _minute_prices(self, symbol, now, minutes):
         rows = self._samples.get(symbol) or ()
         if not rows:
@@ -402,200 +392,309 @@ class UniverseMomentumStreamService:
                 continue
             ts = _dt(sample.get("ts"))
             px = _f(sample.get("price"))
-            if ts is None or px is None:
+            if ts is None or px is None or px <= 0:
                 continue
             points.append((ts, px))
-        # One point per represented minute, chronological. Samples can repeat
-        # after a small feed gap, so timestamp dedupe is required.
         dedup = {}
         for ts, px in points:
             dedup[ts] = px
         return sorted(dedup.items())
 
-    def _direction_regime_features(
-        self, symbol, now, *, atr=None, market_15m_pct=None, sector_15m_pct=None
-    ):
-        points = self._minute_prices(symbol, now, DIRECTION_EMA_SLOW + 4)
-        if len(points) < 12:
-            return {
-                "candidate": None,
-                "path_efficiency": None,
-                "move_15m_atr": None,
-                "ret_15m_pct": None,
-                "ema9": None,
-                "ema20": None,
-                "ema9_slope": None,
-                "relative_residual_15m_pct": None,
-                "reason": "REGIME_HISTORY_NOT_READY",
-            }
+    def _aligned_minute_returns(self, symbol, now, minutes):
+        """Return fixed-lookback one-minute log returns, oldest to newest."""
+        prices = []
+        for minute in range(int(minutes), -1, -1):
+            if minute == 0:
+                rows = self._samples.get(symbol) or ()
+                sample = rows[-1] if rows else None
+            else:
+                sample = self._sample_at(symbol, now, minute * 60)
+            px = _f((sample or {}).get("price"))
+            if px is None or px <= 0:
+                prices.append(None)
+            else:
+                prices.append(px)
+        out = []
+        for i in range(1, len(prices)):
+            p0, p1 = prices[i - 1], prices[i]
+            out.append(math.log(p1 / p0) if p0 and p1 else None)
+        return out
 
-        # Keep the most recent ~15 one-minute intervals for efficiency.
-        recent = points[-(DIRECTION_PATH_MINUTES + 1):]
-        if len(recent) < 12:
-            return {"candidate": None, "reason": "REGIME_HISTORY_NOT_READY"}
+    @staticmethod
+    def _median(values):
+        vals = sorted(float(v) for v in values if v is not None and math.isfinite(float(v)))
+        if not vals:
+            return None
+        n = len(vals)
+        mid = n // 2
+        return vals[mid] if n % 2 else 0.5 * (vals[mid - 1] + vals[mid])
 
-        prices = [px for _, px in recent]
-        first = prices[0]
-        last = prices[-1]
-        path = sum(abs(prices[i] - prices[i - 1]) for i in range(1, len(prices)))
-        signed_eff = (last - first) / path if path > 0 else 0.0
-        ret15 = (last / first - 1.0) * 100.0 if first > 0 else None
+    @classmethod
+    def _robust_z_series(cls, values):
+        vals = [float(v) for v in values if v is not None and math.isfinite(float(v))]
+        if len(vals) < 6:
+            return [], 0.0, None
+        # Null hypothesis is zero drift. Estimate *noise* around the local
+        # median, but score returns from zero. This preserves a persistent
+        # mean shift while preventing a quiet trend from inflating its own scale.
+        hist = vals[:-1] if len(vals) > 1 else vals
+        med = cls._median(hist) or 0.0
+        mad = cls._median([abs(v - med) for v in hist])
+        scale = 1.4826 * (mad or 0.0)
+        if scale <= DIRECTION_SCALE_FLOOR:
+            mean = sum(hist) / max(1, len(hist))
+            var = sum((v - mean) ** 2 for v in hist) / max(1, len(hist) - 1)
+            scale = math.sqrt(max(0.0, var))
+        scale = max(DIRECTION_SCALE_FLOOR, scale)
+        return [v / scale for v in vals], 0.0, scale
 
-        all_prices = [px for _, px in points]
-        ema9s = self._ema_values(all_prices, DIRECTION_EMA_FAST)
-        ema20s = self._ema_values(all_prices, DIRECTION_EMA_SLOW)
-        ema9 = ema9s[-1]
-        ema20 = ema20s[-1]
-        slope_idx = max(0, len(ema9s) - 1 - DIRECTION_EMA_SLOPE_POINTS)
-        ema9_slope = ema9s[-1] - ema9s[slope_idx]
+    @staticmethod
+    def _factor_residuals(stock, market, sector):
+        """Rolling no-intercept ridge factor residuals.
 
-        atr = _f(atr)
-        move_atr = abs(last - first) / atr if atr and atr > 0 else None
-        move_ok = (
-            move_atr is not None and move_atr >= DIRECTION_MOVE_ATR_MIN
-        ) or (
-            move_atr is None and ret15 is not None and abs(ret15) >= 0.20
+        Zero return is the null. Betas remove contemporaneous market/sector
+        movement, while any persistent unexplained drift remains in residuals.
+        """
+        rows = []
+        for i, y in enumerate(stock):
+            m = market[i] if i < len(market) else None
+            s = sector[i] if i < len(sector) else None
+            if y is None or m is None:
+                continue
+            rows.append((float(y), float(m), None if s is None else float(s)))
+        if len(rows) < 7:
+            return [], {"status": "INSUFFICIENT", "beta_market": None, "beta_sector": None}
+
+        train = rows[:-1]
+        use_sector = sum(r[2] is not None for r in train) >= max(6, len(train) - 2)
+        ys = [r[0] for r in train]
+        ms = [r[1] for r in train]
+
+        if use_sector:
+            ss = [float(r[2]) for r in train]
+            v_m = sum(m*m for m in ms) / len(ms)
+            v_s = sum(s*s for s in ss) / len(ss)
+            c_ms = sum(m*s for m,s in zip(ms,ss)) / len(ms)
+            c_ym = sum(y*m for y,m in zip(ys,ms)) / len(ms)
+            c_ys = sum(y*s for y,s in zip(ys,ss)) / len(ms)
+            ridge = 0.05 * max(v_m + v_s, 1e-12)
+            a = v_m + ridge
+            d = v_s + ridge
+            det = a*d - c_ms*c_ms
+            if abs(det) < 1e-18:
+                beta_m = c_ym / max(v_m + ridge, 1e-12)
+                beta_s = 0.0
+            else:
+                beta_m = (c_ym*d - c_ys*c_ms) / det
+                beta_s = (c_ys*a - c_ym*c_ms) / det
+        else:
+            v_m = sum(m*m for m in ms) / len(ms)
+            c_ym = sum(y*m for y,m in zip(ys,ms)) / len(ms)
+            ridge = 0.05 * max(v_m, 1e-12)
+            beta_m = c_ym / max(v_m + ridge, 1e-12)
+            beta_s = 0.0
+
+        residuals = [
+            y - beta_m*m - beta_s*(float(s) if s is not None else 0.0)
+            for y,m,s in rows
+        ]
+        return residuals, {
+            "status": "MARKET+SECTOR" if use_sector else "MARKET_ONLY",
+            "beta_market": beta_m,
+            "beta_sector": beta_s if use_sector else None,
+        }
+
+    @staticmethod
+    def _cusum_path(z_values):
+        up = down = 0.0
+        for z in z_values:
+            up = max(0.0, up + float(z) - DIRECTION_CUSUM_K)
+            down = max(0.0, down - float(z) - DIRECTION_CUSUM_K)
+        return up, down
+
+    def _quant_direction_features(self, symbol, now, sector_symbol=None):
+        stock = self._aligned_minute_returns(symbol, now, DIRECTION_HISTORY_MINUTES)
+        market = self._aligned_minute_returns("NIFTY 50", now, DIRECTION_HISTORY_MINUTES)
+        sector = (
+            self._aligned_minute_returns(sector_symbol, now, DIRECTION_HISTORY_MINUTES)
+            if sector_symbol else [None] * len(stock)
         )
+        stock_z, _, stock_scale = self._robust_z_series(stock)
+        residuals, factor = self._factor_residuals(stock, market, sector)
+        resid_z, _, resid_scale = self._robust_z_series(residuals)
+        if len(stock_z) < 6:
+            return {"ready": False, "reason": "QUANT_HISTORY_NOT_READY"}
 
-        candidate = None
-        bull = (
-            signed_eff >= DIRECTION_PATH_EFFICIENCY_MIN
-            and move_ok
-            and ema9 > ema20
-            and ema9_slope > 0
-            and last >= ema20
-        )
-        bear = (
-            signed_eff <= -DIRECTION_PATH_EFFICIENCY_MIN
-            and move_ok
-            and ema9 < ema20
-            and ema9_slope < 0
-            and last <= ema20
-        )
-        if bull:
-            candidate = "Bullish"
-        elif bear:
-            candidate = "Bearish"
-
-        residuals = []
-        if ret15 is not None and market_15m_pct is not None:
-            residuals.append(ret15 - float(market_15m_pct))
-        if ret15 is not None and sector_15m_pct is not None:
-            residuals.append(ret15 - float(sector_15m_pct))
-        residual = sum(residuals) / len(residuals) if residuals else None
-
+        ret15 = self._return(symbol, now, 900)
         return {
-            "candidate": candidate,
-            "path_efficiency": round(signed_eff, 4),
-            "move_15m_atr": round(move_atr, 4) if move_atr is not None else None,
-            "ret_15m_pct": round(ret15, 4) if ret15 is not None else None,
-            "ema9": round(ema9, 4),
-            "ema20": round(ema20, 4),
-            "ema9_slope": round(ema9_slope, 6),
-            "relative_residual_15m_pct": round(residual, 4) if residual is not None else None,
-            "reason": "PERSISTENT_DIRECTIONAL_TRAVEL" if candidate else "REGIME_STRUCTURE_NOT_ALIGNED",
+            "ready": True,
+            "stock_z_series": stock_z,
+            "residual_z_series": resid_z,
+            "stock_z": stock_z[-1],
+            "residual_z": resid_z[-1] if resid_z else None,
+            "stock_scale": stock_scale,
+            "residual_scale": resid_scale,
+            "ret_15m_pct": ret15,
+            "factor_status": factor.get("status"),
+            "beta_market": factor.get("beta_market"),
+            "beta_sector": factor.get("beta_sector"),
         }
 
     @staticmethod
     def _new_direction_lock():
         return {
+            "model_version": DIRECTION_MODEL_VERSION,
             "state": "NEUTRAL",
             "phase": "NEUTRAL",
             "since": None,
             "last_eval_at": None,
             "observations": 0,
-            "recent_candidates": [],
             "pending_direction": None,
-            "path_efficiency": None,
-            "move_15m_atr": None,
+            "cusum_initialized": False,
+            "stock_up": 0.0,
+            "stock_down": 0.0,
+            "residual_up": 0.0,
+            "residual_down": 0.0,
+            "stock_z": None,
+            "residual_z": None,
             "ret_15m_pct": None,
-            "ema9": None,
-            "ema20": None,
-            "ema9_slope": None,
-            "relative_residual_15m_pct": None,
+            "factor_status": "INSUFFICIENT",
+            "beta_market": None,
+            "beta_sector": None,
         }
 
-    def _update_direction_lock(
-        self, symbol, now, *, atr=None, market_15m_pct=None, sector_15m_pct=None
-    ):
-        """Persistent Directional Travel lock.
+    def _update_direction_lock(self, symbol, now, *, sector_symbol=None, **_ignored):
+        """Indicator-free quant regime.
 
-        Direction is inferred from 15m path efficiency + ATR-normalised travel
-        + EMA9/20 structure sampled on one-minute points.  The lock needs 3 of
-        the last 4 regime observations.  Opposite direction first moves the
-        state through NEUTRAL/REVERSAL_PENDING, so a short pullback cannot
-        directly flip the desk.
+        Absolute direction is a robust-return CUSUM with k=0.5/h=6. Factor
+        residual CUSUM is recorded separately and is required only for a move
+        that fights both market and sector context. Reversals pass through
+        NEUTRAL/REVERSAL_PENDING.
         """
         state = self._direction_locks.setdefault(symbol, self._new_direction_lock())
+        if int(state.get("model_version") or 0) != DIRECTION_MODEL_VERSION:
+            state = self._new_direction_lock()
+            self._direction_locks[symbol] = state
+
         last_eval = _dt(state.get("last_eval_at"))
         if last_eval is not None and (now - last_eval).total_seconds() < DIRECTION_UPDATE_SECONDS:
             return self._direction_lock_summary(state)
 
-        feat = self._direction_regime_features(
-            symbol, now, atr=atr,
-            market_15m_pct=market_15m_pct,
-            sector_15m_pct=sector_15m_pct,
-        )
-        candidate = feat.get("candidate")
-        vote = 1 if candidate == "Bullish" else (-1 if candidate == "Bearish" else 0)
-        votes = list(state.get("recent_candidates") or [])
-        votes.append(vote)
-        votes = votes[-DIRECTION_VOTE_WINDOW:]
-        state["recent_candidates"] = votes
+        feat = self._quant_direction_features(symbol, now, sector_symbol=sector_symbol)
         state["observations"] = int(state.get("observations") or 0) + 1
         state["last_eval_at"] = _iso(now)
+        if not feat.get("ready"):
+            state["phase"] = "NEUTRAL" if state.get("state") == "NEUTRAL" else "WEAKENING"
+            return self._direction_lock_summary(state)
+
         for key in (
-            "path_efficiency", "move_15m_atr", "ret_15m_pct",
-            "ema9", "ema20", "ema9_slope", "relative_residual_15m_pct",
+            "stock_z", "residual_z", "ret_15m_pct", "factor_status",
+            "beta_market", "beta_sector",
         ):
             state[key] = feat.get(key)
 
-        bull_votes = sum(v > 0 for v in votes)
-        bear_votes = sum(v < 0 for v in votes)
+        # True sequential Page-CUSUM. On first usable observation after a
+        # restart/model migration, bootstrap from the preserved rolling history;
+        # thereafter consume only the newest standardized return.
+        if not bool(state.get("cusum_initialized")):
+            stock_up, stock_down = self._cusum_path(feat.get("stock_z_series") or [])
+            resid_up, resid_down = self._cusum_path(feat.get("residual_z_series") or [])
+            state["stock_up"] = min(DIRECTION_CUSUM_H, stock_up)
+            state["stock_down"] = min(DIRECTION_CUSUM_H, stock_down)
+            state["residual_up"] = min(DIRECTION_RESIDUAL_H, resid_up)
+            state["residual_down"] = min(DIRECTION_RESIDUAL_H, resid_down)
+            state["cusum_initialized"] = True
+        else:
+            z = _f(feat.get("stock_z"), 0.0) or 0.0
+            state["stock_up"] = min(
+                DIRECTION_CUSUM_H,
+                max(0.0, float(state.get("stock_up") or 0.0) + z - DIRECTION_CUSUM_K),
+            )
+            state["stock_down"] = min(
+                DIRECTION_CUSUM_H,
+                max(0.0, float(state.get("stock_down") or 0.0) - z - DIRECTION_CUSUM_K),
+            )
+            rz = _f(feat.get("residual_z"))
+            if rz is not None:
+                state["residual_up"] = min(
+                    DIRECTION_RESIDUAL_H,
+                    max(0.0, float(state.get("residual_up") or 0.0) + rz - DIRECTION_CUSUM_K),
+                )
+                state["residual_down"] = min(
+                    DIRECTION_RESIDUAL_H,
+                    max(0.0, float(state.get("residual_down") or 0.0) - rz - DIRECTION_CUSUM_K),
+                )
+
+        up = float(state.get("stock_up") or 0.0)
+        down = float(state.get("stock_down") or 0.0)
         prior = str(state.get("state") or "NEUTRAL")
         pending = state.get("pending_direction")
+        z_now = _f(state.get("stock_z"), 0.0) or 0.0
 
         if prior == "BULLISH":
-            if bear_votes >= DIRECTION_ENTER_VOTES:
+            if down >= DIRECTION_CUSUM_H:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BEARISH"
                 state["since"] = None
-            elif candidate == "Bullish":
+                # Standard Page-CUSUM reset after a change alarm.
+                state["stock_up"] = 0.0
+            elif z_now < 0:
+                state["phase"] = "PULLBACK"
+            else:
                 state["phase"] = "CONTINUING"
-            elif candidate is None:
-                state["phase"] = "PULLBACK" if (_f(self._return(symbol, now, 60), 0.0) or 0.0) < 0 else "WEAKENING"
         elif prior == "BEARISH":
-            if bull_votes >= DIRECTION_ENTER_VOTES:
+            if up >= DIRECTION_CUSUM_H:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BULLISH"
                 state["since"] = None
-            elif candidate == "Bearish":
+                state["stock_down"] = 0.0
+            elif z_now > 0:
+                state["phase"] = "PULLBACK"
+            else:
                 state["phase"] = "CONTINUING"
-            elif candidate is None:
-                state["phase"] = "PULLBACK" if (_f(self._return(symbol, now, 60), 0.0) or 0.0) > 0 else "WEAKENING"
         else:
             if pending == "BULLISH":
-                if bull_votes >= DIRECTION_ENTER_VOTES:
+                if up >= DIRECTION_CUSUM_H and z_now > 0:
                     state["state"] = "BULLISH"
                     state["phase"] = "CONTINUING"
                     state["since"] = _iso(now)
                     state["pending_direction"] = None
+                    state["stock_down"] = 0.0
+                else:
+                    state["phase"] = "REVERSAL_PENDING"
             elif pending == "BEARISH":
-                if bear_votes >= DIRECTION_ENTER_VOTES:
+                if down >= DIRECTION_CUSUM_H and z_now < 0:
                     state["state"] = "BEARISH"
                     state["phase"] = "CONTINUING"
                     state["since"] = _iso(now)
                     state["pending_direction"] = None
-            elif bull_votes >= DIRECTION_ENTER_VOTES:
+                    state["stock_up"] = 0.0
+                else:
+                    state["phase"] = "REVERSAL_PENDING"
+            elif up >= DIRECTION_CUSUM_H and down < DIRECTION_CUSUM_H:
                 state["state"] = "BULLISH"
                 state["phase"] = "CONTINUING"
                 state["since"] = _iso(now)
-            elif bear_votes >= DIRECTION_ENTER_VOTES:
+                state["stock_down"] = 0.0
+            elif down >= DIRECTION_CUSUM_H and up < DIRECTION_CUSUM_H:
                 state["state"] = "BEARISH"
                 state["phase"] = "CONTINUING"
                 state["since"] = _iso(now)
+                state["stock_up"] = 0.0
+            elif up >= DIRECTION_CUSUM_H and down >= DIRECTION_CUSUM_H:
+                # Rare bootstrap ambiguity: use the newest standardized return
+                # only to choose which already-significant side is current.
+                chosen = "BULLISH" if z_now > 0 else ("BEARISH" if z_now < 0 else None)
+                if chosen:
+                    state["state"] = chosen
+                    state["phase"] = "CONTINUING"
+                    state["since"] = _iso(now)
+                    if chosen == "BULLISH":
+                        state["stock_down"] = 0.0
+                    else:
+                        state["stock_up"] = 0.0
             else:
                 state["phase"] = "NEUTRAL"
 
@@ -604,25 +703,37 @@ class UniverseMomentumStreamService:
     @staticmethod
     def _direction_lock_summary(state):
         locked = str(state.get("state") or "NEUTRAL")
-        votes = list(state.get("recent_candidates") or [])
+        direction = "Bullish" if locked == "BULLISH" else ("Bearish" if locked == "BEARISH" else None)
+        evidence = float(state.get("stock_up") or 0.0) if direction == "Bullish" else (
+            float(state.get("stock_down") or 0.0) if direction == "Bearish" else max(
+                float(state.get("stock_up") or 0.0), float(state.get("stock_down") or 0.0)
+            )
+        )
+        residual_evidence = float(state.get("residual_up") or 0.0) if direction == "Bullish" else (
+            float(state.get("residual_down") or 0.0) if direction == "Bearish" else max(
+                float(state.get("residual_up") or 0.0), float(state.get("residual_down") or 0.0)
+            )
+        )
         return {
+            "model_version": DIRECTION_MODEL_VERSION,
             "state": locked,
-            "direction": "Bullish" if locked == "BULLISH" else (
-                "Bearish" if locked == "BEARISH" else None
-            ),
+            "direction": direction,
             "phase": state.get("phase") or "NEUTRAL",
             "since": state.get("since"),
             "observations": int(state.get("observations") or 0),
-            "up_evidence": sum(v > 0 for v in votes),
-            "down_evidence": sum(v < 0 for v in votes),
-            "pending_direction": state.get("pending_direction"),
-            "path_efficiency": state.get("path_efficiency"),
-            "move_15m_atr": state.get("move_15m_atr"),
+            "up_evidence": round(float(state.get("stock_up") or 0.0), 3),
+            "down_evidence": round(float(state.get("stock_down") or 0.0), 3),
+            "direction_evidence": round(evidence, 3),
+            "residual_up_evidence": round(float(state.get("residual_up") or 0.0), 3),
+            "residual_down_evidence": round(float(state.get("residual_down") or 0.0), 3),
+            "residual_evidence": round(residual_evidence, 3),
+            "stock_z": None if state.get("stock_z") is None else round(float(state.get("stock_z")), 3),
+            "residual_z": None if state.get("residual_z") is None else round(float(state.get("residual_z")), 3),
             "ret_15m_pct": state.get("ret_15m_pct"),
-            "ema9": state.get("ema9"),
-            "ema20": state.get("ema20"),
-            "ema9_slope": state.get("ema9_slope"),
-            "relative_residual_15m_pct": state.get("relative_residual_15m_pct"),
+            "factor_status": state.get("factor_status"),
+            "beta_market": state.get("beta_market"),
+            "beta_sector": state.get("beta_sector"),
+            "pending_direction": state.get("pending_direction"),
         }
 
     def _near_extreme(self, sample, direction):
@@ -691,14 +802,10 @@ class UniverseMomentumStreamService:
         # whether an obvious trend exists.
         if (
             str((direction_info or {}).get("phase") or "") == "CONTINUING"
-            and abs(_f((direction_info or {}).get("path_efficiency"), 0.0) or 0.0) >= DIRECTION_PATH_EFFICIENCY_MIN
-            and (
-                _f((direction_info or {}).get("move_15m_atr")) is None
-                or _f((direction_info or {}).get("move_15m_atr"), 0.0) >= DIRECTION_MOVE_ATR_MIN
-            )
+            and (_f((direction_info or {}).get("direction_evidence"), 0.0) or 0.0) >= DIRECTION_CUSUM_H
         ):
             event_family = "REGIME_PERSISTENCE"
-            why = ["15m directional path efficient", "EMA9/20 structure aligned", "direction lock persistent"]
+            why = ["robust one-minute drift change detected", "quant direction lock persistent"]
 
         # Opening-drive: price is already pressing the session extreme while
         # both short return and participation are expanding.
@@ -783,13 +890,14 @@ class UniverseMomentumStreamService:
             "direction_lock_since": (direction_info or {}).get("since"),
             "direction_up_evidence": (direction_info or {}).get("up_evidence"),
             "direction_down_evidence": (direction_info or {}).get("down_evidence"),
-            "direction_residual_z": (direction_info or {}).get("relative_residual_15m_pct"),
-            "path_efficiency_15m": (direction_info or {}).get("path_efficiency"),
-            "move_15m_atr": (direction_info or {}).get("move_15m_atr"),
+            "direction_stock_z": (direction_info or {}).get("stock_z"),
+            "direction_residual_z": (direction_info or {}).get("residual_z"),
+            "direction_evidence": (direction_info or {}).get("direction_evidence"),
+            "direction_residual_evidence": (direction_info or {}).get("residual_evidence"),
             "ret_15m_pct": (direction_info or {}).get("ret_15m_pct"),
-            "ema9_live": (direction_info or {}).get("ema9"),
-            "ema20_live": (direction_info or {}).get("ema20"),
-            "ema9_slope_live": (direction_info or {}).get("ema9_slope"),
+            "direction_factor_status": (direction_info or {}).get("factor_status"),
+            "direction_beta_market": (direction_info or {}).get("beta_market"),
+            "direction_beta_sector": (direction_info or {}).get("beta_sector"),
             "why": why,
         }
 
@@ -965,11 +1073,7 @@ class UniverseMomentumStreamService:
                 if r5 is not None and sector_r5 is not None else None
             )
             direction_info = self._update_direction_lock(
-                symbol,
-                now,
-                atr=symbol_meta.get("atr"),
-                market_15m_pct=nifty_returns.get("15m"),
-                sector_15m_pct=sector_r15,
+                symbol, now, sector_symbol=str(sector) if sector else None
             )
             event = self._event_for(
                 symbol, sample, symbol_meta, nifty_returns, now, direction_info=direction_info
@@ -1015,13 +1119,14 @@ class UniverseMomentumStreamService:
                     "direction_lock_since": direction_info.get("since"),
                     "direction_up_evidence": direction_info.get("up_evidence"),
                     "direction_down_evidence": direction_info.get("down_evidence"),
-                    "direction_residual_z": direction_info.get("relative_residual_15m_pct"),
-                    "path_efficiency_15m": direction_info.get("path_efficiency"),
-                    "move_15m_atr": direction_info.get("move_15m_atr"),
+                    "direction_stock_z": direction_info.get("stock_z"),
+                    "direction_residual_z": direction_info.get("residual_z"),
+                    "direction_evidence": direction_info.get("direction_evidence"),
+                    "direction_residual_evidence": direction_info.get("residual_evidence"),
                     "ret_15m_pct": direction_info.get("ret_15m_pct"),
-                    "ema9_live": direction_info.get("ema9"),
-                    "ema20_live": direction_info.get("ema20"),
-                    "ema9_slope_live": direction_info.get("ema9_slope"),
+                    "direction_factor_status": direction_info.get("factor_status"),
+                    "direction_beta_market": direction_info.get("beta_market"),
+                    "direction_beta_sector": direction_info.get("beta_sector"),
                 })
             if event:
                 events.append(event)
