@@ -599,58 +599,102 @@ class UniverseMomentumStreamService:
         if not bool(state.get("cusum_initialized")):
             stock_up, stock_down = self._cusum_path(feat.get("stock_z_series") or [])
             resid_up, resid_down = self._cusum_path(feat.get("residual_z_series") or [])
-            state["stock_up"], state["stock_down"] = stock_up, stock_down
-            state["residual_up"], state["residual_down"] = resid_up, resid_down
+            state["stock_up"] = min(DIRECTION_CUSUM_H, stock_up)
+            state["stock_down"] = min(DIRECTION_CUSUM_H, stock_down)
+            state["residual_up"] = min(DIRECTION_RESIDUAL_H, resid_up)
+            state["residual_down"] = min(DIRECTION_RESIDUAL_H, resid_down)
             state["cusum_initialized"] = True
         else:
             z = _f(feat.get("stock_z"), 0.0) or 0.0
-            state["stock_up"] = max(0.0, float(state.get("stock_up") or 0.0) + z - DIRECTION_CUSUM_K)
-            state["stock_down"] = max(0.0, float(state.get("stock_down") or 0.0) - z - DIRECTION_CUSUM_K)
+            state["stock_up"] = min(
+                DIRECTION_CUSUM_H,
+                max(0.0, float(state.get("stock_up") or 0.0) + z - DIRECTION_CUSUM_K),
+            )
+            state["stock_down"] = min(
+                DIRECTION_CUSUM_H,
+                max(0.0, float(state.get("stock_down") or 0.0) - z - DIRECTION_CUSUM_K),
+            )
             rz = _f(feat.get("residual_z"))
             if rz is not None:
-                state["residual_up"] = max(0.0, float(state.get("residual_up") or 0.0) + rz - DIRECTION_CUSUM_K)
-                state["residual_down"] = max(0.0, float(state.get("residual_down") or 0.0) - rz - DIRECTION_CUSUM_K)
+                state["residual_up"] = min(
+                    DIRECTION_RESIDUAL_H,
+                    max(0.0, float(state.get("residual_up") or 0.0) + rz - DIRECTION_CUSUM_K),
+                )
+                state["residual_down"] = min(
+                    DIRECTION_RESIDUAL_H,
+                    max(0.0, float(state.get("residual_down") or 0.0) - rz - DIRECTION_CUSUM_K),
+                )
 
         up = float(state.get("stock_up") or 0.0)
         down = float(state.get("stock_down") or 0.0)
         prior = str(state.get("state") or "NEUTRAL")
         pending = state.get("pending_direction")
-        candidate = "Bullish" if up >= DIRECTION_CUSUM_H and up > down else (
-            "Bearish" if down >= DIRECTION_CUSUM_H and down > up else None
-        )
+        z_now = _f(state.get("stock_z"), 0.0) or 0.0
 
         if prior == "BULLISH":
-            if candidate == "Bearish":
+            if down >= DIRECTION_CUSUM_H:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BEARISH"
                 state["since"] = None
-            elif (_f(state.get("stock_z"), 0.0) or 0.0) < 0:
+                # Standard Page-CUSUM reset after a change alarm.
+                state["stock_up"] = 0.0
+            elif z_now < 0:
                 state["phase"] = "PULLBACK"
             else:
                 state["phase"] = "CONTINUING"
         elif prior == "BEARISH":
-            if candidate == "Bullish":
+            if up >= DIRECTION_CUSUM_H:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BULLISH"
                 state["since"] = None
-            elif (_f(state.get("stock_z"), 0.0) or 0.0) > 0:
+                state["stock_down"] = 0.0
+            elif z_now > 0:
                 state["phase"] = "PULLBACK"
             else:
                 state["phase"] = "CONTINUING"
         else:
-            if pending and candidate == pending:
-                state["state"] = pending.upper()
+            if pending == "BULLISH":
+                if up >= DIRECTION_CUSUM_H and z_now > 0:
+                    state["state"] = "BULLISH"
+                    state["phase"] = "CONTINUING"
+                    state["since"] = _iso(now)
+                    state["pending_direction"] = None
+                    state["stock_down"] = 0.0
+                else:
+                    state["phase"] = "REVERSAL_PENDING"
+            elif pending == "BEARISH":
+                if down >= DIRECTION_CUSUM_H and z_now < 0:
+                    state["state"] = "BEARISH"
+                    state["phase"] = "CONTINUING"
+                    state["since"] = _iso(now)
+                    state["pending_direction"] = None
+                    state["stock_up"] = 0.0
+                else:
+                    state["phase"] = "REVERSAL_PENDING"
+            elif up >= DIRECTION_CUSUM_H and down < DIRECTION_CUSUM_H:
+                state["state"] = "BULLISH"
                 state["phase"] = "CONTINUING"
                 state["since"] = _iso(now)
-                state["pending_direction"] = None
-            elif pending and candidate != pending:
-                state["phase"] = "REVERSAL_PENDING"
-            elif candidate:
-                state["state"] = candidate.upper()
+                state["stock_down"] = 0.0
+            elif down >= DIRECTION_CUSUM_H and up < DIRECTION_CUSUM_H:
+                state["state"] = "BEARISH"
                 state["phase"] = "CONTINUING"
                 state["since"] = _iso(now)
+                state["stock_up"] = 0.0
+            elif up >= DIRECTION_CUSUM_H and down >= DIRECTION_CUSUM_H:
+                # Rare bootstrap ambiguity: use the newest standardized return
+                # only to choose which already-significant side is current.
+                chosen = "BULLISH" if z_now > 0 else ("BEARISH" if z_now < 0 else None)
+                if chosen:
+                    state["state"] = chosen
+                    state["phase"] = "CONTINUING"
+                    state["since"] = _iso(now)
+                    if chosen == "BULLISH":
+                        state["stock_down"] = 0.0
+                    else:
+                        state["stock_up"] = 0.0
             else:
                 state["phase"] = "NEUTRAL"
 
