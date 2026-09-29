@@ -882,3 +882,83 @@ def test_building_slot_persists_when_locked_direction_event_keeps_refreshing():
             now=t0 + dt.timedelta(minutes=minute),
         )
         assert "ABC" in state["focus"]
+
+
+def test_persistent_regime_can_survive_opposed_market_without_spike_gate():
+    event = _observer_event(
+        "LEADER", direction="Bearish", family="REGIME_PERSISTENCE", price=95.0
+    )
+    event.update({
+        "path_efficiency_15m": -0.72,
+        "move_15m_atr": 0.64,
+        "market_day_change_pct": 0.80,
+        "market_ret_5m_pct": 0.22,
+        "market_ret_10m_pct": 0.31,
+        "sector_day_change_pct": 0.65,
+        "sector_ret_5m_pct": 0.18,
+        "sector_ret_10m_pct": 0.26,
+        "relative_5m_vs_nifty_pct": -0.10,
+        "relative_5m_vs_sector_pct": -0.12,
+        "volume_rate_accel": 0.85,
+        "near_session_extreme": False,
+    })
+    allowed, state, reason = v123_focus._spotting_context_decision(event)
+    assert allowed is True
+    assert state == "PERSISTENT_REGIME"
+    assert "15m path regime sustained" in reason
+
+
+def test_swing_regime_bridge_requires_live_pdt_agreement():
+    state = {
+        "swing_1d": {
+            "selected": {
+                "POLICYBZR": {
+                    "symbol": "POLICYBZR",
+                    "direction": "Bearish",
+                    "family": "20D_RANGE_BREAK",
+                }
+            }
+        }
+    }
+    observer = {
+        "quant_rows": [{
+            "symbol": "POLICYBZR",
+            "live_price": 1100.0,
+            "day_change_pct": -4.0,
+            "direction_lock_state": "BEARISH",
+            "direction_lock_phase": "CONTINUING",
+            "direction_lock_since": "2026-09-29T09:46:00",
+            "path_efficiency_15m": -0.68,
+            "move_15m_atr": 0.55,
+            "ret_15m_pct": -0.90,
+        }]
+    }
+    rows = v123_focus._swing_regime_candidates(state, observer)
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "POLICYBZR"
+    assert rows[0]["direction"] == "Bearish"
+    assert rows[0]["event_family"] == "HTF_REGIME_CONTINUATION"
+
+    observer["quant_rows"][0]["direction_lock_state"] = "BULLISH"
+    assert v123_focus._swing_regime_candidates(state, observer) == []
+
+
+def test_regime_persistence_enters_building_without_legacy_event_family():
+    t0 = dt.datetime(2026, 9, 29, 10, 30)
+    event = _observer_event(
+        "PREMIERENE", direction="Bearish", family="REGIME_PERSISTENCE", price=890.0
+    )
+    event.update({
+        "path_efficiency_15m": -0.75,
+        "move_15m_atr": 0.70,
+        "direction_lock_state": "BEARISH",
+        "direction_lock_phase": "CONTINUING",
+    })
+    state = v123_focus.update_focus(
+        None,
+        {"events": [event], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []},
+        [_scan("PREMIERENE", 890.0)], now=t0,
+    )
+    assert state["focus"]["PREMIERENE"]["lifecycle"] == "BUILDING"
+    assert state["focus"]["PREMIERENE"]["event_family"] == "REGIME_PERSISTENCE"
