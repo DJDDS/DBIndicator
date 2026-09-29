@@ -476,3 +476,51 @@ def test_tactical_opening_drive_expires_after_1015():
         bars, current, candidate, now=dt.datetime(2026, 9, 24, 10, 18)
     )
     assert setup.get("setup") != "OPENING_DRIVE"
+
+
+def test_live_option_precheck_requires_real_directional_bid_ask_spread_and_delta():
+    good = {
+        "symbol": "ABC26OCT100PE", "type": "PE", "strike": 100,
+        "expiry": "2026-10-29", "dte": 30,
+        "mid": 8.0, "bid": 7.9, "ask": 8.1,
+        "spread_pct": 2.5, "delta": -0.55,
+    }
+    wrong_side = {
+        "symbol": "ABC26OCT100CE", "type": "CE", "strike": 100,
+        "expiry": "2026-10-29", "dte": 30,
+        "mid": 8.0, "bid": 7.9, "ask": 8.1,
+        "spread_pct": 2.5, "delta": 0.55,
+    }
+    out = t.option_pre_feasibility([wrong_side, good], "Bearish")
+    assert out["eligible"] is True
+    assert out["contract"]["symbol"] == "ABC26OCT100PE"
+
+
+def test_live_option_precheck_blocks_wide_or_unpriced_contract_before_3m():
+    wide = {
+        "symbol": "ABC26OCT100PE", "type": "PE", "strike": 100,
+        "expiry": "2026-10-29", "dte": 30,
+        "mid": 8.0, "bid": 7.5, "ask": 8.5,
+        "spread_pct": 12.5, "delta": -0.55,
+    }
+    missing_bid = {
+        "symbol": "ABC26OCT95PE", "type": "PE", "strike": 95,
+        "expiry": "2026-10-29", "dte": 30,
+        "mid": 5.0, "bid": None, "ask": 5.2,
+        "spread_pct": None, "delta": -0.40,
+    }
+    out = t.option_pre_feasibility([wide, missing_bid], "Bearish")
+    assert out["eligible"] is False
+    assert out["contract"] is None
+
+
+def test_live_option_precheck_blocks_missing_greek_needed_by_full_router():
+    no_delta = {
+        "symbol": "ABC26OCT100CE", "type": "CE", "strike": 100,
+        "expiry": "2026-10-29", "dte": 30,
+        "mid": 8.0, "bid": 7.9, "ask": 8.1,
+        "spread_pct": 2.5, "delta": None,
+    }
+    out = t.option_pre_feasibility([no_delta], "Bullish")
+    assert out["eligible"] is False
+    assert "delta" in out["reason"]
