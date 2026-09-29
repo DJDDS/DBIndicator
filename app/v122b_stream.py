@@ -149,6 +149,7 @@ class TacticalStockStreamService:
         self._tod_baseline = defaultdict(dict)
         self._depth_samples = defaultdict(lambda: deque(maxlen=180))
         self._basis_samples = defaultdict(lambda: deque(maxlen=180))
+        self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
         self._lifecycle = {}
         self._last_states = {}
         self._transition_ids = set()
@@ -296,6 +297,7 @@ class TacticalStockStreamService:
             self._tod_baseline = defaultdict(dict)
             self._depth_samples = defaultdict(lambda: deque(maxlen=180))
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
+            self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
             self._lifecycle = {}
             self._last_states = {}
             self._transition_ids = set()
@@ -318,6 +320,7 @@ class TacticalStockStreamService:
             self._tod_baseline.pop(symbol, None)
             self._depth_samples.pop(symbol, None)
             self._basis_samples.pop(symbol, None)
+            self._cash_samples.pop(symbol, None)
             self._seeded.discard(symbol)
 
     def snapshot(self):
