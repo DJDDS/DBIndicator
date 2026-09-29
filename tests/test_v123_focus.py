@@ -840,3 +840,45 @@ def test_bearish_session_with_small_local_rebound_is_still_countertrend():
     assert state == "CONTEXT_REJECTED"
     assert "market=MIXED" in reason
     assert "sector=MIXED" in reason
+
+
+def test_building_slot_expires_without_renewed_evidence_after_six_minutes():
+    t0 = dt.datetime(2026, 9, 29, 11, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("ABC", price=101.0)], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan("ABC", 101.0)], now=t0,
+    )
+    assert "ABC" in state["focus"]
+    assert state["focus"]["ABC"]["lifecycle"] in ("DISCOVERED", "BUILDING")
+
+    state = v123_focus.update_focus(
+        state,
+        {"events": [], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan("ABC", 101.0)],
+        now=t0 + dt.timedelta(minutes=7),
+    )
+    assert "ABC" not in state["focus"]
+    assert any(
+        row.get("symbol") == "ABC"
+        and row.get("lifecycle") == "COMPLETED"
+        and "building evidence expired" in str((row.get("history") or [{}])[-1].get("reason") or "")
+        for row in state["recent"]
+    )
+
+
+def test_building_slot_persists_when_locked_direction_event_keeps_refreshing():
+    t0 = dt.datetime(2026, 9, 29, 11, 0)
+    state = v123_focus.update_focus(
+        None,
+        {"events": [_observer_event("ABC", price=101.0)], "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan("ABC", 101.0)], now=t0,
+    )
+    for minute in (4, 8, 12):
+        state = v123_focus.update_focus(
+            state,
+            {"events": [_observer_event("ABC", price=101.0 + minute / 100.0)], "leaders": [], "laggards": []},
+            {"rows": []}, {"candidates": []}, [_scan("ABC", 101.0 + minute / 100.0)],
+            now=t0 + dt.timedelta(minutes=minute),
+        )
+        assert "ABC" in state["focus"]
