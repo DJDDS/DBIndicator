@@ -351,7 +351,10 @@ def test_quant_cusum_reversal_must_pass_through_neutral():
             bearish = state
             break
     assert seen_neutral is True
-    assert bearish is not None, state
+    assert bearish is not None, (
+        state.get("stock_up"), state.get("stock_down"), state.get("stock_z"),
+        state.get("pending_direction"), state.get("ret_15m_pct")
+    )
     assert bearish["direction_evidence"] >= 6.0
 
 
