@@ -139,3 +139,73 @@ def test_shadow_artifact_manifest_is_read_only_and_traversal_safe(tmp_path):
     assert v123_quant_shadow.resolve_shadow_artifact(tmp_path, "shadow_state.json") is not None
     assert v123_quant_shadow.resolve_shadow_artifact(tmp_path, "../secret.env") is None
     assert v123_quant_shadow.resolve_shadow_artifact(tmp_path, "secret.env") is None
+
+
+def test_shadow_uses_same_sector_return_for_all_symbols_in_sector(tmp_path):
+    recorder = v123_quant_shadow.QuantRegimeShadowRecorder(
+        tmp_path, sample_seconds=60, min_training_sessions=2
+    )
+    t0 = dt.datetime(2026, 9, 29, 10, 0)
+    first = {
+        "status": "STREAMING",
+        "nifty": {"live_price": 22500.0},
+        "sector_contexts": {"NIFTY AUTO": {"live_price": 25300.0}},
+        "quant_rows": [
+            {"symbol": "HEROMOTOCO", "live_price": 540.0, "volume_rate_accel": 1.1, "sector_index": "NIFTY AUTO"},
+            {"symbol": "MARUTI", "live_price": 16000.0, "volume_rate_accel": 1.2, "sector_index": "NIFTY AUTO"},
+        ],
+    }
+    second = {
+        "status": "STREAMING",
+        "nifty": {"live_price": 22450.0},
+        "sector_contexts": {"NIFTY AUTO": {"live_price": 25100.0}},
+        "quant_rows": [
+            {"symbol": "HEROMOTOCO", "live_price": 541.0, "volume_rate_accel": 1.3, "sector_index": "NIFTY AUTO"},
+            {"symbol": "MARUTI", "live_price": 15980.0, "volume_rate_accel": 1.1, "sector_index": "NIFTY AUTO"},
+        ],
+    }
+
+    recorder.process(first, now=t0)
+    status = recorder.process(second, now=t0 + dt.timedelta(minutes=1))
+    assert status["sector_factor_status"] == "ACTIVE"
+    assert status["sector_factor_coverage"] == 1.0
+
+    with gzip.open(tmp_path / "features_2026-09-29.jsonl.gz", "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    latest = [row for row in rows if row["ts"].startswith("2026-09-29T10:01")]
+    assert len(latest) == 2
+    assert latest[0]["sector_return"] < 0
+    assert latest[1]["sector_return"] == latest[0]["sector_return"]
+    assert latest[0]["sector_price"] == 25100.0
+    assert latest[1]["sector_price"] == 25100.0
+
+
+def test_shadow_restart_restores_sector_price_for_next_return(tmp_path):
+    recorder = v123_quant_shadow.QuantRegimeShadowRecorder(
+        tmp_path, sample_seconds=60, min_training_sessions=2
+    )
+    t0 = dt.datetime(2026, 9, 29, 10, 0)
+    payload = {
+        "status": "STREAMING",
+        "nifty": {"live_price": 22500.0},
+        "sector_contexts": {"NIFTY AUTO": {"live_price": 25300.0}},
+        "quant_rows": [{
+            "symbol": "HEROMOTOCO",
+            "live_price": 540.0,
+            "volume_rate_accel": 1.1,
+            "sector_index": "NIFTY AUTO",
+        }],
+    }
+    recorder.process(payload, now=t0)
+
+    restarted = v123_quant_shadow.QuantRegimeShadowRecorder(
+        tmp_path, sample_seconds=60, min_training_sessions=2
+    )
+    payload["nifty"]["live_price"] = 22480.0
+    payload["sector_contexts"]["NIFTY AUTO"]["live_price"] = 25200.0
+    payload["quant_rows"][0]["live_price"] = 541.0
+    restarted.process(payload, now=t0 + dt.timedelta(minutes=1))
+
+    with gzip.open(tmp_path / "features_2026-09-29.jsonl.gz", "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert rows[-1]["sector_return"] < 0
