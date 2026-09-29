@@ -937,62 +937,40 @@ LIVE_PRECHECK_DELTA_MAX = 0.85
 
 
 def option_pre_feasibility(snapshots: list[dict], direction: str) -> dict:
-    """Broad live option gate before any 3-minute structural calculation.
+    """Minimal live quote feasibility before adaptive structure work.
 
-    This is intentionally not the full execution router. It only verifies that
-    the directional option neighborhood is live enough to justify spending a
-    scarce deep/3m slot. Final friction-vs-expected-move remains downstream
-    because the expected underlying move comes from the 3m setup itself.
+    The frozen 10-day feasibility universe already screens chronic option
+    untradeability. This live gate deliberately avoids delta/ATM/ITM priors:
+    it asks only whether at least one directional contract has a valid two-sided
+    quote and expiry. Final contract choice is made later by net option economics.
     """
     typ = "CE" if direction == "Bullish" else "PE"
     directional = [dict(x) for x in (snapshots or []) if x.get("type") == typ]
-    if not directional:
-        return {"eligible": False, "reason": "no live directional option snapshot", "contract": None}
-
     valid = []
-    failures = []
     for row in directional:
         bid = _f(row.get("bid"))
         ask = _f(row.get("ask"))
         mid = _f(row.get("mid"))
-        spread = _f(row.get("spread_pct"))
-        delta = abs(_f(row.get("delta"), 0.0))
         dte = _i(row.get("dte"), -1)
-
-        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid or mid is None or mid <= 0:
-            failures.append("missing/invalid bid-ask")
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
             continue
-        if spread is None or spread > LIVE_PRECHECK_MAX_SPREAD_PCT:
-            failures.append("live spread above 4%")
+        if mid is None or mid <= 0 or dte < 0:
             continue
-        if dte < 0:
-            failures.append("invalid expiry")
-            continue
-        if not (LIVE_PRECHECK_DELTA_MIN <= delta <= LIVE_PRECHECK_DELTA_MAX):
-            failures.append("delta outside broad 0.25-0.85 corridor")
-            continue
-        row["delta_abs"] = round(delta, 4)
         valid.append(row)
-
     if not valid:
-        reason = failures[0] if failures else "no live option passed broad precheck"
-        return {"eligible": False, "reason": reason, "contract": None}
-
-    valid.sort(
-        key=lambda x: (
-            abs(abs(_f(x.get("delta"), 0.0)) - PROPOSED_OPTION_DELTA_TARGET),
-            _f(x.get("spread_pct"), 999.0),
-            abs(_f(x.get("strike"), 0.0)),
-        )
-    )
-    chosen = valid[0]
+        return {
+            "eligible": False,
+            "reason": "no valid two-sided directional option quote",
+            "contract": None,
+            "candidate_count": 0,
+        }
+    valid.sort(key=lambda x: _f(x.get("spread_pct"), 999.0))
     return {
         "eligible": True,
         "reason": None,
-        "contract": chosen,
+        "contract": valid[0],
         "candidate_count": len(valid),
-        "max_spread_pct": LIVE_PRECHECK_MAX_SPREAD_PCT,
-        "delta_corridor": [LIVE_PRECHECK_DELTA_MIN, LIVE_PRECHECK_DELTA_MAX],
+        "method": "TWO_SIDED_QUOTE_ONLY",
     }
 
 
@@ -1132,18 +1110,10 @@ def route_option(
 
     event = earnings or {}
     pre_result = bool(event.get("pre_result"))
-    preferred_expiry = expiries[0]
-    nearest_rows = [x for x in live if str(x.get("expiry")) == expiries[0]]
-    nearest_dte = min((_i(x.get("dte"), 9999) for x in nearest_rows), default=9999)
-
-    if pre_result and nearest_dte <= PROPOSED_PRE_RESULT_NEXT_MONTH_DTE and len(expiries) >= 2:
-        preferred_expiry = expiries[1]
-    elif speed_class == "SWING" and nearest_dte <= 12 and len(expiries) >= 2:
-        preferred_expiry = expiries[1]
-
-    pool = [x for x in live if str(x.get("expiry")) == preferred_expiry]
-    # A currently locked entry contract is allowed to remain on its original
-    # expiry for that entry episode.  Expiry is reconsidered only on re-entry.
+    # Do not pre-select ATM/ITM/expiry. Every live directional contract across
+    # available expiries competes on the same expected-net-ROI objective.
+    pool = list(live)
+    preferred_expiry = None
     locked = next(
         (x for x in live if locked_contract_symbol and str(x.get("symbol") or "") == str(locked_contract_symbol)),
         None,
@@ -1211,8 +1181,8 @@ def route_option(
                 "tradeable": True,
                 "reason": None,
                 "contract": assessed,
-                "preferred_expiry": str(locked.get("expiry") or preferred_expiry),
-                "pre_result_next_month": bool(pre_result and str(locked.get("expiry")) != expiries[0]),
+                "preferred_expiry": str(locked.get("expiry") or ""),
+                "pre_result_next_month": False,
                 "atm_strike": atm_strike,
                 "locked": True,
                 "locked_contract_requested": locked_contract_symbol,
@@ -1227,7 +1197,7 @@ def route_option(
         return {
             "tradeable": False,
             "reason": "preferred expiry has no quoted contract",
-            "preferred_expiry": preferred_expiry,
+            "preferred_expiry": None,
             "locked_contract_requested": locked_contract_symbol,
             "reroute_reason": reroute_reason,
         }
@@ -1257,8 +1227,8 @@ def route_option(
         return {
             "tradeable": False,
             "reason": reject_reasons[0] if reject_reasons else "no contract passed friction gate",
-            "preferred_expiry": preferred_expiry,
-            "pre_result_next_month": bool(pre_result and preferred_expiry != expiries[0]),
+            "preferred_expiry": None,
+            "pre_result_next_month": False,
             "atm_strike": atm_strike,
             "locked": False,
             "locked_contract_requested": locked_contract_symbol,
@@ -1276,8 +1246,8 @@ def route_option(
         "tradeable": True,
         "reason": None,
         "contract": chosen,
-        "preferred_expiry": preferred_expiry,
-        "pre_result_next_month": bool(pre_result and preferred_expiry != expiries[0]),
+        "preferred_expiry": chosen.get("expiry"),
+        "pre_result_next_month": False,
         "atm_strike": atm_strike,
         "locked": False,
         "locked_contract_requested": locked_contract_symbol,
