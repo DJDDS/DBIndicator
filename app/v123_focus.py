@@ -517,6 +517,12 @@ def _new_focus_item(event, scan, now):
         "sector_day_change_pct": event.get("sector_day_change_pct"),
         "sector_ret_5m_pct": event.get("sector_ret_5m_pct"),
         "relative_5m_vs_sector_pct": event.get("relative_5m_vs_sector_pct"),
+        "direction_lock_state": event.get("direction_lock_state"),
+        "direction_lock_phase": event.get("direction_lock_phase"),
+        "direction_lock_since": event.get("direction_lock_since"),
+        "direction_up_evidence": event.get("direction_up_evidence"),
+        "direction_down_evidence": event.get("direction_down_evidence"),
+        "direction_residual_z": event.get("direction_residual_z"),
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
@@ -900,6 +906,12 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["day_change_pct"] = same.get("day_change_pct", item.get("day_change_pct"))
             item["ret_5m_pct"] = same.get("ret_5m_pct", item.get("ret_5m_pct"))
             item["relative_5m_vs_nifty_pct"] = same.get("relative_5m_vs_nifty_pct", item.get("relative_5m_vs_nifty_pct"))
+            item["direction_lock_state"] = same.get("direction_lock_state", item.get("direction_lock_state"))
+            item["direction_lock_phase"] = same.get("direction_lock_phase", item.get("direction_lock_phase"))
+            item["direction_lock_since"] = same.get("direction_lock_since", item.get("direction_lock_since"))
+            item["direction_up_evidence"] = same.get("direction_up_evidence", item.get("direction_up_evidence"))
+            item["direction_down_evidence"] = same.get("direction_down_evidence", item.get("direction_down_evidence"))
+            item["direction_residual_z"] = same.get("direction_residual_z", item.get("direction_residual_z"))
             item["why"] = list(same.get("why") or item.get("why") or [])
 
         if opposite and not same:
@@ -1284,6 +1296,12 @@ def tactical_candidates(state, scan_rows):
         base["watch_reference_family"] = item.get("watch_reference_family")
         base["ret_5m_pct"] = item.get("ret_5m_pct")
         base["relative_5m_vs_nifty_pct"] = item.get("relative_5m_vs_nifty_pct")
+        base["direction_lock_state"] = item.get("direction_lock_state")
+        base["direction_lock_phase"] = item.get("direction_lock_phase")
+        base["direction_lock_since"] = item.get("direction_lock_since")
+        base["direction_up_evidence"] = item.get("direction_up_evidence")
+        base["direction_down_evidence"] = item.get("direction_down_evidence")
+        base["direction_residual_z"] = item.get("direction_residual_z")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
