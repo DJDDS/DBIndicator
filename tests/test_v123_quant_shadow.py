@@ -33,6 +33,7 @@ def _write_training_session(root, day, shift):
                     0.2,
                 ]
                 fh.write(json.dumps({
+                    "schema_version": v123_quant_shadow.SCHEMA_VERSION,
                     "ts": f"{day.isoformat()}T10:{i:02d}:00",
                     "trade_date": day.isoformat(),
                     "symbol": symbol,
@@ -209,3 +210,29 @@ def test_shadow_restart_restores_sector_price_for_next_return(tmp_path):
     with gzip.open(tmp_path / "features_2026-09-29.jsonl.gz", "rt", encoding="utf-8") as fh:
         rows = [json.loads(line) for line in fh]
     assert rows[-1]["sector_return"] < 0
+
+
+def test_shadow_ignores_prior_feature_schema_sessions(tmp_path):
+    old_day = dt.date(2026, 9, 23)
+    for day in (old_day, dt.date(2026, 9, 24)):
+        path = tmp_path / f"features_{day.isoformat()}.jsonl.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as fh:
+            for i in range(24):
+                fh.write(json.dumps({
+                    "schema_version": 1,
+                    "ts": f"{day.isoformat()}T10:{i:02d}:00",
+                    "trade_date": day.isoformat(),
+                    "symbol": "OLD",
+                    "price": 100 + i,
+                    "market_return": 0.0,
+                    "sector_return": None,
+                    "participation": 1.0,
+                    "x": [1.0, 1.0, 0.0, 0.0],
+                }) + "\n")
+
+    recorder = v123_quant_shadow.QuantRegimeShadowRecorder(
+        tmp_path, sample_seconds=60, min_training_sessions=2
+    )
+    status = recorder.process(_payload(), now=dt.datetime(2026, 9, 25, 10, 0))
+    assert status["status"] == "COLLECTING_BASELINE"
+    assert status["training_sessions"] == []
