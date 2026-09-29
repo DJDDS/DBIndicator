@@ -44,6 +44,7 @@ def test_opening_drive_can_be_found_without_oi_confirmation():
         {"symbol": "ABC", "atr": 2.0, "prev_close": 100.0},
         {"5m": svc._return("NIFTY 50", now, 300)},
         now,
+        direction_info={"state": "BULLISH", "direction": "Bullish", "phase": "CONTINUING"},
     )
     assert event is not None
     assert event["direction"] == "Bullish"
@@ -71,6 +72,7 @@ def test_pullback_reclaim_is_a_separate_event_family():
         {"symbol": "XYZ", "atr": 2.0, "prev_close": 100.0},
         {"5m": svc._return("NIFTY 50", now, 300)},
         now,
+        direction_info={"state": "BULLISH", "direction": "Bullish", "phase": "CONTINUING"},
     )
     assert event is not None
     assert event["event_family"] == "PULLBACK_RECLAIM"
@@ -85,7 +87,11 @@ def test_no_event_when_price_is_not_doing_anything():
     _append(svc, "FLAT", now-dt.timedelta(minutes=2), 100.01, 1200, high=100.2, low=99.8)
     _append(svc, "FLAT", now-dt.timedelta(minutes=1), 100.02, 1250, high=100.2, low=99.8)
     _append(svc, "FLAT", now, 100.03, 1300, high=100.2, low=99.8)
-    event = svc._event_for("FLAT", svc._samples["FLAT"][-1], {"prev_close": 100.0, "atr": 1.5}, {"5m": 0.0}, now)
+    event = svc._event_for(
+        "FLAT", svc._samples["FLAT"][-1],
+        {"prev_close": 100.0, "atr": 1.5}, {"5m": 0.0}, now,
+        direction_info={"state": "BULLISH", "direction": "Bullish", "phase": "WEAKENING"},
+    )
     assert event is None
 
 
@@ -107,12 +113,14 @@ def test_mover_diagnostic_explains_why_event_was_missed():
         "MISS", svc._samples["MISS"][-1],
         {"symbol":"MISS","prev_close":100.0,"atr":2.0},
         nifty, now,
+        direction_info={"state": "BULLISH", "direction": "Bullish", "phase": "CONTINUING"},
     )
     assert event is None
     diag = svc._event_diagnostic(
         "MISS", svc._samples["MISS"][-1],
         {"symbol":"MISS","prev_close":100.0,"atr":2.0},
         nifty, now, event=event,
+        direction_info={"state": "BULLISH", "direction": "Bullish", "phase": "CONTINUING"},
     )
     assert diag["qualified"] is False
     assert diag["reason"] == "NO_EVENT_FAMILY_QUALIFIED"
@@ -284,3 +292,76 @@ def test_sector_index_is_context_only_and_enriches_stock_rows():
     assert row["sector_index"] == "NIFTY AUTO"
     assert row["sector_ret_5m_pct"] < 0
     assert row["relative_5m_vs_sector_pct"] > 0
+
+
+def test_direction_lock_requires_repeated_evidence_and_ignores_single_pullback():
+    svc = _service()
+    t0 = dt.datetime(2026, 9, 29, 10, 0)
+
+    states = []
+    for i, ret in enumerate((0.18, 0.16, 0.17, 0.15)):
+        states.append(svc._update_direction_lock(
+            "ABC", t0 + dt.timedelta(minutes=i), ret, 0.03, 0.04
+        ))
+    assert states[0]["state"] == "NEUTRAL"
+    assert states[-1]["state"] == "BULLISH"
+    locked_since = states[-1]["since"]
+
+    # One ordinary one-minute pullback cannot flip the visible direction.
+    pullback = svc._update_direction_lock(
+        "ABC", t0 + dt.timedelta(minutes=4), -0.12, -0.02, -0.03
+    )
+    assert pullback["state"] == "BULLISH"
+    assert pullback["phase"] in ("PULLBACK", "WEAKENING", "CONTINUING")
+    assert pullback["since"] == locked_since
+
+
+def test_direction_lock_reversal_must_pass_through_neutral():
+    svc = _service()
+    t0 = dt.datetime(2026, 9, 29, 10, 0)
+
+    for i, ret in enumerate((0.20, 0.18, 0.19, 0.17)):
+        state = svc._update_direction_lock(
+            "ABC", t0 + dt.timedelta(minutes=i), ret, 0.02, 0.03
+        )
+    assert state["state"] == "BULLISH"
+
+    seen_neutral = False
+    bearish = None
+    for j, ret in enumerate((-0.35, -0.32, -0.34, -0.30, -0.28, -0.26), start=4):
+        state = svc._update_direction_lock(
+            "ABC", t0 + dt.timedelta(minutes=j), ret, -0.05, -0.06
+        )
+        if state["state"] == "NEUTRAL":
+            seen_neutral = True
+        if state["state"] == "BEARISH":
+            bearish = state
+            break
+
+    assert seen_neutral is True
+    assert bearish is not None
+
+
+def test_event_is_hidden_until_direction_is_locked():
+    svc = _service()
+    now = dt.datetime(2026, 9, 29, 10, 0)
+    _append(svc, "ABC", now-dt.timedelta(minutes=5), 100.0, 1000, high=101.0)
+    _append(svc, "ABC", now-dt.timedelta(minutes=1), 100.5, 1200, high=101.0)
+    _append(svc, "ABC", now, 100.8, 1500, high=100.8)
+
+    event = svc._event_for(
+        "ABC", svc._samples["ABC"][-1],
+        {"prev_close": 100.0, "atr": 2.0},
+        {"5m": 0.0}, now,
+        direction_info={"state": "NEUTRAL", "direction": None, "phase": "NEUTRAL"},
+    )
+    assert event is None
+
+    diag = svc._event_diagnostic(
+        "ABC", svc._samples["ABC"][-1],
+        {"prev_close": 100.0, "atr": 2.0},
+        {"5m": 0.0}, now,
+        event=None,
+        direction_info={"state": "NEUTRAL", "direction": None, "phase": "NEUTRAL"},
+    )
+    assert diag["reason"] == "DIRECTION_NOT_LOCKED"

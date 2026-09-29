@@ -945,7 +945,7 @@ button, a, summary, input, select { touch-action: manipulation; }
 
     <div class="focus-kpis" aria-label="Live Focus Desk summary">
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-active-section" aria-label="Go to Actionable desk"><span>Actionable desk</span><strong id="v123-kpi-active">0</strong><small>ready / active / manage</small></button>
-      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Building"><span>Building</span><strong id="v123-kpi-building">0</strong><small>developing underlying events</small></button>
+      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Directional Spots"><span>Directional spots</span><strong id="v123-kpi-building">0</strong><small>locked regime · pre-entry only</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
       <div class="focus-kpi"><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
@@ -958,8 +958,8 @@ button, a, summary, input, select { touch-action: manipulation; }
       </main>
       <aside class="focus-sidebar">
         <div id="v123-focus-building-section" class="focus-sidebar-block focus-jump-target">
-          <div class="focus-section-head"><h3>Building Next</h3><span>pre-entry observation</span></div>
-          <div id="v123-focus-building" class="focus-list"><div class="focus-empty">Observer is looking for opening drive, range expansion, relative separation and continuation/reclaim events.</div></div>
+          <div class="focus-section-head"><h3>Directional Spots</h3><span>direction must be locked before display</span></div>
+          <div id="v123-focus-building" class="focus-list"><div class="focus-empty">No direction-locked stock has persistent evidence yet.</div></div>
         </div>
         <div id="v123-focus-continuation-section" class="focus-sidebar-block focus-jump-target">
           <div class="focus-section-head"><h3>Continuation Watch</h3><span>fresh evidence required</span></div>
@@ -1946,9 +1946,12 @@ button, a, summary, input, select { touch-action: manipulation; }
           '<div class="focus-mini"><span class="label">Execution</span><span class="value">Route '+v12Esc(route)+' · '+v12Esc(window)+'</span><span class="subvalue">'+
             v12Esc(optionContract)+(row.locked_option_delta!=null?' · Δ '+n(Math.abs(Number(row.locked_option_delta)),2):'')+
             (Number.isFinite(maxOptionPay)?' · max pay '+n(maxOptionPay,2):'')+'</span></div>'+
-          '<div class="focus-mini"><span class="label">Context</span><span class="value">5m '+v12Esc(witness)+'</span><span class="subvalue">'+
+          '<div class="focus-mini"><span class="label">Direction lock</span><span class="value">'+
+            v12Esc(row.direction_lock_state||row.direction||'NEUTRAL')+' · '+v12Esc(row.direction_lock_phase||'')+
+            '</span><span class="subvalue">'+
             v12Esc(row.event_family||'UNDERLYING EVENT')+
-            (row.relative_5m_vs_nifty_pct!=null?' · Rel '+s(row.relative_5m_vs_nifty_pct,2)+'%':'')+
+            (row.direction_up_evidence!=null?' · U '+n(row.direction_up_evidence,1):'')+
+            (row.direction_down_evidence!=null?' · D '+n(row.direction_down_evidence,1):'')+
             (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
         '</div>'+
         '<div class="focus-vehicles">'+
@@ -1997,7 +2000,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       : 'research only · no trade control');
 
     fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');
-    fill('v123-focus-building',building,'No developing focus name right now.');
+    fill('v123-focus-building',building,'No direction-locked spot has enough continuing evidence right now.');
     fill('v123-focus-continuation',continuation,'No recent important stock is waiting for fresh re-entry evidence.');
 
     var recentSeen={};

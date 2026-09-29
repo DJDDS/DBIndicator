@@ -28,6 +28,8 @@ import time
 from collections import defaultdict, deque
 from typing import Callable
 
+import numpy as np
+
 from . import scanner, v123_state
 
 
@@ -41,6 +43,20 @@ MAX_DISCOVERY_EVENTS = 30
 MAX_MOVER_ROWS = 30
 LIVE_SAMPLE_STALE_SECONDS = 45
 RECONNECT_COOLDOWN_SECONDS = 10
+
+# Direction Lock v1: sequential evidence, not a latest-3m vote.
+# Percent returns are standardized by an EW RMS scale; CUSUM requires repeated
+# same-direction evidence.  A reversal needs a larger opposite boundary and
+# must pass through NEUTRAL before the opposite lock can be shown.
+DIRECTION_UPDATE_SECONDS = 55
+DIRECTION_MIN_OBS = 4
+DIRECTION_CUSUM_K = 0.25
+DIRECTION_ENTRY_H = 2.5
+DIRECTION_FLIP_H = 4.0
+DIRECTION_EXIT_H = 1.25
+DIRECTION_Z_CAP = 3.0
+DIRECTION_SCALE_ALPHA = 0.20
+DIRECTION_SCALE_FLOOR = 0.00020
 
 
 def _f(value, default=None):
@@ -145,6 +161,7 @@ class UniverseMomentumStreamService:
         self._samples = defaultdict(lambda: deque(maxlen=max(120, int(MAX_SAMPLE_MINUTES * 60 / SAMPLE_SECONDS) + 20)))
         self._latest = {}
         self._last_sample_at = {}
+        self._direction_locks = {}
         self._last_publish_at = None
         self._last_checkpoint_at = None
         self._checkpoint_restored = False
@@ -355,6 +372,207 @@ class UniverseMomentumStreamService:
             return None
         return round(recent / prior, 3)
 
+
+    @staticmethod
+    def _clip_z(value):
+        return max(-DIRECTION_Z_CAP, min(DIRECTION_Z_CAP, float(value)))
+
+    @staticmethod
+    def _rms_z(state, prefix, value):
+        """Causal zero-centred volatility scaling for signed returns."""
+        x = float(value)
+        key = prefix + "_scale2"
+        scale2 = float(state.get(key) or 0.0)
+        if scale2 <= 0.0:
+            scale2 = max(DIRECTION_SCALE_FLOOR ** 2, x * x)
+        else:
+            scale2 = (
+                (1.0 - DIRECTION_SCALE_ALPHA) * scale2
+                + DIRECTION_SCALE_ALPHA * x * x
+            )
+        state[key] = scale2
+        return UniverseMomentumStreamService._clip_z(
+            x / math.sqrt(max(scale2, DIRECTION_SCALE_FLOOR ** 2))
+        )
+
+    @staticmethod
+    def _new_direction_lock():
+        return {
+            "state": "NEUTRAL",
+            "phase": "NEUTRAL",
+            "since": None,
+            "last_eval_at": None,
+            "observations": 0,
+            "up": 0.0,
+            "down": 0.0,
+            "residual_up": 0.0,
+            "residual_down": 0.0,
+            "weak_votes": 0,
+            "pending_direction": None,
+            "recent_signs": [],
+            "beta": np.zeros(3, dtype=float),
+            "covariance": np.eye(3, dtype=float) * 100.0,
+            "stock_scale2": 0.0,
+            "residual_scale2": 0.0,
+        }
+
+    def _update_direction_lock(
+        self, symbol, now, stock_return_pct, market_return_pct=None, sector_return_pct=None
+    ):
+        """Sequential direction regime with hysteresis.
+
+        The latest 3m candle never sets direction.  We update at roughly
+        one-minute cadence from signed 1m returns. Market and sector returns
+        feed a causal RLS residual that is recorded as an independent-move
+        witness, while the stock CUSUM controls the visible direction lock.
+        """
+        state = self._direction_locks.setdefault(symbol, self._new_direction_lock())
+        last_eval = _dt(state.get("last_eval_at"))
+        if last_eval is not None and (now - last_eval).total_seconds() < DIRECTION_UPDATE_SECONDS:
+            return self._direction_lock_summary(state)
+
+        sr = _f(stock_return_pct)
+        if sr is None:
+            return self._direction_lock_summary(state)
+
+        # Use decimal returns for the factor model; all factors share units.
+        y = sr / 100.0
+        m = (_f(market_return_pct, 0.0) or 0.0) / 100.0
+        s = (_f(sector_return_pct, 0.0) or 0.0) / 100.0
+        x = np.array([1.0, m, s], dtype=float)
+        beta = state["beta"]
+        P = state["covariance"]
+        Px = P @ x
+        denom = 0.995 + float(x.T @ Px)
+        gain = Px / max(denom, 1e-12)
+        prediction = float(x.T @ beta)
+        residual = y - prediction
+        state["beta"] = beta + gain * residual
+        state["covariance"] = (P - np.outer(gain, x) @ P) / 0.995
+
+        z_stock = self._rms_z(state, "stock", y)
+        z_residual = self._rms_z(state, "residual", residual)
+        state["observations"] = int(state.get("observations") or 0) + 1
+        state["last_eval_at"] = _iso(now)
+        signs = list(state.get("recent_signs") or [])
+        signs.append(1 if z_stock > 0.15 else (-1 if z_stock < -0.15 else 0))
+        state["recent_signs"] = signs[-4:]
+
+        state["up"] = max(0.0, float(state.get("up") or 0.0) + z_stock - DIRECTION_CUSUM_K)
+        state["down"] = max(0.0, float(state.get("down") or 0.0) - z_stock - DIRECTION_CUSUM_K)
+        state["residual_up"] = max(
+            0.0, float(state.get("residual_up") or 0.0) + z_residual - DIRECTION_CUSUM_K
+        )
+        state["residual_down"] = max(
+            0.0, float(state.get("residual_down") or 0.0) - z_residual - DIRECTION_CUSUM_K
+        )
+        prior = str(state.get("state") or "NEUTRAL")
+        obs = int(state["observations"])
+        up = float(state["up"])
+        down = float(state["down"])
+        recent_signs = list(state.get("recent_signs") or [])
+        bull_support = sum(1 for x in recent_signs if x > 0) >= 3
+        bear_support = sum(1 for x in recent_signs if x < 0) >= 3
+
+        # A locked direction cannot directly reverse.  Strong opposite
+        # evidence first neutralises it; the next evaluation may establish the
+        # opposite regime if that evidence remains above the entry boundary.
+        if prior == "BULLISH":
+            if down >= DIRECTION_FLIP_H and bear_support:
+                state["state"] = "NEUTRAL"
+                state["phase"] = "REVERSAL_PENDING"
+                state["pending_direction"] = "BEARISH"
+                state["since"] = None
+                state["weak_votes"] = 0
+            else:
+                if up < DIRECTION_EXIT_H and down < DIRECTION_ENTRY_H:
+                    state["weak_votes"] = int(state.get("weak_votes") or 0) + 1
+                else:
+                    state["weak_votes"] = 0
+                if int(state["weak_votes"]) >= 3:
+                    state["state"] = "NEUTRAL"
+                    state["phase"] = "NEUTRAL"
+                    state["pending_direction"] = None
+                    state["since"] = None
+                else:
+                    state["phase"] = "PULLBACK" if z_stock < -0.35 else (
+                        "CONTINUING" if up >= DIRECTION_ENTRY_H else "WEAKENING"
+                    )
+        elif prior == "BEARISH":
+            if up >= DIRECTION_FLIP_H and bull_support:
+                state["state"] = "NEUTRAL"
+                state["phase"] = "REVERSAL_PENDING"
+                state["pending_direction"] = "BULLISH"
+                state["since"] = None
+                state["weak_votes"] = 0
+            else:
+                if down < DIRECTION_EXIT_H and up < DIRECTION_ENTRY_H:
+                    state["weak_votes"] = int(state.get("weak_votes") or 0) + 1
+                else:
+                    state["weak_votes"] = 0
+                if int(state["weak_votes"]) >= 3:
+                    state["state"] = "NEUTRAL"
+                    state["phase"] = "NEUTRAL"
+                    state["pending_direction"] = None
+                    state["since"] = None
+                else:
+                    state["phase"] = "PULLBACK" if z_stock > 0.35 else (
+                        "CONTINUING" if down >= DIRECTION_ENTRY_H else "WEAKENING"
+                    )
+        else:
+            pending = state.get("pending_direction")
+            if obs >= DIRECTION_MIN_OBS:
+                if pending == "BULLISH":
+                    if up >= DIRECTION_ENTRY_H and bull_support:
+                        state["state"] = "BULLISH"
+                        state["phase"] = "CONTINUING"
+                        state["since"] = _iso(now)
+                        state["pending_direction"] = None
+                elif pending == "BEARISH":
+                    if down >= DIRECTION_ENTRY_H and bear_support:
+                        state["state"] = "BEARISH"
+                        state["phase"] = "CONTINUING"
+                        state["since"] = _iso(now)
+                        state["pending_direction"] = None
+                elif up >= DIRECTION_ENTRY_H and up > down and bull_support:
+                    state["state"] = "BULLISH"
+                    state["phase"] = "CONTINUING"
+                    state["since"] = _iso(now)
+                elif down >= DIRECTION_ENTRY_H and down > up and bear_support:
+                    state["state"] = "BEARISH"
+                    state["phase"] = "CONTINUING"
+                    state["since"] = _iso(now)
+
+        state["z_stock"] = z_stock
+        state["z_residual"] = z_residual
+        state["beta_market"] = float(state["beta"][1])
+        state["beta_sector"] = float(state["beta"][2])
+        return self._direction_lock_summary(state)
+
+    @staticmethod
+    def _direction_lock_summary(state):
+        locked = str(state.get("state") or "NEUTRAL")
+        return {
+            "state": locked,
+            "direction": "Bullish" if locked == "BULLISH" else (
+                "Bearish" if locked == "BEARISH" else None
+            ),
+            "phase": state.get("phase") or "NEUTRAL",
+            "since": state.get("since"),
+            "observations": int(state.get("observations") or 0),
+            "up_evidence": round(float(state.get("up") or 0.0), 3),
+            "down_evidence": round(float(state.get("down") or 0.0), 3),
+            "residual_up_evidence": round(float(state.get("residual_up") or 0.0), 3),
+            "residual_down_evidence": round(float(state.get("residual_down") or 0.0), 3),
+            "z_stock": round(float(state.get("z_stock") or 0.0), 3),
+            "z_residual": round(float(state.get("z_residual") or 0.0), 3),
+            "beta_market": round(float(state.get("beta_market") or 0.0), 3),
+            "beta_sector": round(float(state.get("beta_sector") or 0.0), 3),
+            "pending_direction": state.get("pending_direction"),
+            "bull_support_votes": sum(1 for x in (state.get("recent_signs") or []) if x > 0),
+            "bear_support_votes": sum(1 for x in (state.get("recent_signs") or []) if x < 0),
+        }
+
     def _near_extreme(self, sample, direction):
         price = _f(sample.get("price"))
         high = _f(sample.get("high"))
@@ -389,7 +607,7 @@ class UniverseMomentumStreamService:
         reclaim = _pct(current, x3)
         return had_pullback and reclaim is not None and reclaim <= -0.12
 
-    def _event_for(self, symbol, sample, meta, nifty_returns, now):
+    def _event_for(self, symbol, sample, meta, nifty_returns, now, direction_info=None):
         price = _f(sample.get("price"))
         prev = _f(sample.get("prev_close"), _f(meta.get("prev_close")))
         if price is None or prev is None or prev <= 0:
@@ -404,13 +622,9 @@ class UniverseMomentumStreamService:
         n5 = nifty_returns.get("5m")
         rel5 = None if r5 is None or n5 is None else round(r5 - n5, 4)
 
-        # Direction is derived from the live underlying event itself, not from
-        # legacy indicator votes.
-        live_axis = r3 if r3 is not None else (r5 if r5 is not None else day)
-        if live_axis is None or abs(live_axis) < 0.05:
-            direction = "Bullish" if day >= 0 else "Bearish"
-        else:
-            direction = "Bullish" if live_axis > 0 else "Bearish"
+        direction = str((direction_info or {}).get("direction") or "")
+        if direction not in ("Bullish", "Bearish"):
+            return None
 
         at_extreme = self._near_extreme(sample, direction)
         minute = now.hour * 60 + now.minute
@@ -497,10 +711,16 @@ class UniverseMomentumStreamService:
             "oi_chg_15m_pct": meta.get("oi_chg_15m_pct"),
             "oi_acceleration": meta.get("oi_acceleration"),
             "tod_rvol": meta.get("tod_rvol"),
+            "direction_lock_state": (direction_info or {}).get("state"),
+            "direction_lock_phase": (direction_info or {}).get("phase"),
+            "direction_lock_since": (direction_info or {}).get("since"),
+            "direction_up_evidence": (direction_info or {}).get("up_evidence"),
+            "direction_down_evidence": (direction_info or {}).get("down_evidence"),
+            "direction_residual_z": (direction_info or {}).get("z_residual"),
             "why": why,
         }
 
-    def _event_diagnostic(self, symbol, sample, meta, nifty_returns, now, event=None):
+    def _event_diagnostic(self, symbol, sample, meta, nifty_returns, now, event=None, direction_info=None):
         """Explain why an actual mover did or did not qualify for discovery."""
         price = _f(sample.get("price"))
         prev = _f(sample.get("prev_close"), _f(meta.get("prev_close")))
@@ -514,8 +734,19 @@ class UniverseMomentumStreamService:
         vol_accel = self._volume_accel(symbol, now)
         n5 = nifty_returns.get("5m")
         rel5 = None if r5 is None or n5 is None else round(r5 - n5, 4)
-        live_axis = r3 if r3 is not None else (r5 if r5 is not None else day)
-        direction = "Bullish" if (live_axis or 0) >= 0 else "Bearish"
+        direction = str((direction_info or {}).get("direction") or "")
+        if direction not in ("Bullish", "Bearish"):
+            return {
+                "qualified": False,
+                "reason": "DIRECTION_NOT_LOCKED",
+                "failed_gates": ["sequential direction evidence below lock boundary"],
+                "direction": None,
+                "direction_lock_state": (direction_info or {}).get("state", "NEUTRAL"),
+                "direction_lock_phase": (direction_info or {}).get("phase", "NEUTRAL"),
+                "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
+                "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
+                "near_session_extreme": False,
+            }
         at_extreme = self._near_extreme(sample, direction)
         sign = 1.0 if direction == "Bullish" else -1.0
 
@@ -606,6 +837,7 @@ class UniverseMomentumStreamService:
         nifty_live = _f(nifty_tick.get("last_price"))
         nifty_prev = _f((nifty_tick.get("ohlc") or {}).get("close"))
         nifty_returns = {
+            "1m": self._return("NIFTY 50", now, 60),
             "3m": self._return("NIFTY 50", now, 180),
             "5m": self._return("NIFTY 50", now, 300),
             "10m": self._return("NIFTY 50", now, 600),
@@ -623,6 +855,7 @@ class UniverseMomentumStreamService:
             sector_contexts[sector] = {
                 "live_price": sector_live,
                 "day_change_pct": _pct(sector_live, sector_prev),
+                "ret_1m_pct": self._return(sector, now, 60),
                 "ret_3m_pct": self._return(sector, now, 180),
                 "ret_5m_pct": self._return(sector, now, 300),
                 "ret_10m_pct": self._return(sector, now, 600),
@@ -648,15 +881,26 @@ class UniverseMomentumStreamService:
             sector = symbol_meta.get("sector") or scanner.SYMBOL_SECTOR_MAP.get(symbol)
             sector_ctx = sector_contexts.get(str(sector)) if sector else None
             sector_day = _f((sector_ctx or {}).get("day_change_pct"))
+            sector_r1 = _f((sector_ctx or {}).get("ret_1m_pct"))
             sector_r5 = _f((sector_ctx or {}).get("ret_5m_pct"))
             sector_r10 = _f((sector_ctx or {}).get("ret_10m_pct"))
             rel_sector5 = (
                 round(r5 - sector_r5, 4)
                 if r5 is not None and sector_r5 is not None else None
             )
-            event = self._event_for(symbol, sample, symbol_meta, nifty_returns, now)
+            direction_info = self._update_direction_lock(
+                symbol,
+                now,
+                self._return(symbol, now, 60),
+                nifty_returns.get("1m"),
+                sector_r1,
+            )
+            event = self._event_for(
+                symbol, sample, symbol_meta, nifty_returns, now, direction_info=direction_info
+            )
             diagnostic = self._event_diagnostic(
-                symbol, sample, symbol_meta, nifty_returns, now, event=event
+                symbol, sample, symbol_meta, nifty_returns, now,
+                event=event, direction_info=direction_info
             )
             if event is not None:
                 event["sector_index"] = sector
@@ -690,6 +934,12 @@ class UniverseMomentumStreamService:
                     "discovery_qualified": diagnostic.get("qualified"),
                     "discovery_reason": diagnostic.get("reason"),
                     "discovery_failed_gates": diagnostic.get("failed_gates"),
+                    "direction_lock_state": direction_info.get("state"),
+                    "direction_lock_phase": direction_info.get("phase"),
+                    "direction_lock_since": direction_info.get("since"),
+                    "direction_up_evidence": direction_info.get("up_evidence"),
+                    "direction_down_evidence": direction_info.get("down_evidence"),
+                    "direction_residual_z": direction_info.get("z_residual"),
                 })
             if event:
                 events.append(event)
@@ -723,6 +973,7 @@ class UniverseMomentumStreamService:
             "nifty": {
                 "live_price": nifty_live,
                 "day_change_pct": nifty_returns["day"],
+                "ret_1m_pct": nifty_returns["1m"],
                 "ret_3m_pct": nifty_returns["3m"],
                 "ret_5m_pct": nifty_returns["5m"],
                 "ret_10m_pct": nifty_returns["10m"],

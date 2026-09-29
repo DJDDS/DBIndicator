@@ -18,7 +18,7 @@ STATE_VERSION = 1
 MAX_FOCUS = 6
 MAX_CONTINUATION_WATCH = 6
 MAX_DEEP_MONITORED = 12
-MIN_FOCUS_MINUTES = 45
+BUILDING_STALE_MINUTES = 6
 CONTINUATION_WATCH_MINUTES = 45
 STALE_REARM_BLOCK_SECONDS = 90
 RECENT_KEEP_MINUTES = 90
@@ -517,6 +517,12 @@ def _new_focus_item(event, scan, now):
         "sector_day_change_pct": event.get("sector_day_change_pct"),
         "sector_ret_5m_pct": event.get("sector_ret_5m_pct"),
         "relative_5m_vs_sector_pct": event.get("relative_5m_vs_sector_pct"),
+        "direction_lock_state": event.get("direction_lock_state"),
+        "direction_lock_phase": event.get("direction_lock_phase"),
+        "direction_lock_since": event.get("direction_lock_since"),
+        "direction_up_evidence": event.get("direction_up_evidence"),
+        "direction_down_evidence": event.get("direction_down_evidence"),
+        "direction_residual_z": event.get("direction_residual_z"),
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
@@ -900,6 +906,12 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["day_change_pct"] = same.get("day_change_pct", item.get("day_change_pct"))
             item["ret_5m_pct"] = same.get("ret_5m_pct", item.get("ret_5m_pct"))
             item["relative_5m_vs_nifty_pct"] = same.get("relative_5m_vs_nifty_pct", item.get("relative_5m_vs_nifty_pct"))
+            item["direction_lock_state"] = same.get("direction_lock_state", item.get("direction_lock_state"))
+            item["direction_lock_phase"] = same.get("direction_lock_phase", item.get("direction_lock_phase"))
+            item["direction_lock_since"] = same.get("direction_lock_since", item.get("direction_lock_since"))
+            item["direction_up_evidence"] = same.get("direction_up_evidence", item.get("direction_up_evidence"))
+            item["direction_down_evidence"] = same.get("direction_down_evidence", item.get("direction_down_evidence"))
+            item["direction_residual_z"] = same.get("direction_residual_z", item.get("direction_residual_z"))
             item["why"] = list(same.get("why") or item.get("why") or [])
 
         if opposite and not same:
@@ -978,17 +990,18 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
         item["vehicles"] = _vehicle_state(item, trow)
         item["focus_age_min"] = round(_focus_age_minutes(item, now), 1)
 
-        # Persistence is deliberate, but not immortality.  A focus survives
-        # short ranking/data gaps; after its minimum observation commitment,
-        # an unproductive thesis can leave the desk so a new mover can enter.
+        # Building persistence now comes from continuing evidence, not a fixed
+        # 45-minute reservation.  If neither the locked-direction observer nor
+        # the tactical stream has refreshed the thesis for six minutes, free
+        # the Focus slot.  Strong names can remain indefinitely while evidence
+        # continues; weak one-off spots rotate out quickly.
         since_seen = _minutes_since(item.get("last_seen_at"), now)
         if (
             item.get("lifecycle") in ("DISCOVERED", "BUILDING")
-            and item["focus_age_min"] >= MIN_FOCUS_MINUTES
-            and since_seen is not None and since_seen >= 15.0
-            and not same and not trow
+            and since_seen is not None and since_seen >= BUILDING_STALE_MINUTES
+            and not same and not opposite and not trow
         ):
-            _history(item, "COMPLETED", now, "focus observation expired without an actionable structure")
+            _history(item, "COMPLETED", now, "building evidence expired; direction/event no longer persistent")
         elif (
             item.get("lifecycle") in ("PULLBACK", "WEAKENING", "PROVEN_MOVER")
             and item["focus_age_min"] >= 90.0
@@ -1283,6 +1296,12 @@ def tactical_candidates(state, scan_rows):
         base["watch_reference_family"] = item.get("watch_reference_family")
         base["ret_5m_pct"] = item.get("ret_5m_pct")
         base["relative_5m_vs_nifty_pct"] = item.get("relative_5m_vs_nifty_pct")
+        base["direction_lock_state"] = item.get("direction_lock_state")
+        base["direction_lock_phase"] = item.get("direction_lock_phase")
+        base["direction_lock_since"] = item.get("direction_lock_since")
+        base["direction_up_evidence"] = item.get("direction_up_evidence")
+        base["direction_down_evidence"] = item.get("direction_down_evidence")
+        base["direction_residual_z"] = item.get("direction_residual_z")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
@@ -1343,7 +1362,7 @@ def dashboard(state):
         "rules": {
             "max_focus": MAX_FOCUS,
             "max_continuation_watch": MAX_CONTINUATION_WATCH,
-            "minimum_observation_minutes": MIN_FOCUS_MINUTES,
+            "building_stale_minutes": BUILDING_STALE_MINUTES,
             "continuation_watch_minutes": CONTINUATION_WATCH_MINUTES,
             "direction_flip": "requires invalidation; opposite event alone does not flip thesis",
             "vehicle_separation": "underlying thesis is independent of option/future/cash eligibility",
