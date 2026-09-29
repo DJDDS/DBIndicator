@@ -32,7 +32,7 @@ from .v123_quant_regime import (
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_SAMPLE_SECONDS = 60
 DEFAULT_KEEP_SESSIONS = 10
 DEFAULT_MIN_TRAINING_SESSIONS = 2
@@ -112,12 +112,30 @@ class QuantRegimeShadowRecorder:
     def _model_path(self, day):
         return self.root / f"model_for_{day.isoformat()}.json"
 
+    @staticmethod
+    def _feature_file_matches_schema(path):
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    return int(row.get("schema_version") or 0) == SCHEMA_VERSION
+        except (OSError, ValueError, TypeError):
+            return False
+        return False
+
     def _feature_files_before(self, day):
         rows = []
         if self.root.exists():
             for path in self.root.glob("features_*.jsonl.gz"):
                 pday = _parse_date_from_name(path)
-                if pday is not None and pday < day:
+                if (
+                    pday is not None
+                    and pday < day
+                    and self._feature_file_matches_schema(path)
+                ):
                     rows.append((pday, path))
         rows.sort()
         return rows[-self.keep_sessions:]
@@ -131,6 +149,8 @@ class QuantRegimeShadowRecorder:
                     for line in fh:
                         try:
                             row = json.loads(line)
+                            if int(row.get("schema_version") or 0) != SCHEMA_VERSION:
+                                continue
                             x = row.get("x")
                             symbol = str(row.get("symbol") or "")
                             if symbol and isinstance(x, list) and len(x) == 4:
@@ -158,6 +178,8 @@ class QuantRegimeShadowRecorder:
         if model_file.exists():
             try:
                 snap = json.loads(model_file.read_text(encoding="utf-8"))
+                if int(snap.get("feature_schema_version") or 0) != SCHEMA_VERSION:
+                    raise ValueError("quant shadow model feature schema mismatch")
                 model = GaussianRegimeHMM()
                 model.means = np.asarray(snap["means"], dtype=float)
                 model.variances = np.asarray(snap["variances"], dtype=float)
@@ -182,6 +204,7 @@ class QuantRegimeShadowRecorder:
             "fit_for_trade_date": day.isoformat(),
             "training_sessions": list(self._training_sessions),
             "sequence_count": len(sequences),
+            "feature_schema_version": SCHEMA_VERSION,
             "production_controls": False,
         })
         _atomic_json(model_file, snap)
@@ -197,6 +220,8 @@ class QuantRegimeShadowRecorder:
             with gzip.open(path, "rt", encoding="utf-8") as fh:
                 for line in fh:
                     row = json.loads(line)
+                    if int(row.get("schema_version") or 0) != SCHEMA_VERSION:
+                        continue
                     symbol = str(row.get("symbol") or "")
                     price = row.get("price")
                     if not symbol or price is None:
