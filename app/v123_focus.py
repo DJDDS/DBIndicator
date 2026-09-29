@@ -280,6 +280,14 @@ def _spotting_context_decision(event):
             f"market={market}; sector={sector}; residual CUSUM {residual_evidence:.2f} < 7.50"
         )
 
+    # Legacy families are retained only for deterministic unit/research
+    # callbacks. The production full-universe observer no longer emits them,
+    # and event-radar rows cannot create Focus candidates.
+    if family in {
+        "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION",
+        "PULLBACK_RECLAIM", "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
+    }:
+        return True, "LEGACY_RESEARCH_ONLY", "legacy callback compatibility; not emitted by production observer"
     return False, "NON_QUANT_EVENT", "non-quant event cannot enter production Focus"
 
 
