@@ -149,6 +149,7 @@ class TacticalStockStreamService:
         self._tod_baseline = defaultdict(dict)
         self._depth_samples = defaultdict(lambda: deque(maxlen=180))
         self._basis_samples = defaultdict(lambda: deque(maxlen=180))
+        self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
         self._lifecycle = {}
         self._last_states = {}
         self._transition_ids = set()
@@ -296,6 +297,7 @@ class TacticalStockStreamService:
             self._tod_baseline = defaultdict(dict)
             self._depth_samples = defaultdict(lambda: deque(maxlen=180))
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
+            self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
             self._lifecycle = {}
             self._last_states = {}
             self._transition_ids = set()
@@ -318,6 +320,7 @@ class TacticalStockStreamService:
             self._tod_baseline.pop(symbol, None)
             self._depth_samples.pop(symbol, None)
             self._basis_samples.pop(symbol, None)
+            self._cash_samples.pop(symbol, None)
             self._seeded.discard(symbol)
 
     def snapshot(self):
@@ -668,34 +671,34 @@ class TacticalStockStreamService:
         if state_name in ("OPTION_NOT_TRADEABLE",) and "no valid option expiry" in reason.lower():
             hard = True
 
-        # New entries must remain fully executable for a fraction of a minute
-        # before the desk calls them Actionable. This is distinct from the 3m
-        # setup: 3m defines structure, this 30s dwell rejects quote/state flicker.
-        if state_name == "TRADEABLE" and prior != "TRADEABLE":
-            pending_key = "|".join(str(x or "") for x in (
-                candidate.get("symbol"),
-                candidate.get("direction"),
-                raw_state.get("reason"),
-            ))
-            if life.get("tradeable_pending_key") != pending_key:
-                life["tradeable_pending_key"] = pending_key
-                life["tradeable_pending_since"] = now
-            started = life.get("tradeable_pending_since")
-            elapsed = (now - started).total_seconds() if isinstance(started, dt.datetime) else 0.0
-            if elapsed < TRADEABLE_CONFIRM_SECONDS:
-                return {
-                    **raw_state,
-                    "state": "TRIGGERED",
-                    "tradeable": False,
-                    "reason": f"MICRO CONFIRM — executable condition held {elapsed:.0f}/{TRADEABLE_CONFIRM_SECONDS:.0f}s",
-                    "micro_confirm_pending": True,
-                    "micro_confirm_seconds": round(elapsed, 1),
-                    "data_ok": True,
-                    "data_status": "LIVE",
-                }
-        elif state_name != "TRADEABLE":
-            life.pop("tradeable_pending_key", None)
-            life.pop("tradeable_pending_since", None)
+        # Statistical hysteresis replaces a fixed persistence duration.
+        # Entry requires p<=0.01; an already TRADEABLE setup remains active
+        # while evidence stays inside the weaker p<=0.10 exit boundary and the
+        # option route remains executable.
+        structure_p = _f(raw_state.get("structure_p_value"))
+        if (
+            prior == "TRADEABLE"
+            and state_name in ("READY", "FORMING")
+            and structure_p is not None
+            and structure_p <= v122b_tactical.ADAPTIVE_STRUCTURE_EXIT_ALPHA
+            and bool(raw_state.get("route_tradeable"))
+        ):
+            life["last_valid_tactical_state"] = "TRADEABLE"
+            life["last_valid_tactical_reason"] = "adaptive evidence hysteresis"
+            return {
+                **raw_state,
+                "state": "TRADEABLE",
+                "tradeable": True,
+                "reason": (
+                    "ADAPTIVE EVIDENCE HOLD — structure remains inside "
+                    f"p<={v122b_tactical.ADAPTIVE_STRUCTURE_EXIT_ALPHA:.2f}"
+                ),
+                "evidence_hysteresis": True,
+                "execution_paused": False,
+                "data_ok": True,
+                "data_status": "LIVE",
+            }
+
 
         soft_deterioration = bool(
             prior in ("READY", "TRIGGERED", "TRADEABLE", "PROFIT_PROTECT")
@@ -728,9 +731,6 @@ class TacticalStockStreamService:
             life.pop("soft_pending_since", None)
 
         # Accept the raw state after any required dwell.
-        if state_name == "TRADEABLE":
-            life.pop("tradeable_pending_key", None)
-            life.pop("tradeable_pending_since", None)
         life["last_valid_tactical_state"] = state_name
         life["last_valid_tactical_reason"] = reason
         life.pop("soft_pending_key", None)
@@ -1104,17 +1104,18 @@ class TacticalStockStreamService:
                 return {"state": "TIME_EXIT", "tradeable": False, "reason": "setup failed its speed-class follow-through clock"}, life
 
         if _f(life.get("best_favourable"), 0.0) >= v122b_tactical.PROPOSED_PROFIT_PROTECT_FRACTION * expected:
-            bars = list(self._bars.get(symbol) or [])
-            trail = None
-            if len(bars) >= 2:
-                if sign > 0:
-                    trail = min(_f(b.get("low"), price) for b in bars[-2:])
-                else:
-                    trail = max(_f(b.get("high"), price) for b in bars[-2:])
-            life["trailing_invalidation"] = trail
-            if trail is not None and sign * (price - trail) <= 0:
-                return {"state": "EXIT", "tradeable": False, "reason": "3m profit-protection structure lost"}, life
-            return {"state": "PROFIT_PROTECT", "tradeable": True, "reason": "move proved itself; protect with fast 3m trailing structure"}, life
+            p_value = _f(setup.get("structure_p_value"))
+            if p_value is not None and p_value > v122b_tactical.ADAPTIVE_STRUCTURE_EXIT_ALPHA:
+                return {
+                    "state": "EXIT",
+                    "tradeable": False,
+                    "reason": "adaptive structure evidence decayed beyond exit boundary",
+                }, life
+            return {
+                "state": "PROFIT_PROTECT",
+                "tradeable": True,
+                "reason": "move proved itself; adaptive evidence still persists",
+            }, life
 
         return state, life
 
@@ -1220,6 +1221,7 @@ class TacticalStockStreamService:
                 builder = self._bar_builders.get(symbol)
                 current = dict(builder.current) if builder is not None and builder.current else None
                 depth_samples = list(self._depth_samples.get(symbol) or [])
+                price_samples = list(self._cash_samples.get(symbol) or [])
 
             cash_age = self._tick_age(cash_tick, now)
             fut_age = self._tick_age(fut_tick, now)
@@ -1233,16 +1235,15 @@ class TacticalStockStreamService:
             locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
             route = None
 
-            # Strict ordering: live directional option feasibility first.
-            # Only an eligible name is allowed into the 3m structural detector.
+            # Underlying movement was already found by the full-universe
+            # multiscale detector. Option feasibility gates expensive deep
+            # execution work; structure uses the market-selected horizon.
             if precheck.get("eligible"):
-                setup = v122b_tactical.detect_structural_setup(
-                    bars, current, candidate, now=now
+                setup = v122b_tactical.detect_adaptive_structure(
+                    price_samples, candidate, now=now
                 )
                 setup_direction = setup.get("direction") or direction
-                fast = v122b_tactical.fast_trend_veto(
-                    (bars + ([current] if current else []))[-80:], setup_direction
-                )
+                fast = {"veto": False, "reason": None, "method": "NO_TECHNICAL_INDICATOR_VETO"}
                 persistence = v122b_tactical.depth_persistence(
                     depth_samples, setup_direction, now=now
                 )
@@ -1252,11 +1253,11 @@ class TacticalStockStreamService:
                         direction=setup_direction,
                         spot=live_price,
                         now=now,
-                        speed_class=setup.get("speed_class") or "IMPULSE",
+                        speed_class=setup.get("speed_class") or "ADAPTIVE",
                         expected_underlying_move_abs=max(
-                            _f(setup.get("expected_move_abs"), 0.0),
-                            0.25 * max(_f(candidate.get("atr"), 0.0), 0.0),
+                            _f(setup.get("expected_move_abs"), 0.0), 1e-9
                         ),
+                        expected_horizon_seconds=setup.get("horizon_seconds"),
                         earnings=event,
                         locked_contract_symbol=locked_contract,
                     )
@@ -1275,29 +1276,34 @@ class TacticalStockStreamService:
                     "setup": None,
                     "ready": False,
                     "triggered": False,
-                    "speed_class": None,
+                    "speed_class": "ADAPTIVE",
                     "trigger": None,
                     "invalidation": None,
                     "expected_move_abs": None,
+                    "structure_p_value": None,
+                    "horizon_seconds": candidate.get("movement_horizon_seconds"),
                 }
-                fast = {"veto": False, "reason": None}
+                fast = {"veto": False, "reason": None, "method": "NO_TECHNICAL_INDICATOR_VETO"}
                 persistence = v122b_tactical.depth_persistence(
                     depth_samples, direction, now=now
                 )
-                reason = "PRE-3M OPTION BLOCK — " + str(
+                reason = "PRE-STRUCTURE OPTION BLOCK — " + str(
                     precheck.get("reason") or "live option feasibility unavailable"
                 )
                 route = {
                     "tradeable": False,
                     "reason": reason,
-                    "pre_3m_option_block": True,
+                    "pre_structure_option_block": True,
                 }
                 route_health = {"state": "BLOCKED", "reason": reason}
                 state = {
                     "state": "OPTION_NOT_TRADEABLE",
                     "tradeable": False,
                     "reason": reason,
-                    "pre_3m_option_block": True,
+                    "pre_structure_option_block": True,
+                    "structure_p_value": None,
+                    "structure_horizon_seconds": candidate.get("movement_horizon_seconds"),
+                    "route_tradeable": False,
                 }
 
             five_minute = v122b_tactical.five_minute_witness(
@@ -1357,7 +1363,7 @@ class TacticalStockStreamService:
             fresh_episode_reason = "OPEN_EPISODE_OR_FIRST_SIGNAL"
             if (
                 not life.get("episode_open")
-                and state.get("state") in ("READY", "TRIGGERED", "TRADEABLE")
+                and state.get("state") == "TRADEABLE"
             ):
                 fresh_episode_ok, fresh_episode_reason = self._fresh_episode_allowed(
                     life, setup, candidate, live_price, now
@@ -1382,9 +1388,9 @@ class TacticalStockStreamService:
             if state.get("state") == "TRADEABLE" and state.get("tradeable"):
                 direction_used[setup.get("direction") or direction] += 1
 
-            # Start an entry episode when structure is READY or already
-            # TRADEABLE and an executable option exists.  Contract selection
-            # becomes sticky for this thesis; later re-routes are explicit.
+            # Lock the mathematically best contract only when the candidate
+            # actually becomes Actionable/TRADEABLE. Before that, the route is
+            # re-evaluated as live strike economics change.
             route_contract = (route or {}).get("contract") or {}
             if (
                 fresh_episode_ok
@@ -1538,6 +1544,14 @@ class TacticalStockStreamService:
                 "rvol_3m_accel": rvol3_accel,
                 "rvol_3m_previous": rvol3_prev,
                 "relative_3m_vs_nifty_pct": relative3,
+                "movement_horizon_seconds": candidate.get("movement_horizon_seconds"),
+                "movement_z": candidate.get("movement_z"),
+                "movement_p_value": candidate.get("movement_p_value"),
+                "movement_coherence": candidate.get("movement_coherence"),
+                "structure_p_value": setup.get("structure_p_value"),
+                "structure_horizon_seconds": setup.get("horizon_seconds"),
+                "structure_aligned_increment_fraction": setup.get("aligned_increment_fraction"),
+                "structure_path_coherence": setup.get("path_coherence"),
                 "ret_5m_pct": candidate.get("ret_5m_pct"),
                 "relative_5m_vs_nifty_pct": candidate.get("relative_5m_vs_nifty_pct"),
                 "five_minute_witness": five_minute,
@@ -1553,6 +1567,14 @@ class TacticalStockStreamService:
                 "fast_veto": fast,
                 "earnings": event,
                 "option_route": option_route,
+                "best_option_contract": (option_route.get("contract") or {}).get("symbol"),
+                "best_option_strike": (option_route.get("contract") or {}).get("strike"),
+                "best_option_expiry": (option_route.get("contract") or {}).get("expiry"),
+                "best_option_expected_net_roi_pct": (option_route.get("contract") or {}).get("expected_net_roi_pct"),
+                "best_option_expected_net_gain_abs": (option_route.get("contract") or {}).get("expected_net_gain_abs"),
+                "best_option_friction_pct": (option_route.get("contract") or {}).get("estimated_round_trip_friction_pct"),
+                "best_option_selection_method": option_route.get("selection_method"),
+                "best_option_top_contracts": option_route.get("top_contracts"),
                 "one_lot_risk": risk,
                 "risk_plan": risk_plan,
                 "entry_episode_no": int(life.get("episode_no") or 0),
@@ -1617,7 +1639,7 @@ class TacticalStockStreamService:
                 "max_friction_ratio": v122b_tactical.PROPOSED_MAX_FRICTION_TO_EXPECTED_MOVE,
                 "same_direction_cap": v122b_tactical.PROPOSED_MAX_SAME_DIRECTION_ACTIVE,
                 "risk_plan_target1_fraction": v122b_tactical.RISK_PLAN_TARGET1_FRACTION,
-                "risk_plan_trailing_method": "PROVEN_3M_STRUCTURE_AFTER_T1",
+                "risk_plan_trailing_method": "ADAPTIVE_EVIDENCE_PERSISTENCE",
                 "risk_plan_atr3_shadow_length": v122b_tactical.RISK_PLAN_ATR3_LENGTH,
                 "risk_plan_controls_trading": False,
             },
@@ -1644,6 +1666,23 @@ class TacticalStockStreamService:
             symbol = meta.get("symbol")
             if kind in ("CASH", "INDEX"):
                 with self._lock:
+                    if kind == "CASH":
+                        px = _f(tick.get("last_price"))
+                        if px is not None and px > 0:
+                            bucket = self._cash_samples[symbol]
+                            sample = {
+                                "ts": now,
+                                "price": px,
+                                "volume": _f(tick.get("volume_traded", tick.get("volume"))),
+                            }
+                            if (
+                                bucket
+                                and isinstance(bucket[-1].get("ts"), dt.datetime)
+                                and (now - bucket[-1]["ts"]).total_seconds() < 1.0
+                            ):
+                                bucket[-1] = sample
+                            else:
+                                bucket.append(sample)
                     builder = self._bar_builders.get(symbol)
                     if builder is None:
                         builder = v122b_tactical.ThreeMinuteBarBuilder()

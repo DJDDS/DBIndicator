@@ -415,3 +415,73 @@ def test_event_is_hidden_until_direction_is_locked():
         direction_info={"state": "NEUTRAL", "direction": None, "phase": "NEUTRAL"},
     )
     assert diag["reason"] == "DIRECTION_NOT_LOCKED"
+
+
+def test_multiscale_detector_selects_significant_natural_horizon():
+    svc = _service()
+    now = dt.datetime(2026, 9, 29, 11, 0)
+    start = now - dt.timedelta(seconds=900)
+    stock = 100.0
+    nifty = 25000.0
+    for i in range(181):
+        ts = start + dt.timedelta(seconds=i * 5)
+        # Mild noise first, then a persistent stock-specific rise in the last 160s.
+        if i >= 149:
+            stock += 0.045 + (0.004 if i % 3 else -0.002)
+        else:
+            stock += 0.003 if i % 2 else -0.003
+        nifty += 0.2 if i % 2 else -0.2
+        _append(svc, "ABC", ts, stock, 1000 + i, prev=99.0)
+        _append(svc, "NIFTY 50", ts, nifty, 1 + i, prev=24990.0)
+
+    move = svc._multiscale_move("ABC", now)
+    assert move["ready"] is True
+    assert move["significant"] is True
+    assert move["direction"] == "Bullish"
+    assert move["natural_horizon_seconds"] in (80, 160, 320)
+    assert move["movement_p_value"] <= move["familywise_alpha"]
+
+
+def test_multiscale_detector_keeps_alternating_noise_unqualified():
+    svc = _service()
+    now = dt.datetime(2026, 9, 29, 11, 0)
+    start = now - dt.timedelta(seconds=900)
+    stock = 100.0
+    nifty = 25000.0
+    for i in range(181):
+        ts = start + dt.timedelta(seconds=i * 5)
+        stock += 0.02 if i % 2 else -0.02
+        nifty += 0.4 if i % 2 else -0.4
+        _append(svc, "CHOP", ts, stock, 1000 + i, prev=100.0)
+        _append(svc, "NIFTY 50", ts, nifty, 1 + i, prev=25000.0)
+
+    move = svc._multiscale_move("CHOP", now)
+    assert move["ready"] is True
+    assert move["significant"] is False
+    assert move["direction"] is None
+
+
+def test_multiscale_event_can_spot_before_slow_direction_lock():
+    svc = _service()
+    now = dt.datetime(2026, 9, 29, 11, 0)
+    _append(svc, "ABC", now, 101.0, 1000, prev=100.0)
+    event = svc._event_for(
+        "ABC", svc._samples["ABC"][-1],
+        {"symbol":"ABC","atr":2.0,"prev_close":100.0},
+        {"5m":0.0}, now,
+        direction_info={"state":"NEUTRAL","direction":None,"phase":"NEUTRAL","direction_evidence":0.0},
+        movement_info={
+            "significant":True,
+            "direction":"Bullish",
+            "natural_horizon_seconds":80,
+            "movement_z":4.2,
+            "movement_p_value":0.00003,
+            "movement_coherence":0.82,
+            "significant_horizons_seconds":[40,80],
+            "familywise_alpha":0.01,
+        },
+    )
+    assert event is not None
+    assert event["event_family"] == "MULTISCALE_MOVE"
+    assert event["direction"] == "Bullish"
+    assert event["movement_horizon_seconds"] == 80

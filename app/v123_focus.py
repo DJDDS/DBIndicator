@@ -25,6 +25,7 @@ RECENT_KEEP_MINUTES = 90
 MAX_HISTORY = 24
 
 EVENT_PRIORITY = {
+    "MULTISCALE_MOVE": 10,
     "REGIME_PERSISTENCE": 9,
     "HTF_REGIME_CONTINUATION": 8,
     "PULLBACK_RECLAIM": 7,
@@ -156,28 +157,8 @@ def _event_candidates(observer, event_radar):
         item["source"] = "FULL_UNIVERSE_PRICE"
         merged[(symbol, direction)] = item
 
-    for row in list((event_radar or {}).get("rows") or []):
-        symbol = str(row.get("symbol") or "")
-        direction = str(row.get("direction") or "")
-        if not symbol or direction not in ("Bullish", "Bearish"):
-            continue
-        state = str(row.get("event_state") or "")
-        if state not in ("PRESSURE_SHIFT", "READY", "BREAK_WATCH", "BREAK_ACCEPTED", "FOLLOW_THROUGH"):
-            continue
-        mapped_family = {
-            "PRESSURE_SHIFT": "PRESSURE_SHIFT",
-            "READY": "PRESSURE_SHIFT",
-            "BREAK_WATCH": "RANGE_EXPANSION",
-            "BREAK_ACCEPTED": "RANGE_EXPANSION",
-            "FOLLOW_THROUGH": "MOMENTUM_CONTINUATION",
-        }.get(state, "PRESSURE_SHIFT")
-        item = dict(row)
-        item["event_family"] = mapped_family
-        item["source"] = "EVENT_EVIDENCE"
-        key = (symbol, direction)
-        prior = merged.get(key)
-        if prior is None or EVENT_PRIORITY.get(mapped_family, 0) > EVENT_PRIORITY.get(prior.get("event_family"), 0):
-            merged[key] = item
+    # Production admission is underlying-price first. Event-radar/OI evidence
+    # may be shown elsewhere, but it cannot create a Focus candidate by itself.
 
     context_keys = (
         "ret_3m_pct", "ret_5m_pct", "ret_10m_pct",
@@ -192,6 +173,9 @@ def _event_candidates(observer, event_radar):
         "direction_evidence", "direction_stock_z", "direction_residual_z",
         "direction_residual_evidence", "direction_factor_status",
         "direction_beta_market", "direction_beta_sector",
+        "movement_horizon_seconds", "movement_z", "movement_p_value",
+        "movement_coherence", "movement_significant_horizons_seconds",
+        "movement_familywise_alpha",
     )
     rows = list(merged.values())
     for item in rows:
@@ -203,8 +187,8 @@ def _event_candidates(observer, event_radar):
     rows.sort(
         key=lambda x: (
             EVENT_PRIORITY.get(str(x.get("event_family") or ""), 0),
-            abs(_f(x.get("relative_5m_vs_nifty_pct"), _f(x.get("relative_3m_vs_nifty_pct"), 0.0))),
-            abs(_f(x.get("ret_5m_pct"), 0.0)),
+            abs(_f(x.get("movement_z"), 0.0)),
+            _f(x.get("direction_evidence"), 0.0),
         ),
         reverse=True,
     )
@@ -245,20 +229,33 @@ def _context_relation(direction, ret_5m, ret_10m, day_change=None):
 
 
 def _spotting_context_decision(event):
-    """Causal Spotting admission: trend lane or independent-breakaway lane.
+    """Causal admission with an adaptive production lane and legacy test lane.
 
-    This deliberately has no weighted score and no elapsed-time hold rule.
-    A candidate aligned with its live market/sector context keeps the normal
-    event path.  A candidate fighting either context must prove that it is a
-    real stock-specific breakaway using the same thresholds already present in
-    V12.3 event discovery: 10m continuation (0.35%), 5m relative separation
-    (0.30%), volume-rate acceleration (1.20x), and session-extreme pressure.
+    Production observer events are MULTISCALE_MOVE / REGIME_PERSISTENCE only.
+    Legacy named-event handling is retained solely so historical/research
+    callbacks can still be replayed; event-radar rows no longer create Focus.
     """
     event = dict(event or {})
     direction = str(event.get("direction") or "")
     if direction not in ("Bullish", "Bearish"):
         return False, "INVALID", "missing directional event"
 
+    family = str(event.get("event_family") or "")
+
+    # Data-derived production spotting: factor-residual multiscale significance.
+    if family == "MULTISCALE_MOVE":
+        p_value = _f(event.get("movement_p_value"))
+        alpha = _f(event.get("movement_familywise_alpha"), 0.01)
+        horizon = event.get("movement_horizon_seconds")
+        if p_value is not None and alpha is not None and p_value <= alpha:
+            return True, "MULTISCALE_RESIDUAL_MOVE", (
+                f"family-wise p={p_value:.5g}; natural horizon={horizon}s"
+            )
+        return False, "MULTISCALE_NOT_SIGNIFICANT", (
+            f"movement p={p_value}; alpha={alpha}"
+        )
+
+    # Slower quant persistence lane.
     market = _context_relation(
         direction,
         event.get("market_ret_5m_pct"),
@@ -273,15 +270,11 @@ def _spotting_context_decision(event):
     )
     opposed = market in ("OPPOSED", "MIXED") or sector in ("OPPOSED", "MIXED")
 
-    if not opposed:
-        if market == "UNKNOWN" and sector == "UNKNOWN":
-            return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
-        return True, "CONTEXT_SUPPORTED", f"market={market}; sector={sector}"
-
-    # Persistent quant regimes are already direction-locked by a calibrated
-    # absolute-return CUSUM. If the stock fights market/sector context, demand
-    # stronger factor-residual evidence (h=7.5) rather than volume/EMA rules.
-    if str(event.get("event_family") or "") in ("REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION"):
+    if family == "REGIME_PERSISTENCE":
+        if not opposed:
+            if market == "UNKNOWN" and sector == "UNKNOWN":
+                return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
+            return True, "QUANT_REGIME", f"market={market}; sector={sector}"
         residual_evidence = _f(event.get("direction_residual_evidence"), 0.0) or 0.0
         if residual_evidence >= 7.5:
             return True, "INDEPENDENT_QUANT_REGIME", (
@@ -290,6 +283,12 @@ def _spotting_context_decision(event):
         return False, "CONTEXT_REJECTED", (
             f"market={market}; sector={sector}; residual CUSUM {residual_evidence:.2f} < 7.50"
         )
+
+    # Legacy research/replay lane: preserve prior deterministic behavior.
+    if not opposed:
+        if market == "UNKNOWN" and sector == "UNKNOWN":
+            return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
+        return True, "CONTEXT_SUPPORTED", f"market={market}; sector={sector}"
 
     checks = {
         "10m continuation": _directional_ok(direction, event.get("ret_10m_pct"), 0.35),
@@ -303,8 +302,9 @@ def _spotting_context_decision(event):
     }
     failed = [name for name, ok in checks.items() if not ok]
     if not failed:
-        return True, "INDEPENDENT_BREAKAWAY", f"market={market}; sector={sector}; residual move sustained"
-
+        return True, "INDEPENDENT_BREAKAWAY", (
+            f"market={market}; sector={sector}; residual move sustained"
+        )
     return (
         False,
         "CONTEXT_REJECTED",
@@ -537,8 +537,8 @@ def _derive_lifecycle(item, event, trow, now):
             "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION",
             "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
         ):
-            if family in ("REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION"):
-                return "BUILDING", "persistent underlying direction established"
+            if family in ("MULTISCALE_MOVE", "REGIME_PERSISTENCE"):
+                return "BUILDING", "quantified underlying movement established"
             return "BUILDING", "underlying event is developing"
 
     # Persistence: absence from the latest snapshot is not invalidation.
@@ -589,6 +589,12 @@ def _new_focus_item(event, scan, now):
         "direction_beta_market": event.get("direction_beta_market"),
         "direction_beta_sector": event.get("direction_beta_sector"),
         "ret_15m_pct": event.get("ret_15m_pct"),
+        "movement_horizon_seconds": event.get("movement_horizon_seconds"),
+        "movement_z": event.get("movement_z"),
+        "movement_p_value": event.get("movement_p_value"),
+        "movement_coherence": event.get("movement_coherence"),
+        "movement_significant_horizons_seconds": event.get("movement_significant_horizons_seconds"),
+        "movement_familywise_alpha": event.get("movement_familywise_alpha"),
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
@@ -830,11 +836,32 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
     for mover in rows:
         symbol = str(mover.get("symbol") or "")
         day = _f(mover.get("day_change_pct"))
-        if day is None or abs(day) < 0.75:
-            continue
+        movement_direction = str(mover.get("movement_direction") or "")
+        movement_p = _f(mover.get("movement_p_value"))
+        movement_alpha = _f(mover.get("movement_familywise_alpha"))
+        has_quant_fields = (
+            mover.get("movement_significant") is not None
+            or movement_p is not None
+            or mover.get("movement_horizon_seconds") is not None
+        )
+        quant_meaningful = bool(
+            movement_direction in ("Bullish", "Bearish")
+            and movement_p is not None
+            and movement_alpha is not None
+            and movement_p <= movement_alpha
+        )
+        # Production audit: a "pipeline miss" means a statistically significant
+        # underlying move was outside Focus/Continuation. Legacy callers without
+        # multiscale fields retain the historical ±0.75% day-move fallback.
+        if has_quant_fields:
+            if not quant_meaningful:
+                continue
+            direction = movement_direction
+        else:
+            if day is None or abs(day) < 0.75:
+                continue
+            direction = "Bullish" if day > 0 else "Bearish"
         meaningful += 1
-
-        direction = "Bullish" if day > 0 else "Bearish"
         event = event_by_key.get((symbol, direction))
         trow = tactical_by_key.get((symbol, direction))
         trace = list(promotion_trace.get(symbol) or [])
@@ -873,7 +900,12 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         entry.update({
             "symbol": symbol,
             "direction": direction,
-            "day_change_pct": round(day, 3),
+            "day_change_pct": round(day, 3) if day is not None else None,
+            "movement_direction": mover.get("movement_direction"),
+            "movement_horizon_seconds": mover.get("movement_horizon_seconds"),
+            "movement_z": mover.get("movement_z"),
+            "movement_p_value": mover.get("movement_p_value"),
+            "movement_coherence": mover.get("movement_coherence"),
             "ret_3m_pct": mover.get("ret_3m_pct"),
             "ret_5m_pct": mover.get("ret_5m_pct"),
             "ret_10m_pct": mover.get("ret_10m_pct"),
@@ -902,6 +934,10 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         "universe_count": int(_f((observer or {}).get("universe_count"), 0.0) or 0),
         "observed_rows": len(rows),
         "meaningful_movers": meaningful,
+        "meaningful_definition": (
+            "FAMILYWISE_SIGNIFICANT_MULTISCALE_MOVE"
+            if whole_universe else "LEGACY_ABS_DAY_MOVE_GE_0_75"
+        ),
         "focus_movers": stage_counts.get("FOCUS", 0),
         "continuation_movers": stage_counts.get("CONTINUATION", 0),
         "captured_movers": stage_counts.get("FOCUS", 0) + stage_counts.get("CONTINUATION", 0),
@@ -950,15 +986,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
 
     scans = _scan_map(scan_rows)
     candidates = _event_candidates(observer, event_radar)
-    existing_keys = {_candidate_key(row) for row in candidates}
-    for row in _swing_regime_candidates(state, observer):
-        if _candidate_key(row) not in existing_keys:
-            candidates.append(row)
     candidates.sort(
         key=lambda x: (
             EVENT_PRIORITY.get(str(x.get("event_family") or ""), 0),
+            abs(_f(x.get("movement_z"), 0.0)),
             _f(x.get("direction_evidence"), 0.0),
-            _f(x.get("direction_residual_evidence"), 0.0),
         ),
         reverse=True,
     )
@@ -994,6 +1026,12 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["direction_evidence"] = same.get("direction_evidence", item.get("direction_evidence"))
             item["direction_residual_evidence"] = same.get("direction_residual_evidence", item.get("direction_residual_evidence"))
             item["direction_factor_status"] = same.get("direction_factor_status", item.get("direction_factor_status"))
+            item["movement_horizon_seconds"] = same.get("movement_horizon_seconds", item.get("movement_horizon_seconds"))
+            item["movement_z"] = same.get("movement_z", item.get("movement_z"))
+            item["movement_p_value"] = same.get("movement_p_value", item.get("movement_p_value"))
+            item["movement_coherence"] = same.get("movement_coherence", item.get("movement_coherence"))
+            item["movement_significant_horizons_seconds"] = same.get("movement_significant_horizons_seconds", item.get("movement_significant_horizons_seconds"))
+            item["movement_familywise_alpha"] = same.get("movement_familywise_alpha", item.get("movement_familywise_alpha"))
             item["why"] = list(same.get("why") or item.get("why") or [])
 
         if opposite and not same:
@@ -1044,6 +1082,14 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["execution_paused"] = bool(trow.get("execution_paused"))
             item["entry_zone"] = trow.get("entry_zone")
             item["max_option_entry_price"] = trow.get("max_option_entry_price")
+            item["best_option_contract"] = trow.get("best_option_contract")
+            item["best_option_strike"] = trow.get("best_option_strike")
+            item["best_option_expiry"] = trow.get("best_option_expiry")
+            item["best_option_expected_net_roi_pct"] = trow.get("best_option_expected_net_roi_pct")
+            item["best_option_expected_net_gain_abs"] = trow.get("best_option_expected_net_gain_abs")
+            item["best_option_friction_pct"] = trow.get("best_option_friction_pct")
+            item["best_option_selection_method"] = trow.get("best_option_selection_method")
+            item["best_option_top_contracts"] = trow.get("best_option_top_contracts")
             item["signal_age_seconds"] = trow.get("signal_age_seconds")
             item["session_entry_allowed"] = trow.get("session_entry_allowed")
             if trow.get("ret_5m_pct") is not None:
@@ -1136,6 +1182,14 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["execution_paused"] = bool(trow.get("execution_paused"))
             item["entry_zone"] = trow.get("entry_zone")
             item["max_option_entry_price"] = trow.get("max_option_entry_price")
+            item["best_option_contract"] = trow.get("best_option_contract")
+            item["best_option_strike"] = trow.get("best_option_strike")
+            item["best_option_expiry"] = trow.get("best_option_expiry")
+            item["best_option_expected_net_roi_pct"] = trow.get("best_option_expected_net_roi_pct")
+            item["best_option_expected_net_gain_abs"] = trow.get("best_option_expected_net_gain_abs")
+            item["best_option_friction_pct"] = trow.get("best_option_friction_pct")
+            item["best_option_selection_method"] = trow.get("best_option_selection_method")
+            item["best_option_top_contracts"] = trow.get("best_option_top_contracts")
             item["signal_age_seconds"] = trow.get("signal_age_seconds")
             item["session_entry_allowed"] = trow.get("session_entry_allowed")
             item["vehicles"] = _vehicle_state(item, trow)
@@ -1389,6 +1443,12 @@ def tactical_candidates(state, scan_rows):
         base["direction_residual_evidence"] = item.get("direction_residual_evidence")
         base["direction_factor_status"] = item.get("direction_factor_status")
         base["ret_15m_pct"] = item.get("ret_15m_pct")
+        base["movement_horizon_seconds"] = item.get("movement_horizon_seconds")
+        base["movement_z"] = item.get("movement_z")
+        base["movement_p_value"] = item.get("movement_p_value")
+        base["movement_coherence"] = item.get("movement_coherence")
+        base["movement_significant_horizons_seconds"] = item.get("movement_significant_horizons_seconds")
+        base["movement_familywise_alpha"] = item.get("movement_familywise_alpha")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
