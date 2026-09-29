@@ -179,8 +179,10 @@ def _event_candidates(observer, event_radar):
 
     context_keys = (
         "ret_3m_pct", "ret_5m_pct", "ret_10m_pct",
-        "relative_5m_vs_nifty_pct", "market_ret_5m_pct", "market_ret_10m_pct",
-        "sector", "sector_index", "sector_ret_5m_pct", "sector_ret_10m_pct",
+        "relative_5m_vs_nifty_pct", "market_day_change_pct",
+        "market_ret_5m_pct", "market_ret_10m_pct",
+        "sector", "sector_index", "sector_day_change_pct",
+        "sector_ret_5m_pct", "sector_ret_10m_pct",
         "relative_5m_vs_sector_pct", "volume_rate_accel", "near_session_extreme",
     )
     rows = list(merged.values())
@@ -212,7 +214,7 @@ def _directional_ok(direction, value, minimum=0.0):
     return value >= minimum if direction == "Bullish" else value <= -minimum
 
 
-def _context_relation(direction, ret_5m, ret_10m):
+def _context_relation(direction, ret_5m, ret_10m, day_change=None):
     """Classify one context without turning it into a score.
 
     0.05% is not a tuned alpha threshold; it is the same noise floor already
@@ -220,7 +222,7 @@ def _context_relation(direction, ret_5m, ret_10m):
     MIXED rather than being silently called supportive.
     """
     labels = []
-    for value in (ret_5m, ret_10m):
+    for value in (ret_5m, ret_10m, day_change):
         value = _f(value)
         if value is None or abs(value) < CONTEXT_NOISE_FLOOR_PCT:
             continue
@@ -250,10 +252,16 @@ def _spotting_context_decision(event):
         return False, "INVALID", "missing directional event"
 
     market = _context_relation(
-        direction, event.get("market_ret_5m_pct"), event.get("market_ret_10m_pct")
+        direction,
+        event.get("market_ret_5m_pct"),
+        event.get("market_ret_10m_pct"),
+        event.get("market_day_change_pct"),
     )
     sector = _context_relation(
-        direction, event.get("sector_ret_5m_pct"), event.get("sector_ret_10m_pct")
+        direction,
+        event.get("sector_ret_5m_pct"),
+        event.get("sector_ret_10m_pct"),
+        event.get("sector_day_change_pct"),
     )
     opposed = market in ("OPPOSED", "MIXED") or sector in ("OPPOSED", "MIXED")
 
@@ -504,7 +512,9 @@ def _new_focus_item(event, scan, now):
         "relative_5m_vs_nifty_pct": event.get("relative_5m_vs_nifty_pct"),
         "spotting_context_state": event.get("spotting_context_state"),
         "spotting_context_reason": event.get("spotting_context_reason"),
+        "market_day_change_pct": event.get("market_day_change_pct"),
         "market_ret_5m_pct": event.get("market_ret_5m_pct"),
+        "sector_day_change_pct": event.get("sector_day_change_pct"),
         "sector_ret_5m_pct": event.get("sector_ret_5m_pct"),
         "relative_5m_vs_sector_pct": event.get("relative_5m_vs_sector_pct"),
         "why": list(event.get("why") or []),
