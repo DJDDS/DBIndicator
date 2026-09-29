@@ -1328,6 +1328,7 @@ def _apply_weighted_score(results):
 
 _state_lock = threading.Lock()
 _v123_focus_lock = threading.Lock()
+_v12_option_feasible_symbols = set()
 _state = {
     "results": [],
     "last_scan": None,
@@ -2063,13 +2064,21 @@ def start_v121_index_stream_once():
 
 
 def _v122b_candidate_provider():
-    # V12.3: the deep FULL-mode tactical stream follows only the persistent
-    # Focus Desk.  There is intentionally no transient top-rank fallback:
-    # if no underlying thesis has earned a Focus slot, the deep stream waits.
+    # Deep 3m/futures/options work is reserved for symbols that passed the
+    # immutable 10-day stock-option feasibility freeze.  Direction discovery
+    # remains underlying-first across all F&O stocks; only execution monitoring
+    # is option-eligibility gated.
     with _state_lock:
         focus_state = dict(_state.get("v123_focus_state") or {})
         results = [dict(row) for row in (_state.get("results") or [])]
-    return v123_focus.tactical_candidates(focus_state, results)
+    rows = v123_focus.tactical_candidates(focus_state, results)
+    eligible = set(_v12_option_feasible_symbols)
+    if eligible:
+        rows = [row for row in rows if str(row.get("symbol") or "") in eligible]
+        for row in rows:
+            row["option_preeligible"] = True
+            row["option_preeligibility_source"] = "V12_10D_FREEZE"
+    return rows
 
 
 def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):
@@ -2247,6 +2256,7 @@ def start_v123_market_stream_once():
 
 
 def start_background_scanner():
+    global _v12_option_feasible_symbols
     # Freeze the completed first-ten-day stock-option feasibility sample once.
     # Fail soft: research provenance must never block the live scanner.
     try:
@@ -2255,10 +2265,12 @@ def start_background_scanner():
             config.V12_STORAGE_ROOT,
         )
         if freeze.get("status") in ("CREATED_AND_VERIFIED", "EXISTING_VALID_FREEZE"):
+            feasibility = freeze.get("feasibility") or {}
+            _v12_option_feasible_symbols = set(feasibility.get("tradeable_symbol_list") or [])
             log.info(
                 "V12 10-day feasibility freeze %s: %s tradeable symbols",
                 freeze.get("status"),
-                (freeze.get("feasibility") or {}).get("tradeable_symbols"),
+                feasibility.get("tradeable_symbols"),
             )
         elif freeze.get("status") == "NOT_FROZEN":
             log.info("V12 10-day feasibility freeze not created: %s", freeze.get("reason"))
