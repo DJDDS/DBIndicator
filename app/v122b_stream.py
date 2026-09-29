@@ -27,6 +27,7 @@ from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tac
 log = logging.getLogger(__name__)
 
 SOFT_STATE_DWELL_SECONDS = 20.0
+TRADEABLE_CONFIRM_SECONDS = 30.0
 CANCEL_REARM_COOLDOWN_SECONDS = 180.0
 STALE_VOID_SECONDS = 60.0
 NEW_ENTRY_CUTOFF_SECONDS = 15 * 3600 + 25 * 60
@@ -667,6 +668,35 @@ class TacticalStockStreamService:
         if state_name in ("OPTION_NOT_TRADEABLE",) and "no valid option expiry" in reason.lower():
             hard = True
 
+        # New entries must remain fully executable for a fraction of a minute
+        # before the desk calls them Actionable. This is distinct from the 3m
+        # setup: 3m defines structure, this 30s dwell rejects quote/state flicker.
+        if state_name == "TRADEABLE" and prior != "TRADEABLE":
+            pending_key = "|".join(str(x or "") for x in (
+                candidate.get("symbol"),
+                candidate.get("direction"),
+                raw_state.get("reason"),
+            ))
+            if life.get("tradeable_pending_key") != pending_key:
+                life["tradeable_pending_key"] = pending_key
+                life["tradeable_pending_since"] = now
+            started = life.get("tradeable_pending_since")
+            elapsed = (now - started).total_seconds() if isinstance(started, dt.datetime) else 0.0
+            if elapsed < TRADEABLE_CONFIRM_SECONDS:
+                return {
+                    **raw_state,
+                    "state": "TRIGGERED",
+                    "tradeable": False,
+                    "reason": f"MICRO CONFIRM — executable condition held {elapsed:.0f}/{TRADEABLE_CONFIRM_SECONDS:.0f}s",
+                    "micro_confirm_pending": True,
+                    "micro_confirm_seconds": round(elapsed, 1),
+                    "data_ok": True,
+                    "data_status": "LIVE",
+                }
+        elif state_name != "TRADEABLE":
+            life.pop("tradeable_pending_key", None)
+            life.pop("tradeable_pending_since", None)
+
         soft_deterioration = bool(
             prior in ("READY", "TRIGGERED", "TRADEABLE", "PROFIT_PROTECT")
             and state_name in ("FORMING", "CANCELLED", "OPTION_NOT_TRADEABLE", "ROUTE_DEGRADED")
@@ -698,6 +728,9 @@ class TacticalStockStreamService:
             life.pop("soft_pending_since", None)
 
         # Accept the raw state after any required dwell.
+        if state_name == "TRADEABLE":
+            life.pop("tradeable_pending_key", None)
+            life.pop("tradeable_pending_since", None)
         life["last_valid_tactical_state"] = state_name
         life["last_valid_tactical_reason"] = reason
         life.pop("soft_pending_key", None)

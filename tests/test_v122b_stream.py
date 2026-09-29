@@ -421,31 +421,42 @@ def test_soft_deterioration_requires_20_second_dwell_but_hard_exit_is_immediate(
     t0 = dt.datetime(2026, 9, 26, 10, 0)
     svc = _service(t0)
     life = svc._lifecycle.setdefault("ABC", {})
-    svc._stabilize_tactical_state(
+
+    first = svc._stabilize_tactical_state(
         life, {"state": "TRADEABLE", "tradeable": True, "reason": "triggered"},
         now=t0, stale=False, live_price=100.0,
-        candidate={"direction": "Bullish", "atr": 2.0},
+        candidate={"symbol": "ABC", "direction": "Bullish", "atr": 2.0},
     )
+    assert first["state"] == "TRIGGERED"
+    assert first["micro_confirm_pending"] is True
+
+    accepted = svc._stabilize_tactical_state(
+        life, {"state": "TRADEABLE", "tradeable": True, "reason": "triggered"},
+        now=t0 + dt.timedelta(seconds=31), stale=False, live_price=100.0,
+        candidate={"symbol": "ABC", "direction": "Bullish", "atr": 2.0},
+    )
+    assert accepted["state"] == "TRADEABLE"
+    assert accepted["tradeable"] is True
 
     soft = {"state": "CANCELLED", "tradeable": False, "reason": "persistent futures depth opposes the setup"}
     h1 = svc._stabilize_tactical_state(
-        life, soft, now=t0 + dt.timedelta(seconds=5), stale=False,
-        live_price=100.0, candidate={"direction": "Bullish", "atr": 2.0},
+        life, soft, now=t0 + dt.timedelta(seconds=36), stale=False,
+        live_price=100.0, candidate={"symbol": "ABC", "direction": "Bullish", "atr": 2.0},
     )
     assert h1["state"] == "TRADEABLE"
     assert h1["soft_hold"] is True
 
     h2 = svc._stabilize_tactical_state(
-        life, soft, now=t0 + dt.timedelta(seconds=26), stale=False,
-        live_price=100.0, candidate={"direction": "Bullish", "atr": 2.0},
+        life, soft, now=t0 + dt.timedelta(seconds=57), stale=False,
+        live_price=100.0, candidate={"symbol": "ABC", "direction": "Bullish", "atr": 2.0},
     )
     assert h2["state"] == "CANCELLED"
-    assert life["last_cancelled_at"] == t0 + dt.timedelta(seconds=26)
+    assert life["last_cancelled_at"] == t0 + dt.timedelta(seconds=57)
 
     hard = svc._stabilize_tactical_state(
         life, {"state": "EXIT", "tradeable": False, "reason": "underlying structural invalidation hit"},
-        now=t0 + dt.timedelta(seconds=27), stale=False,
-        live_price=99.0, candidate={"direction": "Bullish", "atr": 2.0},
+        now=t0 + dt.timedelta(seconds=58), stale=False,
+        live_price=99.0, candidate={"symbol": "ABC", "direction": "Bullish", "atr": 2.0},
     )
     assert hard["state"] == "EXIT"
 
@@ -589,3 +600,38 @@ def test_tactical_feed_health_marks_old_heartbeat_degraded():
     assert health["connected"] is True
     assert health["fresh"] is False
     assert health["last_tick_age_seconds"] == 45.0
+
+
+def test_tradeable_micro_confirm_resets_when_executability_breaks():
+    t0 = dt.datetime(2026, 9, 29, 13, 0)
+    svc = _service(t0)
+    life = svc._lifecycle.setdefault("ABC", {})
+    candidate = {"symbol": "ABC", "direction": "Bearish", "atr": 4.0}
+    raw = {"state": "TRADEABLE", "tradeable": True, "reason": "underlying trigger + executable option route"}
+
+    p0 = svc._stabilize_tactical_state(
+        life, raw, now=t0, stale=False, live_price=100.0, candidate=candidate
+    )
+    assert p0["state"] == "TRIGGERED"
+    assert p0["micro_confirm_seconds"] == 0.0
+
+    p1 = svc._stabilize_tactical_state(
+        life, raw, now=t0 + dt.timedelta(seconds=20),
+        stale=False, live_price=99.8, candidate=candidate
+    )
+    assert p1["state"] == "TRIGGERED"
+    assert p1["micro_confirm_seconds"] == 20.0
+
+    svc._stabilize_tactical_state(
+        life, {"state": "READY", "tradeable": False, "reason": "waiting"},
+        now=t0 + dt.timedelta(seconds=21),
+        stale=False, live_price=99.9, candidate=candidate
+    )
+    assert "tradeable_pending_since" not in life
+
+    restarted = svc._stabilize_tactical_state(
+        life, raw, now=t0 + dt.timedelta(seconds=25),
+        stale=False, live_price=99.7, candidate=candidate
+    )
+    assert restarted["state"] == "TRIGGERED"
+    assert restarted["micro_confirm_seconds"] == 0.0

@@ -18,7 +18,7 @@ import threading
 from typing import Any
 
 FOCUS_SCHEMA_VERSION = 1
-OBSERVER_SCHEMA_VERSION = 1
+OBSERVER_SCHEMA_VERSION = 2
 OBSERVER_KEEP_MINUTES = 15
 OBSERVER_CHECKPOINT_SECONDS = 30
 OBSERVER_DOWNSAMPLE_SECONDS = 15
@@ -230,7 +230,7 @@ def _thin_samples(samples, now):
     return out
 
 
-def save_observer_checkpoint(path: str, samples: dict, latest: dict, *, now=None) -> bool:
+def save_observer_checkpoint(path: str, samples: dict, latest: dict, *, direction_locks=None, now=None) -> bool:
     now = now or dt.datetime.now()
     symbols = {}
     for symbol, rows in (samples or {}).items():
@@ -255,12 +255,27 @@ def save_observer_checkpoint(path: str, samples: dict, latest: dict, *, now=None
             },
         }
 
+    locks = {}
+    for symbol, state in (direction_locks or {}).items():
+        if not isinstance(state, dict):
+            continue
+        locks[str(symbol)] = {
+            key: value for key, value in state.items()
+            if key in {
+                "state", "phase", "since", "last_eval_at", "observations",
+                "recent_candidates", "pending_direction", "path_efficiency",
+                "move_15m_atr", "ret_15m_pct", "ema9", "ema20",
+                "ema9_slope", "relative_residual_15m_pct",
+            }
+        }
+
     payload = {
         "schema_version": OBSERVER_SCHEMA_VERSION,
         "saved_at": _now_iso(now),
         "trade_date": now.date().isoformat(),
         "symbols": symbols,
         "latest": latest_compact,
+        "direction_locks": locks,
     }
     with _lock:
         _atomic_json_write(path, payload)

@@ -25,6 +25,8 @@ RECENT_KEEP_MINUTES = 90
 MAX_HISTORY = 24
 
 EVENT_PRIORITY = {
+    "REGIME_PERSISTENCE": 9,
+    "HTF_REGIME_CONTINUATION": 8,
     "PULLBACK_RECLAIM": 7,
     "OPENING_DRIVE": 6,
     "RANGE_EXPANSION": 5,
@@ -184,6 +186,10 @@ def _event_candidates(observer, event_radar):
         "sector", "sector_index", "sector_day_change_pct",
         "sector_ret_5m_pct", "sector_ret_10m_pct",
         "relative_5m_vs_sector_pct", "volume_rate_accel", "near_session_extreme",
+        "path_efficiency_15m", "move_15m_atr", "ret_15m_pct",
+        "ema9_live", "ema20_live", "ema9_slope_live",
+        "direction_lock_state", "direction_lock_phase", "direction_lock_since",
+        "direction_up_evidence", "direction_down_evidence", "direction_residual_z",
     )
     rows = list(merged.values())
     for item in rows:
@@ -270,6 +276,16 @@ def _spotting_context_decision(event):
             return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
         return True, "CONTEXT_SUPPORTED", f"market={market}; sector={sector}"
 
+    # A persistent path regime has already survived a 15m efficiency,
+    # ATR-travel and EMA-structure test.  Do not force it back through the
+    # old session-extreme/volume-spike gate; that is exactly what made
+    # established names such as morning trends arrive late.
+    if str(event.get("event_family") or "") in ("REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION"):
+        pe = abs(_f(event.get("path_efficiency_15m"), 0.0) or 0.0)
+        move = _f(event.get("move_15m_atr"))
+        if pe >= 0.35 and (move is None or move >= 0.20):
+            return True, "PERSISTENT_REGIME", f"market={market}; sector={sector}; 15m path regime sustained"
+
     checks = {
         "10m continuation": _directional_ok(direction, event.get("ret_10m_pct"), 0.35),
         "vs NIFTY": _directional_ok(direction, event.get("relative_5m_vs_nifty_pct"), 0.30),
@@ -289,6 +305,40 @@ def _spotting_context_decision(event):
         "CONTEXT_REJECTED",
         f"market={market}; sector={sector}; missing " + ", ".join(failed),
     )
+
+
+def _swing_regime_candidates(state, observer):
+    """Bridge slow 1D direction into the intraday desk without auto-trading it.
+
+    A swing pick is only promoted into the candidate stream when the live PDT
+    lock independently agrees with the same direction.  This prevents the
+    1D lane from becoming an entry signal while avoiding rediscovery from zero.
+    """
+    selected = ((state or {}).get("swing_1d") or {}).get("selected") or {}
+    context = {
+        str(row.get("symbol") or ""): dict(row)
+        for row in list((observer or {}).get("quant_rows") or [])
+        if row.get("symbol")
+    }
+    out = []
+    for symbol, swing in selected.items():
+        row = context.get(str(symbol)) or {}
+        direction = str((swing or {}).get("direction") or "")
+        locked = str(row.get("direction_lock_state") or "")
+        locked_direction = "Bullish" if locked == "BULLISH" else ("Bearish" if locked == "BEARISH" else "")
+        if direction not in ("Bullish", "Bearish") or locked_direction != direction:
+            continue
+        item = dict(row)
+        item.update({
+            "symbol": str(symbol),
+            "direction": direction,
+            "event_family": "HTF_REGIME_CONTINUATION",
+            "source": "SWING_1D+LIVE_PDT",
+            "detected_at": row.get("direction_lock_since"),
+            "why": ["1D swing direction", "live persistent direction agrees"],
+        })
+        out.append(item)
+    return out
 
 
 def _tactical_map(tactical):
@@ -478,8 +528,12 @@ def _derive_lifecycle(item, event, trow, now):
         if prior in ("ACTIVE", "MANAGE") and tstate in ("FORMING", ""):
             return "PULLBACK", "original move active; waiting for next continuation entry"
         if estate == "PRESSURE_SHIFT" or family in (
-            "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION", "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
+            "REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION",
+            "OPENING_DRIVE", "RANGE_EXPANSION", "RELATIVE_SEPARATION",
+            "MOMENTUM_CONTINUATION", "PRESSURE_SHIFT",
         ):
+            if family in ("REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION"):
+                return "BUILDING", "persistent underlying direction established"
             return "BUILDING", "underlying event is developing"
 
     # Persistence: absence from the latest snapshot is not invalidation.
@@ -523,6 +577,12 @@ def _new_focus_item(event, scan, now):
         "direction_up_evidence": event.get("direction_up_evidence"),
         "direction_down_evidence": event.get("direction_down_evidence"),
         "direction_residual_z": event.get("direction_residual_z"),
+        "path_efficiency_15m": event.get("path_efficiency_15m"),
+        "move_15m_atr": event.get("move_15m_atr"),
+        "ret_15m_pct": event.get("ret_15m_pct"),
+        "ema9_live": event.get("ema9_live"),
+        "ema20_live": event.get("ema20_live"),
+        "ema9_slope_live": event.get("ema9_slope_live"),
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
@@ -884,6 +944,18 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
 
     scans = _scan_map(scan_rows)
     candidates = _event_candidates(observer, event_radar)
+    existing_keys = {_candidate_key(row) for row in candidates}
+    for row in _swing_regime_candidates(state, observer):
+        if _candidate_key(row) not in existing_keys:
+            candidates.append(row)
+    candidates.sort(
+        key=lambda x: (
+            EVENT_PRIORITY.get(str(x.get("event_family") or ""), 0),
+            abs(_f(x.get("path_efficiency_15m"), 0.0)),
+            abs(_f(x.get("ret_5m_pct"), 0.0)),
+        ),
+        reverse=True,
+    )
     event_by_key = {_candidate_key(row): row for row in candidates}
     tactical_by_key = _tactical_map(tactical)
     focus = dict(state.get("focus") or {})
@@ -1302,6 +1374,12 @@ def tactical_candidates(state, scan_rows):
         base["direction_up_evidence"] = item.get("direction_up_evidence")
         base["direction_down_evidence"] = item.get("direction_down_evidence")
         base["direction_residual_z"] = item.get("direction_residual_z")
+        base["path_efficiency_15m"] = item.get("path_efficiency_15m")
+        base["move_15m_atr"] = item.get("move_15m_atr")
+        base["ret_15m_pct"] = item.get("ret_15m_pct")
+        base["ema9_live"] = item.get("ema9_live")
+        base["ema20_live"] = item.get("ema20_live")
+        base["ema9_slope_live"] = item.get("ema9_slope_live")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
