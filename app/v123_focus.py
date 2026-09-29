@@ -186,10 +186,12 @@ def _event_candidates(observer, event_radar):
         "sector", "sector_index", "sector_day_change_pct",
         "sector_ret_5m_pct", "sector_ret_10m_pct",
         "relative_5m_vs_sector_pct", "volume_rate_accel", "near_session_extreme",
-        "path_efficiency_15m", "move_15m_atr", "ret_15m_pct",
-        "ema9_live", "ema20_live", "ema9_slope_live",
+        "ret_15m_pct",
         "direction_lock_state", "direction_lock_phase", "direction_lock_since",
-        "direction_up_evidence", "direction_down_evidence", "direction_residual_z",
+        "direction_up_evidence", "direction_down_evidence",
+        "direction_evidence", "direction_stock_z", "direction_residual_z",
+        "direction_residual_evidence", "direction_factor_status",
+        "direction_beta_market", "direction_beta_sector",
     )
     rows = list(merged.values())
     for item in rows:
@@ -276,15 +278,18 @@ def _spotting_context_decision(event):
             return True, "CONTEXT_UNAVAILABLE", "market/sector context unavailable; fail-soft"
         return True, "CONTEXT_SUPPORTED", f"market={market}; sector={sector}"
 
-    # A persistent path regime has already survived a 15m efficiency,
-    # ATR-travel and EMA-structure test.  Do not force it back through the
-    # old session-extreme/volume-spike gate; that is exactly what made
-    # established names such as morning trends arrive late.
+    # Persistent quant regimes are already direction-locked by a calibrated
+    # absolute-return CUSUM. If the stock fights market/sector context, demand
+    # stronger factor-residual evidence (h=7.5) rather than volume/EMA rules.
     if str(event.get("event_family") or "") in ("REGIME_PERSISTENCE", "HTF_REGIME_CONTINUATION"):
-        pe = abs(_f(event.get("path_efficiency_15m"), 0.0) or 0.0)
-        move = _f(event.get("move_15m_atr"))
-        if pe >= 0.35 and (move is None or move >= 0.20):
-            return True, "PERSISTENT_REGIME", f"market={market}; sector={sector}; 15m path regime sustained"
+        residual_evidence = _f(event.get("direction_residual_evidence"), 0.0) or 0.0
+        if residual_evidence >= 7.5:
+            return True, "INDEPENDENT_QUANT_REGIME", (
+                f"market={market}; sector={sector}; residual CUSUM={residual_evidence:.2f}"
+            )
+        return False, "CONTEXT_REJECTED", (
+            f"market={market}; sector={sector}; residual CUSUM {residual_evidence:.2f} < 7.50"
+        )
 
     checks = {
         "10m continuation": _directional_ok(direction, event.get("ret_10m_pct"), 0.35),
@@ -310,8 +315,8 @@ def _spotting_context_decision(event):
 def _swing_regime_candidates(state, observer):
     """Bridge slow 1D direction into the intraday desk without auto-trading it.
 
-    A swing pick is only promoted into the candidate stream when the live PDT
-    lock independently agrees with the same direction.  This prevents the
+    A swing pick is only promoted when the live quant CUSUM lock independently
+    agrees with the same direction. This prevents the
     1D lane from becoming an entry signal while avoiding rediscovery from zero.
     """
     selected = ((state or {}).get("swing_1d") or {}).get("selected") or {}
@@ -333,7 +338,7 @@ def _swing_regime_candidates(state, observer):
             "symbol": str(symbol),
             "direction": direction,
             "event_family": "HTF_REGIME_CONTINUATION",
-            "source": "SWING_1D+LIVE_PDT",
+            "source": "SWING_1D+QUANT_LOCK",
             "detected_at": row.get("direction_lock_since"),
             "why": ["1D swing direction", "live persistent direction agrees"],
         })
@@ -576,13 +581,14 @@ def _new_focus_item(event, scan, now):
         "direction_lock_since": event.get("direction_lock_since"),
         "direction_up_evidence": event.get("direction_up_evidence"),
         "direction_down_evidence": event.get("direction_down_evidence"),
+        "direction_stock_z": event.get("direction_stock_z"),
         "direction_residual_z": event.get("direction_residual_z"),
-        "path_efficiency_15m": event.get("path_efficiency_15m"),
-        "move_15m_atr": event.get("move_15m_atr"),
+        "direction_evidence": event.get("direction_evidence"),
+        "direction_residual_evidence": event.get("direction_residual_evidence"),
+        "direction_factor_status": event.get("direction_factor_status"),
+        "direction_beta_market": event.get("direction_beta_market"),
+        "direction_beta_sector": event.get("direction_beta_sector"),
         "ret_15m_pct": event.get("ret_15m_pct"),
-        "ema9_live": event.get("ema9_live"),
-        "ema20_live": event.get("ema20_live"),
-        "ema9_slope_live": event.get("ema9_slope_live"),
         "why": list(event.get("why") or []),
         "trigger": event.get("trigger"),
         "invalidation": event.get("invalidation"),
@@ -951,8 +957,8 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
     candidates.sort(
         key=lambda x: (
             EVENT_PRIORITY.get(str(x.get("event_family") or ""), 0),
-            abs(_f(x.get("path_efficiency_15m"), 0.0)),
-            abs(_f(x.get("ret_5m_pct"), 0.0)),
+            _f(x.get("direction_evidence"), 0.0),
+            _f(x.get("direction_residual_evidence"), 0.0),
         ),
         reverse=True,
     )
@@ -983,7 +989,11 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
             item["direction_lock_since"] = same.get("direction_lock_since", item.get("direction_lock_since"))
             item["direction_up_evidence"] = same.get("direction_up_evidence", item.get("direction_up_evidence"))
             item["direction_down_evidence"] = same.get("direction_down_evidence", item.get("direction_down_evidence"))
+            item["direction_stock_z"] = same.get("direction_stock_z", item.get("direction_stock_z"))
             item["direction_residual_z"] = same.get("direction_residual_z", item.get("direction_residual_z"))
+            item["direction_evidence"] = same.get("direction_evidence", item.get("direction_evidence"))
+            item["direction_residual_evidence"] = same.get("direction_residual_evidence", item.get("direction_residual_evidence"))
+            item["direction_factor_status"] = same.get("direction_factor_status", item.get("direction_factor_status"))
             item["why"] = list(same.get("why") or item.get("why") or [])
 
         if opposite and not same:
@@ -1373,13 +1383,12 @@ def tactical_candidates(state, scan_rows):
         base["direction_lock_since"] = item.get("direction_lock_since")
         base["direction_up_evidence"] = item.get("direction_up_evidence")
         base["direction_down_evidence"] = item.get("direction_down_evidence")
+        base["direction_stock_z"] = item.get("direction_stock_z")
         base["direction_residual_z"] = item.get("direction_residual_z")
-        base["path_efficiency_15m"] = item.get("path_efficiency_15m")
-        base["move_15m_atr"] = item.get("move_15m_atr")
+        base["direction_evidence"] = item.get("direction_evidence")
+        base["direction_residual_evidence"] = item.get("direction_residual_evidence")
+        base["direction_factor_status"] = item.get("direction_factor_status")
         base["ret_15m_pct"] = item.get("ret_15m_pct")
-        base["ema9_live"] = item.get("ema9_live")
-        base["ema20_live"] = item.get("ema20_live")
-        base["ema9_slope_live"] = item.get("ema9_slope_live")
         base["locked_option_contract"] = item.get("locked_option_contract")
         base["entry_episode_no"] = item.get("entry_episode_no")
         rows.append(base)
