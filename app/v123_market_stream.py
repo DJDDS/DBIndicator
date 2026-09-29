@@ -51,8 +51,8 @@ RECONNECT_COOLDOWN_SECONDS = 10
 DIRECTION_UPDATE_SECONDS = 55
 DIRECTION_MIN_OBS = 4
 DIRECTION_CUSUM_K = 0.25
-DIRECTION_ENTRY_H = 3.0
-DIRECTION_FLIP_H = 4.5
+DIRECTION_ENTRY_H = 2.5
+DIRECTION_FLIP_H = 4.0
 DIRECTION_EXIT_H = 1.25
 DIRECTION_Z_CAP = 3.0
 DIRECTION_SCALE_ALPHA = 0.20
@@ -409,6 +409,7 @@ class UniverseMomentumStreamService:
             "residual_down": 0.0,
             "weak_votes": 0,
             "pending_direction": None,
+            "recent_signs": [],
             "beta": np.zeros(3, dtype=float),
             "covariance": np.eye(3, dtype=float) * 100.0,
             "stock_scale2": 0.0,
@@ -453,6 +454,9 @@ class UniverseMomentumStreamService:
         z_residual = self._rms_z(state, "residual", residual)
         state["observations"] = int(state.get("observations") or 0) + 1
         state["last_eval_at"] = _iso(now)
+        signs = list(state.get("recent_signs") or [])
+        signs.append(1 if z_stock > 0.15 else (-1 if z_stock < -0.15 else 0))
+        state["recent_signs"] = signs[-4:]
 
         state["up"] = max(0.0, float(state.get("up") or 0.0) + z_stock - DIRECTION_CUSUM_K)
         state["down"] = max(0.0, float(state.get("down") or 0.0) - z_stock - DIRECTION_CUSUM_K)
@@ -466,12 +470,15 @@ class UniverseMomentumStreamService:
         obs = int(state["observations"])
         up = float(state["up"])
         down = float(state["down"])
+        recent_signs = list(state.get("recent_signs") or [])
+        bull_support = sum(1 for x in recent_signs if x > 0) >= 3
+        bear_support = sum(1 for x in recent_signs if x < 0) >= 3
 
         # A locked direction cannot directly reverse.  Strong opposite
         # evidence first neutralises it; the next evaluation may establish the
         # opposite regime if that evidence remains above the entry boundary.
         if prior == "BULLISH":
-            if down >= DIRECTION_FLIP_H:
+            if down >= DIRECTION_FLIP_H and bear_support:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BEARISH"
@@ -492,7 +499,7 @@ class UniverseMomentumStreamService:
                         "CONTINUING" if up >= DIRECTION_ENTRY_H else "WEAKENING"
                     )
         elif prior == "BEARISH":
-            if up >= DIRECTION_FLIP_H:
+            if up >= DIRECTION_FLIP_H and bull_support:
                 state["state"] = "NEUTRAL"
                 state["phase"] = "REVERSAL_PENDING"
                 state["pending_direction"] = "BULLISH"
@@ -516,22 +523,22 @@ class UniverseMomentumStreamService:
             pending = state.get("pending_direction")
             if obs >= DIRECTION_MIN_OBS:
                 if pending == "BULLISH":
-                    if up >= DIRECTION_ENTRY_H:
+                    if up >= DIRECTION_ENTRY_H and bull_support:
                         state["state"] = "BULLISH"
                         state["phase"] = "CONTINUING"
                         state["since"] = _iso(now)
                         state["pending_direction"] = None
                 elif pending == "BEARISH":
-                    if down >= DIRECTION_ENTRY_H:
+                    if down >= DIRECTION_ENTRY_H and bear_support:
                         state["state"] = "BEARISH"
                         state["phase"] = "CONTINUING"
                         state["since"] = _iso(now)
                         state["pending_direction"] = None
-                elif up >= DIRECTION_ENTRY_H and up > down:
+                elif up >= DIRECTION_ENTRY_H and up > down and bull_support:
                     state["state"] = "BULLISH"
                     state["phase"] = "CONTINUING"
                     state["since"] = _iso(now)
-                elif down >= DIRECTION_ENTRY_H and down > up:
+                elif down >= DIRECTION_ENTRY_H and down > up and bear_support:
                     state["state"] = "BEARISH"
                     state["phase"] = "CONTINUING"
                     state["since"] = _iso(now)
@@ -562,6 +569,8 @@ class UniverseMomentumStreamService:
             "beta_market": round(float(state.get("beta_market") or 0.0), 3),
             "beta_sector": round(float(state.get("beta_sector") or 0.0), 3),
             "pending_direction": state.get("pending_direction"),
+            "bull_support_votes": sum(1 for x in (state.get("recent_signs") or []) if x > 0),
+            "bear_support_votes": sum(1 for x in (state.get("recent_signs") or []) if x < 0),
         }
 
     def _near_extreme(self, sample, direction):
