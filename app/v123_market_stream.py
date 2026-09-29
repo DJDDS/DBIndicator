@@ -434,14 +434,18 @@ class UniverseMomentumStreamService:
         vals = [float(v) for v in values if v is not None and math.isfinite(float(v))]
         if len(vals) < 6:
             return [], 0.0, None
-        # Null hypothesis is zero drift. Estimate only scale; do not subtract
-        # the recent mean, because that would erase persistent direction.
+        # Null hypothesis is zero drift. Estimate *noise* around the local
+        # median, but score returns from zero. This preserves a persistent
+        # mean shift while preventing a quiet trend from inflating its own scale.
         hist = vals[:-1] if len(vals) > 1 else vals
-        mad0 = cls._median([abs(v) for v in hist])
-        scale = max(DIRECTION_SCALE_FLOOR, 1.4826 * (mad0 or 0.0))
+        med = cls._median(hist) or 0.0
+        mad = cls._median([abs(v - med) for v in hist])
+        scale = 1.4826 * (mad or 0.0)
         if scale <= DIRECTION_SCALE_FLOOR:
-            var = sum(v*v for v in hist) / max(1, len(hist))
-            scale = max(DIRECTION_SCALE_FLOOR, math.sqrt(max(0.0, var)))
+            mean = sum(hist) / max(1, len(hist))
+            var = sum((v - mean) ** 2 for v in hist) / max(1, len(hist) - 1)
+            scale = math.sqrt(max(0.0, var))
+        scale = max(DIRECTION_SCALE_FLOOR, scale)
         return [v / scale for v in vals], 0.0, scale
 
     @staticmethod
