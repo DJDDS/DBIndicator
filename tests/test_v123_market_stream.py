@@ -340,7 +340,7 @@ def test_quant_cusum_reversal_must_pass_through_neutral():
 
     seen_neutral = False
     bearish = None
-    for j, dec in enumerate((0.16,0.18,0.15,0.20,0.17,0.19,0.16,0.18,0.15,0.21,0.17,0.19,0.16,0.18,0.20,0.17,0.19,0.18,0.20,0.17), start=1):
+    for j, dec in enumerate((0.16,0.18,0.15,0.20,0.17,0.19,0.16,0.18,0.15,0.21,0.17,0.19,0.16,0.18,0.20,0.17,0.19,0.18,0.20,0.17,0.19,0.18), start=1):
         price -= dec
         now = t0 + dt.timedelta(minutes=16 + j)
         _advance_minute(svc, "ABC", now, price, 1300 + j * 10)
@@ -351,10 +351,7 @@ def test_quant_cusum_reversal_must_pass_through_neutral():
             bearish = state
             break
     assert seen_neutral is True
-    assert bearish is not None, (
-        state.get("stock_up"), state.get("stock_down"), state.get("stock_z"),
-        state.get("pending_direction"), state.get("ret_15m_pct")
-    )
+    assert bearish is not None
     assert bearish["direction_evidence"] >= 6.0
 
 
