@@ -730,9 +730,11 @@ def test_spotting_context_blocks_hero_like_countertrend_bounce():
     event = _observer_event("HEROMOTOCO", direction="Bullish", family="RELATIVE_SEPARATION", price=5400.0)
     event.update({
         "ret_10m_pct": 0.18,
+        "market_day_change_pct": -1.10,
         "market_ret_5m_pct": -0.32,
         "market_ret_10m_pct": -0.55,
         "sector_index": "NIFTY AUTO",
+        "sector_day_change_pct": -1.65,
         "sector_ret_5m_pct": -0.48,
         "sector_ret_10m_pct": -0.72,
         "relative_5m_vs_nifty_pct": 0.34,
@@ -786,9 +788,11 @@ def test_context_rejected_event_never_enters_focus_and_is_auditable():
     event = _observer_event("HEROMOTOCO", direction="Bullish", family="RELATIVE_SEPARATION", price=5400.0)
     event.update({
         "ret_10m_pct": 0.18,
+        "market_day_change_pct": -1.10,
         "market_ret_5m_pct": -0.32,
         "market_ret_10m_pct": -0.55,
         "sector_index": "NIFTY AUTO",
+        "sector_day_change_pct": -1.65,
         "sector_ret_5m_pct": -0.48,
         "sector_ret_10m_pct": -0.72,
         "relative_5m_vs_nifty_pct": 0.34,
@@ -814,3 +818,25 @@ def test_context_rejected_event_never_enters_focus_and_is_auditable():
     assert "HEROMOTOCO" not in state["focus"]
     assert state["forensics"]["HEROMOTOCO"]["stage"] == "SPOTTING_CONTEXT"
     assert "SPOTTING_CONTEXT_BLOCK:" in state["forensics"]["HEROMOTOCO"]["reason"]
+
+
+def test_bearish_session_with_small_local_rebound_is_still_countertrend():
+    event = _observer_event("BOUNCE", direction="Bullish", family="RELATIVE_SEPARATION", price=101.0)
+    event.update({
+        "ret_10m_pct": 0.20,
+        "market_day_change_pct": -1.25,
+        "market_ret_5m_pct": 0.08,
+        "market_ret_10m_pct": 0.10,
+        "sector_day_change_pct": -1.80,
+        "sector_ret_5m_pct": 0.06,
+        "sector_ret_10m_pct": 0.09,
+        "relative_5m_vs_nifty_pct": 0.31,
+        "relative_5m_vs_sector_pct": 0.24,
+        "volume_rate_accel": 1.05,
+        "near_session_extreme": False,
+    })
+    allowed, state, reason = v123_focus._spotting_context_decision(event)
+    assert allowed is False
+    assert state == "CONTEXT_REJECTED"
+    assert "market=MIXED" in reason
+    assert "sector=MIXED" in reason
