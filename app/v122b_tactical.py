@@ -1186,7 +1186,7 @@ def route_option(
                 "atm_strike": atm_strike,
                 "locked": True,
                 "locked_contract_requested": locked_contract_symbol,
-                "selection_reason": "ACTIONABLE CONTRACT LOCK — selected contract remains net-positive after friction",
+                "selection_reason": "ENTRY CONTRACT LOCK — Actionable-selected contract remains net-positive after friction",
                 "reroute_reason": None,
             }
         reroute_reason = rejected or "locked contract no longer economically executable"
