@@ -242,3 +242,55 @@ def test_forensic_flight_recorder_prefers_private_whole_universe_rows(tmp_path):
     assert rows[0]["symbol"] == "HIDDENMISS"
     assert rows[0]["stage"] == "DISCOVERY"
     assert rows[0]["day_change_pct"] == -3.0
+
+
+def test_observer_checkpoint_restores_pdt_direction_lock(tmp_path):
+    now = dt.datetime(2026, 9, 29, 12, 0)
+    path = tmp_path / "v123_market_checkpoint.json"
+    samples = {
+        "ABC": [
+            {"ts": now - dt.timedelta(minutes=1), "price": 99.5, "volume": 1000, "high": 100.0, "low": 99.4, "prev_close": 105.0},
+            {"ts": now, "price": 99.0, "volume": 1100, "high": 100.0, "low": 99.0, "prev_close": 105.0},
+        ]
+    }
+    latest = {
+        "ABC": {
+            "last_price": 99.0, "volume_traded": 1100,
+            "ohlc": {"open": 105.0, "high": 105.0, "low": 99.0, "close": 105.0},
+        }
+    }
+    locks = {
+        "ABC": {
+            "state": "BEARISH",
+            "phase": "CONTINUING",
+            "since": "2026-09-29T10:15:00",
+            "last_eval_at": "2026-09-29T11:59:00",
+            "observations": 50,
+            "recent_candidates": [-1, -1, -1, -1],
+            "pending_direction": None,
+            "path_efficiency": -0.78,
+            "move_15m_atr": 0.62,
+            "ret_15m_pct": -1.1,
+            "ema9": 100.0,
+            "ema20": 102.0,
+            "ema9_slope": -0.4,
+            "relative_residual_15m_pct": -0.55,
+        }
+    }
+    v123_state.save_observer_checkpoint(
+        str(path), samples, latest, direction_locks=locks, now=now
+    )
+    svc = UniverseMomentumStreamService(
+        publish_callback=lambda payload: None,
+        metadata_provider=lambda: [],
+        access_token_getter=lambda: None,
+        kite_client_getter=lambda: None,
+        api_key="x",
+        checkpoint_path=str(path),
+        now_provider=lambda: now + dt.timedelta(seconds=20),
+        sleep_fn=lambda _: None,
+    )
+    svc._restore_checkpoint(now + dt.timedelta(seconds=20))
+    assert svc._direction_locks["ABC"]["state"] == "BEARISH"
+    assert svc._direction_locks["ABC"]["since"] == "2026-09-29T10:15:00"
+    assert svc._direction_locks["ABC"]["path_efficiency"] == -0.78
