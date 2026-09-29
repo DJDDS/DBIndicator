@@ -525,15 +525,11 @@ class UniverseMomentumStreamService:
         if len(stock_z) < 6:
             return {"ready": False, "reason": "QUANT_HISTORY_NOT_READY"}
 
-        stock_up, stock_down = self._cusum_path(stock_z)
-        resid_up, resid_down = self._cusum_path(resid_z) if resid_z else (0.0, 0.0)
         ret15 = self._return(symbol, now, 900)
         return {
             "ready": True,
-            "stock_up": stock_up,
-            "stock_down": stock_down,
-            "residual_up": resid_up,
-            "residual_down": resid_down,
+            "stock_z_series": stock_z,
+            "residual_z_series": resid_z,
             "stock_z": stock_z[-1],
             "residual_z": resid_z[-1] if resid_z else None,
             "stock_scale": stock_scale,
@@ -554,6 +550,7 @@ class UniverseMomentumStreamService:
             "last_eval_at": None,
             "observations": 0,
             "pending_direction": None,
+            "cusum_initialized": False,
             "stock_up": 0.0,
             "stock_down": 0.0,
             "residual_up": 0.0,
@@ -591,11 +588,28 @@ class UniverseMomentumStreamService:
             return self._direction_lock_summary(state)
 
         for key in (
-            "stock_up", "stock_down", "residual_up", "residual_down",
             "stock_z", "residual_z", "ret_15m_pct", "factor_status",
             "beta_market", "beta_sector",
         ):
             state[key] = feat.get(key)
+
+        # True sequential Page-CUSUM. On first usable observation after a
+        # restart/model migration, bootstrap from the preserved rolling history;
+        # thereafter consume only the newest standardized return.
+        if not bool(state.get("cusum_initialized")):
+            stock_up, stock_down = self._cusum_path(feat.get("stock_z_series") or [])
+            resid_up, resid_down = self._cusum_path(feat.get("residual_z_series") or [])
+            state["stock_up"], state["stock_down"] = stock_up, stock_down
+            state["residual_up"], state["residual_down"] = resid_up, resid_down
+            state["cusum_initialized"] = True
+        else:
+            z = _f(feat.get("stock_z"), 0.0) or 0.0
+            state["stock_up"] = max(0.0, float(state.get("stock_up") or 0.0) + z - DIRECTION_CUSUM_K)
+            state["stock_down"] = max(0.0, float(state.get("stock_down") or 0.0) - z - DIRECTION_CUSUM_K)
+            rz = _f(feat.get("residual_z"))
+            if rz is not None:
+                state["residual_up"] = max(0.0, float(state.get("residual_up") or 0.0) + rz - DIRECTION_CUSUM_K)
+                state["residual_down"] = max(0.0, float(state.get("residual_down") or 0.0) - rz - DIRECTION_CUSUM_K)
 
         up = float(state.get("stock_up") or 0.0)
         down = float(state.get("stock_down") or 0.0)
