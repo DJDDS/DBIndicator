@@ -26,6 +26,7 @@ import math
 import threading
 import time
 from collections import defaultdict, deque
+from statistics import NormalDist
 from typing import Callable
 
 
@@ -55,6 +56,14 @@ DIRECTION_CUSUM_H = 6.00
 DIRECTION_RESIDUAL_H = 7.50
 DIRECTION_SCALE_FLOOR = 1e-6
 DIRECTION_MODEL_VERSION = 3
+
+# Adaptive multiscale movement detector. These are candidate observation
+# windows, not trading timeframes. The live market chooses h* by the strongest
+# family-wise-significant residual move.
+MULTISCALE_HORIZONS_SECONDS = (20, 40, 80, 160, 320, 640, 900)
+MULTISCALE_STEP_SECONDS = 5
+MULTISCALE_ALPHA = 0.01
+MULTISCALE_MIN_RETURNS = 4
 
 
 def _f(value, default=None):
@@ -540,6 +549,126 @@ class UniverseMomentumStreamService:
             "beta_sector": factor.get("beta_sector"),
         }
 
+    def _aligned_step_returns(self, symbol, now, *, step_seconds=MULTISCALE_STEP_SECONDS,
+                              history_seconds=max(MULTISCALE_HORIZONS_SECONDS)):
+        """Regular-step log returns from the lightweight full-universe buffer."""
+        prices = []
+        for seconds in range(int(history_seconds), -1, -int(step_seconds)):
+            if seconds == 0:
+                rows = self._samples.get(symbol) or ()
+                sample = rows[-1] if rows else None
+            else:
+                sample = self._sample_at(
+                    symbol, now, seconds,
+                    max_lag_seconds=max(8, int(step_seconds * 2)),
+                )
+            px = _f((sample or {}).get("price"))
+            prices.append(px if px and px > 0 else None)
+        out = []
+        for i in range(1, len(prices)):
+            p0, p1 = prices[i - 1], prices[i]
+            out.append(math.log(p1 / p0) if p0 and p1 else None)
+        return out
+
+    def _multiscale_move(self, symbol, now, *, sector_symbol=None):
+        """Select the natural movement horizon from statistically significant scales.
+
+        Residualise each 5s return against NIFTY and sector, estimate robust
+        residual noise, then test cumulative residual movement over a family of
+        candidate horizons. Bonferroni controls the family-wise false positive
+        rate at MULTISCALE_ALPHA. No EMA/RSI/MACD/VWAP or named chart pattern
+        enters this detector.
+        """
+        history = max(MULTISCALE_HORIZONS_SECONDS)
+        stock = self._aligned_step_returns(symbol, now, history_seconds=history)
+        market = self._aligned_step_returns("NIFTY 50", now, history_seconds=history)
+        sector = (
+            self._aligned_step_returns(str(sector_symbol), now, history_seconds=history)
+            if sector_symbol else [None] * len(stock)
+        )
+        residuals, factor = self._factor_residuals(stock, market, sector)
+        clean = [float(x) for x in residuals if x is not None and math.isfinite(float(x))]
+        if len(clean) < 24:
+            return {
+                "ready": False,
+                "reason": "MULTISCALE_HISTORY_NOT_READY",
+                "natural_horizon_seconds": None,
+                "direction": None,
+                "significant": False,
+            }
+
+        _, _, scale = self._robust_z_series(clean)
+        if scale is None or scale <= 0:
+            return {
+                "ready": False,
+                "reason": "MULTISCALE_SCALE_UNAVAILABLE",
+                "natural_horizon_seconds": None,
+                "direction": None,
+                "significant": False,
+            }
+
+        alpha_each = MULTISCALE_ALPHA / (2.0 * len(MULTISCALE_HORIZONS_SECONDS))
+        zcrit = NormalDist().inv_cdf(1.0 - alpha_each)
+        rows = []
+        for horizon in MULTISCALE_HORIZONS_SECONDS:
+            n = max(1, int(round(horizon / float(MULTISCALE_STEP_SECONDS))))
+            if len(clean) < max(MULTISCALE_MIN_RETURNS, n):
+                continue
+            window = clean[-n:]
+            net = sum(window)
+            denom = scale * math.sqrt(max(1, len(window)))
+            z = net / denom if denom > 0 else 0.0
+            path = sum(abs(x) for x in window)
+            coherence = abs(net) / path if path > 1e-15 else 0.0
+            p_two = max(
+                0.0,
+                min(1.0, 2.0 * (1.0 - NormalDist().cdf(abs(z)))),
+            )
+            rows.append({
+                "horizon_seconds": int(horizon),
+                "z": float(z),
+                "p_two_sided": float(p_two),
+                "coherence": float(coherence),
+                "net_residual_log_return": float(net),
+                "significant": bool(abs(z) >= zcrit),
+            })
+
+        significant = [row for row in rows if row["significant"]]
+        best = max(significant, key=lambda row: abs(row["z"])) if significant else None
+        direction = None
+        if best is not None:
+            direction = "Bullish" if best["z"] > 0 else "Bearish"
+        same_direction = [
+            row for row in significant
+            if direction and (row["z"] > 0) == (direction == "Bullish")
+        ]
+        return {
+            "ready": bool(rows),
+            "reason": "MULTISCALE_SIGNIFICANT_MOVE" if best else "NO_SIGNIFICANT_MULTISCALE_MOVE",
+            "significant": bool(best),
+            "direction": direction,
+            "natural_horizon_seconds": best["horizon_seconds"] if best else None,
+            "movement_z": round(best["z"], 4) if best else None,
+            "movement_p_value": round(best["p_two_sided"], 8) if best else None,
+            "movement_coherence": round(best["coherence"], 4) if best else None,
+            "significant_horizons_seconds": [row["horizon_seconds"] for row in same_direction],
+            "familywise_alpha": MULTISCALE_ALPHA,
+            "critical_z": round(zcrit, 4),
+            "factor_status": factor.get("status"),
+            "beta_market": factor.get("beta_market"),
+            "beta_sector": factor.get("beta_sector"),
+            "all_horizons": [
+                {
+                    "horizon_seconds": row["horizon_seconds"],
+                    "z": round(row["z"], 4),
+                    "p_two_sided": round(row["p_two_sided"], 8),
+                    "coherence": round(row["coherence"], 4),
+                    "significant": row["significant"],
+                }
+                for row in rows
+            ],
+        }
+
     @staticmethod
     def _new_direction_lock():
         return {
@@ -770,7 +899,7 @@ class UniverseMomentumStreamService:
         reclaim = _pct(current, x3)
         return had_pullback and reclaim is not None and reclaim <= -0.12
 
-    def _event_for(self, symbol, sample, meta, nifty_returns, now, direction_info=None):
+    def _event_for(self, symbol, sample, meta, nifty_returns, now, direction_info=None, movement_info=None):
         price = _f(sample.get("price"))
         prev = _f(sample.get("prev_close"), _f(meta.get("prev_close")))
         if price is None or prev is None or prev <= 0:
@@ -785,80 +914,43 @@ class UniverseMomentumStreamService:
         n5 = nifty_returns.get("5m")
         rel5 = None if r5 is None or n5 is None else round(r5 - n5, 4)
 
-        direction = str((direction_info or {}).get("direction") or "")
+        move_direction = str((movement_info or {}).get("direction") or "")
+        lock_direction = str((direction_info or {}).get("direction") or "")
+        # A fresh statistically significant move may be spotted before the
+        # slower persistent lock is established, but never against an already
+        # locked opposite regime.
+        if move_direction in ("Bullish", "Bearish") and (
+            lock_direction not in ("Bullish", "Bearish") or lock_direction == move_direction
+        ):
+            direction = move_direction
+        else:
+            direction = lock_direction
+
         if direction not in ("Bullish", "Bearish"):
             return None
 
-        at_extreme = self._near_extreme(sample, direction)
-        minute = now.hour * 60 + now.minute
-        opening = 9 * 60 + 15 <= minute <= 10 * 60 + 15
-
         event_family = None
         why = []
-
-        # Primary production lane: a persistent underlying regime can enter
-        # Focus without waiting for a legacy event label.  Legacy families
-        # remain useful for entry/re-entry context, but they no longer decide
-        # whether an obvious trend exists.
         if (
+            bool((movement_info or {}).get("significant"))
+            and move_direction == direction
+        ):
+            event_family = "MULTISCALE_MOVE"
+            why = [
+                "family-wise significant market/sector-residual move",
+                f"natural horizon {(movement_info or {}).get('natural_horizon_seconds')}s",
+            ]
+        elif (
             str((direction_info or {}).get("phase") or "") == "CONTINUING"
             and (_f((direction_info or {}).get("direction_evidence"), 0.0) or 0.0) >= DIRECTION_CUSUM_H
         ):
             event_family = "REGIME_PERSISTENCE"
-            why = ["robust one-minute drift change detected", "quant direction lock persistent"]
-
-        # Opening-drive: price is already pressing the session extreme while
-        # both short return and participation are expanding.
-        elif (
-            opening and _signed_ok(direction, r5, 0.30)
-            and vol_accel is not None and vol_accel >= 1.20
-            and at_extreme
-            and (rel5 is None or _signed_ok(direction, rel5, 0.08))
-        ):
-            event_family = "OPENING_DRIVE"
-            why = ["5m directional expansion", "volume rate accelerating", "pressing session extreme"]
-
-        # Range expansion is available all day and does not need old OI.
-        elif (
-            _signed_ok(direction, r5, 0.40)
-            and vol_accel is not None and vol_accel >= 1.20
-            and at_extreme
-            and (rel5 is None or _signed_ok(direction, rel5, 0.08))
-        ):
-            event_family = "RANGE_EXPANSION"
-            why = ["5m range expansion", "volume rate accelerating", "session extreme"]
-
-        # Relative leader/laggard catches stock-specific movement even when
-        # absolute market activity is modest.
-        elif (
-            rel5 is not None and _signed_ok(direction, rel5, 0.30)
-            and day is not None and _signed_ok(direction, day, 0.75)
-            and r3 is not None and _signed_ok(direction, r3, 0.10)
-        ):
-            event_family = "RELATIVE_SEPARATION"
-            why = ["stock separating from NIFTY", "same-direction 3m continuation"]
-
-        # Continuation/re-entry is explicitly separate from the first early
-        # entry.  A stock is not deleted merely because the initial move is
-        # already underway.
-        elif self._continuation_reclaim(symbol, direction, now, day):
-            event_family = "PULLBACK_RECLAIM"
-            why = ["existing day trend", "short pullback", "live reclaim"]
-
-        # Sustained trend catches strong movers whose first expansion was
-        # missed but which are still moving in an orderly fashion.
-        elif (
-            day is not None and _signed_ok(direction, day, 1.0)
-            and r3 is not None and r10 is not None
-            and _signed_ok(direction, r3, 0.12)
-            and _signed_ok(direction, r10, 0.35)
-        ):
-            event_family = "MOMENTUM_CONTINUATION"
-            why = ["strong day move", "3m and 10m direction agree"]
+            why = ["sequential quant direction remains persistent"]
 
         if event_family is None:
             return None
 
+        at_extreme = self._near_extreme(sample, direction)
         atr = _f(meta.get("atr"))
         move_atr = None
         if atr and atr > 0 and prev:
@@ -898,10 +990,16 @@ class UniverseMomentumStreamService:
             "direction_factor_status": (direction_info or {}).get("factor_status"),
             "direction_beta_market": (direction_info or {}).get("beta_market"),
             "direction_beta_sector": (direction_info or {}).get("beta_sector"),
+            "movement_horizon_seconds": (movement_info or {}).get("natural_horizon_seconds"),
+            "movement_z": (movement_info or {}).get("movement_z"),
+            "movement_p_value": (movement_info or {}).get("movement_p_value"),
+            "movement_coherence": (movement_info or {}).get("movement_coherence"),
+            "movement_significant_horizons_seconds": (movement_info or {}).get("significant_horizons_seconds"),
+            "movement_familywise_alpha": (movement_info or {}).get("familywise_alpha"),
             "why": why,
         }
 
-    def _event_diagnostic(self, symbol, sample, meta, nifty_returns, now, event=None, direction_info=None):
+    def _event_diagnostic(self, symbol, sample, meta, nifty_returns, now, event=None, direction_info=None, movement_info=None):
         """Explain why an actual mover did or did not qualify for discovery."""
         price = _f(sample.get("price"))
         prev = _f(sample.get("prev_close"), _f(meta.get("prev_close")))
@@ -915,18 +1013,21 @@ class UniverseMomentumStreamService:
         vol_accel = self._volume_accel(symbol, now)
         n5 = nifty_returns.get("5m")
         rel5 = None if r5 is None or n5 is None else round(r5 - n5, 4)
-        direction = str((direction_info or {}).get("direction") or "")
+        direction = str((movement_info or {}).get("direction") or (direction_info or {}).get("direction") or "")
         if direction not in ("Bullish", "Bearish"):
             return {
                 "qualified": False,
-                "reason": "DIRECTION_NOT_LOCKED",
-                "failed_gates": ["sequential direction evidence below lock boundary"],
+                "reason": "NO_SIGNIFICANT_MULTISCALE_MOVE",
+                "failed_gates": ["no family-wise-significant residual move yet"],
                 "direction": None,
                 "direction_lock_state": (direction_info or {}).get("state", "NEUTRAL"),
                 "direction_lock_phase": (direction_info or {}).get("phase", "NEUTRAL"),
                 "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
                 "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
                 "near_session_extreme": False,
+                "movement_horizon_seconds": (movement_info or {}).get("natural_horizon_seconds"),
+                "movement_z": (movement_info or {}).get("movement_z"),
+                "movement_p_value": (movement_info or {}).get("movement_p_value"),
             }
         at_extreme = self._near_extreme(sample, direction)
         sign = 1.0 if direction == "Bullish" else -1.0
@@ -942,38 +1043,17 @@ class UniverseMomentumStreamService:
                 "near_session_extreme": at_extreme,
             }
 
-        failed = []
-        if r5 is None:
-            failed.append("5m history not ready")
-        elif sign * r5 < 0.20:
-            failed.append("5m move < 0.20%")
-        if vol_accel is None:
-            failed.append("volume acceleration unavailable")
-        elif vol_accel < 1.20:
-            failed.append("volume rate < 1.20x")
-        if not at_extreme:
-            failed.append("not near session extreme")
-        if rel5 is not None and sign * rel5 < 0.08:
-            failed.append("relative 5m < 0.08%")
-        if day is not None and sign * day < 0.75:
-            failed.append(f"direction-aligned day move {sign * day:.2f}% < 0.75%")
-        if r3 is None or sign * r3 < 0.10:
-            failed.append("3m continuation < 0.10%")
-        if r10 is None or sign * r10 < 0.35:
-            failed.append("10m continuation < 0.35%")
-        if not self._continuation_reclaim(symbol, direction, now, day):
-            failed.append("no fresh pullback-reclaim")
-
-        # Report the few most informative unmet gates rather than dumping every
-        # branch condition.
         return {
             "qualified": False,
-            "reason": "NO_EVENT_FAMILY_QUALIFIED",
-            "failed_gates": failed[:5],
+            "reason": str((movement_info or {}).get("reason") or "MULTISCALE_MOVE_NOT_QUALIFIED"),
+            "failed_gates": ["multiscale residual significance not sustained"],
             "direction": direction,
             "ret_3m_pct": r3, "ret_5m_pct": r5, "ret_10m_pct": r10,
             "relative_5m_vs_nifty_pct": rel5, "volume_rate_accel": vol_accel,
             "near_session_extreme": at_extreme,
+            "movement_horizon_seconds": (movement_info or {}).get("natural_horizon_seconds"),
+            "movement_z": (movement_info or {}).get("movement_z"),
+            "movement_p_value": (movement_info or {}).get("movement_p_value"),
         }
 
 
@@ -1075,12 +1155,16 @@ class UniverseMomentumStreamService:
             direction_info = self._update_direction_lock(
                 symbol, now, sector_symbol=str(sector) if sector else None
             )
+            movement_info = self._multiscale_move(
+                symbol, now, sector_symbol=str(sector) if sector else None
+            )
             event = self._event_for(
-                symbol, sample, symbol_meta, nifty_returns, now, direction_info=direction_info
+                symbol, sample, symbol_meta, nifty_returns, now,
+                direction_info=direction_info, movement_info=movement_info
             )
             diagnostic = self._event_diagnostic(
                 symbol, sample, symbol_meta, nifty_returns, now,
-                event=event, direction_info=direction_info
+                event=event, direction_info=direction_info, movement_info=movement_info
             )
             if event is not None:
                 event["sector_index"] = sector
@@ -1127,16 +1211,19 @@ class UniverseMomentumStreamService:
                     "direction_factor_status": direction_info.get("factor_status"),
                     "direction_beta_market": direction_info.get("beta_market"),
                     "direction_beta_sector": direction_info.get("beta_sector"),
+                    "movement_horizon_seconds": movement_info.get("natural_horizon_seconds"),
+                    "movement_z": movement_info.get("movement_z"),
+                    "movement_p_value": movement_info.get("movement_p_value"),
+                    "movement_coherence": movement_info.get("movement_coherence"),
+                    "movement_significant_horizons_seconds": movement_info.get("significant_horizons_seconds"),
+                    "movement_familywise_alpha": movement_info.get("familywise_alpha"),
                 })
             if event:
                 events.append(event)
 
         priority = {
-            "PULLBACK_RECLAIM": 6,
-            "OPENING_DRIVE": 5,
-            "RANGE_EXPANSION": 4,
-            "RELATIVE_SEPARATION": 3,
-            "MOMENTUM_CONTINUATION": 2,
+            "MULTISCALE_MOVE": 10,
+            "REGIME_PERSISTENCE": 9,
         }
         events.sort(
             key=lambda x: (
