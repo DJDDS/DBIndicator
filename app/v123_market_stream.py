@@ -433,23 +433,23 @@ class UniverseMomentumStreamService:
     def _robust_z_series(cls, values):
         vals = [float(v) for v in values if v is not None and math.isfinite(float(v))]
         if len(vals) < 6:
-            return [], None, None
-        center = cls._median(vals[:-1] if len(vals) > 1 else vals)
-        deviations = [abs(v - center) for v in vals[:-1]]
-        mad = cls._median(deviations)
-        scale = max(DIRECTION_SCALE_FLOOR, 1.4826 * (mad or 0.0))
+            return [], 0.0, None
+        # Null hypothesis is zero drift. Estimate only scale; do not subtract
+        # the recent mean, because that would erase persistent direction.
+        hist = vals[:-1] if len(vals) > 1 else vals
+        mad0 = cls._median([abs(v) for v in hist])
+        scale = max(DIRECTION_SCALE_FLOOR, 1.4826 * (mad0 or 0.0))
         if scale <= DIRECTION_SCALE_FLOOR:
-            mean = sum(vals[:-1]) / max(1, len(vals) - 1)
-            var = sum((v - mean) ** 2 for v in vals[:-1]) / max(1, len(vals) - 2)
+            var = sum(v*v for v in hist) / max(1, len(hist))
             scale = max(DIRECTION_SCALE_FLOOR, math.sqrt(max(0.0, var)))
-        return [(v - center) / scale for v in vals], center, scale
+        return [v / scale for v in vals], 0.0, scale
 
     @staticmethod
     def _factor_residuals(stock, market, sector):
-        """Causal rolling two-factor residuals using centred ridge OLS.
+        """Rolling no-intercept ridge factor residuals.
 
-        Betas are estimated from all but the newest observation. Missing sector
-        data falls back to market-only. No technical indicator enters this model.
+        Zero return is the null. Betas remove contemporaneous market/sector
+        movement, while any persistent unexplained drift remains in residuals.
         """
         rows = []
         for i, y in enumerate(stock):
@@ -465,20 +465,14 @@ class UniverseMomentumStreamService:
         use_sector = sum(r[2] is not None for r in train) >= max(6, len(train) - 2)
         ys = [r[0] for r in train]
         ms = [r[1] for r in train]
-        ss = [r[2] for r in train] if use_sector else None
-        ym = sum(ys) / len(ys)
-        mm = sum(ms) / len(ms)
 
         if use_sector:
-            sm = sum(float(x) for x in ss) / len(ss)
-            yc = [y - ym for y in ys]
-            mc = [m - mm for m in ms]
-            sc = [float(s) - sm for s in ss]
-            v_m = sum(x*x for x in mc) / len(mc)
-            v_s = sum(x*x for x in sc) / len(sc)
-            c_ms = sum(a*b for a,b in zip(mc,sc)) / len(mc)
-            c_ym = sum(a*b for a,b in zip(yc,mc)) / len(mc)
-            c_ys = sum(a*b for a,b in zip(yc,sc)) / len(mc)
+            ss = [float(r[2]) for r in train]
+            v_m = sum(m*m for m in ms) / len(ms)
+            v_s = sum(s*s for s in ss) / len(ss)
+            c_ms = sum(m*s for m,s in zip(ms,ss)) / len(ms)
+            c_ym = sum(y*m for y,m in zip(ys,ms)) / len(ms)
+            c_ys = sum(y*s for y,s in zip(ys,ss)) / len(ms)
             ridge = 0.05 * max(v_m + v_s, 1e-12)
             a = v_m + ridge
             d = v_s + ridge
@@ -489,20 +483,17 @@ class UniverseMomentumStreamService:
             else:
                 beta_m = (c_ym*d - c_ys*c_ms) / det
                 beta_s = (c_ys*a - c_ym*c_ms) / det
-            alpha = ym - beta_m*mm - beta_s*sm
         else:
-            yc = [y - ym for y in ys]
-            mc = [m - mm for m in ms]
-            v_m = sum(x*x for x in mc) / len(mc)
-            c_ym = sum(a*b for a,b in zip(yc,mc)) / len(mc)
+            v_m = sum(m*m for m in ms) / len(ms)
+            c_ym = sum(y*m for y,m in zip(ys,ms)) / len(ms)
             ridge = 0.05 * max(v_m, 1e-12)
             beta_m = c_ym / max(v_m + ridge, 1e-12)
             beta_s = 0.0
-            alpha = ym - beta_m*mm
 
-        residuals = []
-        for y,m,s in rows:
-            residuals.append(y - (alpha + beta_m*m + beta_s*(float(s) if s is not None else 0.0)))
+        residuals = [
+            y - beta_m*m - beta_s*(float(s) if s is not None else 0.0)
+            for y,m,s in rows
+        ]
         return residuals, {
             "status": "MARKET+SECTOR" if use_sector else "MARKET_ONLY",
             "beta_market": beta_m,
