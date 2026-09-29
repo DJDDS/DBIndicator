@@ -301,48 +301,50 @@ def _advance_minute(svc, symbol, when, price, volume=1000, prev=100.0):
     )
 
 
-def test_pdt_lock_requires_persistent_path_and_ignores_one_pullback():
+def test_quant_cusum_locks_persistent_drift_and_ignores_one_pullback():
     svc = _service()
     t0 = dt.datetime(2026, 9, 29, 9, 30)
+    price = 100.0
     state = None
-    # Build a clean 20-minute bullish path. The first 15m is observation only;
-    # the lock then needs repeated 3-of-4 regime votes.
-    for i in range(21):
+    increments = (0.10, 0.13, 0.09, 0.12, 0.11, 0.14, 0.10, 0.12, 0.09, 0.13,
+                  0.11, 0.12, 0.10, 0.14, 0.11, 0.13, 0.10)
+    for i, inc in enumerate(increments):
+        price += inc
         now = t0 + dt.timedelta(minutes=i)
-        _advance_minute(svc, "ABC", now, 100.0 + 0.12 * i, 1000 + i * 10)
-        state = svc._update_direction_lock("ABC", now, atr=2.0)
+        _advance_minute(svc, "ABC", now, price, 1000 + i * 10)
+        state = svc._update_direction_lock("ABC", now)
     assert state["state"] == "BULLISH"
-    assert state["path_efficiency"] >= 0.35
+    assert state["direction_evidence"] >= 6.0
     locked_since = state["since"]
 
-    # One ordinary one-minute pullback does not flip the slow regime.
-    now = t0 + dt.timedelta(minutes=21)
-    _advance_minute(svc, "ABC", now, 102.0, 1250)
-    pullback = svc._update_direction_lock("ABC", now, atr=2.0)
+    now = t0 + dt.timedelta(minutes=len(increments))
+    price -= 0.08
+    _advance_minute(svc, "ABC", now, price, 1300)
+    pullback = svc._update_direction_lock("ABC", now)
     assert pullback["state"] == "BULLISH"
-    assert pullback["phase"] in ("PULLBACK", "WEAKENING", "CONTINUING")
+    assert pullback["phase"] in ("PULLBACK", "CONTINUING")
     assert pullback["since"] == locked_since
 
 
-def test_pdt_reversal_must_pass_through_neutral():
+def test_quant_cusum_reversal_must_pass_through_neutral():
     svc = _service()
     t0 = dt.datetime(2026, 9, 29, 9, 30)
-    state = None
     price = 100.0
-    for i in range(21):
+    state = None
+    for i, inc in enumerate((0.10,0.13,0.09,0.12,0.11,0.14,0.10,0.12,0.09,0.13,0.11,0.12,0.10,0.14,0.11,0.13)):
+        price += inc
         now = t0 + dt.timedelta(minutes=i)
-        price += 0.12
         _advance_minute(svc, "ABC", now, price, 1000 + i * 10)
-        state = svc._update_direction_lock("ABC", now, atr=2.0)
+        state = svc._update_direction_lock("ABC", now)
     assert state["state"] == "BULLISH"
 
     seen_neutral = False
     bearish = None
-    for j in range(1, 25):
-        now = t0 + dt.timedelta(minutes=21 + j)
-        price -= 0.22
+    for j, dec in enumerate((0.16,0.18,0.15,0.20,0.17,0.19,0.16,0.18,0.15,0.21,0.17,0.19,0.16,0.18,0.20,0.17), start=1):
+        price -= dec
+        now = t0 + dt.timedelta(minutes=16 + j)
         _advance_minute(svc, "ABC", now, price, 1300 + j * 10)
-        state = svc._update_direction_lock("ABC", now, atr=2.0)
+        state = svc._update_direction_lock("ABC", now)
         if state["state"] == "NEUTRAL":
             seen_neutral = True
         if state["state"] == "BEARISH":
@@ -350,23 +352,24 @@ def test_pdt_reversal_must_pass_through_neutral():
             break
     assert seen_neutral is True
     assert bearish is not None
-    assert bearish["path_efficiency"] <= -0.35
+    assert bearish["direction_evidence"] >= 6.0
 
 
-def test_pdt_chop_never_locks_direction():
+def test_quant_cusum_chop_stays_neutral():
     svc = _service()
     t0 = dt.datetime(2026, 9, 29, 10, 0)
+    price = 100.0
     state = None
-    prices = [100.0 + (0.10 if i % 2 else -0.10) for i in range(25)]
-    for i, price in enumerate(prices):
+    for i in range(24):
+        price += 0.10 if i % 2 else -0.10
         now = t0 + dt.timedelta(minutes=i)
         _advance_minute(svc, "CHOP", now, price, 1000 + i * 5)
-        state = svc._update_direction_lock("CHOP", now, atr=2.0)
+        state = svc._update_direction_lock("CHOP", now)
     assert state["state"] == "NEUTRAL"
-    assert abs(state["path_efficiency"] or 0.0) < 0.35
+    assert state["direction_evidence"] < 6.0
 
 
-def test_persistent_regime_creates_discovery_without_volume_spike():
+def test_quant_regime_creates_discovery_without_volume_or_indicator_gate():
     svc = _service()
     now = dt.datetime(2026, 9, 29, 11, 0)
     _append(svc, "ABC", now-dt.timedelta(minutes=10), 101.0, 1000, prev=105.0)
@@ -378,14 +381,15 @@ def test_persistent_regime_creates_discovery_without_volume_spike():
         {"5m": -0.1}, now,
         direction_info={
             "state": "BEARISH", "direction": "Bearish", "phase": "CONTINUING",
-            "path_efficiency": -0.72, "move_15m_atr": 0.65,
-            "relative_residual_15m_pct": -0.35,
+            "direction_evidence": 7.2, "residual_evidence": 8.1,
+            "stock_z": -1.8, "residual_z": -1.4,
+            "factor_status": "MARKET+SECTOR",
         },
     )
     assert event is not None
     assert event["event_family"] == "REGIME_PERSISTENCE"
     assert event["direction"] == "Bearish"
-    assert event["path_efficiency_15m"] == -0.72
+    assert event["direction_evidence"] == 7.2
 
 
 def test_event_is_hidden_until_direction_is_locked():
