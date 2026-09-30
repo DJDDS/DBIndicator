@@ -41,10 +41,10 @@ class _FakeKite:
     def instruments(self, exchange):
         assert exchange == 'NFO'
         return [
-            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 9, 29), 'tradingsymbol': 'AAASEP', 'instrument_token': 1},
-            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 10, 27), 'tradingsymbol': 'AAAOCT', 'instrument_token': 2},
-            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 11, 24), 'tradingsymbol': 'AAANOV', 'instrument_token': 3},
-            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 12, 29), 'tradingsymbol': 'AAADEC', 'instrument_token': 4},
+            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 10, 27), 'tradingsymbol': 'AAASEP', 'instrument_token': 1},
+            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 11, 24), 'tradingsymbol': 'AAAOCT', 'instrument_token': 2},
+            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2026, 12, 29), 'tradingsymbol': 'AAANOV', 'instrument_token': 3},
+            {'instrument_type': 'FUT', 'name': 'AAA', 'expiry': dt.date(2027, 1, 27), 'tradingsymbol': 'AAADEC', 'instrument_token': 4},
         ]
 
     def quote(self, keys):
