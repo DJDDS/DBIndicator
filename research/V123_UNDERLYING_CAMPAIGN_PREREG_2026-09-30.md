@@ -134,3 +134,14 @@ The reclaim hypothesis earns further consideration only if final OOS:
 5. event count is large enough that the result is not a handful of anecdotes.
 
 No production logic changes from this run alone.
+
+
+## Requested regime stratification
+
+Report the underlying campaign results separately for three market/event windows:
+
+1. **COVID period:** 11 Mar 2020–31 Dec 2021. Because Dhan intraday history does not cover early 2020, full-period COVID comparison is daily/regime context; intraday event evidence includes only the late-2021 overlap available in the five-year intraday sample.
+2. **Post-Oct-2024 stress/bearish window:** 1 Oct 2024–25 Sep 2026. This is a user-requested analysis bucket; it does not imply every trading day inside the window is bearish.
+3. **US–Iran conflict analysis window:** 1 Mar 2026–25 Sep 2026, per the user's requested window. Current reporting places the outbreak of the wider conflict in February 2026, so the March-start tag is an analysis convention rather than the asserted war-start date.
+
+The named windows may overlap. In addition, report a separate data-derived NIFTY regime based only on prior-completed-day returns/drawdown, so a calendar label is not mistaken for the actual market state.
