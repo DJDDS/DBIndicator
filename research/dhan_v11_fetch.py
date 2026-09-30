@@ -12,6 +12,7 @@ Environment:
 from __future__ import annotations
 
 import argparse
+import ast
 import concurrent.futures as cf
 import datetime as dt
 import hashlib
@@ -33,26 +34,20 @@ EXCLUDE_POST_SAMPLE_FNO = {"ANANDRATHI", "ENRIN", "UJJIVANSFB"}
 # New 15-Jun-2026 sectoral launches are deliberately excluded.
 SECTOR_INDEX_ALIASES = {
     "NIFTY AUTO": ["NIFTY AUTO"],
-    "NIFTY BANK": ["NIFTY BANK", "BANK NIFTY"],
-    "NIFTY FINANCIAL SERVICES": ["NIFTY FINANCIAL SERVICES", "NIFTY FIN SERVICE", "FINNIFTY"],
-    "NIFTY FINANCIAL SERVICES 25/50": ["NIFTY FINANCIAL SERVICES 25/50", "NIFTY FINSRV25 50", "NIFTY FINSRV25/50"],
-    "NIFTY FINANCIAL SERVICES EX BANK": ["NIFTY FINANCIAL SERVICES EX BANK", "NIFTY FINANCIAL SERVICES EX-BANK"],
-    "NIFTY FMCG": ["NIFTY FMCG"],
-    "NIFTY HEALTHCARE": ["NIFTY HEALTHCARE", "NIFTY HEALTHCARE INDEX"],
-    "NIFTY IT": ["NIFTY IT"],
-    "NIFTY MEDIA": ["NIFTY MEDIA"],
-    "NIFTY METAL": ["NIFTY METAL"],
+    "NIFTY BANK": ["NIFTY BANK", "BANKNIFTY"],
+    "NIFTY IT": ["NIFTY IT", "NIFTYIT"],
     "NIFTY PHARMA": ["NIFTY PHARMA"],
-    "NIFTY PRIVATE BANK": ["NIFTY PRIVATE BANK", "NIFTY PVT BANK"],
-    "NIFTY PSU BANK": ["NIFTY PSU BANK"],
-    "NIFTY REALTY": ["NIFTY REALTY"],
-    "NIFTY CONSUMER DURABLES": ["NIFTY CONSUMER DURABLES", "NIFTY CONSUMER DURABLE"],
-    "NIFTY OIL & GAS": ["NIFTY OIL & GAS", "NIFTY OIL AND GAS"],
-    "NIFTY MIDSMALL FINANCIAL SERVICES": ["NIFTY MIDSMALL FINANCIAL SERVICES"],
-    "NIFTY MIDSMALL HEALTHCARE": ["NIFTY MIDSMALL HEALTHCARE"],
-    "NIFTY MIDSMALL IT & TELECOM": ["NIFTY MIDSMALL IT & TELECOM", "NIFTY MIDSMALL IT AND TELECOM"],
+    "NIFTY FMCG": ["NIFTY FMCG"],
+    "NIFTY METAL": ["NIFTY METAL"],
     "NIFTY ENERGY": ["NIFTY ENERGY"],
-    "NIFTY SERVICES SECTOR": ["NIFTY SERVICES SECTOR", "NIFTY SERV SECTOR"],
+    "NIFTY REALTY": ["NIFTY REALTY"],
+    "NIFTY FIN SERVICE": ["NIFTY FIN SERVICE", "FINNIFTY"],
+    "NIFTY MEDIA": ["NIFTY MEDIA"],
+    "NIFTY OIL AND GAS": ["NIFTY OIL AND GAS", "NIFTY OIL & GAS"],
+    "NIFTY HEALTHCARE": ["NIFTY HEALTHCARE"],
+    "NIFTY CONSR DURBL": ["NIFTY CONSR DURBL", "NIFTY CONSUMER DURABLE"],
+    "NIFTY CHEMICALS": ["NIFTY CHEMICALS"],
+    "NIFTY INFRA": ["NIFTY INFRA", "NIFTY INFRASTRUCTURE"],
 }
 NIFTY_ALIASES = ["NIFTY 50", "NIFTY50"]
 
@@ -82,6 +77,18 @@ def col(df: pd.DataFrame, *names: str) -> str | None:
         if hit:
             return hit
     return None
+
+
+def load_project_sector_map() -> dict[str, str]:
+    source = Path("app/scanner.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "SYMBOL_SECTOR_MAP":
+                    value = ast.literal_eval(node.value)
+                    return {str(k).upper(): str(v) for k, v in value.items()}
+    raise RuntimeError("SYMBOL_SECTOR_MAP not found in app/scanner.py")
 
 
 def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
@@ -160,7 +167,7 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
         names = [str(row[x]).strip() for x in name_cols if pd.notna(row[x])]
         candidates.append((sid, names))
 
-    def match_one(aliases: list[str]) -> tuple[str, str]:
+    def match_one(aliases: list[str], *, required: bool = False) -> tuple[str | None, str | None]:
         alias_norm = {norm(a) for a in aliases}
         exact = []
         for sid, names in candidates:
@@ -169,22 +176,9 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
                     exact.append((sid, name))
         unique = {(sid, name) for sid, name in exact if sid and sid.lower() != "nan"}
         if not unique:
-            tokens = [t for t in re.split(r"[^A-Z0-9]+", aliases[0].upper()) if t not in {"NIFTY","INDEX","AND"}]
-            nearby = []
-            for sid, names in candidates:
-                for name in names:
-                    score = sum(tok in name.upper() for tok in tokens)
-                    if score:
-                        nearby.append((score, sid, name))
-            nearby = sorted(nearby, reverse=True)[:20]
-            all_nifty = sorted({
-                (sid, name) for sid, names in candidates for name in names
-                if "NIFTY" in name.upper() or "FINNIFTY" in name.upper() or "BANKNIFTY" in name.upper()
-            }, key=lambda x: (norm(x[1]), x[0]))
-            raise RuntimeError(
-                f"Could not exactly map index aliases {aliases}; nearby candidates={nearby}; "
-                f"available_nifty_indices={all_nifty}"
-            )
+            if required:
+                raise RuntimeError(f"Could not exactly map required index aliases: {aliases}")
+            return None, None
         if len({sid for sid, _ in unique}) != 1:
             raise RuntimeError(f"Ambiguous exact index mapping for {aliases}: {sorted(unique)}")
         sid, name = sorted(unique, key=lambda x: (len(norm(x[1])), norm(x[1]), x[0]))[0]
@@ -192,14 +186,22 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
 
 
     indices = {}
-    nifty_sid, nifty_name = match_one(NIFTY_ALIASES)
-    indices["NIFTY 50"] = {"security_id": nifty_sid, "matched_name": nifty_name}
+    nifty_sid, nifty_name = match_one(NIFTY_ALIASES, required=True)
+    indices["NIFTY 50"] = {"security_id": nifty_sid, "matched_name": nifty_name, "available": True}
     for canonical, aliases in SECTOR_INDEX_ALIASES.items():
-        sid, matched = match_one(aliases)
-        indices[canonical] = {"security_id": sid, "matched_name": matched}
+        sid, matched = match_one(aliases, required=False)
+        indices[canonical] = {
+            "security_id": sid,
+            "matched_name": matched,
+            "available": bool(sid),
+        }
 
-    if len(indices) != 22:
-        raise RuntimeError(f"Expected NIFTY + 21 sector indices, got {len(indices)}")
+    project_sectors = sorted(set(load_project_sector_map().values()))
+    if project_sectors != sorted(SECTOR_INDEX_ALIASES):
+        raise RuntimeError(
+            f"Research sector list diverged from scanner.py: project={project_sectors}, "
+            f"research={sorted(SECTOR_INDEX_ALIASES)}"
+        )
     return stocks, indices
 
 
@@ -344,6 +346,9 @@ def main():
         "stock_count": len(stocks),
         "stocks": stocks,
         "excluded_post_sample_fno": sorted(EXCLUDE_POST_SAMPLE_FNO),
+        "symbol_sector_map": {
+            sym: load_project_sector_map().get(sym) for sym in sorted(stocks)
+        },
         "indices": indices,
     }
     (root / "universe.json").write_text(json.dumps(universe, indent=2), encoding="utf-8")
@@ -362,7 +367,7 @@ def main():
         ]
         targets += [
             (name, info["security_id"], "IDX_I", "INDEX", root/"indices"/(norm(name)+".parquet"))
-            for name, info in indices.items()
+            for name, info in indices.items() if info.get("available")
         ]
 
     records = []
@@ -397,7 +402,8 @@ def main():
         "probe":args.probe,
         "files":len(records),
         "stock_universe":len(stocks),
-        "index_universe":len(indices),
+        "index_universe_available":sum(1 for x in indices.values() if x.get("available")),
+        "index_universe_total":len(indices),
     }, indent=2))
 
 
