@@ -27,7 +27,7 @@ PB_BINS = [(0.0, 0.20), (0.20, 0.35), (0.35, 0.50), (0.50, 0.65), (0.65, 0.80), 
 COVID_START = "2020-03-11"
 COVID_END = "2021-12-31"
 POST_OCT24_START = "2024-10-01"
-US_IRAN_START = "2026-02-28"
+US_IRAN_START = "2026-03-01"
 
 
 def split_name(d: str) -> str:
