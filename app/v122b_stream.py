@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import median
 from typing import Callable
 
-from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution
+from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution, v3_call_forward_recorder
 
 
 log = logging.getLogger(__name__)
@@ -126,6 +126,18 @@ class TacticalStockStreamService:
         self.continuation_file = (
             str(Path(event_file).with_name("v123_continuation_shadow.jsonl"))
             if event_file else None
+        )
+        self.call_v1_forward_file = (
+            str(Path(event_file).with_name("v3_call_v1_forward.jsonl"))
+            if event_file else None
+        )
+        self.call_v1_forward_state_file = (
+            str(Path(event_file).with_name("v3_call_v1_forward_state.json"))
+            if event_file else None
+        )
+        self._call_v1_forward = v3_call_forward_recorder.CallV1ForwardRecorder(
+            self.call_v1_forward_file,
+            self.call_v1_forward_state_file,
         )
         self._shadow_samples_written = 0
         self._shadow_episode_keys = set()
