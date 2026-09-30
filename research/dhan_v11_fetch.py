@@ -177,8 +177,13 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
                     if score:
                         nearby.append((score, sid, name))
             nearby = sorted(nearby, reverse=True)[:20]
+            all_nifty = sorted({
+                (sid, name) for sid, names in candidates for name in names
+                if "NIFTY" in name.upper() or "FINNIFTY" in name.upper() or "BANKNIFTY" in name.upper()
+            }, key=lambda x: (norm(x[1]), x[0]))
             raise RuntimeError(
-                f"Could not exactly map index aliases {aliases}; nearby candidates={nearby}"
+                f"Could not exactly map index aliases {aliases}; nearby candidates={nearby}; "
+                f"available_nifty_indices={all_nifty}"
             )
         if len({sid for sid, _ in unique}) != 1:
             raise RuntimeError(f"Ambiguous exact index mapping for {aliases}: {sorted(unique)}")
