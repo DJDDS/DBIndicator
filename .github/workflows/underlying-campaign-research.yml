@@ -1,0 +1,86 @@
+name: Underlying Campaign Research
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'research/dhan_campaign_fetch.py'
+      - 'research/underlying_campaign_research.py'
+      - 'research/dhan_campaign_option_overlay.py'
+      - 'research/V123_UNDERLYING_CAMPAIGN_PREREG_2026-09-30.md'
+      - '.github/workflows/underlying-campaign-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  campaign-replay:
+    if: github.head_ref == 'research/underlying-campaign-20260930' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+      DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install research dependencies
+        run: |
+          pip install             pandas==2.2.2             numpy==1.26.4             requests==2.33.0             pyarrow==17.0.0
+
+      - name: Verify isolation, credentials and syntax
+        shell: bash
+        run: |
+          test -n "$DHAN_CLIENT_ID"
+          test -n "$DHAN_ACCESS_TOKEN"
+          git diff --quiet origin/main -- app || {
+            echo "Research branch unexpectedly changes production app/ files"
+            git diff --name-only origin/main -- app
+            exit 1
+          }
+          python -m py_compile             research/dhan_campaign_fetch.py             research/underlying_campaign_research.py             research/dhan_campaign_option_overlay.py
+
+      - name: Download five-year 5m + ten-year daily underlying history
+        run: |
+          python research/dhan_campaign_fetch.py             --intraday-start 2021-10-01             --intraday-end 2026-09-25             --daily-start 2016-10-01             --daily-end 2026-09-25             --out /tmp/campaign_data             --workers 12
+
+      - name: Run preregistered underlying impulse-pullback-reclaim replay
+        run: |
+          python research/underlying_campaign_research.py             --data-root /tmp/campaign_data             --out /tmp/campaign_results
+
+      - name: Run historical option-premium overlay
+        run: |
+          python research/dhan_campaign_option_overlay.py             --data-root /tmp/campaign_data             --events /tmp/campaign_results/campaign_events.parquet             --out /tmp/option_results             --workers 10
+
+      - name: Print reports
+        if: always()
+        shell: bash
+        run: |
+          echo "===== UNDERLYING REPORT ====="
+          test -f /tmp/campaign_results/report.md && cat /tmp/campaign_results/report.md || true
+          echo "===== OPTION REPORT ====="
+          test -f /tmp/option_results/option_report.md && cat /tmp/option_results/option_report.md || true
+
+      - name: Upload research results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: underlying-campaign-results
+          path: |
+            /tmp/campaign_data/universe.json
+            /tmp/campaign_data/download_manifest.json
+            /tmp/campaign_results/campaign_events.parquet
+            /tmp/campaign_results/summary.json
+            /tmp/campaign_results/report.md
+            /tmp/option_results/option_event_overlay.parquet
+            /tmp/option_results/option_summary.json
+            /tmp/option_results/option_report.md
+          if-no-files-found: warn
+          retention-days: 14
