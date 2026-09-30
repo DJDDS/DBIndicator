@@ -147,6 +147,17 @@ V12_EARNINGS_STATE_FILE = _V12_STORAGE["earnings_state"]
 V12_SNAPSHOT_GRACE_MINUTES = int(os.getenv("V12_SNAPSHOT_GRACE_MINUTES", "7"))
 V12_DEEP_SYMBOL_LIMIT = int(os.getenv("V12_DEEP_SYMBOL_LIMIT", "40"))
 
+# Owner-only Friday→Monday NIFTY research alert. These files are intentionally
+# isolated from all V12/V12.1 recorders and from production decision state.
+FRIDAY_WEEKEND_ALERT_STATE_FILE = os.getenv(
+    "FRIDAY_WEEKEND_ALERT_STATE_FILE",
+    os.path.join(V12_STORAGE_ROOT, "friday_weekend_alert_state.json"),
+)
+FRIDAY_WEEKEND_HOLIDAY_CACHE_FILE = os.getenv(
+    "FRIDAY_WEEKEND_HOLIDAY_CACHE_FILE",
+    os.path.join(V12_STORAGE_ROOT, "friday_weekend_nse_holidays.json"),
+)
+
 # V12.2B interim tactical stock-option execution state.  These files are
 # intentionally separate from every frozen V12/Trial-25 artifact.
 V122B_TACTICAL_STATE_FILE = os.getenv(
