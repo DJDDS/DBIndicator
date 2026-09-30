@@ -54,6 +54,8 @@ def post(payload, retries=7):
             last = RuntimeError(f"HTTP {r.status_code}: {r.text[:240]}")
             if r.status_code in (400, 401, 403):
                 raise last
+            if r.status_code == 429:
+                time.sleep(min(8.0, 1.5 + attempt))
         except Exception as exc:  # noqa: BLE001
             last = exc
         time.sleep(min(10.0, 0.7 * 1.7 ** attempt))
