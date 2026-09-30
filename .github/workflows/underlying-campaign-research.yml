@@ -47,7 +47,7 @@ jobs:
             git diff --name-only origin/main -- app
             exit 1
           }
-          python -m py_compile research/dhan_campaign_quick_fetch.py research/underlying_campaign_research.py
+          python -m py_compile research/dhan_campaign_quick_fetch.py research/underlying_campaign_research.py research/dhan_campaign_option_overlay.py
       - name: Download underlying stress-window panel
         run: |
           python research/dhan_campaign_quick_fetch.py \
@@ -61,10 +61,18 @@ jobs:
           python research/underlying_campaign_research.py \
             --data-root /tmp/campaign_data \
             --out /tmp/campaign_results
+      - name: Run historical stock-option overlay
+        run: |
+          python research/dhan_campaign_option_overlay.py \
+            --data-root /tmp/campaign_data \
+            --events /tmp/campaign_results/campaign_events.parquet \
+            --out /tmp/option_results \
+            --workers 6
       - name: Print report
         if: always()
         run: |
           test -f /tmp/campaign_results/report.md && cat /tmp/campaign_results/report.md || true
+          test -f /tmp/option_results/option_report.md && cat /tmp/option_results/option_report.md || true
       - name: Upload underlying results
         if: always()
         uses: actions/upload-artifact@v4
@@ -76,5 +84,8 @@ jobs:
             /tmp/campaign_results/campaign_events.parquet
             /tmp/campaign_results/summary.json
             /tmp/campaign_results/report.md
+            /tmp/option_results/option_event_overlay.parquet
+            /tmp/option_results/option_summary.json
+            /tmp/option_results/option_report.md
           if-no-files-found: warn
           retention-days: 14
