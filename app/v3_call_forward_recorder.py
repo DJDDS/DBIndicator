@@ -14,7 +14,8 @@ from pathlib import Path
 
 HORIZONS = {"1m": 60, "3m": 180, "5m": 300, "10m": 600}
 MAX_OUTCOME_DELAY_SECONDS = 45
-MAX_EVENT_AGE_SECONDS = 15 * 60\nMIN_REARM_SECONDS = 15 * 60
+MAX_EVENT_AGE_SECONDS = 15 * 60
+MIN_REARM_SECONDS = 15 * 60
 
 
 def _finite(value):
