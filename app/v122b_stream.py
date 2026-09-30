@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import median
 from typing import Callable
 
-from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical
+from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution
 
 
 log = logging.getLogger(__name__)
@@ -150,6 +150,9 @@ class TacticalStockStreamService:
         self._depth_samples = defaultdict(lambda: deque(maxlen=180))
         self._basis_samples = defaultdict(lambda: deque(maxlen=180))
         self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
+        # Bounded live option history for the frozen CALL_EXECUTION_CANDIDATE_V1 scorer.
+        # This is read-only evidence; it never places orders or mutates the underlying thesis.
+        self._option_samples = defaultdict(lambda: deque(maxlen=1200))
         self._lifecycle = {}
         self._last_states = {}
         self._transition_ids = set()
@@ -298,6 +301,7 @@ class TacticalStockStreamService:
             self._depth_samples = defaultdict(lambda: deque(maxlen=180))
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
             self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
+            self._option_samples = defaultdict(lambda: deque(maxlen=1200))
             self._lifecycle = {}
             self._last_states = {}
             self._transition_ids = set()
@@ -321,6 +325,13 @@ class TacticalStockStreamService:
             self._depth_samples.pop(symbol, None)
             self._basis_samples.pop(symbol, None)
             self._cash_samples.pop(symbol, None)
+            option_symbols = {
+                str(meta.get("tradingsymbol") or "")
+                for meta in self._metadata.values()
+                if meta.get("kind") == "OPTION" and meta.get("symbol") == symbol
+            }
+            for contract_symbol in option_symbols:
+                self._option_samples.pop(contract_symbol, None)
             self._seeded.discard(symbol)
 
     def snapshot(self):
@@ -543,6 +554,39 @@ class TacticalStockStreamService:
                 snap["lot_size"] = meta.get("lot_size")
                 out.append(snap)
         return out
+
+    def _record_option_samples(self, snaps, spot, now):
+        """Keep causal live option history for V3 scoring; no trading side effects."""
+        with self._lock:
+            for snap in snaps or []:
+                contract = str((snap or {}).get("symbol") or "")
+                mid = _f((snap or {}).get("mid"))
+                if not contract or mid is None or mid <= 0:
+                    continue
+                sample = {
+                    "ts": now,
+                    "mid": mid,
+                    "iv_pct": _f((snap or {}).get("iv_pct")),
+                    "oi": _f((snap or {}).get("oi")),
+                    "cum_volume": _f((snap or {}).get("volume")),
+                    "spot": _f(spot),
+                    "strike": _f((snap or {}).get("strike")),
+                    "expiry": (snap or {}).get("expiry"),
+                    "dte": (snap or {}).get("dte"),
+                    "delta": _f((snap or {}).get("delta")),
+                    "bid": _f((snap or {}).get("bid")),
+                    "ask": _f((snap or {}).get("ask")),
+                    "spread_pct": _f((snap or {}).get("spread_pct")),
+                }
+                bucket = self._option_samples[contract]
+                if (
+                    bucket
+                    and isinstance(bucket[-1].get("ts"), dt.datetime)
+                    and (now - bucket[-1]["ts"]).total_seconds() < 1.0
+                ):
+                    bucket[-1] = sample
+                else:
+                    bucket.append(sample)
 
     def _basis(self, symbol, now):
         with self._lock:
@@ -1230,6 +1274,7 @@ class TacticalStockStreamService:
             option_snaps = self._option_snapshots(
                 symbol, live_price or _f(candidate.get("close"), 0.0), now
             )
+            self._record_option_samples(option_snaps, live_price, now)
             precheck = v122b_tactical.option_pre_feasibility(option_snaps, direction)
             life = self._lifecycle.setdefault(symbol, {})
             locked_contract = life.get("locked_option_contract") or candidate.get("locked_option_contract")
@@ -1305,6 +1350,15 @@ class TacticalStockStreamService:
                     "structure_horizon_seconds": candidate.get("movement_horizon_seconds"),
                     "route_tradeable": False,
                 }
+
+            call_execution_candidate = v3_call_execution.evaluate_call_candidates(
+                option_snaps,
+                self._option_samples,
+                price_samples,
+                now=now,
+                direction=setup.get("direction") or direction,
+                spot=live_price,
+            )
 
             five_minute = v122b_tactical.five_minute_witness(
                 setup.get("direction") or direction,
@@ -1567,6 +1621,11 @@ class TacticalStockStreamService:
                 "fast_veto": fast,
                 "earnings": event,
                 "option_route": option_route,
+                "call_execution_candidate": call_execution_candidate,
+                "call_execution_candidate_pass": bool(call_execution_candidate.get("pass")),
+                "call_execution_candidate_contract": call_execution_candidate.get("selected_contract"),
+                "call_execution_candidate_probability": call_execution_candidate.get("probability"),
+                "call_execution_candidate_hold_seconds": call_execution_candidate.get("evaluation_horizon_seconds"),
                 "best_option_contract": (option_route.get("contract") or {}).get("symbol"),
                 "best_option_strike": (option_route.get("contract") or {}).get("strike"),
                 "best_option_expiry": (option_route.get("contract") or {}).get("expiry"),
@@ -1642,6 +1701,14 @@ class TacticalStockStreamService:
                 "risk_plan_trailing_method": "ADAPTIVE_EVIDENCE_PERSISTENCE",
                 "risk_plan_atr3_shadow_length": v122b_tactical.RISK_PLAN_ATR3_LENGTH,
                 "risk_plan_controls_trading": False,
+                "call_execution_candidate_v1": {
+                    "direction": "Bullish",
+                    "threshold": v3_call_execution.MODEL_THRESHOLD,
+                    "hold_seconds": v3_call_execution.EVALUATION_HORIZON_SECONDS,
+                    "max_live_spread_pct": v3_call_execution.MAX_LIVE_SPREAD_PCT,
+                    "controls_trading": False,
+                    "validation_label": v3_call_execution.VALIDATION_LABEL,
+                },
             },
         })
 
