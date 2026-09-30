@@ -1450,6 +1450,21 @@ class TacticalStockStreamService:
                 direction=setup.get("direction") or direction,
                 spot=live_price,
             )
+            selected_call_snapshot = next(
+                (
+                    snap for snap in option_snaps
+                    if str((snap or {}).get("symbol") or "")
+                    == str(call_execution_candidate.get("selected_contract") or "")
+                ),
+                None,
+            )
+            self._call_v1_forward.observe_signal(
+                now=now,
+                symbol=symbol,
+                spot=live_price,
+                candidate=call_execution_candidate,
+                contract_snapshot=selected_call_snapshot,
+            )
 
             five_minute = v122b_tactical.five_minute_witness(
                 setup.get("direction") or direction,
