@@ -182,6 +182,23 @@
     </div>
   </form>
 
+  <div class="card" style="border-color:#2563eb;">
+    <h2>Friday → Monday NIFTY Research Alert <span class="hint">OWNER ONLY</span></h2>
+    <p class="hint"><strong>Forward validation — not production validated.</strong> Frozen rule: Friday 14:15 IST, ±0.20% from the session open, ATM monthly option only. If Friday is an NSE F&amp;O holiday, Thursday is recorded separately as <strong>HOLIDAY-WEEKEND SHADOW</strong>. This panel never places orders and does not feed Focus Desk, Actionable Desk, member alerts or Telegram.</p>
+    <div class="count-grid" style="margin-top:12px;">
+      <div class="count-tile"><div class="count-value" id="fw-status">{{ friday_weekend_alert_state.status or 'WAITING' }}</div><div class="count-label">Recorder status</div></div>
+      <div class="count-tile"><div class="count-value" id="fw-mode">{{ friday_weekend_alert_state.session_mode or '—' }}</div><div class="count-label">Session class</div></div>
+      <div class="count-tile"><div class="count-value" id="fw-signal">{{ friday_weekend_alert_state.signal or '—' }}</div><div class="count-label">CE / PE / no trade</div></div>
+    </div>
+    <div class="scan-health-note" style="margin-top:12px;">
+      <strong>NIFTY:</strong> <span id="fw-nifty">{% if friday_weekend_alert_state.nifty_open %}{{ friday_weekend_alert_state.nifty_open }} → {{ friday_weekend_alert_state.nifty_spot }} ({{ '%+.2f'|format(friday_weekend_alert_state.move_pct or 0) }}%){% else %}Waiting for an eligible 14:15 capture{% endif %}</span><br>
+      <strong>ATM contract:</strong> <span id="fw-contract">{% if friday_weekend_alert_state.option %}{{ friday_weekend_alert_state.option }} · strike {{ friday_weekend_alert_state.strike }} · expiry {{ friday_weekend_alert_state.expiry }}{% elif friday_weekend_alert_state.signal == 'NO TRADE' %}No contract — threshold not reached{% else %}—{% endif %}</span><br>
+      <strong>Premium / spread:</strong> <span id="fw-price">{% if friday_weekend_alert_state.premium %}LTP {{ friday_weekend_alert_state.premium }} · bid {{ friday_weekend_alert_state.bid or '—' }} · ask {{ friday_weekend_alert_state.ask or '—' }} · spread {{ friday_weekend_alert_state.spread_pct or '—' }}%{% else %}—{% endif %}</span><br>
+      <strong>Exit research window:</strong> <span id="fw-exit">{% if friday_weekend_alert_state.exit_session %}{{ friday_weekend_alert_state.exit_session }} · {{ friday_weekend_alert_state.exit_window }}{% else %}—{% endif %}</span><br>
+      <strong>Validation:</strong> <span id="fw-validation">{{ friday_weekend_alert_state.validation_label or 'FORWARD VALIDATION — NOT PRODUCTION VALIDATED' }}</span>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Alerts</h2>
     {% if telegram_enabled %}
@@ -230,6 +247,45 @@
   }
   wireButton('test-alert-btn', 'test-alert-result', '/api/alerts/test', 'POST');
   wireButton('find-chat-id-btn', 'chat-id-result', '/api/alerts/discover-chat-id', 'GET');
+
+  function fwText(id, value) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = (value === null || value === undefined || value === '') ? '—' : String(value);
+  }
+  function renderFridayWeekendAlert(s) {
+    s = s || {};
+    fwText('fw-status', s.status || 'WAITING');
+    fwText('fw-mode', s.session_mode || '—');
+    fwText('fw-signal', s.signal || '—');
+    if (s.nifty_open && s.nifty_spot) {
+      var move = Number(s.move_pct || 0);
+      fwText('fw-nifty', s.nifty_open + ' → ' + s.nifty_spot + ' (' + (move >= 0 ? '+' : '') + move.toFixed(2) + '%)');
+    } else {
+      fwText('fw-nifty', 'Waiting for an eligible 14:15 capture');
+    }
+    if (s.option) {
+      fwText('fw-contract', s.option + ' · strike ' + s.strike + ' · expiry ' + s.expiry);
+    } else if (s.signal === 'NO TRADE') {
+      fwText('fw-contract', 'No contract — threshold not reached');
+    } else {
+      fwText('fw-contract', '—');
+    }
+    if (s.premium) {
+      fwText('fw-price', 'LTP ' + s.premium + ' · bid ' + (s.bid || '—') + ' · ask ' + (s.ask || '—') + ' · spread ' + (s.spread_pct == null ? '—' : s.spread_pct + '%'));
+    } else {
+      fwText('fw-price', '—');
+    }
+    fwText('fw-exit', s.exit_session ? (s.exit_session + ' · ' + (s.exit_window || '09:15-09:30 IST')) : '—');
+    fwText('fw-validation', s.validation_label || 'FORWARD VALIDATION — NOT PRODUCTION VALIDATED');
+  }
+  function refreshFridayWeekendAlert() {
+    fetch('/api/admin/friday-weekend-alert', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(renderFridayWeekendAlert)
+      .catch(function () {});
+  }
+  refreshFridayWeekendAlert();
+  setInterval(refreshFridayWeekendAlert, 30000);
 </script>
 </body>
 </html>
