@@ -32,6 +32,7 @@ def now_ist() -> dt.datetime:
     return dt.datetime.now(_IST).replace(tzinfo=None)
 
 _instrument_cache = {}
+_instrument_cache_date = None
 
 
 def seed_nse_instrument_cache(mapping: dict) -> None:
@@ -74,15 +75,29 @@ _fut_contracts_cache = {"date": None, "map": {}}
 
 
 def _load_instrument_map(kite):
-    global _instrument_cache
-    if _instrument_cache:
+    global _instrument_cache, _instrument_cache_date
+    today = now_ist().date().isoformat()
+    if _instrument_cache_date == today and _instrument_cache:
         return _instrument_cache
-    instruments = kite.instruments("NSE")
-    _instrument_cache = {
-        row["tradingsymbol"]: row["instrument_token"]
-        for row in instruments
-        if row.get("segment") == "NSE"
-    }
+
+    try:
+        instruments = kite.instruments("NSE")
+        fresh = {
+            row["tradingsymbol"]: row["instrument_token"]
+            for row in instruments
+            if row.get("segment") == "NSE"
+        }
+    except Exception as exc:  # noqa: BLE001 - stale cache is a deliberate fallback
+        if _instrument_cache:
+            log.warning("NSE instrument refresh failed; using last-known cache: %s", exc)
+            return _instrument_cache
+        raise
+
+    if fresh:
+        _instrument_cache = fresh
+        _instrument_cache_date = today
+    elif _instrument_cache:
+        log.warning("NSE instrument refresh returned empty; using last-known cache")
     return _instrument_cache
 
 
@@ -92,7 +107,7 @@ def get_fno_stock_list(kite) -> list:
     stock-futures "name" field) rather than a hardcoded list that could
     go stale as SEBI/NSE periodically revise F&O eligibility. Cached
     for the day since this rarely changes intraday."""
-    today = dt.date.today().isoformat()
+    today = now_ist().date().isoformat()
     if _fno_cache["date"] == today and _fno_cache["symbols"]:
         return _fno_cache["symbols"]
     instruments = kite.instruments("NFO")
@@ -110,7 +125,11 @@ def get_fno_stock_list(kite) -> list:
     # non-stock derivatives before they can become a permanent scan error.
     cash_symbols = set(_load_instrument_map(kite))
     symbols = sorted(name for name in names if name in cash_symbols)
-    if symbols:
+    # Cache today's F&O list only when the NSE cash instrument master was
+    # also refreshed today. If Kite's NSE master temporarily failed and we had
+    # to use a last-known fallback, leave the F&O cache open so the next pass
+    # can retry instead of freezing a stale universe for the whole session.
+    if symbols and _instrument_cache_date == today:
         _fno_cache["date"] = today
         _fno_cache["symbols"] = symbols
     return symbols
