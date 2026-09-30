@@ -1774,6 +1774,9 @@ class TacticalStockStreamService:
             if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"):
                 self._reset_trigger(life)
 
+        # Record any due +1m/+3m/+5m/+10m outcomes after processing current PASS transitions.
+        self._record_call_v1_forward_outcomes(now, metadata, ticks)
+
         priority = {
             "TRADEABLE": 10, "PROFIT_PROTECT": 9, "READY": 8, "TRIGGERED": 7,
             "ROUTE_DEGRADED": 7, "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
@@ -1798,6 +1801,7 @@ class TacticalStockStreamService:
                 "file": Path(self.continuation_file).name if self.continuation_file else None,
                 "controls_trading": False,
             },
+            "call_v1_forward_recorder": self._call_v1_forward.status(),
             "rules": {
                 "pool_max": v122b_tactical.TACTICAL_POOL_MAX,
                 "pre_result_next_month_dte_lte": v122b_tactical.PROPOSED_PRE_RESULT_NEXT_MONTH_DTE,
