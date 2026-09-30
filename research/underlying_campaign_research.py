@@ -24,6 +24,10 @@ OOS_START = "2025-10-01"
 OOS_END = "2026-09-25"
 BARRIERS_BPS = (10, 20, 30)
 PB_BINS = [(0.0, 0.20), (0.20, 0.35), (0.35, 0.50), (0.50, 0.65), (0.65, 0.80), (0.80, 1.00)]
+COVID_START = "2020-03-11"
+COVID_END = "2021-12-31"
+POST_OCT24_START = "2024-10-01"
+US_IRAN_START = "2026-02-28"
 
 
 def split_name(d: str) -> str:
@@ -51,6 +55,70 @@ def load_nifty(root: Path) -> pd.DataFrame:
     x = x[["timestamp", "close"]].dropna().drop_duplicates("timestamp").sort_values("timestamp")
     x["r_mkt"] = np.log(x["close"] / x["close"].shift(1))
     return x[["timestamp", "r_mkt"]]
+
+
+def nifty_daily_regimes(root: Path) -> pd.DataFrame:
+    """Prior-completed-day NIFTY regime diagnostics for intraday event stratification."""
+    nf = root / "context" / "NIFTY50_daily.parquet"
+    n = pd.read_parquet(nf)[["timestamp", "close"]].dropna().drop_duplicates("timestamp").sort_values("timestamp")
+    n["trade_date"] = n.timestamp.dt.date.astype(str)
+    n["nifty_ret1"] = n.close.pct_change()
+    n["nifty_ret20"] = n.close / n.close.shift(20) - 1.0
+    n["nifty_ret60"] = n.close / n.close.shift(60) - 1.0
+    n["nifty_dd126"] = n.close / n.close.shift(1).rolling(126, min_periods=40).max() - 1.0
+    n["nifty_regime"] = np.select(
+        [
+            n.nifty_dd126 <= -0.10,
+            (n.nifty_ret20 < 0) & (n.nifty_ret60 < 0),
+            (n.nifty_ret20 > 0) & (n.nifty_ret60 > 0),
+        ],
+        ["STRESS_DRAWDOWN", "BEAR", "BULL"],
+        default="MIXED",
+    )
+    # All regime fields used for an intraday date are known only from the prior
+    # completed NIFTY session. Shifting the date forward enforces causality.
+    n["trade_date"] = n["trade_date"].shift(-1)
+    return n[["trade_date", "nifty_ret20", "nifty_ret60", "nifty_dd126", "nifty_regime"]].dropna(subset=["trade_date"])
+
+
+def named_regime_flags(d: str) -> dict:
+    return {
+        "covid_period": COVID_START <= d <= COVID_END,
+        "post_oct2024_stress_window": d >= POST_OCT24_START,
+        "us_iran_conflict": d >= US_IRAN_START,
+    }
+
+
+def daily_market_period_summary(root: Path) -> dict:
+    """Daily NIFTY descriptors for the requested historical stress periods."""
+    nf = root / "context" / "NIFTY50_daily.parquet"
+    n = pd.read_parquet(nf)[["timestamp", "close"]].dropna().drop_duplicates("timestamp").sort_values("timestamp")
+    n["trade_date"] = n.timestamp.dt.date.astype(str)
+    n["ret"] = n.close.pct_change()
+    periods = {
+        "COVID_2020_TO_LATE_2021": (COVID_START, COVID_END),
+        "POST_OCT2024_STRESS_WINDOW": (POST_OCT24_START, OOS_END),
+        "US_IRAN_CONFLICT": (US_IRAN_START, OOS_END),
+    }
+    out = {}
+    for name, (a, b) in periods.items():
+        z = n[(n.trade_date >= a) & (n.trade_date <= b)].copy()
+        if z.empty:
+            out[name] = {"days": 0}
+            continue
+        peak = z.close.cummax()
+        dd = z.close / peak - 1.0
+        out[name] = {
+            "start": a,
+            "end": b,
+            "days": int(len(z)),
+            "total_return_pct": float((z.close.iloc[-1] / z.close.iloc[0] - 1.0) * 100.0),
+            "mean_daily_bps": float(z.ret.mean() * 10000.0),
+            "daily_vol_annualized_pct": float(z.ret.std(ddof=0) * np.sqrt(252.0) * 100.0),
+            "max_drawdown_pct": float(dd.min() * 100.0),
+            "down_day_rate": float((z.ret < 0).mean()),
+        }
+    return out
 
 
 def daily_context(root: Path, sym: str) -> pd.DataFrame:
@@ -325,6 +393,17 @@ def main():
     if ev.empty:
         raise RuntimeError("No campaign events extracted")
     ev["pb_bin"] = ev.pullback_ratio.apply(pb_bin_label) if "pullback_ratio" in ev else None
+
+    # Requested market/event regimes are explicit overlapping flags. They are
+    # diagnostics, never signal inputs. The broad post-Oct-2024 bucket is a
+    # user-requested stress window, not a claim that every day was bearish.
+    ev["covid_period"] = ev.trade_date.between(COVID_START, COVID_END)
+    ev["post_oct2024_stress_window"] = ev.trade_date >= POST_OCT24_START
+    ev["us_iran_conflict"] = ev.trade_date >= US_IRAN_START
+
+    # Add an independent, data-derived NIFTY regime from the prior completed day.
+    nr = nifty_daily_regimes(root)
+    ev = ev.merge(nr, on="trade_date", how="left")
     ev.to_parquet(out / "campaign_events.parquet", index=False, compression="zstd")
 
     report = {
@@ -338,6 +417,12 @@ def main():
             "oos": [OOS_START, OOS_END],
             "bar_interval_minutes": 5,
         },
+        "named_periods": {
+            "covid": [COVID_START, COVID_END],
+            "post_oct2024_stress_window": [POST_OCT24_START, OOS_END],
+            "us_iran_conflict": [US_IRAN_START, OOS_END],
+        },
+        "daily_market_periods": daily_market_period_summary(root),
         "splits": {},
     }
     for sp in ("DEV", "VAL", "OOS"):
@@ -350,6 +435,34 @@ def main():
             "reclaim_contract_expand": summarize(rec[(rec.pullback_volume_ratio <= 1.0) & (rec.reclaim_volume_ratio >= 1.0)], "reclaim"),
             "reclaim_rate": float(len(rec) / len(z)) if len(z) else None,
         }
+
+    # Requested regime distinctions. Named periods can overlap. The independent
+    # NIFTY regime is based only on prior completed daily data.
+    report["regime_results"] = {}
+    named_filters = {
+        "COVID_2020_TO_LATE_2021_INTRADAY_OVERLAP": ev.covid_period,
+        "POST_OCT2024_STRESS_WINDOW": ev.post_oct2024_stress_window,
+        "US_IRAN_CONFLICT": ev.us_iran_conflict,
+    }
+    for name, mask in named_filters.items():
+        z = ev[mask].copy()
+        rec = z[z.campaign_state == "RECLAIM"].copy()
+        report["regime_results"][name] = {
+            "coverage_note": (
+                "Dhan intraday history begins within the last-five-year window, so the COVID "
+                "intraday sample contains only the available late-2021 overlap; full 2020-late-2021 "
+                "context is reported from daily history."
+                if name.startswith("COVID") else None
+            ),
+            "impulse": summarize(z, "impulse"),
+            "reclaim": summarize(rec, "reclaim"),
+            "reclaim_volume_contraction": summarize(rec[rec.pullback_volume_ratio <= 1.0], "reclaim"),
+        }
+
+    report["data_driven_nifty_regimes"] = {}
+    rec_reg = ev[ev.campaign_state == "RECLAIM"].copy()
+    for name, z in rec_reg.groupby("nifty_regime", dropna=False):
+        report["data_driven_nifty_regimes"][str(name)] = summarize(z, "reclaim")
 
     # Pullback-depth response surface is reported for every split. No OOS bin
     # is selected from OOS itself.
@@ -413,6 +526,29 @@ def main():
                 f"{s.get('mean_15m_bps',np.nan):.2f} | [{ci[0]:.2f}, {ci[1]:.2f}] | "
                 f"{s.get('mean_30m_bps',np.nan):.2f} | n/a |"
             )
+    lines += ["", "## Requested market/event regimes", "", "| Regime | Entry state | Events | +15m bps | 95% CI | Hit rate |", "|---|---|---:|---:|---:|---:|"]
+    for name, rr in report["regime_results"].items():
+        for key, label in (("impulse", "Immediate impulse"), ("reclaim", "Pullback → reclaim")):
+            s = rr[key]
+            ci = s.get("ci95_15m_bps", [np.nan, np.nan])
+            hit = s.get("hit_15m")
+            lines.append(
+                f"| {name} | {label} | {s.get('events',0)} | {s.get('mean_15m_bps',np.nan):.2f} | "
+                f"[{ci[0]:.2f}, {ci[1]:.2f}] | {100*hit:.1f}% |"
+                if hit is not None else
+                f"| {name} | {label} | {s.get('events',0)} | n/a | n/a | n/a |"
+            )
+
+    lines += ["", "## Data-driven prior-day NIFTY regimes", "", "| NIFTY regime | Reclaim events | +15m bps | 95% CI | Hit rate |", "|---|---:|---:|---:|---:|"]
+    for name, s in report["data_driven_nifty_regimes"].items():
+        ci = s.get("ci95_15m_bps", [np.nan, np.nan])
+        hit = s.get("hit_15m")
+        lines.append(
+            f"| {name} | {s.get('events',0)} | {s.get('mean_15m_bps',np.nan):.2f} | "
+            f"[{ci[0]:.2f}, {ci[1]:.2f}] | {100*hit:.1f}% |"
+            if hit is not None else f"| {name} | {s.get('events',0)} | n/a | n/a | n/a |"
+        )
+
     lines += ["", "## Pullback depth — OOS", "", "| Pullback depth | Events | +15m bps | 95% CI | Hit rate |", "|---|---:|---:|---:|---:|"]
     for k, s in report["pullback_bins"]["OOS"].items():
         ci = s.get("ci95_15m_bps", [np.nan, np.nan])
