@@ -14,6 +14,7 @@ import concurrent.futures as cf
 import json
 import os
 import time
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +22,22 @@ import pandas as pd
 import requests
 
 ROLLING_URL = "https://api.dhan.co/v2/charts/rollingoption"
-# Dhan Data APIs are rate limited per account, so serialize all historical\n# option requests below the documented 5 requests/second ceiling.\n_RATE_LOCK = threading.Lock()\n_NEXT_REQUEST_AT = 0.0\n_REQUEST_SPACING_SECONDS = 0.26\n\ndef throttle():\n    global _NEXT_REQUEST_AT\n    with _RATE_LOCK:\n        now = time.monotonic()\n        if now < _NEXT_REQUEST_AT:\n            time.sleep(_NEXT_REQUEST_AT - now)\n            now = time.monotonic()\n        _NEXT_REQUEST_AT = now + _REQUEST_SPACING_SECONDS\n\nSPREAD_SCENARIOS_PCT = {
+
+# Process-wide throttle: Dhan v2 Data APIs allow 5 requests/second.
+_RATE_LOCK = threading.Lock()
+_NEXT_REQUEST_AT = 0.0
+_REQUEST_SPACING_SECONDS = 0.26
+
+def throttle():
+    global _NEXT_REQUEST_AT
+    with _RATE_LOCK:
+        now = time.monotonic()
+        if now < _NEXT_REQUEST_AT:
+            time.sleep(_NEXT_REQUEST_AT - now)
+            now = time.monotonic()
+        _NEXT_REQUEST_AT = now + _REQUEST_SPACING_SECONDS
+
+SPREAD_SCENARIOS_PCT = {
     "recorder_median": 1.8059,
     "recorder_p75": 2.5532,
     "liquidity_gate": 4.0,
@@ -45,6 +61,7 @@ def post(payload, retries=7):
     last = None
     for attempt in range(retries):
         try:
+            throttle()
             r = requests.post(ROLLING_URL, headers=headers(), json=payload, timeout=90)
             if r.status_code == 200:
                 d = r.json()
