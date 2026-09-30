@@ -1286,6 +1286,50 @@ class TacticalStockStreamService:
             "last_error": last_error,
         }
 
+    def _record_call_v1_forward_outcomes(self, now, metadata, ticks):
+        refs = self._call_v1_forward.active_subscriptions()
+        for ref in refs:
+            symbol = str((ref or {}).get("symbol") or "")
+            contract_symbol = str((ref or {}).get("contract") or "")
+            if not symbol or not contract_symbol:
+                continue
+            cash_tok = next(
+                (
+                    tok for tok, meta in metadata.items()
+                    if meta.get("kind") == "CASH" and meta.get("symbol") == symbol
+                ),
+                None,
+            )
+            option_tok = next(
+                (
+                    tok for tok, meta in metadata.items()
+                    if meta.get("kind") == "OPTION"
+                    and str(meta.get("tradingsymbol") or "") == contract_symbol
+                ),
+                None,
+            )
+            cash_tick = ticks.get(cash_tok) or {}
+            option_tick = ticks.get(option_tok) or {}
+            spot = _f(cash_tick.get("last_price"))
+            snapshot = None
+            if option_tok is not None and spot is not None and spot > 0:
+                try:
+                    snapshot = derivative_intelligence.contract_snapshot(
+                        metadata.get(option_tok) or {},
+                        option_tick,
+                        spot,
+                        now,
+                    )
+                except Exception:
+                    snapshot = None
+            self._call_v1_forward.observe_market(
+                now=now,
+                symbol=symbol,
+                contract=contract_symbol,
+                spot=spot,
+                snapshot=snapshot or {},
+            )
+
     def _evaluate(self, now):
         self._maybe_reset_session(now)
         feed_health = self._feed_health(now)
