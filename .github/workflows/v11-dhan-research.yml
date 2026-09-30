@@ -1,0 +1,51 @@
+name: V1.1 Dhan Research Probe
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'research/dhan_v11_fetch.py'
+      - 'research/v123_v11_auditor_followup.py'
+      - 'research/V123_V11_EMPIRICAL_NULL_PREREG_2026-09-30.md'
+      - '.github/workflows/v11-dhan-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.head_ref == 'research/v11-empirical-null-audit-followup' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+      DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install research dependencies
+        run: pip install pandas==2.2.2 numpy==1.26.4 requests==2.33.0 pyarrow==17.0.0
+      - name: Verify Dhan secrets are present
+        shell: bash
+        run: |
+          test -n "$DHAN_CLIENT_ID" || (echo "DHAN_CLIENT_ID missing" && exit 1)
+          test -n "$DHAN_ACCESS_TOKEN" || (echo "DHAN_ACCESS_TOKEN missing" && exit 1)
+      - name: Probe Dhan v2 history and frozen 210-stock universe
+        run: |
+          python research/dhan_v11_fetch.py \
+            --start 2026-09-24 \
+            --end 2026-09-25 \
+            --out /tmp/dhan_probe \
+            --workers 2 \
+            --probe
+      - name: Upload probe manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: v11-dhan-probe
+          path: |
+            /tmp/dhan_probe/universe.json
+            /tmp/dhan_probe/download_manifest.json
+          retention-days: 7
