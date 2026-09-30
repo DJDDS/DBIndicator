@@ -1,10 +1,11 @@
-name: V1.1 Dhan Research Probe
+name: V1.1 Dhan Research
 
 on:
   pull_request:
     branches: [ main ]
     paths:
       - 'research/dhan_v11_fetch.py'
+      - 'research/v11_dhan_replay.py'
       - 'research/v123_v11_auditor_followup.py'
       - 'research/V123_V11_EMPIRICAL_NULL_PREREG_2026-09-30.md'
       - '.github/workflows/v11-dhan-research.yml'
@@ -33,6 +34,10 @@ jobs:
         run: |
           test -n "$DHAN_CLIENT_ID" || (echo "DHAN_CLIENT_ID missing" && exit 1)
           test -n "$DHAN_ACCESS_TOKEN" || (echo "DHAN_ACCESS_TOKEN missing" && exit 1)
+      - name: Compile research modules
+        run: |
+          python -m py_compile research/dhan_v11_fetch.py
+          python -m py_compile research/v11_dhan_replay.py
       - name: Probe Dhan v2 history and frozen 210-stock universe
         run: |
           python research/dhan_v11_fetch.py \
@@ -49,3 +54,69 @@ jobs:
             /tmp/dhan_probe/universe.json
             /tmp/dhan_probe/download_manifest.json
           retention-days: 7
+
+  full-replay:
+    needs: probe
+    if: github.head_ref == 'research/v11-empirical-null-audit-followup' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+      DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install replay dependencies
+        run: |
+          pip install \
+            pandas==2.2.2 \
+            numpy==1.26.4 \
+            requests==2.33.0 \
+            pyarrow==17.0.0 \
+            numba==0.61.2 \
+            scikit-learn==1.6.1
+      - name: Verify research isolation and secrets
+        shell: bash
+        run: |
+          test -n "$DHAN_CLIENT_ID"
+          test -n "$DHAN_ACCESS_TOKEN"
+          git diff --quiet origin/main -- app || {
+            echo "Research PR unexpectedly changes production app/ files"
+            git diff --name-only origin/main -- app
+            exit 1
+          }
+      - name: Download complete Dhan 1-minute research panel
+        run: |
+          python research/dhan_v11_fetch.py \
+            --start 2026-03-02 \
+            --end 2026-09-25 \
+            --out /tmp/dhan_v11_data \
+            --workers 3
+      - name: Run preregistered V1.1 empirical-null replay
+        run: |
+          python research/v11_dhan_replay.py \
+            --data-root /tmp/dhan_v11_data \
+            --out /tmp/v11_results
+      - name: Show research report
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/v11_results/report.md ]; then cat /tmp/v11_results/report.md; fi
+      - name: Upload V1.1 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v11-dhan-full-results
+          path: |
+            /tmp/dhan_v11_data/universe.json
+            /tmp/dhan_v11_data/download_manifest.json
+            /tmp/v11_results/sector_mapping.csv
+            /tmp/v11_results/thresholds.csv
+            /tmp/v11_results/null_histograms.npz
+            /tmp/v11_results/events.parquet
+            /tmp/v11_results/summary.json
+            /tmp/v11_results/report.md
+          if-no-files-found: warn
+          retention-days: 14
