@@ -434,7 +434,9 @@ class TacticalStockStreamService:
         self.sleep_fn(0.38)
 
     def _resolve_universe(self, kite, candidates, now):
-        cash_map = scanner.cached_nse_instrument_tokens([x.get("symbol") for x in candidates])
+        forward_refs = self._call_v1_forward.active_subscriptions()
+        requested_cash = [x.get("symbol") for x in candidates] + [x.get("symbol") for x in forward_refs]
+        cash_map = scanner.cached_nse_instrument_tokens(requested_cash)
         fut_map = scanner.get_futures_contracts_map(kite)
         opt_map = derivative_intelligence.get_option_contracts_map(kite)
         metadata = {}
@@ -487,6 +489,39 @@ class TacticalStockStreamService:
                             "strike": con.get("strike"), "expiry": con.get("expiry"),
                             "lot_size": con.get("lot_size"),
                         }
+
+        # Keep exact CALL V1 forward-study contracts and their underlying cash
+        # subscribed through +10m even if the name temporarily leaves Focus.
+        candidate_symbols = {str(x.get("symbol") or "") for x in candidates}
+        for ref in forward_refs:
+            symbol = str((ref or {}).get("symbol") or "")
+            contract_symbol = str((ref or {}).get("contract") or "")
+            if not symbol or not contract_symbol:
+                continue
+            if symbol not in candidate_symbols:
+                cash_token = cash_map.get(symbol)
+                if cash_token:
+                    metadata[int(cash_token)] = {
+                        "kind": "CASH", "symbol": symbol, "tradingsymbol": symbol
+                    }
+            exact = next(
+                (
+                    row for row in list(opt_map.get(symbol) or [])
+                    if str(row.get("tradingsymbol") or "") == contract_symbol
+                ),
+                None,
+            )
+            if exact and exact.get("instrument_token"):
+                tok = int(exact["instrument_token"])
+                metadata[tok] = {
+                    "kind": "OPTION", "symbol": symbol,
+                    "tradingsymbol": exact.get("tradingsymbol"),
+                    "instrument_token": tok,
+                    "instrument_type": exact.get("instrument_type"),
+                    "strike": exact.get("strike"),
+                    "expiry": exact.get("expiry"),
+                    "lot_size": exact.get("lot_size"),
+                }
 
         # Subscribe to NIFTY spot as a light 3m relative-move witness.
         try:
