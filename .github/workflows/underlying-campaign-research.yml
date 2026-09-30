@@ -5,20 +5,26 @@ on:
     branches: [ main ]
     paths:
       - 'research/dhan_campaign_fetch.py'
+      - 'research/dhan_campaign_quick_fetch.py'
       - 'research/underlying_campaign_research.py'
       - 'research/dhan_campaign_option_overlay.py'
       - 'research/V123_UNDERLYING_CAMPAIGN_PREREG_2026-09-30.md'
+      - 'research/V123_UNDERLYING_CAMPAIGN_REGIME_ADDENDUM_2026-09-30.md'
       - '.github/workflows/underlying-campaign-research.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: underlying-campaign-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  campaign-replay:
+  underlying-first:
     if: github.head_ref == 'research/underlying-campaign-20260930' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
     env:
       DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
       DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
@@ -26,16 +32,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install research dependencies
-        run: |
-          pip install             pandas==2.2.2             numpy==1.26.4             requests==2.33.0             pyarrow==17.0.0
-
-      - name: Verify isolation, credentials and syntax
+        run: pip install pandas==2.2.2 numpy==1.26.4 requests==2.33.0 pyarrow==17.0.0
+      - name: Verify research isolation and credentials
         shell: bash
         run: |
           test -n "$DHAN_CLIENT_ID"
@@ -45,30 +47,25 @@ jobs:
             git diff --name-only origin/main -- app
             exit 1
           }
-          python -m py_compile             research/dhan_campaign_fetch.py             research/underlying_campaign_research.py             research/dhan_campaign_option_overlay.py
-
-      - name: Download five-year 5m + ten-year daily underlying history
+          python -m py_compile research/dhan_campaign_quick_fetch.py research/underlying_campaign_research.py
+      - name: Download underlying stress-window panel
         run: |
-          python research/dhan_campaign_fetch.py             --intraday-start 2021-10-01             --intraday-end 2026-09-25             --daily-start 2016-10-01             --daily-end 2026-09-25             --out /tmp/campaign_data             --workers 12
-
-      - name: Run preregistered underlying impulse-pullback-reclaim replay
+          python research/dhan_campaign_quick_fetch.py \
+            --start 2024-01-01 \
+            --end 2026-09-25 \
+            --daily-start 2016-10-01 \
+            --out /tmp/campaign_data \
+            --workers 6
+      - name: Run preregistered underlying campaign replay
         run: |
-          python research/underlying_campaign_research.py             --data-root /tmp/campaign_data             --out /tmp/campaign_results
-
-      - name: Run historical option-premium overlay
-        run: |
-          python research/dhan_campaign_option_overlay.py             --data-root /tmp/campaign_data             --events /tmp/campaign_results/campaign_events.parquet             --out /tmp/option_results             --workers 10
-
-      - name: Print reports
+          python research/underlying_campaign_research.py \
+            --data-root /tmp/campaign_data \
+            --out /tmp/campaign_results
+      - name: Print report
         if: always()
-        shell: bash
         run: |
-          echo "===== UNDERLYING REPORT ====="
           test -f /tmp/campaign_results/report.md && cat /tmp/campaign_results/report.md || true
-          echo "===== OPTION REPORT ====="
-          test -f /tmp/option_results/option_report.md && cat /tmp/option_results/option_report.md || true
-
-      - name: Upload research results
+      - name: Upload underlying results
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -79,8 +76,5 @@ jobs:
             /tmp/campaign_results/campaign_events.parquet
             /tmp/campaign_results/summary.json
             /tmp/campaign_results/report.md
-            /tmp/option_results/option_event_overlay.parquet
-            /tmp/option_results/option_summary.json
-            /tmp/option_results/option_report.md
           if-no-files-found: warn
           retention-days: 14
