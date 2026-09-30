@@ -128,7 +128,11 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
     stocks = {}
     for _, row in stock_deriv.iterrows():
         sym = str(row[c_under_sym]).strip().upper()
-        if not sym or sym in EXCLUDE_POST_SAMPLE_FNO:
+        if (
+            not sym
+            or sym in EXCLUDE_POST_SAMPLE_FNO
+            or "NSETEST" in sym
+        ):
             continue
         sid = str(row[c_under_id]).split(".")[0].strip()
         if sid and sid.lower() != "nan":
