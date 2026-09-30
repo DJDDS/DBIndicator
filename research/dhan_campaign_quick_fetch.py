@@ -19,6 +19,7 @@ import json
 import os
 import re
 import time
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +29,21 @@ from dhan_v11_fetch import discover_universe, get_master
 
 INTRADAY_URL = "https://api.dhan.co/v2/charts/intraday"
 DAILY_URL = "https://api.dhan.co/v2/charts/historical"
+
+# Process-wide throttle: Dhan v2 Data APIs allow 5 requests/second.
+_RATE_LOCK = threading.Lock()
+_NEXT_REQUEST_AT = 0.0
+_REQUEST_SPACING_SECONDS = 0.26
+
+def throttle():
+    global _NEXT_REQUEST_AT
+    with _RATE_LOCK:
+        now = time.monotonic()
+        if now < _NEXT_REQUEST_AT:
+            time.sleep(_NEXT_REQUEST_AT - now)
+            now = time.monotonic()
+        _NEXT_REQUEST_AT = now + _REQUEST_SPACING_SECONDS
+
 
 
 def headers():
@@ -47,6 +63,7 @@ def post(url, payload, retries=8):
     last = None
     for attempt in range(retries):
         try:
+            throttle()
             r = requests.post(url, headers=headers(), json=payload, timeout=90)
             if r.status_code == 200:
                 out = r.json()
@@ -56,6 +73,8 @@ def post(url, payload, retries=8):
             last = RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
             if r.status_code in (400, 401, 403):
                 raise last
+            if r.status_code == 429:
+                time.sleep(min(8.0, 1.5 + attempt))
         except Exception as exc:  # noqa: BLE001
             last = exc
         time.sleep(min(12.0, 0.8 * (1.7 ** attempt)))
