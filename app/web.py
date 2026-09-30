@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
-from . import alerts, audit_access, backtest, chart_patterns, background, config, delivery, early_signal, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development, v123_quant_shadow
+from . import alerts, audit_access, backtest, chart_patterns, background, config, delivery, early_signal, friday_weekend_alert, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development, v123_quant_shadow
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -549,6 +549,14 @@ def api_audit_file(file_id):
     return send_file(path, as_attachment=True, download_name=path.name)
 
 
+@app.route("/api/admin/friday-weekend-alert")
+@require_roles(OWNER)
+def api_admin_friday_weekend_alert():
+    state = friday_weekend_alert.load_state(config.FRIDAY_WEEKEND_ALERT_STATE_FILE)
+    state["owner_only"] = True
+    return jsonify(state)
+
+
 @app.route("/settings", methods=["GET", "POST"])
 @require_dashboard_password
 def settings_page():
@@ -614,6 +622,7 @@ def settings_page():
         require_oi_agreement=settings.REQUIRE_OI_AGREEMENT,
         telegram_token_set=bool(config.TELEGRAM_BOT_TOKEN),
         delivery_status=delivery.get_status(),
+        friday_weekend_alert_state=friday_weekend_alert.load_state(config.FRIDAY_WEEKEND_ALERT_STATE_FILE),
     )
 
 
