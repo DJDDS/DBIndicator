@@ -160,6 +160,7 @@ class UniverseMomentumStreamService:
         self._connected = False
         self._tokens = {}
         self._token_to_symbol = {}
+        self._universe_date = None
         # Context indices share the lightweight QUOTE socket but are never
         # eligible as stock movers.  This gives Spotting a contemporaneous
         # market + sector frame without adding a separate data connection.
@@ -305,6 +306,29 @@ class UniverseMomentumStreamService:
             self._underlying_symbols = underlying_symbols
             self._context_symbols = context_symbols
         return tokens
+
+    def _ensure_daily_universe(self, kite, now):
+        """Refresh the live F&O token universe once per IST trading date.
+
+        The process intentionally survives overnight, so yesterday's websocket
+        token map must not be reused at the next market open. A failed/empty
+        refresh is not marked complete; the next loop retries instead of
+        freezing a partial universe for the session.
+        """
+        today = now.date().isoformat()
+        with self._lock:
+            if self._universe_date == today and self._tokens:
+                return False
+
+        tokens = self._resolve_universe(kite)
+        with self._lock:
+            if not self._underlying_symbols:
+                return False
+            self._tokens = dict(tokens)
+            self._token_to_symbol = {int(tok): sym for sym, tok in tokens.items()}
+            self._universe_date = today
+            self._next_connect_at = None
+        return True
 
     def _metadata(self):
         rows = list(self.metadata_provider() or [])
@@ -1492,11 +1516,14 @@ class UniverseMomentumStreamService:
                     self.sleep_fn(10)
                     continue
 
-                if not self._tokens:
-                    tokens = self._resolve_universe(kite)
-                    with self._lock:
-                        self._tokens = dict(tokens)
-                        self._token_to_symbol = {int(tok): sym for sym, tok in tokens.items()}
+                today = now.date().isoformat()
+                with self._lock:
+                    universe_stale = self._universe_date != today
+                    active = self._active
+                if universe_stale and active:
+                    self._close()
+
+                self._ensure_daily_universe(kite, now)
 
                 with self._lock:
                     next_connect_at = self._next_connect_at
