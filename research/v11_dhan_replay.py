@@ -210,7 +210,9 @@ def load_series(path: Path, name: str) -> pd.DataFrame:
 
 def load_index_panel(root: Path, universe: dict):
     frames=[]
-    for name in universe["indices"]:
+    for name, info in universe["indices"].items():
+        if not info.get("available", True):
+            continue
         p=root/"indices"/f"{norm(name)}.parquet"
         frames.append(load_series(p,name).set_index("timestamp"))
     panel=pd.concat(frames,axis=1).sort_index()
@@ -221,7 +223,10 @@ def load_index_panel(root: Path, universe: dict):
 def map_sectors(root: Path, universe: dict, panel: pd.DataFrame, cal_days: list[str]):
     out=[]
     calset=set(cal_days)
-    idx_names=[x for x in universe["indices"] if x!="NIFTY 50"]
+    idx_names=[
+        x for x, info in universe["indices"].items()
+        if x!="NIFTY 50" and info.get("available", True) and x in panel.columns
+    ]
     ir=np.log(panel[idx_names]/panel[idx_names].shift(1))
     ir=ir[pd.Series(ir.index.date.astype(str),index=ir.index).isin(calset)]
     for sym in sorted(universe["stocks"]):
@@ -568,7 +573,9 @@ def main():
     summary={
         "research_version":"V1.1-1m-EMPIRICAL-NULL",
         "production_changed":False,
-        "stocks":len(universe["stocks"]),"context_indices":len(universe["indices"]),
+        "stocks":len(universe["stocks"]),
+        "context_indices_available":sum(1 for x in universe["indices"].values() if x.get("available", True)),
+        "context_indices_total":len(universe["indices"]),
         "trading_days":len(days),"calibration_days":CAL_MIN_DAYS,
         "oos_days":len(days)-CAL_MIN_DAYS,
         "threshold_q99_multiscale":{
