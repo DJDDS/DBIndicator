@@ -14,7 +14,7 @@ from pathlib import Path
 
 HORIZONS = {"1m": 60, "3m": 180, "5m": 300, "10m": 600}
 MAX_OUTCOME_DELAY_SECONDS = 45
-MAX_EVENT_AGE_SECONDS = 15 * 60
+MAX_EVENT_AGE_SECONDS = 15 * 60\nMIN_REARM_SECONDS = 15 * 60
 
 
 def _finite(value):
@@ -161,6 +161,14 @@ class CallV1ForwardRecorder:
             latch = self._state["latches"].setdefault(symbol, {})
             if latch.get("active") and str(latch.get("contract") or "") == contract:
                 return latch.get("event_id")
+            last_started = _dt(latch.get("started_at"))
+            if last_started is not None:
+                if last_started.tzinfo is not None and now.tzinfo is None:
+                    last_started = last_started.replace(tzinfo=None)
+                elif last_started.tzinfo is None and now.tzinfo is not None:
+                    last_started = last_started.replace(tzinfo=now.tzinfo)
+                if (now - last_started).total_seconds() < MIN_REARM_SECONDS:
+                    return latch.get("event_id")
 
             snap = dict(contract_snapshot or {})
             bid = _finite(snap.get("bid"))
@@ -215,6 +223,11 @@ class CallV1ForwardRecorder:
         if not isinstance(event, dict):
             return
         self._state["completed"] = int(self._state.get("completed") or 0) + 1
+        symbol = str(event.get("symbol") or "")
+        latch = (self._state.get("latches") or {}).get(symbol)
+        if isinstance(latch, dict) and latch.get("event_id") == event_id:
+            latch["active"] = False
+            latch["completed_at"] = _iso(now)
         _append_jsonl(self.ledger_file, {
             "record_type": "COMPLETE",
             "event_id": event_id,
@@ -243,6 +256,10 @@ class CallV1ForwardRecorder:
                     self._finish_event(event_id, now, "INVALID_ENTRY_TIME")
                     changed = True
                     continue
+                if start.tzinfo is not None and now.tzinfo is None:
+                    start = start.replace(tzinfo=None)
+                elif start.tzinfo is None and now.tzinfo is not None:
+                    start = start.replace(tzinfo=now.tzinfo)
                 age = max(0.0, (now - start).total_seconds())
                 outcomes = event.setdefault("outcomes", {})
                 for label, seconds in HORIZONS.items():
