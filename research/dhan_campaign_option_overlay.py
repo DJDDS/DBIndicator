@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 
 ROLLING_URL = "https://api.dhan.co/v2/charts/rollingoption"
-SPREAD_SCENARIOS_PCT = {
+# Dhan Data APIs are rate limited per account, so serialize all historical\n# option requests below the documented 5 requests/second ceiling.\n_RATE_LOCK = threading.Lock()\n_NEXT_REQUEST_AT = 0.0\n_REQUEST_SPACING_SECONDS = 0.26\n\ndef throttle():\n    global _NEXT_REQUEST_AT\n    with _RATE_LOCK:\n        now = time.monotonic()\n        if now < _NEXT_REQUEST_AT:\n            time.sleep(_NEXT_REQUEST_AT - now)\n            now = time.monotonic()\n        _NEXT_REQUEST_AT = now + _REQUEST_SPACING_SECONDS\n\nSPREAD_SCENARIOS_PCT = {
     "recorder_median": 1.8059,
     "recorder_p75": 2.5532,
     "liquidity_gate": 4.0,
