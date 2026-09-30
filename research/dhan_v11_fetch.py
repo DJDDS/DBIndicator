@@ -203,7 +203,7 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
     return stocks, indices
 
 
-def chunks(start_date: str, end_date: str, days: int = 60):
+def chunks(start_date: str, end_date: str, days: int = 85):
     start = pd.Timestamp(start_date + " 09:15:00")
     end_exclusive = pd.Timestamp(end_date) + pd.Timedelta(days=1)
     cur = start
