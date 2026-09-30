@@ -227,8 +227,14 @@ def map_sectors(root: Path, universe: dict, panel: pd.DataFrame, cal_days: list[
     for sym in sorted(universe["stocks"]):
         s=pd.read_parquet(root/"stocks"/f"{sym}.parquet",columns=["timestamp","close"])
         s=s.drop_duplicates("timestamp").set_index("timestamp").sort_index()
-        sr=np.log(s["close"]/s["close"].shift(1))
-        sr=sr[pd.Series(sr.index.date.astype(str),index=sr.index).isin(calset)]
+        # Dhan omits some no-trade cash minutes. Reindex to the NIFTY minute grid
+        # and carry only the last known same-day cash price forward. This is causal
+        # and makes +5/+15/+30 mean clock minutes rather than "next N prints".
+        sc=s["close"].reindex(ir.index)
+        daykey=pd.Series(ir.index.date.astype(str),index=ir.index)
+        sc=sc.groupby(daykey).ffill()
+        sr=np.log(sc/sc.groupby(daykey).shift(1))
+        sr=sr[daykey.isin(calset)]
         cors={}
         for idx in idx_names:
             pair=pd.concat([sr.rename("s"),ir[idx].rename("i")],axis=1).dropna()
@@ -243,11 +249,23 @@ def map_sectors(root: Path, universe: dict, panel: pd.DataFrame, cal_days: list[
 def prepare_symbol(root:Path,sym:str,sector:str,panel:pd.DataFrame,day_to_code:dict):
     s=pd.read_parquet(root/"stocks"/f"{sym}.parquet",
                       columns=["timestamp","open","high","low","close"])
-    s=s.drop_duplicates("timestamp").sort_values("timestamp")
-    x=s.merge(panel[["NIFTY 50",sector]],left_on="timestamp",right_index=True,how="inner")
-    x["trade_date"]=x["timestamp"].dt.date.astype(str)
-    x=x[x["trade_date"].isin(day_to_code)].copy()
+    s=s.drop_duplicates("timestamp").sort_values("timestamp").set_index("timestamp")
+
+    ctx=panel[["NIFTY 50",sector]].copy()
+    ctx=ctx[pd.Series(ctx.index.date.astype(str),index=ctx.index).isin(day_to_code)]
+    x=ctx.join(s[["open","high","low","close"]],how="left")
+    x["trade_date"]=x.index.date.astype(str)
+    daykey=pd.Series(x["trade_date"].to_numpy(),index=x.index)
+
+    # Complete no-trade cash minutes using only the last known same-day price.
+    x["close"]=x["close"].groupby(daykey).ffill()
+    missing=x["open"].isna() & x["close"].notna()
+    for col in ("open","high","low"):
+        x.loc[missing,col]=x.loc[missing,"close"]
+    x=x.dropna(subset=["close","NIFTY 50",sector]).copy()
+    x=x.reset_index().rename(columns={"index":"timestamp"})
     x["day_code"]=x["trade_date"].map(day_to_code).astype(int)
+
     same=x["day_code"].eq(x["day_code"].shift())
     x["r_stock"]=np.where(same,np.log(x["close"]/x["close"].shift()),np.nan)
     x["r_market"]=np.where(same,np.log(x["NIFTY 50"]/x["NIFTY 50"].shift()),np.nan)
@@ -269,9 +287,10 @@ def prepare_symbol(root:Path,sym:str,sector:str,panel:pd.DataFrame,day_to_code:d
     mx[good]=tmp[rows,ai[good]]
     direction=np.where(selected>=0,1.0,-1.0)
 
-    r2=pd.Series(y)
-    vol5=r2.pow(2).rolling(5,min_periods=3).mean().pow(0.5)
-    vol15=r2.pow(2).rolling(15,min_periods=8).mean().pow(0.5)
+    # Same-day rolling realized-volatility ratio; no overnight leakage.
+    sq=pd.Series(y*y,index=x.index)
+    vol5=sq.groupby(x["day_code"]).rolling(5,min_periods=3).mean().reset_index(level=0,drop=True).pow(0.5)
+    vol15=sq.groupby(x["day_code"]).rolling(15,min_periods=8).mean().reset_index(level=0,drop=True).pow(0.5)
     vr=(vol5/vol15).to_numpy(float)
     minute=(x["timestamp"].dt.hour*60+x["timestamp"].dt.minute-555).to_numpy(float)
 
