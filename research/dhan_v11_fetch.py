@@ -161,23 +161,30 @@ def discover_universe(master: pd.DataFrame) -> tuple[dict, dict]:
         candidates.append((sid, names))
 
     def match_one(aliases: list[str]) -> tuple[str, str]:
-        alias_norm = [norm(a) for a in aliases]
+        alias_norm = {norm(a) for a in aliases}
         exact = []
-        fuzzy = []
         for sid, names in candidates:
             for name in names:
-                n = norm(name)
-                if n in alias_norm:
+                if norm(name) in alias_norm:
                     exact.append((sid, name))
-                elif any(a in n or n in a for a in alias_norm if len(a) >= 7):
-                    fuzzy.append((sid, name))
-        hits = exact or fuzzy
-        unique = {(sid, name) for sid, name in hits if sid and sid.lower() != "nan"}
+        unique = {(sid, name) for sid, name in exact if sid and sid.lower() != "nan"}
         if not unique:
-            raise RuntimeError(f"Could not map index aliases: {aliases}")
-        # Prefer shortest display match for deterministic selection.
+            tokens = [t for t in re.split(r"[^A-Z0-9]+", aliases[0].upper()) if t not in {"NIFTY","INDEX","AND"}]
+            nearby = []
+            for sid, names in candidates:
+                for name in names:
+                    score = sum(tok in name.upper() for tok in tokens)
+                    if score:
+                        nearby.append((score, sid, name))
+            nearby = sorted(nearby, reverse=True)[:20]
+            raise RuntimeError(
+                f"Could not exactly map index aliases {aliases}; nearby candidates={nearby}"
+            )
+        if len({sid for sid, _ in unique}) != 1:
+            raise RuntimeError(f"Ambiguous exact index mapping for {aliases}: {sorted(unique)}")
         sid, name = sorted(unique, key=lambda x: (len(norm(x[1])), norm(x[1]), x[0]))[0]
         return sid, name
+
 
     indices = {}
     nifty_sid, nifty_name = match_one(NIFTY_ALIASES)
