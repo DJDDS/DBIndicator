@@ -1,0 +1,71 @@
+name: Underlying Campaign Stress Quick Run
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'research/dhan_campaign_quick_fetch.py'
+      - '.github/workflows/underlying-campaign-stress-quick.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  underlying-stress:
+    if: github.head_ref == 'research/underlying-campaign-20260930' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+      DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install research dependencies
+        run: pip install pandas==2.2.2 numpy==1.26.4 requests==2.33.0 pyarrow==17.0.0
+
+      - name: Verify isolation and syntax
+        shell: bash
+        run: |
+          test -n "$DHAN_CLIENT_ID"
+          test -n "$DHAN_ACCESS_TOKEN"
+          git diff --quiet origin/main -- app || {
+            echo "Research branch unexpectedly changes production app/ files"
+            git diff --name-only origin/main -- app
+            exit 1
+          }
+          python -m py_compile             research/dhan_campaign_quick_fetch.py             research/underlying_campaign_research.py
+
+      - name: Download stress-window underlying history
+        run: |
+          python research/dhan_campaign_quick_fetch.py             --start 2024-01-01             --end 2026-09-25             --daily-start 2016-10-01             --out /tmp/campaign_quick_data             --workers 6
+
+      - name: Run underlying campaign replay
+        run: |
+          python research/underlying_campaign_research.py             --data-root /tmp/campaign_quick_data             --out /tmp/campaign_quick_results
+
+      - name: Print underlying report
+        if: always()
+        run: |
+          test -f /tmp/campaign_quick_results/report.md && cat /tmp/campaign_quick_results/report.md || true
+
+      - name: Upload underlying-only result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: underlying-campaign-stress-quick-results
+          path: |
+            /tmp/campaign_quick_data/universe.json
+            /tmp/campaign_quick_data/download_manifest.json
+            /tmp/campaign_quick_results/campaign_events.parquet
+            /tmp/campaign_quick_results/summary.json
+            /tmp/campaign_quick_results/report.md
+          if-no-files-found: warn
+          retention-days: 14
