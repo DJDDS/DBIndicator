@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import median
 from typing import Callable
 
-from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution
+from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution, v3_call_forward_recorder
 
 
 log = logging.getLogger(__name__)
@@ -126,6 +126,18 @@ class TacticalStockStreamService:
         self.continuation_file = (
             str(Path(event_file).with_name("v123_continuation_shadow.jsonl"))
             if event_file else None
+        )
+        self.call_v1_forward_file = (
+            str(Path(event_file).with_name("v3_call_v1_forward.jsonl"))
+            if event_file else None
+        )
+        self.call_v1_forward_state_file = (
+            str(Path(event_file).with_name("v3_call_v1_forward_state.json"))
+            if event_file else None
+        )
+        self._call_v1_forward = v3_call_forward_recorder.CallV1ForwardRecorder(
+            self.call_v1_forward_file,
+            self.call_v1_forward_state_file,
         )
         self._shadow_samples_written = 0
         self._shadow_episode_keys = set()
@@ -422,7 +434,9 @@ class TacticalStockStreamService:
         self.sleep_fn(0.38)
 
     def _resolve_universe(self, kite, candidates, now):
-        cash_map = scanner.cached_nse_instrument_tokens([x.get("symbol") for x in candidates])
+        forward_refs = self._call_v1_forward.active_subscriptions()
+        requested_cash = [x.get("symbol") for x in candidates] + [x.get("symbol") for x in forward_refs]
+        cash_map = scanner.cached_nse_instrument_tokens(requested_cash)
         fut_map = scanner.get_futures_contracts_map(kite)
         opt_map = derivative_intelligence.get_option_contracts_map(kite)
         metadata = {}
@@ -475,6 +489,39 @@ class TacticalStockStreamService:
                             "strike": con.get("strike"), "expiry": con.get("expiry"),
                             "lot_size": con.get("lot_size"),
                         }
+
+        # Keep exact CALL V1 forward-study contracts and their underlying cash
+        # subscribed through +10m even if the name temporarily leaves Focus.
+        candidate_symbols = {str(x.get("symbol") or "") for x in candidates}
+        for ref in forward_refs:
+            symbol = str((ref or {}).get("symbol") or "")
+            contract_symbol = str((ref or {}).get("contract") or "")
+            if not symbol or not contract_symbol:
+                continue
+            if symbol not in candidate_symbols:
+                cash_token = cash_map.get(symbol)
+                if cash_token:
+                    metadata[int(cash_token)] = {
+                        "kind": "CASH", "symbol": symbol, "tradingsymbol": symbol
+                    }
+            exact = next(
+                (
+                    row for row in list(opt_map.get(symbol) or [])
+                    if str(row.get("tradingsymbol") or "") == contract_symbol
+                ),
+                None,
+            )
+            if exact and exact.get("instrument_token"):
+                tok = int(exact["instrument_token"])
+                metadata[tok] = {
+                    "kind": "OPTION", "symbol": symbol,
+                    "tradingsymbol": exact.get("tradingsymbol"),
+                    "instrument_token": tok,
+                    "instrument_type": exact.get("instrument_type"),
+                    "strike": exact.get("strike"),
+                    "expiry": exact.get("expiry"),
+                    "lot_size": exact.get("lot_size"),
+                }
 
         # Subscribe to NIFTY spot as a light 3m relative-move witness.
         try:
@@ -1239,6 +1286,50 @@ class TacticalStockStreamService:
             "last_error": last_error,
         }
 
+    def _record_call_v1_forward_outcomes(self, now, metadata, ticks):
+        refs = self._call_v1_forward.active_subscriptions()
+        for ref in refs:
+            symbol = str((ref or {}).get("symbol") or "")
+            contract_symbol = str((ref or {}).get("contract") or "")
+            if not symbol or not contract_symbol:
+                continue
+            cash_tok = next(
+                (
+                    tok for tok, meta in metadata.items()
+                    if meta.get("kind") == "CASH" and meta.get("symbol") == symbol
+                ),
+                None,
+            )
+            option_tok = next(
+                (
+                    tok for tok, meta in metadata.items()
+                    if meta.get("kind") == "OPTION"
+                    and str(meta.get("tradingsymbol") or "") == contract_symbol
+                ),
+                None,
+            )
+            cash_tick = ticks.get(cash_tok) or {}
+            option_tick = ticks.get(option_tok) or {}
+            spot = _f(cash_tick.get("last_price"))
+            snapshot = None
+            if option_tok is not None and spot is not None and spot > 0:
+                try:
+                    snapshot = derivative_intelligence.contract_snapshot(
+                        metadata.get(option_tok) or {},
+                        option_tick,
+                        spot,
+                        now,
+                    )
+                except Exception:
+                    snapshot = None
+            self._call_v1_forward.observe_market(
+                now=now,
+                symbol=symbol,
+                contract=contract_symbol,
+                spot=spot,
+                snapshot=snapshot or {},
+            )
+
     def _evaluate(self, now):
         self._maybe_reset_session(now)
         feed_health = self._feed_health(now)
@@ -1358,6 +1449,21 @@ class TacticalStockStreamService:
                 now=now,
                 direction=setup.get("direction") or direction,
                 spot=live_price,
+            )
+            selected_call_snapshot = next(
+                (
+                    snap for snap in option_snaps
+                    if str((snap or {}).get("symbol") or "")
+                    == str(call_execution_candidate.get("selected_contract") or "")
+                ),
+                None,
+            )
+            self._call_v1_forward.observe_signal(
+                now=now,
+                symbol=symbol,
+                spot=live_price,
+                candidate=call_execution_candidate,
+                contract_snapshot=selected_call_snapshot,
             )
 
             five_minute = v122b_tactical.five_minute_witness(
@@ -1668,6 +1774,9 @@ class TacticalStockStreamService:
             if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"):
                 self._reset_trigger(life)
 
+        # Record any due +1m/+3m/+5m/+10m outcomes after processing current PASS transitions.
+        self._record_call_v1_forward_outcomes(now, metadata, ticks)
+
         priority = {
             "TRADEABLE": 10, "PROFIT_PROTECT": 9, "READY": 8, "TRIGGERED": 7,
             "ROUTE_DEGRADED": 7, "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
@@ -1692,6 +1801,7 @@ class TacticalStockStreamService:
                 "file": Path(self.continuation_file).name if self.continuation_file else None,
                 "controls_trading": False,
             },
+            "call_v1_forward_recorder": self._call_v1_forward.status(),
             "rules": {
                 "pool_max": v122b_tactical.TACTICAL_POOL_MAX,
                 "pre_result_next_month_dte_lte": v122b_tactical.PROPOSED_PRE_RESULT_NEXT_MONTH_DTE,
