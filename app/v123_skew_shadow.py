@@ -199,10 +199,12 @@ def _eligible_rows(record):
             continue
 
         chosen = expiry_keys[0]
+        expiry_selection = "NEAREST_EXPIRY"
         near_pair = expiries[chosen]
         near_dte = _finite((near_pair.get("CE") or near_pair.get("PE") or {}).get("dte"))
         if near_dte is not None and near_dte <= 3 and len(expiry_keys) >= 2:
             chosen = expiry_keys[1]
+            expiry_selection = "NEXT_EXPIRY_DTE_LE_3"
 
         pair = expiries.get(chosen) or {}
         ce, pe = pair.get("CE") or {}, pair.get("PE") or {}
@@ -233,6 +235,7 @@ def _eligible_rows(record):
         rows.append({
             "symbol": symbol,
             "expiry": chosen,
+            "expiry_selection": expiry_selection,
             "dte": int(_finite(ce.get("dte")) or _finite(pe.get("dte")) or 0),
             "strike": _finite(ce.get("strike")) or _finite(pe.get("strike")),
             "spot": spot,
@@ -435,7 +438,11 @@ def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
     row["machine_option_spread_pct"] = relevant_spread
     row["machine_option_selection_reason"] = (
         f"ATM {option_type} from fixed skew-anchor snapshot; "
-        + ("next expiry because near DTE <=3" if int(_finite(row.get("dte")) or 0) > 3 and str(row.get("expiry") or "") else "chosen recorder expiry")
+        + (
+            "next expiry because nearest expiry DTE <=3"
+            if row.get("expiry_selection") == "NEXT_EXPIRY_DTE_LE_3"
+            else "nearest eligible expiry"
+        )
     )
     row["research_primary_instrument"] = "STOCK_FUTURES"
     row["research_option_status"] = "OPTION_ELIGIBLE" if option_ok else "OPTION_SPREAD_TOO_WIDE"
