@@ -78,3 +78,64 @@ def test_quote_timestamp_age_normalizes_aware_timestamp_and_naive_now():
     now = dt.datetime(2026, 10, 1, 14, 15, 12)
     kite_timestamp = dt.datetime(2026, 10, 1, 8, 45, 0, tzinfo=dt.timezone.utc)
     assert mod._quote_timestamp_age_seconds(kite_timestamp, now) == 12.0
+
+
+def test_maybe_capture_retries_same_day_data_unavailable(monkeypatch, tmp_path):
+    mod = _mod()
+    now = dt.datetime(2026, 10, 1, 14, 30, tzinfo=mod.IST)
+    state_file = tmp_path / "state.json"
+    holiday_file = tmp_path / "holidays.json"
+    mod._atomic_write_json(
+        state_file,
+        {
+            "status": "DATA UNAVAILABLE",
+            "capture_date": "2026-10-01",
+            "session_mode": "HOLIDAY_WEEKEND_SHADOW",
+            "signal": "NONE",
+        },
+    )
+    monkeypatch.setattr(
+        mod,
+        "get_nse_fo_holidays",
+        lambda *args, **kwargs: ({dt.date(2026, 10, 2)}, "TEST"),
+    )
+    monkeypatch.setattr(
+        mod,
+        "evaluate",
+        lambda *args, **kwargs: {
+            "status": "CAPTURED",
+            "capture_date": "2026-10-01",
+            "session_mode": "HOLIDAY_WEEKEND_SHADOW",
+            "signal": "NO TRADE",
+        },
+    )
+    result = mod.maybe_capture(
+        object(),
+        state_file=state_file,
+        holiday_cache_file=holiday_file,
+        now=now,
+    )
+    assert result["status"] == "CAPTURED"
+    assert result["signal"] == "NO TRADE"
+
+
+def test_maybe_capture_does_not_overwrite_same_day_captured(monkeypatch, tmp_path):
+    mod = _mod()
+    now = dt.datetime(2026, 10, 1, 14, 30, tzinfo=mod.IST)
+    state_file = tmp_path / "state.json"
+    holiday_file = tmp_path / "holidays.json"
+    original = {
+        "status": "CAPTURED",
+        "capture_date": "2026-10-01",
+        "session_mode": "HOLIDAY_WEEKEND_SHADOW",
+        "signal": "BUY PE",
+    }
+    mod._atomic_write_json(state_file, original)
+    monkeypatch.setattr(mod, "evaluate", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not recapture")))
+    result = mod.maybe_capture(
+        object(),
+        state_file=state_file,
+        holiday_cache_file=holiday_file,
+        now=now,
+    )
+    assert result == original
