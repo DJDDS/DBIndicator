@@ -2123,6 +2123,10 @@ def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
     the frozen CALL V1 model only; Focus/lifecycle logic is unchanged.
     Ordering: Focus names, then scouts, then continuation alumni (whose
     shadow evidence failed the 1 Oct review).
+
+    Scouts are taken from both sides, alternating bullish/bearish by |z|
+    (bullish first), so the order-flow recorder sees falling stocks too and
+    the put side gets data. Bearish scouts are never scored by CALL V1.
     """
     pool_max = v122b_tactical.TACTICAL_POOL_MAX
     continuation = set((focus_state.get("continuation_watch") or {}).keys())
@@ -2141,7 +2145,8 @@ def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
     scouts = []
     for ev in list(observer.get("events") or []):
         symbol = str(ev.get("symbol") or "")
-        if not symbol or symbol in taken or ev.get("direction") != "Bullish":
+        direction = ev.get("direction")
+        if not symbol or symbol in taken or direction not in ("Bullish", "Bearish"):
             continue
         if eligible and symbol not in eligible:
             continue
@@ -2150,8 +2155,10 @@ def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
             continue
         base = dict(scans.get(symbol) or {"symbol": symbol, "close": ev.get("live_price")})
         base.update({
-            "symbol": symbol, "direction": "Bullish", "trade_direction": "Bullish",
-            "focus_lifecycle": "CALL_SCOUT", "call_v1_scout": True,
+            "symbol": symbol, "direction": direction, "trade_direction": direction,
+            "focus_lifecycle": "CALL_SCOUT" if direction == "Bullish" else "PUT_SCOUT",
+            "call_v1_scout": direction == "Bullish",
+            "flow_scout": True, "scout_side": "CALL" if direction == "Bullish" else "PUT",
             "movement_z": ev.get("movement_z"), "movement_p_value": p,
             "movement_familywise_alpha": alpha,
             "movement_horizon_seconds": ev.get("movement_horizon_seconds"),
@@ -2162,9 +2169,20 @@ def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
             base["close"] = ev.get("live_price")
         scouts.append(base)
         taken.add(symbol)
-    scouts.sort(key=lambda r: abs(_num(r.get("movement_z")) or 0.0), reverse=True)
+    def _rank(side):
+        out = [r for r in scouts if r["direction"] == side]
+        out.sort(key=lambda r: abs(_num(r.get("movement_z")) or 0.0), reverse=True)
+        return out
+
+    bulls, bears = _rank("Bullish"), _rank("Bearish")
+    ordered = []
+    while bulls or bears:
+        if bulls:
+            ordered.append(bulls.pop(0))
+        if bears:
+            ordered.append(bears.pop(0))
     free = max(0, pool_max - len(primary))
-    return (primary + scouts[:min(CALL_V1_MAX_SCOUTS, free)] + alumni)[:pool_max]
+    return (primary + ordered[:min(CALL_V1_MAX_SCOUTS, free)] + alumni)[:pool_max]
 
 
 def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):

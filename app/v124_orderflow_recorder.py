@@ -24,7 +24,28 @@ from pathlib import Path
 
 SESSION_START = dt.time(9, 15)
 SESSION_END = dt.time(15, 30)
-SCHEMA = "v124_orderflow_minute_v1"
+SCHEMA = "v124_orderflow_minute_v2"
+
+
+def ofi_increment(prev_bid, prev_bidq, prev_ask, prev_askq, bid, bidq, ask, askq):
+    """Best-level order-flow imbalance between two book snapshots.
+
+    Positive = net buying pressure at the touch (bids added/raised or asks
+    lifted/cancelled); it separates queue changes from trades, which the
+    end-of-minute book alone cannot.
+    """
+    if None in (prev_bid, prev_ask, bid, ask):
+        return 0.0
+    e = 0.0
+    if bid >= prev_bid:
+        e += bidq
+    if bid <= prev_bid:
+        e -= prev_bidq
+    if ask <= prev_ask:
+        e -= askq
+    if ask >= prev_ask:
+        e += prev_askq
+    return e
 
 
 def _f(value):
@@ -59,6 +80,8 @@ def book_features(tick: dict) -> dict:
     out = {
         "bid": bid,
         "ask": ask,
+        "bidq": bidq,
+        "askq": askq,
         "l1_imb": (bidq - askq) / (bidq + askq) if bidq + askq > 0 else None,
         "l5_imb": (wb - ws) / (wb + ws) if wb + ws > 0 else None,
         "tot_imb": (tbq - tsq) / (tbq + tsq) if tbq + tsq > 0 else None,
@@ -119,6 +142,14 @@ class OrderFlowMinuteRecorder:
                     "prev_ask": prev.get("last_ask"),
                     "imb_sum": 0.0,
                     "imb_n": 0,
+                    "high": px,
+                    "low": px,
+                    "ofi": 0.0,
+                    "depth_sum": 0.0,
+                    "depth_n": 0,
+                    "prev_bidq": prev.get("last_bidq"),
+                    "prev_askq": prev.get("last_askq"),
+                    "vol_start": prev.get("last_vol"),
                 }
                 self._state[symbol] = st
             dv = None
@@ -136,6 +167,16 @@ class OrderFlowMinuteRecorder:
                     st["sell"] += dv
                 else:
                     st["unk"] += dv
+            if st.get("prev_bidq") is not None and st.get("prev_askq") is not None:
+                st["ofi"] += ofi_increment(
+                    st.get("prev_bid"), st["prev_bidq"], st.get("prev_ask"), st["prev_askq"],
+                    book["bid"], book["bidq"], book["ask"], book["askq"],
+                )
+            if book["bidq"] + book["askq"] > 0:
+                st["depth_sum"] += (book["bidq"] + book["askq"]) / 2.0
+                st["depth_n"] += 1
+            st["high"] = max(st["high"], px)
+            st["low"] = min(st["low"], px)
             if book["l5_imb"] is not None:
                 st["imb_sum"] += book["l5_imb"]
                 st["imb_n"] += 1
@@ -147,6 +188,8 @@ class OrderFlowMinuteRecorder:
                 st["prev_vol"] = st["last_vol"] = vol
             st["prev_bid"] = st["last_bid"] = book["bid"]
             st["prev_ask"] = st["last_ask"] = book["ask"]
+            st["prev_bidq"] = st["last_bidq"] = book["bidq"]
+            st["prev_askq"] = st["last_askq"] = book["askq"]
         if emit:
             self._write(emit)
 
@@ -154,12 +197,21 @@ class OrderFlowMinuteRecorder:
     def _row(symbol, st):
         book = st.get("book") or {}
         total = st["buy"] + st["sell"]
+        depth = st["depth_sum"] / st["depth_n"] if st["depth_n"] else None
+        vol = None
+        if st.get("vol_start") is not None and st.get("last_vol") is not None:
+            vol = max(0.0, st["last_vol"] - st["vol_start"])
         return {
             "schema": SCHEMA,
             "minute": st["minute"].isoformat(),
             "symbol": symbol,
             "open": st.get("open"),
             "close": st.get("close"),
+            "high": st.get("high"),
+            "low": st.get("low"),
+            "volume": vol,
+            "ofi": round(st["ofi"], 2),
+            "ofi_norm": round(st["ofi"] / depth, 4) if depth else None,
             "ticks": st["ticks"],
             "buy_vol": round(st["buy"], 2),
             "sell_vol": round(st["sell"], 2),

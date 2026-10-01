@@ -13,10 +13,19 @@ def test_scouts_fill_free_slots_with_strongest_bullish_movers():
     out = background._with_call_v1_scouts(focus_rows, {"continuation_watch": {}}, observer, [], set())
     syms = [r["symbol"] for r in out]
     assert syms[:3] == ["F0", "F1", "F2"]                       # Focus first, unchanged
-    scouts = [r for r in out if r.get("call_v1_scout")]
-    assert [r["symbol"] for r in scouts] == ["B", "E", "C", "D"]  # top |z|, max 4
-    assert all(r["direction"] == "Bullish" for r in scouts)
+    scouts = [r for r in out if r.get("flow_scout")]
+    # alternating sides, bullish first, each side by |z|; max 4
+    assert [r["symbol"] for r in scouts] == ["B", "BEAR", "E", "C"]
+    assert [r["symbol"] for r in out if r.get("call_v1_scout")] == ["B", "E", "C"]
+    bear = next(r for r in scouts if r["symbol"] == "BEAR")
+    assert bear["direction"] == "Bearish" and bear["scout_side"] == "PUT" and not bear["call_v1_scout"]
     assert len(out) <= v122b_tactical.TACTICAL_POOL_MAX
+
+
+def test_bullish_only_day_keeps_all_scout_slots_for_call_v1():
+    observer = {"events": [_ev("A", 4.0), _ev("B", 9.0), _ev("C", 6.0), _ev("D", 5.0), _ev("E", 7.0)]}
+    out = background._with_call_v1_scouts([], {"continuation_watch": {}}, observer, [], set())
+    assert [r["symbol"] for r in out if r.get("call_v1_scout")] == ["B", "E", "C", "D"]
 
 
 def test_scouts_respect_option_feasibility_and_pool_limit():

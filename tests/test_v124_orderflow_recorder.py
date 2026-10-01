@@ -51,3 +51,24 @@ def test_outside_session_and_no_path_are_ignored(tmp_path):
     rec.on_cash_tick("ABC", _tick(100, 2, 99.95, 100.05), dt.datetime(2026, 10, 1, 15, 31))
     assert rec.status()["symbols_live"] == 0
     OrderFlowMinuteRecorder(None).on_cash_tick("ABC", _tick(100, 1, 99.95, 100.05), dt.datetime(2026, 10, 1, 10))
+
+
+def test_ofi_sign_and_minute_fields(tmp_path):
+    from app.v124_orderflow_recorder import ofi_increment
+    # bid raised, ask unchanged with smaller queue -> buying pressure
+    assert ofi_increment(99.95, 100, 100.05, 100, 100.00, 80, 100.05, 60) > 0
+    # bid dropped, ask lowered -> selling pressure
+    assert ofi_increment(100.00, 100, 100.10, 100, 99.95, 100, 100.05, 100) < 0
+    path = tmp_path / "of.jsonl"
+    rec = OrderFlowMinuteRecorder(path)
+    t0 = dt.datetime(2026, 10, 5, 10, 0, 1)
+    rec.on_cash_tick("ABC", _tick(100.00, 1000, 99.95, 100.05), t0)
+    rec.on_cash_tick("ABC", _tick(100.20, 1300, 100.15, 100.25), t0 + dt.timedelta(seconds=5))
+    rec.on_cash_tick("ABC", _tick(100.15, 1400, 100.15, 100.25), t0 + dt.timedelta(seconds=9))
+    rec.on_cash_tick("ABC", _tick(100.10, 1500, 100.05, 100.15), t0 + dt.timedelta(seconds=61))
+    rec.on_cash_tick("ABC", _tick(100.10, 1600, 100.05, 100.15), t0 + dt.timedelta(seconds=121))
+    rows = [json.loads(x) for x in path.read_text().splitlines()]
+    assert rows[0]["high"] == 100.20 and rows[0]["low"] == 100.00 and rows[0]["close"] == 100.15
+    assert rows[0]["ofi"] > 0 and rows[0]["ofi_norm"] is not None
+    assert rows[0]["volume"] is None          # no prior minute to difference against
+    assert rows[1]["volume"] == 100.0

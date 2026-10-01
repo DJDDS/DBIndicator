@@ -1059,8 +1059,8 @@ button, a, summary, input, select { touch-action: manipulation; }
       </main>
       <aside class="focus-sidebar">
         <div id="v123-call-scouts-section" class="focus-sidebar-block focus-jump-target">
-          <div class="focus-section-head"><h3>CALL V1 Scouts</h3><span>bullish significant movers outside Focus · CALL V1 scoring only</span></div>
-          <div id="v123-call-scouts" class="focus-list"><div class="focus-empty">No bullish scout is being scored right now.</div></div>
+          <div class="focus-section-head"><h3>Scouts — Call &amp; Put</h3><span>significant movers outside Focus, both sides · bullish scored by CALL V1 · all recorded for order flow</span></div>
+          <div id="v123-call-scouts" class="focus-list"><div class="focus-empty">No scout is being watched right now.</div></div>
         </div>
         <div id="v123-focus-building-section" class="focus-sidebar-block focus-jump-target">
           <div class="focus-section-head"><h3>Directional Spots</h3><span>direction must be locked before display</span></div>
@@ -2236,13 +2236,16 @@ button, a, summary, input, select { touch-action: manipulation; }
     (function renderCallScouts(){
       var box=document.getElementById('v123-call-scouts'); if(!box) return;
       var cands=Array.isArray(tactical.candidates)?tactical.candidates:[];
-      var scouts=cands.filter(function(r){return r&&r.call_v1_scout;});
+      var scouts=cands.filter(function(r){return r&&(r.call_v1_scout||r.flow_scout);});
       if(!scouts.length){box.innerHTML='<div class="focus-empty">No bullish scout is being scored right now.</div>';return;}
       function esc2(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
       box.innerHTML=scouts.map(function(r){
         var c=r.call_execution_candidate||{}, w=c.trade_window||null, st=String(c.state||'WAIT').toUpperCase();
-        var line;
-        if(w&&w.contract){
+        var line, isPut=String(r.scout_side||'')==='PUT'||String(r.direction||'')==='Bearish';
+        if(isPut){
+          line='PUT side · order flow recording (no validated put model yet — watch only)';
+          w=null;
+        }else if(w&&w.contract){
           line=(String(w.phase)==='ENTRY_OPEN'
             ?(w.entry_price_ok===false?'PRICE MOVED · don\'t chase':'ENTRY OPEN · '+Math.round(Number(w.entry_seconds_left)||0)+'s left')
             :'HOLDING · exit '+String(w.exit_at||'').slice(11,19))+' · '+esc2(w.contract)+
@@ -2254,8 +2257,8 @@ button, a, summary, input, select { touch-action: manipulation; }
         }
         var cls=w&&w.contract?(String(w.phase)==='ENTRY_OPEN'&&w.entry_price_ok!==false?'pass':'hold'):'wait';
         return '<div class="focus-card scout '+cls+'"><div class="focus-card-head"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc2(r.symbol)+'</a>'+
-          ' <span class="side bullish">Bullish scout</span>'+(Number.isFinite(Number(r.live_price))?' · CMP '+Number(r.live_price).toFixed(2):'')+'</div>'+
-          '<div class="focus-meta">CALL V1: '+line+'</div></div>';
+          (isPut?' <span class="side bearish">Bearish scout</span>':' <span class="side bullish">Bullish scout</span>')+(Number.isFinite(Number(r.live_price))?' · CMP '+Number(r.live_price).toFixed(2):'')+'</div>'+
+          '<div class="focus-meta">'+(isPut?'':'CALL V1: ')+line+'</div></div>';
       }).join('');
     })();
     fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');

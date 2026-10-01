@@ -1801,6 +1801,8 @@ class TacticalStockStreamService:
                 "option_route": option_route,
                 "call_execution_candidate": call_execution_candidate,
                 "call_v1_scout": bool(candidate.get("call_v1_scout")),
+                "flow_scout": bool(candidate.get("flow_scout")),
+                "scout_side": candidate.get("scout_side"),
                 "candidate_lifecycle": candidate.get("focus_lifecycle"),
                 "call_execution_candidate_pass": bool(call_execution_candidate.get("pass")),
                 "call_execution_candidate_contract": call_execution_candidate.get("selected_contract"),
