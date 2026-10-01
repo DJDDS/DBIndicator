@@ -192,6 +192,18 @@ V123_QUANT_REGIME_ROOT = os.getenv(
     os.path.join(V12_STORAGE_ROOT, "v123_quant_regime_shadow"),
 )
 
+# 09:30 / 13:00 ATM CE-IV minus PE-IV cross-sectional skew SHADOW study.
+# Research-only. It is intentionally isolated from Math Recorder, CALL V1,
+# Focus admission, alerts, and broker execution.
+V123_SKEW_SHADOW_STATE_FILE = os.getenv(
+    "V123_SKEW_SHADOW_STATE_FILE",
+    os.path.join(V12_STORAGE_ROOT, "v123_skew_shadow_state.json"),
+)
+V123_SKEW_SHADOW_LEDGER_FILE = os.getenv(
+    "V123_SKEW_SHADOW_LEDGER_FILE",
+    os.path.join(V12_STORAGE_ROOT, "v123_skew_shadow.jsonl"),
+)
+
 # Trial 25 forward earnings-volatility shadow recorder. All files live under
 # the same persistent V12 Railway volume and are research-only.
 TRIAL25_ROOT = _V12_STORAGE["trial25_root"]

@@ -117,6 +117,7 @@ def dashboard():
         v12_feasibility=state.get("v12_feasibility") or {},
         v12_earnings=state.get("v12_earnings") or {},
         trial25_shadow=state.get("trial25_shadow") or {},
+        v123_skew_shadow=state.get("v123_skew_shadow") or {},
         v12_trial25_status=state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
         v121_index_vol=v121_health,
         v121_backup=v121_backup_state,
@@ -243,6 +244,7 @@ def api_dashboard_state():
         "v12_feasibility": state.get("v12_feasibility") or {},
         "v12_earnings": state.get("v12_earnings") or {},
         "trial25_shadow": state.get("trial25_shadow") or {},
+        "v123_skew_shadow": state.get("v123_skew_shadow") or {},
         "v12_trial25_status": state.get("v12_trial25_status") or "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.",
         "v121_index_vol": v121_health,
         "v121_backup": v121_backup_state,
@@ -280,6 +282,7 @@ def api_v8_dashboard():
     payload["event_early_evidence"] = state.get("v122d_forward_summary") or {}
     payload["v123_market_observer"] = state.get("v123_market_observer") or {}
     payload["v123_focus_desk"] = state.get("v123_focus_desk") or {}
+    payload["v123_skew_shadow"] = state.get("v123_skew_shadow") or {}
     payload["swing_research"] = swing_research_console(base_radar)
     payload["opportunity_forward"] = opportunity_forward.summarize(state.get("opportunity_forward"))
     payload["scan_interval_seconds"] = settings.SCAN_INTERVAL_SECONDS

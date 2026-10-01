@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, friday_weekend_alert, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_quant_shadow, v123_state, v123_swing, config
+from . import alerts, delivery, early_signal, early_movement, stock_in_play, v6_edge, v8_dual, v9_playbooks, derivative_intelligence, friday_weekend_alert, kite_auth, scanner, news, oi_view, opportunity_forward, research_runtime, v94_magnitude, v12_live, v12_feasibility_freeze, v121_index_recorder, v121_backup, v122b_tactical, v122b_stream, v122d_forward, v123_focus, v123_market_stream, v123_quant_shadow, v123_skew_shadow, v123_state, v123_swing, config
 from .config import (
     settings, SCAN_RESULTS_FILE, PARAM_WEIGHTS_FILE, WATCHLIST_TIMEFRAME,
 )
@@ -1360,6 +1360,7 @@ _state = {
     "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
     "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
     "trial25_shadow": {"status": "PREREGISTERED_WAITING_EVENTS", "completed": 0, "target": 40},
+    "v123_skew_shadow": {"status": "WAITING_FOR_SLOT", "controls_trading": False, "current": None},
     "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
     "v122b_candidates": [],
     "v122b_tactical": {
@@ -1578,6 +1579,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             "feasibility": {"status": "UNAVAILABLE", "trial25_locked": True},
             "earnings": {"status": "UNAVAILABLE", "active_count": 0, "upcoming_7d": []},
             "trial25_shadow": {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40},
+            "skew_shadow": {"status": "ERROR", "controls_trading": False, "error": str(exc)},
             "trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
         }
     out.setdefault("earnings", {})["refresh_status"] = (refresh or {}).get("status") or "UNKNOWN"
@@ -1918,6 +1920,18 @@ def _run_loop():
                         v12_snapshot = _run_v12_live(
                             kite, results, radar_snapshot, swing_snapshot, fno_symbols, now=scan_now
                         )
+                        # Research-only 60-minute check for the fixed 09:30/13:00
+                        # IV-skew batches. Uses the next normal scanner observation
+                        # at/after +60m; never controls Focus, alerts or execution.
+                        try:
+                            v12_snapshot["skew_shadow"] = v123_skew_shadow.update_one_hour_outcomes(
+                                live_rows=results,
+                                state_file=config.V123_SKEW_SHADOW_STATE_FILE,
+                                ledger_file=config.V123_SKEW_SHADOW_LEDGER_FILE,
+                                now=scan_now,
+                            )
+                        except Exception:
+                            log.exception("Failed to update V12.3 IV-skew one-hour shadow outcome")
                         with _state_lock:
                             tactical_snapshot = dict(_state.get("v122b_tactical") or {})
                         event_radar_snapshot = _update_v122d_event_evidence(radar_snapshot, tactical_snapshot, scan_now)
@@ -1950,6 +1964,7 @@ def _run_loop():
                             _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
                             _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}
+                            _state["v123_skew_shadow"] = v12_snapshot.get("skew_shadow") or _state.get("v123_skew_shadow") or {}
                             _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                             # v122b_candidates is maintained by _update_v123_focus.
                         wait_seconds = _record_scan_attempt_success(scan_ts)
