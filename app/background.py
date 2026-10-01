@@ -2098,6 +2098,8 @@ def _v122b_candidate_provider():
     with _state_lock:
         focus_state = dict(_state.get("v123_focus_state") or {})
         results = [dict(row) for row in (_state.get("results") or [])]
+    with _state_lock:
+        observer = dict(_state.get("v123_market_observer") or {})
     rows = v123_focus.tactical_candidates(focus_state, results)
     eligible = set(_v12_option_feasible_symbols)
     if eligible:
@@ -2105,7 +2107,64 @@ def _v122b_candidate_provider():
         for row in rows:
             row["option_preeligible"] = True
             row["option_preeligibility_source"] = "V12_10D_FREEZE"
-    return rows
+    return _with_call_v1_scouts(rows, focus_state, observer, results, eligible)
+
+
+CALL_V1_MAX_SCOUTS = 4
+
+
+def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
+    """Give CALL V1 more chances without widening the Focus desk.
+
+    Focus holds at most six names, so on most days only one or two bullish
+    stocks ever reached CALL V1. Free tactical-pool slots are now filled with
+    "CALL scouts": bullish, family-wise significant multiscale movers that did
+    not fit on the Focus desk, ranked by |z|. They are subscribed and scored by
+    the frozen CALL V1 model only; Focus/lifecycle logic is unchanged.
+    Ordering: Focus names, then scouts, then continuation alumni (whose
+    shadow evidence failed the 1 Oct review).
+    """
+    pool_max = v122b_tactical.TACTICAL_POOL_MAX
+    continuation = set((focus_state.get("continuation_watch") or {}).keys())
+    primary = [r for r in rows if str(r.get("symbol") or "") not in continuation]
+    alumni = [r for r in rows if str(r.get("symbol") or "") in continuation]
+    taken = {str(r.get("symbol") or "") for r in rows}
+    scans = {str(r.get("symbol") or ""): r for r in (results or []) if r.get("symbol")}
+
+    def _num(v):
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        return x if x == x else None
+
+    scouts = []
+    for ev in list(observer.get("events") or []):
+        symbol = str(ev.get("symbol") or "")
+        if not symbol or symbol in taken or ev.get("direction") != "Bullish":
+            continue
+        if eligible and symbol not in eligible:
+            continue
+        p, alpha = _num(ev.get("movement_p_value")), _num(ev.get("movement_familywise_alpha"))
+        if p is None or alpha is None or p > alpha:
+            continue
+        base = dict(scans.get(symbol) or {"symbol": symbol, "close": ev.get("live_price")})
+        base.update({
+            "symbol": symbol, "direction": "Bullish", "trade_direction": "Bullish",
+            "focus_lifecycle": "CALL_SCOUT", "call_v1_scout": True,
+            "movement_z": ev.get("movement_z"), "movement_p_value": p,
+            "movement_familywise_alpha": alpha,
+            "movement_horizon_seconds": ev.get("movement_horizon_seconds"),
+            "option_preeligible": bool(eligible),
+            "option_preeligibility_source": "V12_10D_FREEZE" if eligible else None,
+        })
+        if base.get("close") is None:
+            base["close"] = ev.get("live_price")
+        scouts.append(base)
+        taken.add(symbol)
+    scouts.sort(key=lambda r: abs(_num(r.get("movement_z")) or 0.0), reverse=True)
+    free = max(0, pool_max - len(primary))
+    return (primary + scouts[:min(CALL_V1_MAX_SCOUTS, free)] + alumni)[:pool_max]
 
 
 def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):

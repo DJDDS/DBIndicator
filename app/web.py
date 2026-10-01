@@ -96,6 +96,10 @@ def dashboard():
 
     return render_template(
         "index.html",
+        # Panels whose live/forward evidence failed (1 Oct 2026 recorder review)
+        # are hidden by default; their recorders keep running. ?show_retired=1
+        # brings them back for audit.
+        show_retired=request.args.get("show_retired") == "1",
         logged_in=logged_in,
         login_url=login_url,
         security_role=current_role(),

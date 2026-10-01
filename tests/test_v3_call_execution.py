@@ -228,3 +228,46 @@ def test_dashboard_renders_call_v1_trade_window():
     assert "CALL V1 ENTRY OPEN" in html
     assert "CALL V1 HOLDING" in html
     assert "below gate (trade unchanged)" in html
+
+
+def _scored_inputs(now, quote_age=1.0):
+    snaps, history = [], {}
+    for k in (95.0, 100.0, 105.0):
+        sym = f"TEST26OCT{int(k)}CE"
+        snaps.append({"type": "CE", "symbol": sym, "strike": k, "expiry": "2026-10-27", "dte": 26,
+                      "mid": 5.0, "bid": 4.95, "ask": 5.05, "spread_pct": 2.0, "quote_age_s": quote_age,
+                      "iv_pct": 25.0, "delta": 0.5, "oi": 1000, "volume": 500})
+        history[sym] = [{"ts": now - dt.timedelta(minutes=m), "mid": 5.0 - m * 0.02, "iv_pct": 25.0,
+                         "oi": 1000, "cum_volume": 500 - m * 10} for m in range(12, -1, -1)]
+    cash = [{"ts": now - dt.timedelta(minutes=m), "price": 100.0 - m * 0.01} for m in range(12, -1, -1)]
+    return snaps, history, cash
+
+
+def test_stale_option_quotes_never_pass():
+    now = dt.datetime(2026, 10, 2, 10, 30)
+    snaps, history, cash = _scored_inputs(now, quote_age=45.0)
+    out = v3_call_execution.evaluate_call_candidates(snaps, history, cash, now=now, direction="Bullish", spot=100.0)
+    assert out["pass"] is False
+    assert "stale" in out["reason"]
+
+
+def test_blocked_result_for_stale_underlying_is_not_a_pass():
+    out = v3_call_execution.blocked_result("underlying feed stale (cash tick age 30s)", code="UNDERLYING_STALE")
+    assert out["state"] == "BLOCKED" and out["pass"] is False and out["block_code"] == "UNDERLYING_STALE"
+
+
+def test_trade_window_no_chase_guard():
+    latch = v3_call_execution.MinuteDecisionLatch()
+    pass_result = {"state": "PASS", "pass": True, "probability": 0.7,
+                   "selected_contract": "ABC26OCT100CE", "selected_ask": 5.05, "selected_mid": 5.0}
+    t0 = dt.datetime(2026, 10, 2, 10, 31, 1)
+    live = [{"symbol": "ABC26OCT100CE", "ask": 5.05, "quote_age_s": 1.0}]
+    out = latch.decide("ABC", "Bullish", t0, lambda t: pass_result, live_snaps=live)
+    assert out["trade_window"]["entry_price_ok"] is True
+    moved = [{"symbol": "ABC26OCT100CE", "ask": 5.40, "quote_age_s": 1.0}]
+    out = latch.decide("ABC", "Bullish", t0 + dt.timedelta(seconds=20), lambda t: pass_result, live_snaps=moved)
+    assert out["trade_window"]["entry_price_ok"] is False
+    assert out["trade_window"]["live_ask"] == 5.40
+    stale = [{"symbol": "ABC26OCT100CE", "ask": 5.00, "quote_age_s": 60.0}]
+    out = latch.decide("ABC", "Bullish", t0 + dt.timedelta(seconds=30), lambda t: pass_result, live_snaps=stale)
+    assert out["trade_window"]["entry_price_ok"] is False

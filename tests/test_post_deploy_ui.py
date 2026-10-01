@@ -102,3 +102,15 @@ def test_live_dashboard_hides_unvalidated_sl_target_plan_but_keeps_research_pipe
     assert 'freshLine+riskHtml+mathHtml' not in text
     assert 'Shadow continuation mathematics' in text
     assert 'research only · does not control trade' in text
+
+
+def test_failed_panels_hidden_by_default_but_recoverable():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "[data-retired]{display:none!important}" in html
+    for pid in ("skew-opportunity-desk", "v122b-tactical-console", "v123-skew-shadow",
+                "v8-decision-console", "v123-focus-continuation-section"):
+        assert f'id="{pid}"{{% if not show_retired %}} hidden data-retired="1"{{% endif %}}' in html
+    assert "/?show_retired=1" in html
+    web = Path("app/web.py").read_text(encoding="utf-8")
+    assert 'show_retired=request.args.get("show_retired") == "1"' in web

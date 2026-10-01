@@ -634,6 +634,9 @@ class TacticalStockStreamService:
                 snap = None
             if snap:
                 snap["lot_size"] = meta.get("lot_size")
+                # Quote age lets CALL V1 refuse a stale last mid that would
+                # otherwise look like a premium move.
+                snap["quote_age_s"] = self._tick_age(tick, now)
                 out.append(snap)
         return out
 
@@ -1478,20 +1481,33 @@ class TacticalStockStreamService:
                 }
 
             call_direction = setup.get("direction") or direction
-            # Score once per minute (the frozen model's sampling) and keep a
-            # PASS actionable for its 5-minute trade window.
-            call_execution_candidate = self._call_v1_latch.decide(
-                symbol,
-                call_direction,
-                now,
-                lambda scored_at: v3_call_execution.evaluate_call_candidates(
+            underlying_stale = cash_age is None or cash_age > self.stale_seconds
+
+            def _score_call_v1(scored_at):
+                # Never score on a stale underlying: the frozen model's spot
+                # features would be missing/old and could fake a PASS.
+                if underlying_stale and str(call_direction) == "Bullish":
+                    return v3_call_execution.blocked_result(
+                        f"underlying feed stale (cash tick age {cash_age if cash_age is not None else 'n/a'}s)",
+                        code="UNDERLYING_STALE",
+                    )
+                return v3_call_execution.evaluate_call_candidates(
                     option_snaps,
                     self._option_samples,
                     price_samples,
                     now=scored_at,
                     direction=call_direction,
                     spot=live_price,
-                ),
+                )
+
+            # Score once per minute (the frozen model's sampling) and keep a
+            # PASS actionable for its 5-minute trade window.
+            call_execution_candidate = self._call_v1_latch.decide(
+                symbol,
+                call_direction,
+                now,
+                _score_call_v1,
+                live_snaps=option_snaps,
             )
             call_execution_candidate = _annotate_call_v1_pass_age(
                 self._call_v1_pass_state,
@@ -1777,6 +1793,8 @@ class TacticalStockStreamService:
                 "earnings": event,
                 "option_route": option_route,
                 "call_execution_candidate": call_execution_candidate,
+                "call_v1_scout": bool(candidate.get("call_v1_scout")),
+                "candidate_lifecycle": candidate.get("focus_lifecycle"),
                 "call_execution_candidate_pass": bool(call_execution_candidate.get("pass")),
                 "call_execution_candidate_contract": call_execution_candidate.get("selected_contract"),
                 "call_execution_candidate_probability": call_execution_candidate.get("probability"),

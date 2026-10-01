@@ -481,6 +481,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-kpi-button:focus-visible{outline:2px solid #6ea8fe;outline-offset:2px}
 
 /* Production research opportunity desk — validation in process */
+[data-retired]{display:none!important}
 .skew-opportunity{margin:14px 0;border:1px solid #6a5630;border-radius:12px;background:
   radial-gradient(circle at 8% 0%,rgba(240,185,11,.10),transparent 35%),
   linear-gradient(180deg,#13130e 0%,#0b1016 100%);overflow:hidden}
@@ -986,7 +987,15 @@ button, a, summary, input, select { touch-action: manipulation; }
 
   {% set skew = v123_skew_shadow|default({}) %}
   {% set skewcur = skew.get('current') or {} %}
-  <section id="skew-opportunity-desk" class="skew-opportunity" aria-label="Production research skew opportunity desk">
+  {% if not show_retired %}
+  <div class="retired-note" style="margin:10px 0;padding:8px 12px;border:1px dashed #3a3f46;border-radius:8px;font-size:10px;color:#8592a0">
+    <strong style="color:#c9d3dc">Hidden (failed live/forward checks, 1 Oct 2026):</strong>
+    Skew desk &amp; recorder (116-day OOS: +1 bps/day) · Tactical Option Console (379 episodes, 0.0%, median 44 s) ·
+    Opportunity radar / decision console (2,500 picks, no edge) · Event early detection (all families negative after cost) ·
+    Continuation watch (32% vs 33% break-even). Recorders keep collecting. <a href="/?show_retired=1">Show retired panels</a>
+  </div>
+  {% endif %}
+  <section id="skew-opportunity-desk"{% if not show_retired %} hidden data-retired="1"{% endif %} class="skew-opportunity" aria-label="Production research skew opportunity desk">
     <div class="head">
       <div>
         <div class="kicker">PRODUCTION RESEARCH · ATM CALL IV − PUT IV · VALIDATION IN PROCESS</div>
@@ -1049,11 +1058,15 @@ button, a, summary, input, select { touch-action: manipulation; }
         <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for a persistent underlying opportunity…</div></div>
       </main>
       <aside class="focus-sidebar">
+        <div id="v123-call-scouts-section" class="focus-sidebar-block focus-jump-target">
+          <div class="focus-section-head"><h3>CALL V1 Scouts</h3><span>bullish significant movers outside Focus · CALL V1 scoring only</span></div>
+          <div id="v123-call-scouts" class="focus-list"><div class="focus-empty">No bullish scout is being scored right now.</div></div>
+        </div>
         <div id="v123-focus-building-section" class="focus-sidebar-block focus-jump-target">
           <div class="focus-section-head"><h3>Directional Spots</h3><span>direction must be locked before display</span></div>
           <div id="v123-focus-building" class="focus-list"><div class="focus-empty">No direction-locked stock has persistent evidence yet.</div></div>
         </div>
-        <div id="v123-focus-continuation-section" class="focus-sidebar-block focus-jump-target">
+        <div id="v123-focus-continuation-section"{% if not show_retired %} hidden data-retired="1"{% endif %} class="focus-sidebar-block focus-jump-target">
           <div class="focus-section-head"><h3>Continuation Watch</h3><span>fresh evidence required</span></div>
           <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">No important alumni is waiting for re-entry.</div></div>
         </div>
@@ -1094,7 +1107,7 @@ button, a, summary, input, select { touch-action: manipulation; }
   </section>
 
   {% set tctl = v122b_tactical|default({}) %}
-  <section id="v122b-tactical-console" class="card v12-card" style="border-color:#0f7b61;" aria-label="V12.2B tactical stock option execution engine">
+  <section id="v122b-tactical-console"{% if not show_retired %} hidden data-retired="1"{% endif %} class="card v12-card" style="border-color:#0f7b61;" aria-label="V12.2B tactical stock option execution engine">
     <div class="v12-head">
       <div>
         <div class="v12-kicker">V12.2B · FAST STOCK-OPTION EXECUTION · 15m FIND → 3m TRIGGER</div>
@@ -1162,7 +1175,7 @@ button, a, summary, input, select { touch-action: manipulation; }
 
   {% set skew = v123_skew_shadow|default({}) %}
   {% set skewcur = skew.get('current') or {} %}
-  <section id="v123-skew-shadow" class="card v12-card" aria-label="ATM call put IV skew shadow research">
+  <section id="v123-skew-shadow"{% if not show_retired %} hidden data-retired="1"{% endif %} class="card v12-card" aria-label="ATM call put IV skew shadow research">
     <div class="v12-head">
       <div><div class="v12-kicker">ATM CALL IV − PUT IV · RESEARCH RECORDER / AUDIT</div>
       <h2>Skew Validation Recorder <span class="sub">fixed 09:30 / 13:00 anchors · 1h and 15:10 outcomes</span></h2></div>
@@ -1248,7 +1261,7 @@ button, a, summary, input, select { touch-action: manipulation; }
     <div class="v12-links"><button type="button" id="v121-run-development">Run historical RV development lab</button><a href="/api/v121-index-micro/export">Export today's 5s micro data</a><a href="/api/v121-index-depth/export">Export today's 60s depth data</a><a href="/api/v121-index-vol-health">Recorder health JSON</a></div>
   </section>
 
-  <section id="v8-decision-console" class="card v8-console" aria-label="V9.2 evidence-gated live decision console">
+  <section id="v8-decision-console"{% if not show_retired %} hidden data-retired="1"{% endif %} class="card v8-console" aria-label="V9.2 evidence-gated live decision console">
     <div class="v8-console-head">
       <div>
         <div class="v8-kicker">V9.4 Live Market Monitor + Magnitude Research · NSE F&amp;O</div>
@@ -1326,6 +1339,7 @@ button, a, summary, input, select { touch-action: manipulation; }
   </section>
 
 
+  <div id="early-radar-retired"{% if not show_retired %} hidden data-retired="1"{% endif %}>
   <div class="card" style="border-color:#3a2f0f;">
     <div id="early-radar-card">
       <h2>⚡ Event-Driven Early Detection <span class="sub">no composite score · observable sequence only · SCOUT → PRESSURE SHIFT → READY → BREAK ACCEPTED → FOLLOW-THROUGH</span></h2>
@@ -1387,6 +1401,7 @@ button, a, summary, input, select { touch-action: manipulation; }
         <div style="margin-top:6px;"><span class="sub">Legacy Energy Building / Ignition scores are retained only in research logs for comparison; they no longer drive this visible section.</span></div>
       </div>
     </div>
+  </div>
   </div>
 
   <div class="card" style="border-color:#273d55;">
@@ -2066,10 +2081,15 @@ button, a, summary, input, select { touch-action: manipulation; }
         // A PASS opens a 5-minute trade (research rule: enter at the signal
         // minute, exit after five minutes). Later below-gate minutes do not cancel it.
         var winAsk=Number(callV1Win.reference_ask), winP=Number(callV1Win.signal_probability);
-        if(String(callV1Win.phase)==='ENTRY_OPEN'){
+        var liveAsk=Number(callV1Win.live_ask);
+        if(String(callV1Win.phase)==='ENTRY_OPEN' && callV1Win.entry_price_ok===false){
+          callV1State='PASS';
+          callV1Decision='CALL V1 PRICE MOVED · '+n(callV1Win.entry_seconds_left,0)+'s left';
+          callV1Action="DON'T CHASE"+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):' · no fresh quote');
+        }else if(String(callV1Win.phase)==='ENTRY_OPEN'){
           callV1State='PASS';
           callV1Decision='CALL V1 ENTRY OPEN · '+n(callV1Win.entry_seconds_left,0)+'s left';
-          callV1Action='CALL ENTRY WINDOW';
+          callV1Action='CALL ENTRY WINDOW'+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):'');
         }else{
           callV1State='PASS';
           callV1Decision='CALL V1 HOLDING · exit in '+mmss(callV1Win.hold_seconds_left);
@@ -2213,6 +2233,31 @@ button, a, summary, input, select { touch-action: manipulation; }
       ? String(callRec.entries||0)+' entries · '+String(callRec.completed||0)+' complete · '+String(callRec.open_events||0)+' open'
       : 'live bid/ask forward validation');
 
+    (function renderCallScouts(){
+      var box=document.getElementById('v123-call-scouts'); if(!box) return;
+      var cands=Array.isArray(tactical.candidates)?tactical.candidates:[];
+      var scouts=cands.filter(function(r){return r&&r.call_v1_scout;});
+      if(!scouts.length){box.innerHTML='<div class="focus-empty">No bullish scout is being scored right now.</div>';return;}
+      function esc2(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+      box.innerHTML=scouts.map(function(r){
+        var c=r.call_execution_candidate||{}, w=c.trade_window||null, st=String(c.state||'WAIT').toUpperCase();
+        var line;
+        if(w&&w.contract){
+          line=(String(w.phase)==='ENTRY_OPEN'
+            ?(w.entry_price_ok===false?'PRICE MOVED · don\'t chase':'ENTRY OPEN · '+Math.round(Number(w.entry_seconds_left)||0)+'s left')
+            :'HOLDING · exit '+String(w.exit_at||'').slice(11,19))+' · '+esc2(w.contract)+
+            (Number.isFinite(Number(w.reference_ask))?' · ref ask '+Number(w.reference_ask).toFixed(2):'');
+        }else if(st==='BELOW_GATE'){
+          line='below gate · p '+(Number.isFinite(Number(c.probability))?Number(c.probability).toFixed(3):'—');
+        }else{
+          line=st.replace(/_/g,' ').toLowerCase()+(c.reason?' · '+esc2(c.reason):'');
+        }
+        var cls=w&&w.contract?(String(w.phase)==='ENTRY_OPEN'&&w.entry_price_ok!==false?'pass':'hold'):'wait';
+        return '<div class="focus-card scout '+cls+'"><div class="focus-card-head"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc2(r.symbol)+'</a>'+
+          ' <span class="side bullish">Bullish scout</span>'+(Number.isFinite(Number(r.live_price))?' · CMP '+Number(r.live_price).toFixed(2):'')+'</div>'+
+          '<div class="focus-meta">CALL V1: '+line+'</div></div>';
+      }).join('');
+    })();
     fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');
     fill('v123-focus-building',building,'No direction-locked spot has enough continuing evidence right now.');
     fill('v123-focus-continuation',continuation,'No recent important stock is waiting for fresh re-entry evidence.');

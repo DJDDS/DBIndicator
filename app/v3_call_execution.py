@@ -27,6 +27,7 @@ MAX_LIVE_SPREAD_PCT = 4.0
 RECORDER_MEDIAN_SPREAD_PCT = 1.8059
 HISTORY_TOLERANCE_SECONDS = 20.0
 ENTRY_WINDOW_SECONDS = 60
+MAX_QUOTE_AGE_SECONDS = 10.0
 MODEL_LABEL = "CALL_EXECUTION_CANDIDATE_V1"
 VALIDATION_LABEL = "RESEARCH CANDIDATE · FORWARD CONFIRMATION REQUIRED"
 
@@ -230,6 +231,15 @@ def _features_for_contract(snap, samples, cash_samples, now, *, offset, code):
     return out, history_ready
 
 
+def blocked_result(reason, *, code="BLOCKED"):
+    return {
+        "label": MODEL_LABEL, "state": "BLOCKED", "pass": False, "reason": reason,
+        "block_code": code, "threshold": MODEL_THRESHOLD,
+        "evaluation_horizon_seconds": EVALUATION_HORIZON_SECONDS,
+        "validation_label": VALIDATION_LABEL, "controls_trading": False,
+    }
+
+
 def evaluate_call_candidates(option_snapshots, option_history, cash_samples, *, now, direction, spot):
     """Score live CE ATM-1/ATM/ATM+1 contracts without controlling the trade state."""
     if str(direction or "") != "Bullish":
@@ -294,22 +304,29 @@ def evaluate_call_candidates(option_snapshots, option_history, cash_samples, *, 
         probability = score_features(features)
         bid, ask = _finite(snap.get("bid")), _finite(snap.get("ask"))
         spread = _finite(snap.get("spread_pct"))
+        quote_age = _finite(snap.get("quote_age_s"))
+        fresh = quote_age is None or quote_age <= MAX_QUOTE_AGE_SECONDS
+        if not fresh:
+            diag["stale_quote"] = diag.get("stale_quote", 0) + 1
         quote_ok = bool(
             bid is not None and ask is not None and bid > 0 and ask >= bid
             and spread is not None and spread <= MAX_LIVE_SPREAD_PCT
+            and fresh
         )
         scored.append({
             "contract": symbol, "strike": strike, "expiry": expiry.isoformat(),
             "offset": int(offset), "probability": round(probability, 6),
             "history_ready": bool(ready), "quote_ok": quote_ok,
-            "spread_pct": spread, "delta_abs": abs(_finite(snap.get("delta")) or 0.0),
+            "spread_pct": spread, "quote_age_s": quote_age, "delta_abs": abs(_finite(snap.get("delta")) or 0.0),
             "dte": snap.get("dte"), "mid": snap.get("mid"), "bid": bid, "ask": ask,
         })
 
     eligible = [x for x in scored if x["history_ready"] and x["quote_ok"]]
     eligible.sort(key=lambda x: (x["probability"], -abs(int(x["offset"]))), reverse=True)
     if not eligible:
-        if scored:
+        if scored and diag.get("stale_quote") and all(not x["quote_ok"] for x in scored):
+            reason = f"ATM±1 CALL quotes stale (> {MAX_QUOTE_AGE_SECONDS:.0f}s) or too wide"
+        elif scored:
             reason = "5-minute same-contract history still warming"
         elif diag["atm_neighbourhood"] and diag["no_live_quote"] == diag["atm_neighbourhood"]:
             # Subscribed contracts but no ticks yet: typical right after a
@@ -382,7 +399,7 @@ class MinuteDecisionLatch:
         self._decisions.clear()
         self._windows.clear()
 
-    def decide(self, symbol, direction, now, evaluate):
+    def decide(self, symbol, direction, now, evaluate, live_snaps=None):
         key = (str(symbol or ""), str(direction or ""))
         minute = now.replace(second=0, microsecond=0)
         cached = self._decisions.get(key)
@@ -427,6 +444,21 @@ class MinuteDecisionLatch:
                 "hold_seconds_left": round(max(0.0, hold_left), 1),
                 "exit_at": window["hold_until"].isoformat(timespec="seconds"),
             }
+            live = next(
+                (x for x in (live_snaps or []) if str((x or {}).get("symbol") or "") == str(window["contract"] or "")),
+                None,
+            )
+            live_ask = _finite((live or {}).get("ask"))
+            live_age = _finite((live or {}).get("quote_age_s"))
+            ref_ask = _finite(window["reference_ask"])
+            fresh = live_ask is not None and (live_age is None or live_age <= MAX_QUOTE_AGE_SECONDS)
+            out["trade_window"].update({
+                "live_ask": live_ask,
+                "live_quote_age_s": live_age,
+                # No-chase guard: during ENTRY_OPEN the entry is valid only at or
+                # below the signal-minute ask on a fresh quote.
+                "entry_price_ok": bool(fresh and ref_ask is not None and live_ask <= ref_ask),
+            })
         else:
             out["trade_window"] = None
         return out
