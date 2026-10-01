@@ -401,6 +401,8 @@ def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
         lane = "EXTREME_WATCH"
 
     row.update(context)
+    option_type = "CE" if side == "Bullish" else "PE"
+    selected_contract = row.get("call_contract") if side == "Bullish" else row.get("put_contract")
     relevant_spread = _finite(row.get("call_spread_pct")) if side == "Bullish" else _finite(row.get("put_spread_pct"))
     option_ok = relevant_spread is not None and relevant_spread <= 3.0
 
@@ -426,10 +428,27 @@ def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
     row["opportunity_lane"] = lane
     row["relevant_option_spread_pct"] = relevant_spread
     row["option_spread_le_3pct"] = bool(option_ok)
+    row["machine_option_type"] = option_type
+    row["machine_option_contract"] = selected_contract
+    row["machine_option_strike"] = _finite(row.get("strike"))
+    row["machine_option_expiry"] = row.get("expiry")
+    row["machine_option_spread_pct"] = relevant_spread
+    row["machine_option_selection_reason"] = (
+        f"ATM {option_type} from fixed skew-anchor snapshot; "
+        + ("next expiry because near DTE <=3" if int(_finite(row.get("dte")) or 0) > 3 and str(row.get("expiry") or "") else "chosen recorder expiry")
+    )
     row["research_primary_instrument"] = "STOCK_FUTURES"
     row["research_option_status"] = "OPTION_ELIGIBLE" if option_ok else "OPTION_SPREAD_TOO_WIDE"
     row["anchor_age_seconds"] = anchor_age_seconds
     row["entry_window_state"] = entry_window_state
+    row["machine_option_entry_eligible"] = bool(
+        market_aligned and entry_window_state == "ANCHOR_WINDOW" and option_ok and selected_contract
+    )
+    row["machine_option_action"] = (
+        "OPTION_ENTRY_ELIGIBLE"
+        if row["machine_option_entry_eligible"]
+        else ("TRACK_ONLY" if selected_contract else "NO_OPTION_CONTRACT")
+    )
     row["research_exit_clock"] = "15:10"
     row["validation_status"] = "VALIDATION_IN_PROCESS"
     row["controls_trading"] = False
