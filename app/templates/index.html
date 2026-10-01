@@ -508,6 +508,12 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .skew-card .top{display:flex;gap:7px;align-items:center}.skew-card .symbol{font:850 14px var(--mono);color:#edf3f6}.skew-card .side{font-size:9px;font-weight:850}.skew-card .side.bullish{color:#6fd09e}.skew-card .side.bearish{color:#e08b86}
 .skew-card .lane{margin-left:auto;font:800 8px var(--mono);color:#9da9b4}.skew-card .move{margin-top:5px;font:800 12px var(--mono);color:#dce7ee}
 .skew-card .meta{margin-top:4px;font-size:8.5px;color:#718392;line-height:1.45}
+.skew-card .decision-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.skew-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;border:1px solid #3a4651;background:#111920;font:850 8px var(--mono);letter-spacing:.04em}
+.skew-badge.green{border-color:#2f7453;background:rgba(22,199,132,.10);color:#83d9ae}
+.skew-badge.amber{border-color:#82682a;background:rgba(240,185,11,.09);color:#e4c76f}
+.skew-badge.red{border-color:#75413e;background:rgba(217,83,79,.08);color:#e39894}
+.skew-badge.blue{border-color:#355d7c;background:rgba(72,143,196,.08);color:#9bc6e5}
 .skew-empty{padding:12px;border:1px dashed #3a3b35;border-radius:8px;color:#7e8790;font-size:9.5px}
 .skew-opportunity .foot{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;border-top:1px solid #30291c;background:#0a0f14;font-size:9px;color:#7d8994;line-height:1.4}
 @media(max-width:1050px){.skew-kpis{grid-template-columns:repeat(4,1fr)}.skew-board{grid-template-columns:1fr}.skew-lane+.skew-lane{border-left:0;border-top:1px solid #30291c}}
@@ -1009,7 +1015,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       <div class="skew-lane"><h3>Other extremes <span>visible, not hidden</span></h3><div id="skew-desk-extremes"><div class="skew-empty">Waiting for skew extremes.</div></div></div>
     </div>
     <div class="foot">
-      <span><strong>Reading order:</strong> skew lane → live underlying direction → movement significance → then use Focus/CALL V1 only as downstream execution context.</span>
+      <span><strong>Colour guide:</strong> GREEN = research entry window (anchor to +15m); AMBER = late/reversal track only; RED = no fresh trade. Futures are the primary research vehicle; options are only marked eligible when the relevant ATM spread is ≤3%.</span>
       <span><strong>No auto-orders.</strong> Math Recorder, CALL V1, quant shadow, Trial 25 and missed-mover forensics remain separate and unchanged.</span>
     </div>
   </section>
@@ -2419,11 +2425,24 @@ button, a, summary, input, select { touch-action: manipulation; }
       var timing=String(r.entry_window_state||'');
       var instrument=String(r.research_primary_instrument||'');
       var optionStatus=String(r.research_option_status||'');
+      var decisionClass='red', decisionText='NO FRESH TRADE';
+      if((lane==='PRIMARY_CONFIRMED'||lane==='PRIMARY_MOVING'||lane==='PRIMARY_WATCH') && timing==='ANCHOR_WINDOW'){
+        decisionClass='green'; decisionText='RESEARCH ENTRY WINDOW';
+      }else if((lane.indexOf('PRIMARY_')===0 && timing==='LATE_TRACK_ONLY') || lane==='REVERSAL_WATCH'){
+        decisionClass='amber'; decisionText=(lane==='REVERSAL_WATCH'?'REVERSAL WATCH · TRACK ONLY':'LATE · TRACK ONLY');
+      }
+      var optionClass=optionStatus==='OPTION_ELIGIBLE'?'green':'red';
+      var optionText=optionStatus==='OPTION_ELIGIBLE'?'OPTION SPREAD OK ≤3%':'OPTIONS AVOID';
       return '<div class="skew-card '+esc(cls)+'">'+
         '<div class="top"><span class="symbol"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc(r.symbol||'—')+'</a></span>'+
         '<span class="side '+String(r.side||'').toLowerCase()+'">'+esc(r.side||'')+'</span>'+
         '<span class="lane">'+esc(lane.replaceAll('_',' '))+'</span></div>'+
         '<div class="move">'+moveText+(r.live_price!=null?' · CMP '+num(r.live_price,2):'')+'</div>'+
+        '<div class="decision-row">'+
+          '<span class="skew-badge '+decisionClass+'">'+esc(decisionText)+'</span>'+
+          '<span class="skew-badge blue">FUTURES = PRIMARY RESEARCH VEHICLE</span>'+
+          '<span class="skew-badge '+optionClass+'">'+esc(optionText)+'</span>'+
+        '</div>'+
         '<div class="meta">'+
         (instrument?'research: '+esc(instrument.replaceAll('_',' ')):'')+
         (optionStatus?' · '+esc(optionStatus.replaceAll('_',' ')):'')+
