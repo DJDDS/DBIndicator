@@ -271,6 +271,11 @@ def evaluate_call_candidates(option_snapshots, option_history, cash_samples, *, 
         if strike not in keep or not symbol:
             continue
         diag["atm_neighbourhood"] += 1
+        if _finite(snap.get("spot")) is None:
+            # Live contract snapshots (derivative_intelligence.contract_snapshot)
+            # carry no underlying price. Without this every contract failed
+            # feature construction and CALL V1 was permanently BLOCKED live.
+            snap = dict(snap, spot=spot)
         offset = strikes.index(strike) - ai
         hist = (option_history or {}).get(symbol) or []
         features, ready = _features_for_contract(

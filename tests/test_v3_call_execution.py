@@ -162,3 +162,24 @@ def test_blocked_reason_distinguishes_missing_ticks_from_illiquid_chain():
     assert out["reason"] == "no live ATM±1 CALL ticks yet (subscribed, waiting for quotes)"
     assert out["diagnostics"]["no_live_quote"] == 3
     assert out["controls_trading"] is False
+
+
+def test_live_snapshots_without_spot_field_are_scored():
+    """Production snapshots have no 'spot' key; the evaluator must use the live
+    underlying price instead of silently blocking every contract."""
+    now = dt.datetime(2026, 10, 1, 10, 30)
+    snaps, history = [], {}
+    for k in (95.0, 100.0, 105.0):
+        sym = f"TEST26OCT{int(k)}CE"
+        snaps.append({"type": "CE", "symbol": sym, "strike": k, "expiry": "2026-10-27", "dte": 26,
+                      "mid": 5.0, "bid": 4.95, "ask": 5.05, "spread_pct": 2.0,
+                      "iv_pct": 25.0, "delta": 0.5, "oi": 1000, "volume": 500})
+        history[sym] = [{"ts": now - dt.timedelta(minutes=m), "mid": 5.0 - m * 0.02, "iv_pct": 25.0,
+                         "oi": 1000, "cum_volume": 500 - m * 10} for m in range(12, -1, -1)]
+    cash = [{"ts": now - dt.timedelta(minutes=m), "price": 100.0 - m * 0.01} for m in range(12, -1, -1)]
+    out = v3_call_execution.evaluate_call_candidates(
+        snaps, history, cash, now=now, direction="Bullish", spot=100.0,
+    )
+    assert out["state"] in {"PASS", "BELOW_GATE"}, out
+    assert out["selected_contract"].startswith("TEST26OCT")
+    assert out["controls_trading"] is False
