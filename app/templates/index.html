@@ -1056,6 +1056,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       <h2>Forward Option Edge Recorder <span class="sub">09:30 · 13:00 · 15:10 PRE-CAS · 15:37 POST-CAS IST</span></h2></div>
       <div id="v12-trial25-status" class="v12-lock">{{ v12t25 }}</div>
     </div>
+    <div class="warn" style="margin:10px 0 12px"><strong>RESEARCH IN PROGRESS — NOT VALIDATED FOR TRADING.</strong> Production observation only. This 17-session hypothesis may surface bullish or bearish research candidates, but it does not control Actionable, CALL V1, alerts, or orders.</div>
     <div class="v12-metrics">
       <div class="v12-metric"><span>Feasibility</span><strong id="v12-feasibility-status">{{ v12f.get('status') or 'RECORDING — NO FEASIBILITY VERDICT' }}</strong></div>
       <div class="v12-metric"><span>Trading days</span><strong id="v12-days-recorded">{{ v12f.get('trading_days_recorded', 0) }}/10</strong></div>
@@ -1087,7 +1088,7 @@ button, a, summary, input, select { touch-action: manipulation; }
   <section id="v123-skew-shadow" class="card v12-card" aria-label="ATM call put IV skew shadow research">
     <div class="v12-head">
       <div><div class="v12-kicker">ATM CALL IV − PUT IV · CROSS-SECTIONAL SHADOW</div>
-      <h2>09:30 / 13:00 Skew Observer <span class="sub">top/bottom 5% · market-agreement filter · research only</span></h2></div>
+      <h2>09:30 / 13:00 Skew Observer <span class="sub">top/bottom 5% · market-agreement filter</span></h2></div>
       <div id="skew-shadow-status" class="v12-lock">{{ skew.get('status') or 'WAITING_FOR_SLOT' }}</div>
     </div>
     <div class="v12-metrics">
@@ -1105,7 +1106,7 @@ button, a, summary, input, select { touch-action: manipulation; }
         <div class="v8-empty">Waiting for the next 09:30 / 13:00 slot.</div>
       </div>
     </div>
-    <div class="v12-note"><strong>Research only:</strong> separate from Math Recorder and CALL V1. It never changes Focus, Actionable, alerts, option selection or broker execution.</div>
+    <div class="v12-note"><strong>Production research lane:</strong> today's already-recorded 09:30/13:00 slot is backfilled automatically after a restart/deploy. Picks are observational until forward evidence is sufficient.</div>
   </section>
 
   {% set t25 = trial25_shadow|default({}) %}
