@@ -280,9 +280,20 @@ def _quote_timestamp_age_seconds(value, now: dt.datetime) -> float | None:
         value = parsed
     if not isinstance(value, dt.datetime):
         return None
+
+    # Kite may return naive IST timestamps while callers may pass either naive
+    # or timezone-aware datetimes. Normalize both sides before subtraction so
+    # the recorder never mixes offset-naive and offset-aware datetime objects.
     if value.tzinfo is None:
         value = value.replace(tzinfo=IST)
-    return max(0.0, (now - value.astimezone(IST)).total_seconds())
+    else:
+        value = value.astimezone(IST)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=IST)
+    else:
+        now = now.astimezone(IST)
+
+    return max(0.0, (now - value).total_seconds())
 
 
 def _nifty_quote(kite, now: dt.datetime) -> tuple[float, float, float | None]:
