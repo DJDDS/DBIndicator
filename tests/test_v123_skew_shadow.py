@@ -178,3 +178,131 @@ def test_dashboard_marks_skew_shadow_not_validated():
     html = Path("app/templates/index.html").read_text(encoding="utf-8")
     assert "RESEARCH IN PROGRESS — NOT VALIDATED FOR TRADING." in html
     assert "17-session hypothesis" in html
+
+
+def test_live_skew_status_surfaces_primary_and_reversal_without_trade_control(tmp_path):
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+
+    symbols = [f"S{i:02d}" for i in range(20)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    skews = {s: 0.0 for s in symbols}
+    skews["S00"] = -8.0
+    skews["S19"] = 9.0
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 101.0 for s in symbols}, skews)
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+
+    now = dt.datetime(2026, 10, 1, 9, 30)
+    v123_skew_shadow.process_slot(
+        snapshot_file=snapshot,
+        state_file=state,
+        ledger_file=ledger,
+        now=now,
+        slot="OPEN_STABLE",
+    )
+
+    live_rows = [
+        {
+            "symbol": "S19",
+            "live_price": 102.0,
+            "direction_lock_state": "BULLISH",
+            "movement_significant": True,
+            "movement_direction": "Bullish",
+            "movement_p_value": 0.001,
+            "movement_familywise_alpha": 0.01,
+            "movement_z": 4.0,
+            "movement_horizon_seconds": 300,
+        },
+        {
+            "symbol": "S00",
+            "live_price": 102.0,
+            "direction_lock_state": "BEARISH",
+            "movement_significant": True,
+            "movement_direction": "Bearish",
+            "movement_p_value": 0.001,
+            "movement_familywise_alpha": 0.01,
+            "movement_z": -4.0,
+            "movement_horizon_seconds": 300,
+        },
+    ]
+    live = v123_skew_shadow.live_status(
+        state_file=state,
+        live_rows=live_rows,
+        now=dt.datetime(2026, 10, 1, 10, 0),
+    )
+    cur = live["current"]
+    # Market is bullish from 100 -> 101, so S19 is the primary skew name.
+    assert cur["market_direction"] == "Bullish"
+    assert cur["live_primary"][0]["symbol"] == "S19"
+    assert cur["live_primary"][0]["opportunity_lane"] == "PRIMARY_CONFIRMED"
+    # S00 is opposite the market anchor but now has a significant bearish
+    # underlying move, so it remains visible as a reversal research watch.
+    assert cur["live_reversal_watch"][0]["symbol"] == "S00"
+    assert cur["live_reversal_watch"][0]["opportunity_lane"] == "REVERSAL_WATCH"
+    assert live["controls_trading"] is False
+    assert live["validation_status"] == "VALIDATION_IN_PROCESS"
+
+
+def test_dashboard_has_production_skew_opportunity_desk():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert 'id="skew-opportunity-desk"' in html
+    assert "17-SESSION HYPOTHESIS · NOT YET VALIDATED" in html
+    assert 'id="skew-desk-primary"' in html
+    assert 'id="skew-desk-reversal"' in html
+    assert 'id="skew-desk-extremes"' in html
+    assert "REVERSAL WATCH" in html
+    assert "Math Recorder, CALL V1, quant shadow, Trial 25 and missed-mover forensics remain separate and unchanged." in html
+
+
+def test_live_skew_primary_carries_research_instrument_and_timing(tmp_path):
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+    symbols = [f"S{i:02d}" for i in range(20)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    skews = {s: 0.0 for s in symbols}
+    skews["S19"] = 9.0
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 101.0 for s in symbols}, skews)
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+    v123_skew_shadow.process_slot(
+        snapshot_file=snapshot,
+        state_file=state,
+        ledger_file=ledger,
+        now=dt.datetime(2026, 10, 1, 9, 30),
+        slot="OPEN_STABLE",
+    )
+    live = v123_skew_shadow.live_status(
+        state_file=state,
+        live_rows=[{"symbol":"S19","live_price":101.5}],
+        now=dt.datetime(2026, 10, 1, 9, 40),
+    )
+    row = live["current"]["live_primary"][0]
+    assert row["research_primary_instrument"] == "STOCK_FUTURES"
+    assert row["entry_window_state"] == "ANCHOR_WINDOW"
+    assert row["research_exit_clock"] == "15:10"
+    # Synthetic fixture uses 2% spread on both option legs.
+    assert row["option_spread_le_3pct"] is True
+    assert row["research_option_status"] == "OPTION_ELIGIBLE"
+
+    late = v123_skew_shadow.live_status(
+        state_file=state,
+        live_rows=[{"symbol":"S19","live_price":102.0}],
+        now=dt.datetime(2026, 10, 1, 12, 0),
+    )
+    assert late["current"]["live_primary"][0]["entry_window_state"] == "LATE_TRACK_ONLY"
+
+
+def test_dashboard_colour_codes_skew_trade_window():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "RESEARCH ENTRY WINDOW" in html
+    assert "LATE · TRACK ONLY" in html
+    assert "NO FRESH TRADE" in html
+    assert "FUTURES = PRIMARY RESEARCH VEHICLE" in html
+    assert "OPTION SPREAD OK ≤3%" in html
+    assert "OPTIONS AVOID" in html
+    assert "GREEN = research entry window (anchor to +15m)" in html

@@ -2194,9 +2194,21 @@ def _v123_market_publish(payload):
     # become public dashboard state and never feed trading controls.
     observer_payload = dict(raw_payload)
     observer_payload.pop("quant_rows", None)
+    try:
+        skew_live = v123_skew_shadow.live_status(
+            state_file=config.V123_SKEW_SHADOW_STATE_FILE,
+            live_rows=raw_payload.get("quant_rows") or [],
+            now=now,
+        )
+    except Exception:
+        log.exception("Failed to build live IV-skew opportunity view")
+        skew_live = None
+
     with _state_lock:
         _state["v123_market_observer"] = observer_payload
         _state["v123_quant_regime_shadow"] = _v123_quant_shadow_worker.status()
+        if skew_live is not None:
+            _state["v123_skew_shadow"] = skew_live
     _update_v123_focus(observer=raw_payload, now=now)
 
 

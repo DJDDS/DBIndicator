@@ -479,6 +479,45 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-kpi-button{width:100%;font:inherit;text-align:left;color:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;transition:border-color .16s ease,background .16s ease,transform .16s ease}
 .focus-kpi-button:hover{border-color:#41647b;background:#111d28;transform:translateY(-1px)}
 .focus-kpi-button:focus-visible{outline:2px solid #6ea8fe;outline-offset:2px}
+
+/* Production research opportunity desk — validation in process */
+.skew-opportunity{margin:14px 0;border:1px solid #6a5630;border-radius:12px;background:
+  radial-gradient(circle at 8% 0%,rgba(240,185,11,.10),transparent 35%),
+  linear-gradient(180deg,#13130e 0%,#0b1016 100%);overflow:hidden}
+.skew-opportunity .head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:16px 18px;border-bottom:1px solid #3a3220}
+.skew-opportunity .kicker{font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:#d4b65f;font-weight:850}
+.skew-opportunity h2{margin:4px 0 0;font-size:21px;letter-spacing:-.025em;color:#eef3f6}
+.skew-opportunity .sub{margin-top:5px;font-size:10px;color:#9c9270;line-height:1.45;max-width:880px}
+.skew-validation{flex:0 0 auto;border:1px solid #8b6d24;border-radius:999px;padding:7px 10px;background:rgba(240,185,11,.08);font:800 9px var(--mono);color:#e6c965;white-space:nowrap}
+.skew-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:7px;padding:10px 14px;border-bottom:1px solid #30291c;background:rgba(8,11,14,.55)}
+.skew-kpi{padding:9px 10px;border:1px solid #342e21;border-radius:8px;background:#0d1319;min-width:0}
+.skew-kpi span{display:block;font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:#837b66;font-weight:800}
+.skew-kpi strong{display:block;margin-top:3px;font:800 13px var(--mono);color:#e5edf2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.skew-guide{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;padding:10px 14px;border-bottom:1px solid #30291c}
+.skew-guide div{padding:8px 9px;border:1px solid #302e2a;border-radius:8px;background:rgba(10,14,18,.72);font-size:9px;color:#8594a1;line-height:1.4}
+.skew-guide b{display:block;margin-bottom:2px;font-size:9px;letter-spacing:.06em}
+.skew-guide .primary b{color:#84d2a7}.skew-guide .reversal b{color:#e4bc62}.skew-guide .watch b{color:#8aa0b2}
+.skew-board{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:0}
+.skew-lane{padding:12px 14px;min-width:0}
+.skew-lane+.skew-lane{border-left:1px solid #30291c}
+.skew-lane h3{margin:0 0 8px;font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:#97a5b1}
+.skew-lane h3 span{font-weight:500;color:#6f7d89;margin-left:5px;text-transform:none;letter-spacing:0}
+.skew-card{padding:10px 11px;border:1px solid #2b3540;border-radius:9px;background:linear-gradient(180deg,#10171e,#0b1117);margin-top:7px}
+.skew-card.primary_confirmed{border-color:#2e6a4e;background:linear-gradient(180deg,rgba(22,199,132,.06),#0b1312)}
+.skew-card.primary_moving{border-color:#53623a}.skew-card.reversal_watch{border-color:#82682a;background:linear-gradient(180deg,rgba(240,185,11,.06),#15130b)}
+.skew-card .top{display:flex;gap:7px;align-items:center}.skew-card .symbol{font:850 14px var(--mono);color:#edf3f6}.skew-card .side{font-size:9px;font-weight:850}.skew-card .side.bullish{color:#6fd09e}.skew-card .side.bearish{color:#e08b86}
+.skew-card .lane{margin-left:auto;font:800 8px var(--mono);color:#9da9b4}.skew-card .move{margin-top:5px;font:800 12px var(--mono);color:#dce7ee}
+.skew-card .meta{margin-top:4px;font-size:8.5px;color:#718392;line-height:1.45}
+.skew-card .decision-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.skew-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;border:1px solid #3a4651;background:#111920;font:850 8px var(--mono);letter-spacing:.04em}
+.skew-badge.green{border-color:#2f7453;background:rgba(22,199,132,.10);color:#83d9ae}
+.skew-badge.amber{border-color:#82682a;background:rgba(240,185,11,.09);color:#e4c76f}
+.skew-badge.red{border-color:#75413e;background:rgba(217,83,79,.08);color:#e39894}
+.skew-badge.blue{border-color:#355d7c;background:rgba(72,143,196,.08);color:#9bc6e5}
+.skew-empty{padding:12px;border:1px dashed #3a3b35;border-radius:8px;color:#7e8790;font-size:9.5px}
+.skew-opportunity .foot{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;border-top:1px solid #30291c;background:#0a0f14;font-size:9px;color:#7d8994;line-height:1.4}
+@media(max-width:1050px){.skew-kpis{grid-template-columns:repeat(4,1fr)}.skew-board{grid-template-columns:1fr}.skew-lane+.skew-lane{border-left:0;border-top:1px solid #30291c}}
+@media(max-width:720px){.skew-opportunity .head{flex-direction:column}.skew-validation{white-space:normal}.skew-kpis{grid-template-columns:repeat(2,1fr)}.skew-guide{grid-template-columns:1fr}.skew-opportunity .foot{flex-direction:column}}
 .focus-jump-target{scroll-margin-top:88px}
 .focus-jump-target.focus-jump-flash{animation:focus-jump-flash .9s ease-out}
 @keyframes focus-jump-flash{0%{box-shadow:0 0 0 2px rgba(110,168,254,.62)}100%{box-shadow:none}}
@@ -945,6 +984,42 @@ button, a, summary, input, select { touch-action: manipulation; }
     </div>
   </div>
 
+  {% set skew = v123_skew_shadow|default({}) %}
+  {% set skewcur = skew.get('current') or {} %}
+  <section id="skew-opportunity-desk" class="skew-opportunity" aria-label="Production research skew opportunity desk">
+    <div class="head">
+      <div>
+        <div class="kicker">PRODUCTION RESEARCH · ATM CALL IV − PUT IV · VALIDATION IN PROCESS</div>
+        <h2>Skew Opportunity Desk</h2>
+        <div class="sub">This desk does not wait for the old Focus pipeline to admit a stock. It surfaces the 09:30/13:00 cross-sectional IV-skew extremes directly, keeps the market-aligned side as the primary research lane, and keeps opposite-side extremes visible for statistically confirmed reversal watch.</div>
+      </div>
+      <div class="skew-validation">17-SESSION HYPOTHESIS · NOT YET VALIDATED</div>
+    </div>
+    <div class="skew-kpis">
+      <div class="skew-kpi"><span>Anchor</span><strong id="skew-desk-slot">{{ skewcur.get('signal_clock') or 'WAITING' }}</strong></div>
+      <div class="skew-kpi"><span>Market</span><strong id="skew-desk-market">{{ skewcur.get('market_direction') or '—' }}</strong></div>
+      <div class="skew-kpi"><span>Eligible F&amp;O</span><strong id="skew-desk-eligible">{{ skewcur.get('eligible_symbols',0) }}</strong></div>
+      <div class="skew-kpi"><span>Primary</span><strong id="skew-desk-primary-count">{{ skewcur.get('selected_count',0) }}</strong></div>
+      <div class="skew-kpi"><span>Confirmed live</span><strong id="skew-desk-confirmed">0</strong></div>
+      <div class="skew-kpi"><span>Reversal watch</span><strong id="skew-desk-reversal-count">0</strong></div>
+      <div class="skew-kpi"><span>Live update</span><strong id="skew-desk-updated">—</strong></div>
+    </div>
+    <div class="skew-guide">
+      <div class="primary"><b>PRIMARY SKEW</b>Top/bottom 5% IV-skew extreme whose side agrees with the broad F&amp;O market direction from prior 15:10. This is the setup supported by the 17-session research.</div>
+      <div class="reversal"><b>REVERSAL WATCH</b>An opposite-side skew extreme that later develops a statistically significant underlying move in the same direction. This is production research for recoveries/reversals and remains unvalidated.</div>
+      <div class="watch"><b>EXTREME WATCH</b>Skew extreme is visible even without market agreement. It is context, not confirmation. The dashboard no longer hides these names just because the primary filter rejects them.</div>
+    </div>
+    <div class="skew-board">
+      <div class="skew-lane"><h3>Primary candidates <span>market-aligned skew</span></h3><div id="skew-desk-primary"><div class="skew-empty">Waiting for the 09:30 / 13:00 skew anchor.</div></div></div>
+      <div class="skew-lane"><h3>Reversal watch <span>opposite skew + significant underlying move</span></h3><div id="skew-desk-reversal"><div class="skew-empty">No statistically confirmed reversal watch yet.</div></div></div>
+      <div class="skew-lane"><h3>Other extremes <span>visible, not hidden</span></h3><div id="skew-desk-extremes"><div class="skew-empty">Waiting for skew extremes.</div></div></div>
+    </div>
+    <div class="foot">
+      <span><strong>Colour guide:</strong> GREEN = research entry window (anchor to +15m); AMBER = late/reversal track only; RED = no fresh trade. Futures are the primary research vehicle; options are only marked eligible when the relevant ATM spread is ≤3%.</span>
+      <span><strong>No auto-orders.</strong> Math Recorder, CALL V1, quant shadow, Trial 25 and missed-mover forensics remain separate and unchanged.</span>
+    </div>
+  </section>
+
   {% set fdesk = v123_focus_desk|default({}) %}
   {% set mobserver = v123_market_observer|default({}) %}
   <section id="v123-focus-desk" class="focus-desk focus-pro" aria-label="V12.3 underlying first live focus desk">
@@ -1087,8 +1162,8 @@ button, a, summary, input, select { touch-action: manipulation; }
   {% set skewcur = skew.get('current') or {} %}
   <section id="v123-skew-shadow" class="card v12-card" aria-label="ATM call put IV skew shadow research">
     <div class="v12-head">
-      <div><div class="v12-kicker">ATM CALL IV − PUT IV · CROSS-SECTIONAL SHADOW</div>
-      <h2>09:30 / 13:00 Skew Observer <span class="sub">top/bottom 5% · market-agreement filter</span></h2></div>
+      <div><div class="v12-kicker">ATM CALL IV − PUT IV · RESEARCH RECORDER / AUDIT</div>
+      <h2>Skew Validation Recorder <span class="sub">fixed 09:30 / 13:00 anchors · 1h and 15:10 outcomes</span></h2></div>
       <div id="skew-shadow-status" class="v12-lock">{{ skew.get('status') or 'WAITING_FOR_SLOT' }}</div>
     </div>
     <div class="v12-metrics">
@@ -1101,7 +1176,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       <div class="v12-metric"><span>Completed to 15:10</span><strong id="skew-completed">{{ skew.get('completed_batches', 0) }}</strong></div>
     </div>
     <div class="v12-panel">
-      <h3>Current shadow picks · no trade control</h3>
+      <h3>Current primary skew picks · recorder view</h3>
       <div id="skew-shadow-list" class="v12-list">
         <div class="v8-empty">Waiting for the next 09:30 / 13:00 slot.</div>
       </div>
@@ -2310,24 +2385,93 @@ button, a, summary, input, select { touch-action: manipulation; }
     var cur = shadow.current || {};
     function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
     function num(v, d) { var x = Number(v); return Number.isFinite(x) ? x.toFixed(d == null ? 2 : d) : '—'; }
+    function signed(v,d){var x=Number(v);return Number.isFinite(x)?(x>=0?'+':'')+x.toFixed(d==null?1:d):'—';}
+    function esc(v){ return String(v == null ? '—' : v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;"); }
+
     text('skew-shadow-status', shadow.status || 'WAITING_FOR_SLOT');
     text('skew-slot', cur.signal_clock || '—');
     text('skew-market-dir', cur.market_direction || '—');
     text('skew-eligible', cur.eligible_symbols || 0);
     text('skew-selected', cur.selected_count || 0);
     text('skew-completed', shadow.completed_batches || 0);
+    text('skew-desk-slot', cur.signal_clock || 'WAITING');
+    text('skew-desk-market', cur.market_direction || '—');
+    text('skew-desk-eligible', cur.eligible_symbols || 0);
+
+    var primary = Array.isArray(cur.live_primary) ? cur.live_primary : (Array.isArray(cur.selected) ? cur.selected : []);
+    var reversal = Array.isArray(cur.live_reversal_watch) ? cur.live_reversal_watch : [];
+    var extremes = Array.isArray(cur.live_extreme_watch) ? cur.live_extreme_watch : [];
+    if (!extremes.length && !cur.live_updated_at) {
+      var t = Array.isArray(cur.top_5pct) ? cur.top_5pct : [];
+      var b = Array.isArray(cur.bottom_5pct) ? cur.bottom_5pct : [];
+      var selectedKeys={};
+      primary.forEach(function(x){selectedKeys[String(x.symbol||'')+'|'+String(x.side||'')]=true;});
+      extremes=t.concat(b).filter(function(x){return !selectedKeys[String(x.symbol||'')+'|'+String(x.side||'')];});
+    }
+    text('skew-desk-primary-count', primary.length);
+    text('skew-desk-confirmed', cur.live_primary_confirmed || 0);
+    text('skew-desk-reversal-count', reversal.length);
+    var upd=String(cur.live_updated_at || shadow.live_updated_at || '');
+    text('skew-desk-updated', upd ? upd.slice(11,19) : '—');
+
+    function card(r){
+      r=r||{};
+      var lane=String(r.opportunity_lane||'EXTREME_WATCH');
+      var cls=lane.toLowerCase();
+      var move=Number(r.live_directional_bps);
+      var moveText=Number.isFinite(move)?signed(move,1)+' bps from '+esc(cur.signal_clock||'anchor'):'live move —';
+      var obs=String(r.live_direction||r.direction_lock_state||'');
+      var p=Number(r.movement_p_value), z=Number(r.movement_z), h=Number(r.movement_horizon_seconds);
+      var timing=String(r.entry_window_state||'');
+      var instrument=String(r.research_primary_instrument||'');
+      var optionStatus=String(r.research_option_status||'');
+      var decisionClass='red', decisionText='NO FRESH TRADE';
+      if((lane==='PRIMARY_CONFIRMED'||lane==='PRIMARY_MOVING'||lane==='PRIMARY_WATCH') && timing==='ANCHOR_WINDOW'){
+        decisionClass='green'; decisionText='RESEARCH ENTRY WINDOW';
+      }else if((lane.indexOf('PRIMARY_')===0 && timing==='LATE_TRACK_ONLY') || lane==='REVERSAL_WATCH'){
+        decisionClass='amber'; decisionText=(lane==='REVERSAL_WATCH'?'REVERSAL WATCH · TRACK ONLY':'LATE · TRACK ONLY');
+      }
+      var optionClass=optionStatus==='OPTION_ELIGIBLE'?'green':'red';
+      var optionText=optionStatus==='OPTION_ELIGIBLE'?'OPTION SPREAD OK ≤3%':'OPTIONS AVOID';
+      return '<div class="skew-card '+esc(cls)+'">'+
+        '<div class="top"><span class="symbol"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc(r.symbol||'—')+'</a></span>'+
+        '<span class="side '+String(r.side||'').toLowerCase()+'">'+esc(r.side||'')+'</span>'+
+        '<span class="lane">'+esc(lane.replaceAll('_',' '))+'</span></div>'+
+        '<div class="move">'+moveText+(r.live_price!=null?' · CMP '+num(r.live_price,2):'')+'</div>'+
+        '<div class="decision-row">'+
+          '<span class="skew-badge '+decisionClass+'">'+esc(decisionText)+'</span>'+
+          '<span class="skew-badge blue">FUTURES = PRIMARY RESEARCH VEHICLE</span>'+
+          '<span class="skew-badge '+optionClass+'">'+esc(optionText)+'</span>'+
+        '</div>'+
+        '<div class="meta">'+
+        (instrument?'research: '+esc(instrument.replaceAll('_',' ')):'')+
+        (optionStatus?' · '+esc(optionStatus.replaceAll('_',' ')):'')+
+        (timing?' · '+esc(timing.replaceAll('_',' ')):'')+
+        (r.research_exit_clock?' · exit study '+esc(r.research_exit_clock):'')+
+        '</div>'+
+        '<div class="meta">skew '+num(r.skew_pct_points,2)+' pp · anchor '+num(r.spot,2)+
+        ' · CE spread '+num(r.call_spread_pct,2)+'% · PE spread '+num(r.put_spread_pct,2)+'%'+
+        (obs?' · underlying '+esc(obs):'')+
+        (Number.isFinite(z)?' · Z '+signed(z,2):'')+
+        (Number.isFinite(p)?' · p '+p.toExponential(1):'')+
+        (Number.isFinite(h)?' · H* '+num(h,0)+'s':'')+
+        (r.expiry?' · '+esc(r.expiry):'')+'</div></div>';
+    }
+    function fill(id,rows,empty){
+      var el=document.getElementById(id); if(!el)return;
+      rows=Array.isArray(rows)?rows:[];
+      el.innerHTML=rows.length?rows.slice(0,12).map(card).join(''):'<div class="skew-empty">'+esc(empty)+'</div>';
+    }
+    fill('skew-desk-primary',primary,'No market-aligned primary skew candidate in the current anchor.');
+    fill('skew-desk-reversal',reversal,'No opposite-side skew extreme has a statistically significant same-direction underlying move yet.');
+    fill('skew-desk-extremes',extremes,'No additional skew extreme is available.');
+
     var one = cur.one_hour_outcome || {};
     text('skew-onehour-mean', one.mean_net_6bps_proxy == null ? '—' : num(one.mean_net_6bps_proxy,1) + ' bps');
     text('skew-onehour-win', one.win_rate_pct == null ? '—' : num(one.win_rate_pct,1) + '%');
     var box = document.getElementById('skew-shadow-list');
-    if (!box) return;
-    var rows = Array.isArray(cur.selected) ? cur.selected.slice(0,12) : [];
-    function esc(v){ return String(v == null ? '—' : v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;"); }
-    box.innerHTML = rows.length ? rows.map(function(r){
-      return '<div class="v8-empty"><strong>'+esc(r.symbol)+'</strong> · '+esc(r.side)+
-        ' · skew '+num(r.skew_pct_points,2)+'pp · CE '+num(r.call_spread_pct,2)+'% · PE '+num(r.put_spread_pct,2)+'%'+
-        (r.expiry?' · '+esc(r.expiry):'')+'</div>';
-    }).join('') : '<div class="v8-empty">Waiting for the next 09:30 / 13:00 slot or no market-filtered extreme.</div>';
+    if (box) box.innerHTML = primary.length ? primary.slice(0,12).map(card).join('') :
+      '<div class="v8-empty">No market-aligned primary skew extreme in the current anchor. Check the top Opportunity Desk for visible opposite extremes.</div>';
   }
 
   function renderTrial25Shadow(shadow) {
