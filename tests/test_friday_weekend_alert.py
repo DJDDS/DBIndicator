@@ -64,3 +64,17 @@ def test_capture_window_starts_at_1415_and_fails_closed_outside():
     assert mod.in_capture_window(dt.datetime(2026, 10, 9, 15, 25))
     assert not mod.in_capture_window(dt.datetime(2026, 10, 9, 14, 14))
     assert not mod.in_capture_window(dt.datetime(2026, 10, 9, 15, 26))
+
+
+def test_quote_timestamp_age_normalizes_naive_kite_timestamp_and_aware_now():
+    mod = _mod()
+    now = dt.datetime(2026, 10, 1, 14, 15, 12, tzinfo=mod.IST)
+    kite_timestamp = dt.datetime(2026, 10, 1, 14, 15, 0)
+    assert mod._quote_timestamp_age_seconds(kite_timestamp, now) == 12.0
+
+
+def test_quote_timestamp_age_normalizes_aware_timestamp_and_naive_now():
+    mod = _mod()
+    now = dt.datetime(2026, 10, 1, 14, 15, 12)
+    kite_timestamp = dt.datetime(2026, 10, 1, 8, 45, 0, tzinfo=dt.timezone.utc)
+    assert mod._quote_timestamp_age_seconds(kite_timestamp, now) == 12.0
