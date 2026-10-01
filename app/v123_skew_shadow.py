@@ -298,6 +298,114 @@ def _rank_and_filter(rows, market):
     return top, bottom, selected
 
 
+def _parse_dt(value):
+    if isinstance(value, dt.datetime):
+        return value
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _live_spot_map(rows):
+    out = {}
+    for row in rows or []:
+        symbol = str((row or {}).get("symbol") or "")
+        price = (
+            _finite((row or {}).get("close"))
+            or _finite((row or {}).get("last_price"))
+            or _finite((row or {}).get("ltp"))
+            or _finite((row or {}).get("price"))
+        )
+        if symbol and price is not None and price > 0:
+            out[symbol] = price
+    return out
+
+
+def update_one_hour_outcomes(*, live_rows, state_file, ledger_file, now):
+    """Record first live scanner observation at/after +60m for each open batch."""
+    state = load_state(state_file)
+    spots = _live_spot_map(live_rows)
+    changed = False
+    for batch_id, batch in list((state.get("open_batches") or {}).items()):
+        if not isinstance(batch, dict) or batch.get("one_hour_outcome"):
+            continue
+        signal_ts = _parse_dt(batch.get("signal_ts"))
+        if signal_ts is None:
+            continue
+        if signal_ts.tzinfo is not None and now.tzinfo is None:
+            signal_ts = signal_ts.replace(tzinfo=None)
+        elif signal_ts.tzinfo is None and now.tzinfo is not None:
+            signal_ts = signal_ts.replace(tzinfo=now.tzinfo)
+        age = (now - signal_ts).total_seconds()
+        if age < 3600:
+            continue
+
+        outcomes = []
+        for signal in batch.get("selected") or []:
+            symbol = str(signal.get("symbol") or "")
+            entry = _finite(signal.get("spot"))
+            exit_spot = _finite(spots.get(symbol))
+            if not symbol or entry is None or entry <= 0 or exit_spot is None or exit_spot <= 0:
+                continue
+            side = str(signal.get("side") or "")
+            signed = 1.0 if side == "Bullish" else -1.0
+            directional_bps = signed * (exit_spot / entry - 1.0) * 10000.0
+            outcomes.append({
+                "symbol": symbol,
+                "side": side,
+                "entry_spot": entry,
+                "exit_spot": exit_spot,
+                "directional_spot_bps": directional_bps,
+                "net_6bps_proxy": directional_bps - 6.0,
+                "skew_pct_points": signal.get("skew_pct_points"),
+                "rank_percentile": signal.get("rank_percentile"),
+            })
+
+        result = {
+            "record_type": "SKEW_SHADOW_60M",
+            "batch_id": batch_id,
+            "date": batch.get("date"),
+            "slot": batch.get("slot"),
+            "signal_clock": batch.get("signal_clock"),
+            "observed_at": now.isoformat(timespec="seconds"),
+            "delay_seconds": round(max(0.0, age - 3600.0), 1),
+            "selected_count": len(batch.get("selected") or []),
+            "outcome_count": len(outcomes),
+            "mean_directional_spot_bps": (
+                sum(x["directional_spot_bps"] for x in outcomes) / len(outcomes)
+                if outcomes else None
+            ),
+            "median_directional_spot_bps": (
+                sorted(x["directional_spot_bps"] for x in outcomes)[len(outcomes)//2]
+                if outcomes else None
+            ),
+            "mean_net_6bps_proxy": (
+                sum(x["net_6bps_proxy"] for x in outcomes) / len(outcomes)
+                if outcomes else None
+            ),
+            "positive_count": sum(1 for x in outcomes if x["net_6bps_proxy"] > 0),
+            "win_rate_pct": (
+                100.0 * sum(1 for x in outcomes if x["net_6bps_proxy"] > 0) / len(outcomes)
+                if outcomes else None
+            ),
+            "outcomes": outcomes,
+            "controls_trading": False,
+        }
+        batch["one_hour_outcome"] = result
+        state["current"] = batch
+        state["last_outcome_at"] = result["observed_at"]
+        _append_jsonl(ledger_file, result)
+        changed = True
+
+    if changed:
+        state["status"] = "ONE_HOUR_RECORDED"
+        _atomic_write(state_file, state)
+    return shadow_status(state_file)
+
+
 def _process_entry(record, previous, state, ledger_file, now):
     slot = str(record.get("slot") or "")
     rows = _eligible_rows(record)
