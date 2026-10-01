@@ -373,7 +373,7 @@ def _observer_context_map(rows):
     return out
 
 
-def _enrich_signal(signal, ctx, market_direction):
+def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
     row = dict(signal or {})
     symbol = str(row.get("symbol") or "")
     side = str(row.get("side") or "")
@@ -401,10 +401,36 @@ def _enrich_signal(signal, ctx, market_direction):
         lane = "EXTREME_WATCH"
 
     row.update(context)
+    relevant_spread = _finite(row.get("call_spread_pct")) if side == "Bullish" else _finite(row.get("put_spread_pct"))
+    option_ok = relevant_spread is not None and relevant_spread <= 3.0
+
+    anchor_age_seconds = None
+    signal_dt = _parse_dt(signal_ts)
+    if signal_dt is not None and now is not None:
+        if signal_dt.tzinfo is not None and now.tzinfo is None:
+            signal_dt = signal_dt.replace(tzinfo=None)
+        elif signal_dt.tzinfo is None and now.tzinfo is not None:
+            signal_dt = signal_dt.replace(tzinfo=now.tzinfo)
+        anchor_age_seconds = max(0.0, (now - signal_dt).total_seconds())
+
+    if anchor_age_seconds is None:
+        entry_window_state = "UNKNOWN"
+    elif anchor_age_seconds <= 15 * 60:
+        entry_window_state = "ANCHOR_WINDOW"
+    else:
+        entry_window_state = "LATE_TRACK_ONLY"
+
     row["live_directional_bps"] = directional_bps
     row["market_aligned"] = bool(market_aligned)
     row["significant_same_side"] = bool(significant_same_side)
     row["opportunity_lane"] = lane
+    row["relevant_option_spread_pct"] = relevant_spread
+    row["option_spread_le_3pct"] = bool(option_ok)
+    row["research_primary_instrument"] = "STOCK_FUTURES"
+    row["research_option_status"] = "OPTION_ELIGIBLE" if option_ok else "OPTION_SPREAD_TOO_WIDE"
+    row["anchor_age_seconds"] = anchor_age_seconds
+    row["entry_window_state"] = entry_window_state
+    row["research_exit_clock"] = "15:10"
     row["validation_status"] = "VALIDATION_IN_PROCESS"
     row["controls_trading"] = False
     return row
@@ -429,15 +455,15 @@ def live_status(*, state_file, live_rows, now):
     ctx = _observer_context_map(live_rows)
     market_direction = current.get("market_direction")
     primary = [
-        _enrich_signal(row, ctx, market_direction)
+        _enrich_signal(row, ctx, market_direction, signal_ts=current.get("signal_ts"), now=now)
         for row in (current.get("selected") or [])
     ]
     top = [
-        _enrich_signal(row, ctx, market_direction)
+        _enrich_signal(row, ctx, market_direction, signal_ts=current.get("signal_ts"), now=now)
         for row in (current.get("top_5pct") or [])
     ]
     bottom = [
-        _enrich_signal(row, ctx, market_direction)
+        _enrich_signal(row, ctx, market_direction, signal_ts=current.get("signal_ts"), now=now)
         for row in (current.get("bottom_5pct") or [])
     ]
     all_extremes = top + bottom
