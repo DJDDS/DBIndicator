@@ -1082,6 +1082,32 @@ button, a, summary, input, select { touch-action: manipulation; }
     <div class="v12-links"><a href="/api/v12-option-snapshots/export">Export option snapshots</a><a href="/api/v12-option-state/export">Export option state</a><a href="/api/v12-earnings-ledger/export">Export earnings ledger</a><a href="/api/v12-earnings-state/export">Export earnings state</a></div>
   </section>
 
+  {% set skew = v123_skew_shadow|default({}) %}
+  {% set skewcur = skew.get('current') or {} %}
+  <section id="v123-skew-shadow" class="card v12-card" aria-label="ATM call put IV skew shadow research">
+    <div class="v12-head">
+      <div><div class="v12-kicker">ATM CALL IV − PUT IV · CROSS-SECTIONAL SHADOW</div>
+      <h2>09:30 / 13:00 Skew Observer <span class="sub">top/bottom 5% · market-agreement filter · research only</span></h2></div>
+      <div id="skew-shadow-status" class="v12-lock">{{ skew.get('status') or 'WAITING_FOR_SLOT' }}</div>
+    </div>
+    <div class="v12-metrics">
+      <div class="v12-metric"><span>Current slot</span><strong id="skew-slot">{{ skewcur.get('signal_clock') or '—' }}</strong></div>
+      <div class="v12-metric"><span>Market direction</span><strong id="skew-market-dir">{{ skewcur.get('market_direction') or '—' }}</strong></div>
+      <div class="v12-metric"><span>Eligible names</span><strong id="skew-eligible">{{ skewcur.get('eligible_symbols', 0) }}</strong></div>
+      <div class="v12-metric"><span>Selected picks</span><strong id="skew-selected">{{ skewcur.get('selected_count', 0) }}</strong></div>
+      <div class="v12-metric"><span>1h mean</span><strong id="skew-onehour-mean">—</strong></div>
+      <div class="v12-metric"><span>1h win rate</span><strong id="skew-onehour-win">—</strong></div>
+      <div class="v12-metric"><span>Completed to 15:10</span><strong id="skew-completed">{{ skew.get('completed_batches', 0) }}</strong></div>
+    </div>
+    <div class="v12-panel">
+      <h3>Current shadow picks · no trade control</h3>
+      <div id="skew-shadow-list" class="v12-list">
+        <div class="v8-empty">Waiting for the next 09:30 / 13:00 slot.</div>
+      </div>
+    </div>
+    <div class="v12-note"><strong>Research only:</strong> separate from Math Recorder and CALL V1. It never changes Focus, Actionable, alerts, option selection or broker execution.</div>
+  </section>
+
   {% set t25 = trial25_shadow|default({}) %}
   {% set t25stale = t25.get('stale_audit') or {} %}
   <section id="trial25-stage-d" class="card v12-card" aria-label="Trial 25 earnings volatility Stage D shadow recorder">
@@ -2278,6 +2304,31 @@ button, a, summary, input, select { touch-action: manipulation; }
     text('v12-trial25-status', trial25Status || 'TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED.');
   }
 
+  function renderSkewShadow(shadow) {
+    shadow = shadow || {};
+    var cur = shadow.current || {};
+    function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
+    function num(v, d) { var x = Number(v); return Number.isFinite(x) ? x.toFixed(d == null ? 2 : d) : '—'; }
+    text('skew-shadow-status', shadow.status || 'WAITING_FOR_SLOT');
+    text('skew-slot', cur.signal_clock || '—');
+    text('skew-market-dir', cur.market_direction || '—');
+    text('skew-eligible', cur.eligible_symbols || 0);
+    text('skew-selected', cur.selected_count || 0);
+    text('skew-completed', shadow.completed_batches || 0);
+    var one = cur.one_hour_outcome || {};
+    text('skew-onehour-mean', one.mean_net_6bps_proxy == null ? '—' : num(one.mean_net_6bps_proxy,1) + ' bps');
+    text('skew-onehour-win', one.win_rate_pct == null ? '—' : num(one.win_rate_pct,1) + '%');
+    var box = document.getElementById('skew-shadow-list');
+    if (!box) return;
+    var rows = Array.isArray(cur.selected) ? cur.selected.slice(0,12) : [];
+    function esc(v){ return String(v == null ? '—' : v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;"); }
+    box.innerHTML = rows.length ? rows.map(function(r){
+      return '<div class="v8-empty"><strong>'+esc(r.symbol)+'</strong> · '+esc(r.side)+
+        ' · skew '+num(r.skew_pct_points,2)+'pp · CE '+num(r.call_spread_pct,2)+'% · PE '+num(r.put_spread_pct,2)+'%'+
+        (r.expiry?' · '+esc(r.expiry):'')+'</div>';
+    }).join('') : '<div class="v8-empty">Waiting for the next 09:30 / 13:00 slot or no market-filtered extreme.</div>';
+  }
+
   function renderTrial25Shadow(shadow) {
     shadow = shadow || {};
     function text(id, value) { var el = document.getElementById(id); if (el) el.textContent = value == null ? '—' : value; }
@@ -2377,6 +2428,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       renderV122BTactical(state.v122b_tactical);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
+      renderSkewShadow(state.v123_skew_shadow);
       renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
 
