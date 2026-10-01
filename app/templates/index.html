@@ -471,7 +471,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-pro .focus-head h2{font-size:20px;text-transform:none;letter-spacing:-.025em}
 .focus-pro .focus-status{display:flex;align-items:center;gap:7px;background:#0b131b}
 .focus-live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(22,199,132,.10)}
-.focus-kpis{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:8px;padding:12px 16px;border-bottom:1px solid #21303d;background:rgba(8,13,19,.72)}
+.focus-kpis{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;padding:12px 16px;border-bottom:1px solid #21303d;background:rgba(8,13,19,.72)}
 .focus-kpi{padding:10px 11px;border:1px solid #263746;border-radius:9px;background:#0d151e;min-width:0}
 .focus-kpi span{display:block;color:#718397;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:750}
 .focus-kpi strong{display:block;margin-top:4px;font:800 17px var(--mono);color:#dce7ef}
@@ -503,6 +503,20 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-mini .label{display:block;color:#66798c;font-size:8.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:800}
 .focus-mini .value{display:block;margin-top:3px;font:750 11px var(--mono);color:#d3dfe7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .focus-mini .subvalue{display:block;margin-top:3px;color:#708194;font-size:8.5px;line-height:1.35}
+.focus-call-v1{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:8px;padding:9px 10px;border:1px solid #2a3948;border-radius:8px;background:rgba(7,12,17,.62)}
+.focus-call-v1.pass{border-color:#256447;background:rgba(22,199,132,.065)}
+.focus-call-v1.warming,.focus-call-v1.below_gate{border-color:#806526;background:rgba(240,185,11,.055)}
+.focus-call-v1.blocked,.focus-call-v1.not_applicable{border-color:#5c4141;background:rgba(217,139,136,.04)}
+.focus-call-v1 .left{min-width:0}
+.focus-call-v1 .title{font-size:9px;text-transform:uppercase;letter-spacing:.08em;font-weight:850;color:#8294a6}
+.focus-call-v1 .decision{margin-top:3px;font:850 12px var(--mono);color:#dbe7ef}
+.focus-call-v1.pass .decision{color:#83d9ae}
+.focus-call-v1.warming .decision,.focus-call-v1.below_gate .decision{color:#dfc56f}
+.focus-call-v1.blocked .decision,.focus-call-v1.not_applicable .decision{color:#d7928f}
+.focus-call-v1 .detail{margin-top:4px;color:#7d8fa1;font-size:9px;line-height:1.4}
+.focus-call-v1 .action{flex:0 0 auto;text-align:right;font-size:9px;font-weight:850;line-height:1.4;color:#94a6b7}
+.focus-call-v1.pass .action{color:#83d9ae}
+.focus-call-v1.below_gate .action,.focus-call-v1.warming .action{color:#dfc56f}
 .focus-math{margin-top:8px;padding:8px 9px;border:1px dashed #31516a;border-radius:8px;background:rgba(44,105,145,.055)}
 .focus-math-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:6px}
 .focus-math-head strong{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;color:#82b8d3}
@@ -949,6 +963,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
       <div class="focus-kpi"><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
+      <div class="focus-kpi"><span>CALL V1 recorder</span><strong id="v123-kpi-callrec">WAIT</strong><small id="v123-kpi-callrec-sub">live bid/ask forward validation</small></div>
     </div>
 
     <div class="focus-workspace">
@@ -1923,6 +1938,51 @@ button, a, summary, input, select { touch-action: manipulation; }
       var zoneDistance=Number(zoneObj.distance_atr);
       var maxOptionPay=Number(row.max_option_entry_price);
       var signalAge=Number(row.signal_age_seconds);
+      var callV1=row.call_execution_candidate||{};
+      var callV1State=String(callV1.state||'').toUpperCase();
+      var callV1Prob=Number(callV1.probability);
+      var callV1Threshold=Number(callV1.threshold);
+      var callV1Contract=String(callV1.selected_contract||'');
+      var callV1Spread=Number(callV1.selected_spread_pct);
+      var callV1Delta=Number(callV1.selected_delta_abs);
+      var callV1Hold=Number(callV1.evaluation_horizon_seconds);
+      var callV1Decision='';
+      var callV1Action='';
+      var callV1Detail='';
+      if(dir==='Bearish'){
+        callV1State='NOT_APPLICABLE';
+        callV1Decision='PE execution model not validated';
+        callV1Action='NO PE DECISION';
+        callV1Detail='Bearish underlying evidence may still be valid, but PUT V1 failed historical OOS and is not deployed.';
+      }else if(callV1State==='PASS'){
+        callV1Decision='CALL V1 PASS';
+        callV1Action='CALL CANDIDATE';
+        callV1Detail=(Number.isFinite(callV1Prob)?'p '+n(callV1Prob,3):'')+
+          (Number.isFinite(callV1Threshold)?' / gate '+n(callV1Threshold,3):'')+
+          (callV1Contract?' · '+callV1Contract:'')+
+          (Number.isFinite(callV1Spread)?' · spread '+n(callV1Spread,2)+'%':'')+
+          (Number.isFinite(callV1Delta)?' · |Δ| '+n(callV1Delta,2):'')+
+          (Number.isFinite(callV1Hold)?' · '+n(callV1Hold/60,0)+'m horizon':'');
+      }else if(callV1State==='BELOW_GATE'){
+        callV1Decision='CALL V1 BELOW GATE';
+        callV1Action='SKIP CALL';
+        callV1Detail=(Number.isFinite(callV1Prob)?'p '+n(callV1Prob,3):'')+
+          (Number.isFinite(callV1Threshold)?' / gate '+n(callV1Threshold,3):'')+
+          (callV1Contract?' · best '+callV1Contract:'');
+      }else if(callV1State==='WARMING'){
+        callV1Decision='CALL V1 WARMING';
+        callV1Action='WAIT';
+        callV1Detail='Building same-contract 1m / 3m / 5m option history before scoring.';
+      }else if(callV1State==='BLOCKED'){
+        callV1Decision='CALL V1 BLOCKED';
+        callV1Action='NO ENTRY';
+        callV1Detail=String(callV1.reason||'No quoted ATM±1 CALL contract passes live execution checks.');
+      }else{
+        callV1State=callV1State||'NOT_APPLICABLE';
+        callV1Decision='CALL V1 '+callV1State.replaceAll('_',' ');
+        callV1Action='WAIT';
+        callV1Detail=String(callV1.reason||'Bullish CALL execution evidence not available yet.');
+      }
       var freshLine=fresh===false
         ? '<div class="focus-fresh wait">Fresh-entry gate: waiting for new structure / re-arm evidence</div>'
         : (freshReason && freshReason!=='OPEN_EPISODE_OR_FIRST_SIGNAL'
@@ -1962,6 +2022,12 @@ button, a, summary, input, select { touch-action: manipulation; }
             (Number.isFinite(movementP)?'move p '+movementP.toExponential(2):'move p —')+
             (Number.isFinite(structureP)?' · structure p '+structureP.toExponential(2):' · structure forming')+
             (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
+        '</div>'+
+        '<div class="focus-call-v1 '+v12Esc(callV1State.toLowerCase())+'">'+
+          '<div class="left"><div class="title">Option execution decision · research candidate</div>'+
+          '<div class="decision">'+v12Esc(callV1Decision)+'</div>'+
+          '<div class="detail">'+v12Esc(callV1Detail)+'</div></div>'+
+          '<div class="action">'+v12Esc(callV1Action)+'</div>'+
         '</div>'+
         '<div class="focus-vehicles">'+
           '<span class="focus-vehicle'+(zoneState==='IN_ZONE'?' good':(zoneState==='EXTENDED'||zoneState==='INVALID'?' bad':' warn'))+'">ZONE '+v12Esc(zoneState.replaceAll('_',' '))+'</span>'+
@@ -2008,6 +2074,11 @@ button, a, summary, input, select { touch-action: manipulation; }
     setText('v123-kpi-shadow-sub',shadow.status==='RECORDING_SHADOW'
       ? String(shadow.samples_written||0)+' samples · '+String(shadow.episodes_with_close_record||0)+' closed episodes'
       : 'research only · no trade control');
+    var callRec=tactical.call_v1_forward_recorder||{};
+    setText('v123-kpi-callrec',callRec.status==='RECORDING_FORWARD'?'LIVE':'WAIT');
+    setText('v123-kpi-callrec-sub',callRec.status==='RECORDING_FORWARD'
+      ? String(callRec.entries||0)+' entries · '+String(callRec.completed||0)+' complete · '+String(callRec.open_events||0)+' open'
+      : 'live bid/ask forward validation');
 
     fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');
     fill('v123-focus-building',building,'No direction-locked spot has enough continuing evidence right now.');

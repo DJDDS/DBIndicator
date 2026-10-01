@@ -75,3 +75,14 @@ def test_bullish_without_option_history_is_warming():
     assert out["state"] in {"WARMING", "BLOCKED"}
     assert out["pass"] is False
     assert out["controls_trading"] is False
+
+
+def test_focus_dashboard_surfaces_call_v1_decision():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "CALL V1 PASS" in html
+    assert "CALL V1 BELOW GATE" in html
+    assert "CALL V1 WARMING" in html
+    assert "PE execution model not validated" in html
+    assert "v123-kpi-callrec" in html
+    assert "call_v1_forward_recorder" in html
