@@ -2413,7 +2413,8 @@ button, a, summary, input, select { touch-action: manipulation; }
     text('skew-desk-primary-count', primary.length);
     text('skew-desk-confirmed', cur.live_primary_confirmed || 0);
     text('skew-desk-reversal-count', reversal.length);
-    var mk=Number(cur.live_market_bps), edge=Number(cur.live_primary_mean_vs_market_bps);
+    var mk=cur.live_market_bps==null?NaN:Number(cur.live_market_bps);
+    var edge=cur.live_primary_mean_vs_market_bps==null?NaN:Number(cur.live_primary_mean_vs_market_bps);
     text('skew-desk-market-bps', Number.isFinite(mk) ? signed(mk,0)+' bps' : '—');
     text('skew-desk-edge-bps', Number.isFinite(edge) ? signed(edge,0)+' bps' : '—');
     var upd=String(cur.live_updated_at || shadow.live_updated_at || '');
@@ -2423,10 +2424,11 @@ button, a, summary, input, select { touch-action: manipulation; }
       r=r||{};
       var lane=String(r.opportunity_lane||'EXTREME_WATCH');
       var cls=lane.toLowerCase();
-      var move=Number(r.live_directional_bps);
-      var vsm=Number(r.live_vs_market_bps);
+      // Number(null) is 0: a missing live price must read as "—", not "+0.0 bps".
+      var move=r.live_directional_bps==null?NaN:Number(r.live_directional_bps);
+      var vsm=r.live_vs_market_bps==null?NaN:Number(r.live_vs_market_bps);
       var moveText=Number.isFinite(move)?signed(move,1)+' bps from '+esc(cur.signal_clock||'anchor')+
-        (Number.isFinite(vsm)?' · vs market '+signed(vsm,1):''):'live move —';
+        (Number.isFinite(vsm)?' · vs market '+signed(vsm,1):''):'live price unavailable — stream warming/degraded';
       var obs=String(r.live_direction||r.direction_lock_state||'');
       var p=Number(r.movement_p_value), z=Number(r.movement_z), h=Number(r.movement_horizon_seconds);
       var timing=String(r.entry_window_state||'');

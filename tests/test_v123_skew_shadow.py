@@ -458,3 +458,10 @@ def test_market_baseline_includes_names_without_qualifying_option_quotes(tmp_pat
     cur = json.loads(state.read_text())["current"]
     assert cur["eligible_symbols"] == 37
     assert len(cur["anchor_spots"]) == 40
+
+
+def test_dashboard_does_not_render_missing_live_price_as_zero_move():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "r.live_directional_bps==null?NaN" in html
+    assert "live price unavailable" in html
