@@ -1946,6 +1946,13 @@ button, a, summary, input, select { touch-action: manipulation; }
       var callV1Spread=Number(callV1.selected_spread_pct);
       var callV1Delta=Number(callV1.selected_delta_abs);
       var callV1Hold=Number(callV1.evaluation_horizon_seconds);
+      var callV1Age=Number(callV1.pass_age_seconds);
+      var callV1AgeLabel=String(callV1.pass_age_label||'');
+      var callV1AgeText='';
+      if(Number.isFinite(callV1Age)){
+        if(callV1Age<60) callV1AgeText=n(callV1Age,0)+'s';
+        else callV1AgeText=Math.floor(callV1Age/60)+'m '+String(Math.floor(callV1Age%60)).padStart(2,'0')+'s';
+      }
       var callV1Decision='';
       var callV1Action='';
       var callV1Detail='';
@@ -1955,14 +1962,15 @@ button, a, summary, input, select { touch-action: manipulation; }
         callV1Action='NO PE DECISION';
         callV1Detail='Bearish underlying evidence may still be valid, but PUT V1 failed historical OOS and is not deployed.';
       }else if(callV1State==='PASS'){
-        callV1Decision='CALL V1 PASS';
+        callV1Decision='CALL V1 PASS'+(callV1AgeText?' · '+callV1AgeText:'')+(callV1AgeLabel?' · '+callV1AgeLabel:'');
         callV1Action='CALL CANDIDATE';
         callV1Detail=(Number.isFinite(callV1Prob)?'p '+n(callV1Prob,3):'')+
           (Number.isFinite(callV1Threshold)?' / gate '+n(callV1Threshold,3):'')+
           (callV1Contract?' · '+callV1Contract:'')+
           (Number.isFinite(callV1Spread)?' · spread '+n(callV1Spread,2)+'%':'')+
           (Number.isFinite(callV1Delta)?' · |Δ| '+n(callV1Delta,2):'')+
-          (Number.isFinite(callV1Hold)?' · '+n(callV1Hold/60,0)+'m horizon':'');
+          (Number.isFinite(callV1Hold)?' · '+n(callV1Hold/60,0)+'m horizon':'')+
+          ' · PASS age is descriptive only, not extra confidence';
       }else if(callV1State==='BELOW_GATE'){
         callV1Decision='CALL V1 BELOW GATE';
         callV1Action='SKIP CALL';

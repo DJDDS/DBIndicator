@@ -86,3 +86,62 @@ def test_focus_dashboard_surfaces_call_v1_decision():
     assert "PE execution model not validated" in html
     assert "v123-kpi-callrec" in html
     assert "call_v1_forward_recorder" in html
+
+
+def test_call_v1_pass_age_resets_when_pass_breaks_or_contract_changes():
+    from app.v122b_stream import _annotate_call_v1_pass_age
+
+    store = {}
+    t0 = dt.datetime(2026, 10, 1, 10, 0, 0)
+    base = {
+        "state": "PASS",
+        "pass": True,
+        "selected_contract": "TEST26OCT100CE",
+    }
+
+    first = _annotate_call_v1_pass_age(store, "TEST", base, t0)
+    assert first["pass_age_seconds"] == 0.0
+    assert first["pass_age_label"] == "FRESH"
+
+    second = _annotate_call_v1_pass_age(
+        store, "TEST", base, t0 + dt.timedelta(seconds=45)
+    )
+    assert second["pass_age_seconds"] == 45.0
+    assert second["pass_age_label"] == "PERSISTING"
+
+    third = _annotate_call_v1_pass_age(
+        store, "TEST", base, t0 + dt.timedelta(seconds=181)
+    )
+    assert third["pass_age_label"] == "EXTENDED"
+
+    broken = _annotate_call_v1_pass_age(
+        store,
+        "TEST",
+        {"state": "BELOW_GATE", "pass": False, "selected_contract": "TEST26OCT100CE"},
+        t0 + dt.timedelta(seconds=182),
+    )
+    assert broken["pass_age_seconds"] is None
+    assert "TEST" not in store
+
+    restarted = _annotate_call_v1_pass_age(
+        store, "TEST", base, t0 + dt.timedelta(seconds=184)
+    )
+    assert restarted["pass_age_seconds"] == 0.0
+    assert restarted["pass_age_label"] == "FRESH"
+
+    changed = _annotate_call_v1_pass_age(
+        store,
+        "TEST",
+        dict(base, selected_contract="TEST26OCT105CE"),
+        t0 + dt.timedelta(seconds=190),
+    )
+    assert changed["pass_age_seconds"] == 0.0
+    assert changed["pass_age_label"] == "FRESH"
+
+
+def test_focus_dashboard_displays_call_v1_pass_age():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "pass_age_seconds" in html
+    assert "pass_age_label" in html
+    assert "PASS age is descriptive only, not extra confidence" in html

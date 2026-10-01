@@ -54,6 +54,37 @@ def _dt(v):
         return None
 
 
+def _annotate_call_v1_pass_age(store, symbol, candidate, now):
+    """Attach display-only persistence metadata to the current CALL V1 PASS."""
+    out = dict(candidate or {})
+    symbol = str(symbol or "")
+    contract = str(out.get("selected_contract") or "")
+    is_pass = bool(out.get("pass")) and str(out.get("state") or "").upper() == "PASS"
+    if not is_pass or not symbol or not contract:
+        store.pop(symbol, None)
+        out["pass_since"] = None
+        out["pass_age_seconds"] = None
+        out["pass_age_label"] = None
+        return out
+
+    prev = store.get(symbol) or {}
+    since = prev.get("since") if str(prev.get("contract") or "") == contract else None
+    if not isinstance(since, dt.datetime):
+        since = now
+    store[symbol] = {"contract": contract, "since": since}
+    age = max(0.0, (now - since).total_seconds())
+    if age < 30:
+        label = "FRESH"
+    elif age < 180:
+        label = "PERSISTING"
+    else:
+        label = "EXTENDED"
+    out["pass_since"] = _iso(since)
+    out["pass_age_seconds"] = round(age, 1)
+    out["pass_age_label"] = label
+    return out
+
+
 def _ticker_factory(api_key, access_token):
     from kiteconnect import KiteTicker
     return KiteTicker(api_key, access_token)
@@ -165,6 +196,7 @@ class TacticalStockStreamService:
         # Bounded live option history for the frozen CALL_EXECUTION_CANDIDATE_V1 scorer.
         # This is read-only evidence; it never places orders or mutates the underlying thesis.
         self._option_samples = defaultdict(lambda: deque(maxlen=1200))
+        self._call_v1_pass_state = {}
         self._lifecycle = {}
         self._last_states = {}
         self._transition_ids = set()
@@ -314,6 +346,7 @@ class TacticalStockStreamService:
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
             self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
             self._option_samples = defaultdict(lambda: deque(maxlen=1200))
+            self._call_v1_pass_state = {}
             self._lifecycle = {}
             self._last_states = {}
             self._transition_ids = set()
@@ -1449,6 +1482,12 @@ class TacticalStockStreamService:
                 now=now,
                 direction=setup.get("direction") or direction,
                 spot=live_price,
+            )
+            call_execution_candidate = _annotate_call_v1_pass_age(
+                self._call_v1_pass_state,
+                symbol,
+                call_execution_candidate,
+                now,
             )
             selected_call_snapshot = next(
                 (
