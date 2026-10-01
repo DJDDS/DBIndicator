@@ -13,7 +13,7 @@ from typing import Callable
 
 import requests
 
-from . import config, derivative_intelligence, trial25_shadow, trial25_universe, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console
+from . import config, derivative_intelligence, trial25_shadow, trial25_universe, v12_earnings_calendar, v12_feasibility, v12_option_recorder, v12_trade_console, v123_skew_shadow
 
 TRIAL25_LOCKED_STATUS = "TRIAL 25 LOCKED — FORWARD INDIAN OPTION DATA REQUIRED."
 
@@ -170,6 +170,24 @@ def process_live_scan(
         recorder = {"status": "ERROR", "error": str(exc)}
 
     try:
+        if recorder.get("status") in ("CAPTURED", "CAPTURED_PARTIAL") and recorder.get("slot"):
+            skew_shadow = v123_skew_shadow.process_slot(
+                snapshot_file=option_snapshot_file,
+                state_file=config.V123_SKEW_SHADOW_STATE_FILE,
+                ledger_file=config.V123_SKEW_SHADOW_LEDGER_FILE,
+                now=now,
+                slot=str(recorder.get("slot")),
+            )
+        else:
+            skew_shadow = v123_skew_shadow.shadow_status(config.V123_SKEW_SHADOW_STATE_FILE)
+    except Exception as exc:  # shadow research can never stop V12/live scanning
+        skew_shadow = {
+            "status": "ERROR",
+            "controls_trading": False,
+            "error": str(exc),
+        }
+
+    try:
         trial25 = _trial25_process(
             kite,
             now=now,
@@ -197,6 +215,7 @@ def process_live_scan(
             "upcoming_7d": list(earnings_symbols),
         },
         "trial25_shadow": trial25,
+        "skew_shadow": skew_shadow,
         "trial25_status": (
             TRIAL25_LOCKED_STATUS
             if trial25.get("status") == "LOCKED_FEASIBILITY"
