@@ -27,6 +27,15 @@ MAX_LIVE_SPREAD_PCT = 4.0
 RECORDER_MEDIAN_SPREAD_PCT = 1.8059
 HISTORY_TOLERANCE_SECONDS = 20.0
 ENTRY_WINDOW_SECONDS = 60
+# Trade hold shown on the desk. Defaults to the frozen model's 5-minute
+# horizon; it is NOT extended by assumption. The forward recorder measures
+# 5/10/12/15-minute outcomes, and the hold is changed (env CALL_V1_HOLD_SECONDS)
+# only after those outcomes or a historical 1-minute option test show a longer
+# hold pays. 1 Oct historical spot study: after an early 5-min burst the move
+# does not continue at any hold from 3 to 60 minutes.
+import os as _os
+TRADE_HOLD_SECONDS = max(EVALUATION_HORIZON_SECONDS, int(float(_os.getenv("CALL_V1_HOLD_SECONDS", str(EVALUATION_HORIZON_SECONDS)))))
+STOP_LOSS_FRACTION = 0.25
 MAX_QUOTE_AGE_SECONDS = 10.0
 MODEL_LABEL = "CALL_EXECUTION_CANDIDATE_V1"
 VALIDATION_LABEL = "RESEARCH CANDIDATE · FORWARD CONFIRMATION REQUIRED"
@@ -420,7 +429,8 @@ class MinuteDecisionLatch:
                         "reference_ask": result.get("selected_ask"),
                         "reference_mid": result.get("selected_mid"),
                         "entry_open_until": now + dt.timedelta(seconds=ENTRY_WINDOW_SECONDS),
-                        "hold_until": now + dt.timedelta(seconds=EVALUATION_HORIZON_SECONDS),
+                        "model_horizon_at": now + dt.timedelta(seconds=EVALUATION_HORIZON_SECONDS),
+                        "hold_until": now + dt.timedelta(seconds=TRADE_HOLD_SECONDS),
                     }
         out = dict(self._decisions[key]["result"])
         window = self._windows.get(key)
@@ -443,12 +453,16 @@ class MinuteDecisionLatch:
                 "entry_seconds_left": round(max(0.0, entry_left), 1),
                 "hold_seconds_left": round(max(0.0, hold_left), 1),
                 "exit_at": window["hold_until"].isoformat(timespec="seconds"),
+                "model_horizon_at": window["model_horizon_at"].isoformat(timespec="seconds"),
+                "beyond_model_horizon": now >= window["model_horizon_at"],
+                "hold_minutes": TRADE_HOLD_SECONDS // 60,
             }
             live = next(
                 (x for x in (live_snaps or []) if str((x or {}).get("symbol") or "") == str(window["contract"] or "")),
                 None,
             )
             live_ask = _finite((live or {}).get("ask"))
+            live_bid = _finite((live or {}).get("bid"))
             live_age = _finite((live or {}).get("quote_age_s"))
             ref_ask = _finite(window["reference_ask"])
             fresh = live_ask is not None and (live_age is None or live_age <= MAX_QUOTE_AGE_SECONDS)
@@ -458,6 +472,16 @@ class MinuteDecisionLatch:
                 # No-chase guard: during ENTRY_OPEN the entry is valid only at or
                 # below the signal-minute ask on a fresh quote.
                 "entry_price_ok": bool(fresh and ref_ask is not None and live_ask <= ref_ask),
+            })
+            # Running result if bought at the reference ask and sold at the live bid.
+            pnl = None
+            if live_bid is not None and ref_ask and (live_age is None or live_age <= MAX_QUOTE_AGE_SECONDS):
+                pnl = (live_bid / ref_ask - 1.0) * 100.0
+            out["trade_window"].update({
+                "live_bid": live_bid,
+                "running_pnl_pct": round(pnl, 2) if pnl is not None else None,
+                "stop_pct": -STOP_LOSS_FRACTION * 100.0,
+                "stop_hit": bool(pnl is not None and pnl <= -STOP_LOSS_FRACTION * 100.0),
             })
         else:
             out["trade_window"] = None

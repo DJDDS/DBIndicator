@@ -76,7 +76,7 @@ def test_forward_recorder_records_entry_once_and_executable_outcomes(tmp_path):
     assert round(one["executable_return_pct"], 6) == round((10.8 / 10.2 - 1.0) * 100.0, 6)
     assert round(one["underlying_return_bps"], 6) == 50.0
 
-    for seconds in (181, 301, 601):
+    for seconds in (181, 301, 601, 721, 901):
         rec.observe_market(
             now=t0 + dt.timedelta(seconds=seconds),
             symbol="TEST",
@@ -85,7 +85,7 @@ def test_forward_recorder_records_entry_once_and_executable_outcomes(tmp_path):
             snapshot=_snap(bid=11.0, ask=11.4, mid=11.2),
         )
     status = rec.status()
-    assert status["outcomes"] == 4
+    assert status["outcomes"] == 6
     assert status["completed"] == 1
     assert status["open_events"] == 0
 
@@ -102,7 +102,7 @@ def test_forward_recorder_state_survives_reload_and_rearm_is_delayed(tmp_path):
         candidate=_candidate(),
         contract_snapshot=_snap(),
     )
-    for seconds in (61, 181, 301, 601):
+    for seconds in (61, 181, 301, 601, 721, 901):
         rec.observe_market(
             now=t0 + dt.timedelta(seconds=seconds),
             symbol="TEST",

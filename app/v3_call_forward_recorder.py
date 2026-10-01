@@ -12,9 +12,9 @@ import math
 import threading
 from pathlib import Path
 
-HORIZONS = {"1m": 60, "3m": 180, "5m": 300, "10m": 600}
+HORIZONS = {"1m": 60, "3m": 180, "5m": 300, "10m": 600, "12m": 720, "15m": 900}
 MAX_OUTCOME_DELAY_SECONDS = 45
-MAX_EVENT_AGE_SECONDS = 15 * 60
+MAX_EVENT_AGE_SECONDS = 20 * 60
 MIN_REARM_SECONDS = 15 * 60
 
 

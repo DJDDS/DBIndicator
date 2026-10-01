@@ -2078,8 +2078,8 @@ button, a, summary, input, select { touch-action: manipulation; }
       var callV1Win=callV1.trade_window||null;
       function mmss(sec){sec=Math.max(0,Math.round(Number(sec)||0));return Math.floor(sec/60)+'m '+String(sec%60).padStart(2,'0')+'s';}
       if(dir!=='Bearish' && callV1Win && callV1Win.contract){
-        // A PASS opens a 5-minute trade (research rule: enter at the signal
-        // minute, exit after five minutes). Later below-gate minutes do not cancel it.
+        // A PASS opens a trade window for the configured hold (default = 5-min
+        // model horizon; longer holds are being forward-tested, not assumed).
         var winAsk=Number(callV1Win.reference_ask), winP=Number(callV1Win.signal_probability);
         var liveAsk=Number(callV1Win.live_ask);
         if(String(callV1Win.phase)==='ENTRY_OPEN' && callV1Win.entry_price_ok===false){
@@ -2092,8 +2092,11 @@ button, a, summary, input, select { touch-action: manipulation; }
           callV1Action='CALL ENTRY WINDOW'+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):'');
         }else{
           callV1State='PASS';
-          callV1Decision='CALL V1 HOLDING · exit in '+mmss(callV1Win.hold_seconds_left);
-          callV1Action='HOLD · NO NEW ENTRY';
+          var pnl=Number(callV1Win.running_pnl_pct);
+          callV1Decision=(callV1Win.stop_hit?'CALL V1 STOP HIT · exit now':'CALL V1 HOLDING · exit in '+mmss(callV1Win.hold_seconds_left));
+          callV1Action=(callV1Win.stop_hit?'EXIT · premium down 25%':'HOLD · NO NEW ENTRY')+
+            (Number.isFinite(pnl)?' · P&L '+(pnl>=0?'+':'')+n(pnl,1)+'%':'')+
+            (callV1Win.beyond_model_horizon?' · past 5m model horizon (extended hold, testing)':'');
         }
         callV1Detail=String(callV1Win.contract)+
           (Number.isFinite(winAsk)?' · ref ask '+n(winAsk,2)+' (do not chase above)':'')+
@@ -2248,7 +2251,8 @@ button, a, summary, input, select { touch-action: manipulation; }
         }else if(w&&w.contract){
           line=(String(w.phase)==='ENTRY_OPEN'
             ?(w.entry_price_ok===false?'PRICE MOVED · don\'t chase':'ENTRY OPEN · '+Math.round(Number(w.entry_seconds_left)||0)+'s left')
-            :'HOLDING · exit '+String(w.exit_at||'').slice(11,19))+' · '+esc2(w.contract)+
+            :(w.stop_hit?'STOP HIT · exit now':'HOLDING · exit '+String(w.exit_at||'').slice(11,19))+
+              (Number.isFinite(Number(w.running_pnl_pct))?' · P&L '+(Number(w.running_pnl_pct)>=0?'+':'')+Number(w.running_pnl_pct).toFixed(1)+'%':''))+' · '+esc2(w.contract)+
             (Number.isFinite(Number(w.reference_ask))?' · ref ask '+Number(w.reference_ask).toFixed(2):'');
         }else if(st==='BELOW_GATE'){
           line='below gate · p '+(Number.isFinite(Number(c.probability))?Number(c.probability).toFixed(3):'—');

@@ -216,10 +216,48 @@ def test_minute_latch_scores_once_per_minute_and_holds_trade_window():
     assert later["trade_window"]["contract"] == "ABC26OCT100CE"
     assert later["trade_window"]["reference_ask"] == 5.05
 
-    # After the 5-minute horizon the window closes.
+    assert later["trade_window"]["beyond_model_horizon"] is False
+    assert later["trade_window"]["hold_minutes"] == 5          # default = model horizon
+
+    # After the default 5-minute hold the window closes.
     done = latch.decide("ABC", "Bullish", dt.datetime(2026, 10, 2, 10, 36, 5), evaluate)
     assert done["trade_window"] is None
     assert len(calls) == 3
+
+
+def test_longer_hold_only_by_explicit_setting(monkeypatch):
+    monkeypatch.setattr(v3_call_execution, "TRADE_HOLD_SECONDS", 900)
+    latch = v3_call_execution.MinuteDecisionLatch()
+
+    def evaluate(minute):
+        return {"state": "PASS", "pass": True, "probability": 0.7,
+                "selected_contract": "ABC26OCT100CE", "selected_ask": 5.0, "selected_mid": 5.0}
+
+    t0 = dt.datetime(2026, 10, 2, 10, 31, 1)
+    latch.decide("ABC", "Bullish", t0, evaluate)
+    ext = latch.decide("ABC", "Bullish", dt.datetime(2026, 10, 2, 10, 36, 5), evaluate)
+    assert ext["trade_window"]["phase"] == "HOLDING"
+    assert ext["trade_window"]["beyond_model_horizon"] is True
+    # The 15-minute window has ended; a still-passing model opens a new trade.
+    nxt = latch.decide("ABC", "Bullish", dt.datetime(2026, 10, 2, 10, 46, 5), evaluate)["trade_window"]
+    assert nxt["signal_minute"] == "2026-10-02T10:46" and nxt["phase"] == "ENTRY_OPEN"
+
+
+def test_call_v1_window_reports_running_pnl_and_stop():
+    latch = v3_call_execution.MinuteDecisionLatch()
+
+    def evaluate(minute):
+        return {"state": "PASS", "pass": True, "probability": 0.7,
+                "selected_contract": "ABC26OCT100CE", "selected_ask": 10.0, "selected_mid": 9.9}
+
+    t0 = dt.datetime(2026, 10, 2, 10, 31, 1)
+    latch.decide("ABC", "Bullish", t0, evaluate)
+    up = latch.decide("ABC", "Bullish", t0 + dt.timedelta(minutes=3), evaluate,
+                      live_snaps=[{"symbol": "ABC26OCT100CE", "bid": 11.0, "ask": 11.1, "quote_age_s": 1.0}])
+    assert up["trade_window"]["running_pnl_pct"] == 10.0 and not up["trade_window"]["stop_hit"]
+    down = latch.decide("ABC", "Bullish", t0 + dt.timedelta(minutes=4), evaluate,
+                        live_snaps=[{"symbol": "ABC26OCT100CE", "bid": 7.4, "ask": 7.5, "quote_age_s": 1.0}])
+    assert down["trade_window"]["stop_hit"] is True
 
 
 def test_dashboard_renders_call_v1_trade_window():
