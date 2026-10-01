@@ -2060,7 +2060,28 @@ button, a, summary, input, select { touch-action: manipulation; }
       var callV1Decision='';
       var callV1Action='';
       var callV1Detail='';
-      if(dir==='Bearish'){
+      var callV1Win=callV1.trade_window||null;
+      function mmss(sec){sec=Math.max(0,Math.round(Number(sec)||0));return Math.floor(sec/60)+'m '+String(sec%60).padStart(2,'0')+'s';}
+      if(dir!=='Bearish' && callV1Win && callV1Win.contract){
+        // A PASS opens a 5-minute trade (research rule: enter at the signal
+        // minute, exit after five minutes). Later below-gate minutes do not cancel it.
+        var winAsk=Number(callV1Win.reference_ask), winP=Number(callV1Win.signal_probability);
+        if(String(callV1Win.phase)==='ENTRY_OPEN'){
+          callV1State='PASS';
+          callV1Decision='CALL V1 ENTRY OPEN · '+n(callV1Win.entry_seconds_left,0)+'s left';
+          callV1Action='CALL ENTRY WINDOW';
+        }else{
+          callV1State='PASS';
+          callV1Decision='CALL V1 HOLDING · exit in '+mmss(callV1Win.hold_seconds_left);
+          callV1Action='HOLD · NO NEW ENTRY';
+        }
+        callV1Detail=String(callV1Win.contract)+
+          (Number.isFinite(winAsk)?' · ref ask '+n(winAsk,2)+' (do not chase above)':'')+
+          (Number.isFinite(winP)?' · signal p '+n(winP,3):'')+
+          ' · signal '+String(callV1Win.signal_minute||'').slice(11,16)+
+          ' · exit '+String(callV1Win.exit_at||'').slice(11,19)+
+          ' · now: '+(String(callV1.state||'').toUpperCase()==='PASS'?'still PASS':'below gate (trade unchanged)');
+      }else if(dir==='Bearish'){
         callV1State='NOT_APPLICABLE';
         callV1Decision='PE execution model not validated';
         callV1Action='NO PE DECISION';

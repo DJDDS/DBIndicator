@@ -183,3 +183,48 @@ def test_live_snapshots_without_spot_field_are_scored():
     assert out["state"] in {"PASS", "BELOW_GATE"}, out
     assert out["selected_contract"].startswith("TEST26OCT")
     assert out["controls_trading"] is False
+
+
+def test_minute_latch_scores_once_per_minute_and_holds_trade_window():
+    latch = v3_call_execution.MinuteDecisionLatch()
+    calls = []
+    probs = iter([0.70, 0.40, 0.40])
+
+    def evaluate(scored_at):
+        calls.append(scored_at)
+        p = next(probs)
+        passed = p >= v3_call_execution.MODEL_THRESHOLD
+        return {"state": "PASS" if passed else "BELOW_GATE", "pass": passed, "probability": p,
+                "selected_contract": "ABC26OCT100CE", "selected_ask": 5.05, "selected_mid": 5.0}
+
+    t0 = dt.datetime(2026, 10, 2, 10, 31, 1)
+    first = latch.decide("ABC", "Bullish", t0, evaluate)
+    assert first["state"] == "PASS"
+    assert first["trade_window"]["phase"] == "ENTRY_OPEN"
+    assert calls == [dt.datetime(2026, 10, 2, 10, 31)]      # feature clock = minute
+
+    # Same minute, many 2-second cycles: no re-scoring, decision held.
+    for sec in range(3, 60, 2):
+        out = latch.decide("ABC", "Bullish", t0.replace(second=sec), evaluate)
+        assert out["state"] == "PASS"
+    assert len(calls) == 1
+
+    # Next minute scores below gate, but the open trade continues (HOLDING).
+    later = latch.decide("ABC", "Bullish", dt.datetime(2026, 10, 2, 10, 32, 30), evaluate)
+    assert later["state"] == "BELOW_GATE"
+    assert later["trade_window"]["phase"] == "HOLDING"
+    assert later["trade_window"]["contract"] == "ABC26OCT100CE"
+    assert later["trade_window"]["reference_ask"] == 5.05
+
+    # After the 5-minute horizon the window closes.
+    done = latch.decide("ABC", "Bullish", dt.datetime(2026, 10, 2, 10, 36, 5), evaluate)
+    assert done["trade_window"] is None
+    assert len(calls) == 3
+
+
+def test_dashboard_renders_call_v1_trade_window():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "CALL V1 ENTRY OPEN" in html
+    assert "CALL V1 HOLDING" in html
+    assert "below gate (trade unchanged)" in html

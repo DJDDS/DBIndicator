@@ -26,6 +26,7 @@ EVALUATION_HORIZON_SECONDS = 300
 MAX_LIVE_SPREAD_PCT = 4.0
 RECORDER_MEDIAN_SPREAD_PCT = 1.8059
 HISTORY_TOLERANCE_SECONDS = 20.0
+ENTRY_WINDOW_SECONDS = 60
 MODEL_LABEL = "CALL_EXECUTION_CANDIDATE_V1"
 VALIDATION_LABEL = "RESEARCH CANDIDATE · FORWARD CONFIRMATION REQUIRED"
 
@@ -351,3 +352,81 @@ def evaluate_call_candidates(option_snapshots, option_history, cash_samples, *, 
         "validation_label": VALIDATION_LABEL,
         "controls_trading": False,
     }
+
+
+class MinuteDecisionLatch:
+    """Score CALL V1 once per minute and keep a PASS actionable for its trade.
+
+    The frozen V3 model was fitted on one-minute samples: a decision at the
+    signal minute, then a 5-minute hold. Re-scoring every ~2 s with partial-
+    minute premium/volume/IV changes made the probability jitter around the
+    gate, so PASS flickered for seconds and could not be traded. This latch:
+
+    1. scores at most once per (symbol, direction) per clock minute, using the
+       minute timestamp as the feature clock, and holds that decision for the
+       rest of the minute;
+    2. on a PASS, opens a trade window: ENTRY_OPEN for ENTRY_WINDOW_SECONDS with
+       the locked contract and reference quote, then HOLDING until the 5-minute
+       evaluation horizon ends. A later below-gate minute does not cancel an
+       open window, exactly as in the research rule (enter at the signal
+       minute, exit after five minutes).
+
+    The model, features and threshold are unchanged. Display/latching only.
+    """
+
+    def __init__(self):
+        self._decisions = {}
+        self._windows = {}
+
+    def reset(self):
+        self._decisions.clear()
+        self._windows.clear()
+
+    def decide(self, symbol, direction, now, evaluate):
+        key = (str(symbol or ""), str(direction or ""))
+        minute = now.replace(second=0, microsecond=0)
+        cached = self._decisions.get(key)
+        if cached is None or cached["minute"] != minute:
+            result = dict(evaluate(minute) or {})
+            result["scored_minute"] = minute.isoformat(timespec="minutes")
+            self._decisions[key] = {"minute": minute, "result": result}
+            if result.get("pass") and str(result.get("state") or "") == "PASS":
+                active = self._windows.get(key)
+                if active is None or now >= active["hold_until"]:
+                    self._windows[key] = {
+                        "opened_at": now,
+                        "signal_minute": minute,
+                        "contract": result.get("selected_contract"),
+                        "strike": result.get("selected_strike"),
+                        "expiry": result.get("selected_expiry"),
+                        "probability": result.get("probability"),
+                        "reference_ask": result.get("selected_ask"),
+                        "reference_mid": result.get("selected_mid"),
+                        "entry_open_until": now + dt.timedelta(seconds=ENTRY_WINDOW_SECONDS),
+                        "hold_until": now + dt.timedelta(seconds=EVALUATION_HORIZON_SECONDS),
+                    }
+        out = dict(self._decisions[key]["result"])
+        window = self._windows.get(key)
+        if window is not None and now >= window["hold_until"]:
+            self._windows.pop(key, None)
+            window = None
+        if window is not None:
+            entry_left = (window["entry_open_until"] - now).total_seconds()
+            hold_left = (window["hold_until"] - now).total_seconds()
+            out["trade_window"] = {
+                "phase": "ENTRY_OPEN" if entry_left > 0 else "HOLDING",
+                "contract": window["contract"],
+                "strike": window["strike"],
+                "expiry": window["expiry"],
+                "signal_probability": window["probability"],
+                "reference_ask": window["reference_ask"],
+                "reference_mid": window["reference_mid"],
+                "opened_at": window["opened_at"].isoformat(timespec="seconds"),
+                "signal_minute": window["signal_minute"].isoformat(timespec="minutes"),
+                "entry_seconds_left": round(max(0.0, entry_left), 1),
+                "hold_seconds_left": round(max(0.0, hold_left), 1),
+                "exit_at": window["hold_until"].isoformat(timespec="seconds"),
+            }
+        else:
+            out["trade_window"] = None
+        return out

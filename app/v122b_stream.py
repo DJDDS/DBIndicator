@@ -197,6 +197,7 @@ class TacticalStockStreamService:
         # This is read-only evidence; it never places orders or mutates the underlying thesis.
         self._option_samples = defaultdict(lambda: deque(maxlen=1200))
         self._call_v1_pass_state = {}
+        self._call_v1_latch = v3_call_execution.MinuteDecisionLatch()
         self._lifecycle = {}
         self._last_states = {}
         self._transition_ids = set()
@@ -347,6 +348,7 @@ class TacticalStockStreamService:
             self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
             self._option_samples = defaultdict(lambda: deque(maxlen=1200))
             self._call_v1_pass_state = {}
+            self._call_v1_latch = v3_call_execution.MinuteDecisionLatch()
             self._lifecycle = {}
             self._last_states = {}
             self._transition_ids = set()
@@ -1475,13 +1477,21 @@ class TacticalStockStreamService:
                     "route_tradeable": False,
                 }
 
-            call_execution_candidate = v3_call_execution.evaluate_call_candidates(
-                option_snaps,
-                self._option_samples,
-                price_samples,
-                now=now,
-                direction=setup.get("direction") or direction,
-                spot=live_price,
+            call_direction = setup.get("direction") or direction
+            # Score once per minute (the frozen model's sampling) and keep a
+            # PASS actionable for its 5-minute trade window.
+            call_execution_candidate = self._call_v1_latch.decide(
+                symbol,
+                call_direction,
+                now,
+                lambda scored_at: v3_call_execution.evaluate_call_candidates(
+                    option_snaps,
+                    self._option_samples,
+                    price_samples,
+                    now=scored_at,
+                    direction=call_direction,
+                    spot=live_price,
+                ),
             )
             call_execution_candidate = _annotate_call_v1_pass_age(
                 self._call_v1_pass_state,
