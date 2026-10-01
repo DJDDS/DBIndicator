@@ -124,3 +124,57 @@ def test_skew_shadow_rejects_wide_or_stale_quotes():
     stale = [stale_ce, _contract("STALE", "PE", 100, 20, 2)]
     rows = v123_skew_shadow._eligible_rows({"broad_contracts": good + wide + stale})
     assert [x["symbol"] for x in rows] == ["GOOD"]
+
+
+def test_skew_shadow_backfills_missed_same_day_slot_idempotently(tmp_path):
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+
+    symbols = [f"S{i:02d}" for i in range(20)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    today = _slot(
+        "2026-10-01",
+        "OPEN_STABLE",
+        {s: 99.0 for s in symbols},
+        {**{s: 0.0 for s in symbols}, "S00": -7.0, "S19": 8.0},
+    )
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+
+    now = dt.datetime(2026, 10, 1, 11, 45)
+    first = v123_skew_shadow.backfill_today_entries(
+        snapshot_file=snapshot,
+        state_file=state,
+        ledger_file=ledger,
+        now=now,
+    )
+    assert first["current"]["signal_clock"] == "09:30"
+    assert first["current"]["market_direction"] == "Bearish"
+    assert first["current"]["selected_count"] == 1
+    assert first["current"]["selected"][0]["symbol"] == "S00"
+
+    # Running backfill again must not duplicate the historical batch.
+    second = v123_skew_shadow.backfill_today_entries(
+        snapshot_file=snapshot,
+        state_file=state,
+        ledger_file=ledger,
+        now=now + dt.timedelta(minutes=1),
+    )
+    records = [json.loads(x) for x in ledger.read_text().splitlines()]
+    signals = [x for x in records if x.get("record_type") == "SKEW_SHADOW_SIGNAL"]
+    assert len(signals) == 1
+    assert second["open_batches"] == 1
+
+
+def test_skew_shadow_status_has_prominent_research_warning(tmp_path):
+    status = v123_skew_shadow.shadow_status(tmp_path / "missing.json")
+    assert "17-session hypothesis" in status["research_warning"]
+    assert status["controls_trading"] is False
+
+
+def test_dashboard_marks_skew_shadow_not_validated():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "RESEARCH IN PROGRESS — NOT VALIDATED FOR TRADING." in html
+    assert "17-session hypothesis" in html
