@@ -2416,11 +2416,20 @@ button, a, summary, input, select { touch-action: manipulation; }
       var moveText=Number.isFinite(move)?signed(move,1)+' bps from '+esc(cur.signal_clock||'anchor'):'live move —';
       var obs=String(r.live_direction||r.direction_lock_state||'');
       var p=Number(r.movement_p_value), z=Number(r.movement_z), h=Number(r.movement_horizon_seconds);
+      var timing=String(r.entry_window_state||'');
+      var instrument=String(r.research_primary_instrument||'');
+      var optionStatus=String(r.research_option_status||'');
       return '<div class="skew-card '+esc(cls)+'">'+
         '<div class="top"><span class="symbol"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc(r.symbol||'—')+'</a></span>'+
         '<span class="side '+String(r.side||'').toLowerCase()+'">'+esc(r.side||'')+'</span>'+
         '<span class="lane">'+esc(lane.replaceAll('_',' '))+'</span></div>'+
         '<div class="move">'+moveText+(r.live_price!=null?' · CMP '+num(r.live_price,2):'')+'</div>'+
+        '<div class="meta">'+
+        (instrument?'research: '+esc(instrument.replaceAll('_',' ')):'')+
+        (optionStatus?' · '+esc(optionStatus.replaceAll('_',' ')):'')+
+        (timing?' · '+esc(timing.replaceAll('_',' ')):'')+
+        (r.research_exit_clock?' · exit study '+esc(r.research_exit_clock):'')+
+        '</div>'+
         '<div class="meta">skew '+num(r.skew_pct_points,2)+' pp · anchor '+num(r.spot,2)+
         ' · CE spread '+num(r.call_spread_pct,2)+'% · PE spread '+num(r.put_spread_pct,2)+'%'+
         (obs?' · underlying '+esc(obs):'')+
