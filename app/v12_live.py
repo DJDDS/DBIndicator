@@ -180,6 +180,16 @@ def process_live_scan(
             )
         else:
             skew_shadow = v123_skew_shadow.shadow_status(config.V123_SKEW_SHADOW_STATE_FILE)
+
+        # If this code was deployed after a fixed research slot (for example,
+        # 09:30), replay only the already-recorded same-day slot from the
+        # persistent option ledger. No synthetic or future data are introduced.
+        skew_shadow = v123_skew_shadow.backfill_today_entries(
+            snapshot_file=option_snapshot_file,
+            state_file=config.V123_SKEW_SHADOW_STATE_FILE,
+            ledger_file=config.V123_SKEW_SHADOW_LEDGER_FILE,
+            now=now,
+        )
     except Exception as exc:  # shadow research can never stop V12/live scanning
         skew_shadow = {
             "status": "ERROR",

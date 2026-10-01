@@ -65,6 +65,7 @@ def _empty_state():
         "controls_trading": False,
         "current": None,
         "open_batches": {},
+        "processed_batch_ids": [],
         "completed_batches": 0,
         "completed_signals": 0,
         "last_signal_at": None,
@@ -80,6 +81,7 @@ def load_state(path):
             out = _empty_state()
             out.update(raw)
             out["open_batches"] = dict(out.get("open_batches") or {})
+            out["processed_batch_ids"] = list(out.get("processed_batch_ids") or [])
             return out
     except (OSError, ValueError, TypeError):
         pass
@@ -92,6 +94,7 @@ def shadow_status(path):
     return {
         "status": state.get("status") or "WAITING_FOR_SLOT",
         "controls_trading": False,
+        "research_warning": "RESEARCH IN PROGRESS — 17-session hypothesis — NOT VALIDATED",
         "current": current,
         "open_batches": len(state.get("open_batches") or {}),
         "completed_batches": int(state.get("completed_batches") or 0),
@@ -432,6 +435,10 @@ def _process_entry(record, previous, state, ledger_file, now):
         "controls_trading": False,
     }
     state["open_batches"][batch_id] = batch
+    processed = list(state.get("processed_batch_ids") or [])
+    if batch_id not in processed:
+        processed.append(batch_id)
+    state["processed_batch_ids"] = processed[-200:]
     state["current"] = batch
     state["status"] = batch["status"]
     state["last_signal_at"] = batch["signal_ts"]
@@ -516,7 +523,8 @@ def process_slot(*, snapshot_file, state_file, ledger_file, now, slot):
 
         if slot in ENTRY_SLOTS:
             batch_id = f"{now.date().isoformat()}|{slot}"
-            if batch_id not in state.get("open_batches", {}):
+            already = batch_id in set(state.get("processed_batch_ids") or [])
+            if not already and batch_id not in state.get("open_batches", {}):
                 previous = _previous_pre_cas(snapshot_file, now.date())
                 if previous is None:
                     state["status"] = "WAITING_FOR_PREVIOUS_PRE_CAS"
@@ -531,4 +539,41 @@ def process_slot(*, snapshot_file, state_file, ledger_file, now, slot):
         state["status"] = "ERROR"
         state["last_error"] = str(exc)
     _atomic_write(state_file, state)
+    return shadow_status(state_file)
+
+
+def backfill_today_entries(*, snapshot_file, state_file, ledger_file, now):
+    """Replay already-recorded 09:30/13:00 slots after a mid-session deploy.
+
+    This is intentionally same-day only and idempotent. It never creates synthetic
+    data; it only processes fixed V12 option-recorder slots already present in the
+    persistent snapshot ledger.
+    """
+    state = load_state(state_file)
+    processed = set(state.get("processed_batch_ids") or [])
+    changed = False
+
+    for slot, clock in ENTRY_SLOTS.items():
+        hh, mm = [int(x) for x in clock.split(":")]
+        due = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if now < due:
+            continue
+        batch_id = f"{now.date().isoformat()}|{slot}"
+        if batch_id in processed or batch_id in state.get("open_batches", {}):
+            continue
+        record = _latest_slot_record(snapshot_file, now.date(), slot)
+        if not record:
+            continue
+        previous = _previous_pre_cas(snapshot_file, now.date())
+        if previous is None:
+            state["status"] = "WAITING_FOR_PREVIOUS_PRE_CAS"
+            continue
+        _process_entry(record, previous, state, ledger_file, now)
+        processed.add(batch_id)
+        changed = True
+
+    if changed:
+        state["status"] = "SHADOW_SIGNAL"
+        state["last_error"] = None
+        _atomic_write(state_file, state)
     return shadow_status(state_file)
