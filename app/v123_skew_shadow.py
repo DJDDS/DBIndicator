@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -28,6 +29,8 @@ EXIT_SLOT = "PRE_CAS"
 EXTREME_FRACTION = 0.05
 MAX_LEG_SPREAD_PCT = 10.0
 MIN_BASELINE_COVERAGE = 0.50
+
+log = logging.getLogger(__name__)
 
 
 def _finite(value):
@@ -327,6 +330,138 @@ def _live_spot_map(rows):
     return out
 
 
+def _observer_context_map(rows):
+    out = {}
+    for row in rows or []:
+        symbol = str((row or {}).get("symbol") or "")
+        if not symbol:
+            continue
+        live_price = (
+            _finite((row or {}).get("live_price"))
+            or _finite((row or {}).get("price"))
+            or _finite((row or {}).get("close"))
+            or _finite((row or {}).get("last_price"))
+        )
+        p_value = _finite((row or {}).get("movement_p_value"))
+        alpha = _finite((row or {}).get("movement_familywise_alpha"))
+        movement_direction = str((row or {}).get("movement_direction") or "")
+        lock = str((row or {}).get("direction_lock_state") or "")
+        significant = bool((row or {}).get("movement_significant"))
+        if p_value is not None and alpha is not None and p_value <= alpha:
+            significant = True
+        live_direction = lock if lock in ("BULLISH", "BEARISH") else ""
+        if not live_direction and significant and movement_direction in ("Bullish", "Bearish"):
+            live_direction = movement_direction.upper()
+        out[symbol] = {
+            "live_price": live_price,
+            "live_direction": live_direction.title() if live_direction else None,
+            "direction_lock_state": lock or None,
+            "direction_lock_phase": (row or {}).get("direction_lock_phase"),
+            "movement_direction": movement_direction or None,
+            "movement_significant": bool(significant),
+            "movement_p_value": p_value,
+            "movement_familywise_alpha": alpha,
+            "movement_z": _finite((row or {}).get("movement_z")),
+            "movement_horizon_seconds": (row or {}).get("movement_horizon_seconds"),
+            "day_change_pct": _finite((row or {}).get("day_change_pct")),
+            "ret_3m_pct": _finite((row or {}).get("ret_3m_pct")),
+            "ret_5m_pct": _finite((row or {}).get("ret_5m_pct")),
+            "ret_10m_pct": _finite((row or {}).get("ret_10m_pct")),
+            "relative_5m_vs_nifty_pct": _finite((row or {}).get("relative_5m_vs_nifty_pct")),
+            "volume_rate_accel": _finite((row or {}).get("volume_rate_accel")),
+        }
+    return out
+
+
+def _enrich_signal(signal, ctx, market_direction):
+    row = dict(signal or {})
+    symbol = str(row.get("symbol") or "")
+    side = str(row.get("side") or "")
+    context = dict((ctx or {}).get(symbol) or {})
+    live_price = _finite(context.get("live_price"))
+    anchor = _finite(row.get("spot"))
+    signed = 1.0 if side == "Bullish" else -1.0
+    directional_bps = None
+    if live_price is not None and anchor is not None and anchor > 0:
+        directional_bps = signed * (live_price / anchor - 1.0) * 10000.0
+
+    live_direction = str(context.get("live_direction") or "")
+    significant_same_side = (
+        bool(context.get("movement_significant"))
+        and live_direction == side
+    )
+    market_aligned = side == str(market_direction or "")
+    if market_aligned:
+        lane = "PRIMARY_CONFIRMED" if significant_same_side else (
+            "PRIMARY_MOVING" if directional_bps is not None and directional_bps > 0 else "PRIMARY_WATCH"
+        )
+    elif significant_same_side:
+        lane = "REVERSAL_WATCH"
+    else:
+        lane = "EXTREME_WATCH"
+
+    row.update(context)
+    row["live_directional_bps"] = directional_bps
+    row["market_aligned"] = bool(market_aligned)
+    row["significant_same_side"] = bool(significant_same_side)
+    row["opportunity_lane"] = lane
+    row["validation_status"] = "VALIDATION_IN_PROCESS"
+    row["controls_trading"] = False
+    return row
+
+
+def live_status(*, state_file, live_rows, now):
+    """Return a dashboard-ready live view without changing trading controls.
+
+    Evidence-backed market-aligned extremes remain the primary lane. The opposite
+    skew extreme is not discarded: if the existing full-universe observer later
+    establishes a statistically significant move in that skew direction, it is
+    surfaced as REVERSAL_WATCH. This is research-only and does not mutate Focus.
+    """
+    state = load_state(state_file)
+    status = shadow_status(state_file)
+    current = dict(state.get("current") or {})
+    if not current:
+        status["live_updated_at"] = now.isoformat(timespec="seconds")
+        status["validation_status"] = "VALIDATION_IN_PROCESS"
+        return status
+
+    ctx = _observer_context_map(live_rows)
+    market_direction = current.get("market_direction")
+    primary = [
+        _enrich_signal(row, ctx, market_direction)
+        for row in (current.get("selected") or [])
+    ]
+    top = [
+        _enrich_signal(row, ctx, market_direction)
+        for row in (current.get("top_5pct") or [])
+    ]
+    bottom = [
+        _enrich_signal(row, ctx, market_direction)
+        for row in (current.get("bottom_5pct") or [])
+    ]
+    all_extremes = top + bottom
+    reversal = [row for row in all_extremes if row.get("opportunity_lane") == "REVERSAL_WATCH"]
+    extreme_watch = [row for row in all_extremes if row.get("opportunity_lane") == "EXTREME_WATCH"]
+
+    current["live_primary"] = primary
+    current["live_reversal_watch"] = reversal
+    current["live_extreme_watch"] = extreme_watch
+    current["live_primary_positive"] = sum(
+        1 for row in primary if (_finite(row.get("live_directional_bps")) or 0.0) > 0
+    )
+    current["live_primary_confirmed"] = sum(
+        1 for row in primary if row.get("opportunity_lane") == "PRIMARY_CONFIRMED"
+    )
+    current["live_reversal_count"] = len(reversal)
+    current["live_updated_at"] = now.isoformat(timespec="seconds")
+    status["current"] = current
+    status["live_updated_at"] = current["live_updated_at"]
+    status["validation_status"] = "VALIDATION_IN_PROCESS"
+    status["controls_trading"] = False
+    return status
+
+
 def update_one_hour_outcomes(*, live_rows, state_file, ledger_file, now):
     """Record first live scanner observation at/after +60m for each open batch."""
     state = load_state(state_file)
@@ -443,6 +578,17 @@ def _process_entry(record, previous, state, ledger_file, now):
     state["status"] = batch["status"]
     state["last_signal_at"] = batch["signal_ts"]
     _append_jsonl(ledger_file, {"record_type": "SKEW_SHADOW_SIGNAL", **batch})
+    log.info(
+        "IV_SKEW_SHADOW_SIGNAL batch=%s slot=%s market=%s eligible=%s selected=%s primary=%s top=%s bottom=%s",
+        batch_id,
+        batch.get("signal_clock"),
+        batch.get("market_direction"),
+        batch.get("eligible_symbols"),
+        batch.get("selected_count"),
+        [x.get("symbol") for x in selected],
+        [x.get("symbol") for x in top],
+        [x.get("symbol") for x in bottom],
+    )
     return batch
 
 
