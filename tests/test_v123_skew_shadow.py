@@ -294,3 +294,15 @@ def test_live_skew_primary_carries_research_instrument_and_timing(tmp_path):
         now=dt.datetime(2026, 10, 1, 12, 0),
     )
     assert late["current"]["live_primary"][0]["entry_window_state"] == "LATE_TRACK_ONLY"
+
+
+def test_dashboard_colour_codes_skew_trade_window():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "RESEARCH ENTRY WINDOW" in html
+    assert "LATE · TRACK ONLY" in html
+    assert "NO FRESH TRADE" in html
+    assert "FUTURES = PRIMARY RESEARCH VEHICLE" in html
+    assert "OPTION SPREAD OK ≤3%" in html
+    assert "OPTIONS AVOID" in html
+    assert "GREEN = research entry window (anchor to +15m)" in html
