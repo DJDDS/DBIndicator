@@ -438,3 +438,23 @@ def test_close_outcome_records_market_neutral_mean(tmp_path):
     assert round(out["market_move_bps"]) == -205      # 39 names -2%, S00 -4%
     by = {o["symbol"]: o for o in out["outcomes"]}
     assert by["S00"]["directional_vs_market_bps"] > 150
+
+
+def test_market_baseline_includes_names_without_qualifying_option_quotes(tmp_path):
+    """Stocks whose option spreads fail the skew filter still count in the market average."""
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+    symbols = [f"S{i:02d}" for i in range(40)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 99.0 for s in symbols}, {"S00": -9.0, "S39": 9.0})
+    for c in today["broad_contracts"]:
+        if c["underlying"] in ("S10", "S11", "S12"):
+            c["spread_pct"] = 25.0                 # fails the 10% skew filter
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+    v123_skew_shadow.process_slot(snapshot_file=snapshot, state_file=state, ledger_file=ledger,
+                                  now=dt.datetime(2026, 10, 1, 9, 30), slot="OPEN_STABLE")
+    cur = json.loads(state.read_text())["current"]
+    assert cur["eligible_symbols"] == 37
+    assert len(cur["anchor_spots"]) == 40

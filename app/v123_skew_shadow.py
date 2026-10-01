@@ -340,11 +340,11 @@ def _market_move_bps(anchor_spots, live_spots):
 
 
 def _batch_anchor_spots(batch):
-    """All eligible anchor spots; falls back to the extremes for batches written
+    """All anchor spots (full priced universe); falls back to the extremes for batches written
     before anchor_spots existed (both tails together approximate the market)."""
     spots = dict((batch or {}).get("anchor_spots") or {})
     if spots:
-        return spots, "ALL_ELIGIBLE"
+        return spots, "FULL_UNIVERSE"
     for row in list((batch or {}).get("top_5pct") or []) + list((batch or {}).get("bottom_5pct") or []):
         sym, spot = str(row.get("symbol") or ""), _finite(row.get("spot"))
         if sym and spot:
@@ -692,7 +692,10 @@ def _process_entry(record, previous, state, ledger_file, now):
         "selected": selected,
         "top_5pct": top,
         "bottom_5pct": bottom,
-        "anchor_spots": {r["symbol"]: r["spot"] for r in rows if _finite(r.get("spot"))},
+        # Market baseline uses every F&O stock the recorder priced at the anchor
+        # (the full ~213-name universe), not only the ~180 names whose option
+        # quotes qualified for the skew ranking.
+        "anchor_spots": {**_spot_map(record), **{r["symbol"]: r["spot"] for r in rows if _finite(r.get("spot"))}},
         "controls_trading": False,
     }
     state["open_batches"][batch_id] = batch
