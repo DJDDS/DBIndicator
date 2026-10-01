@@ -323,6 +323,15 @@ def _v12_export(path, filename, mimetype):
     return send_file(path, mimetype=mimetype, as_attachment=True, download_name=filename)
 
 
+@app.route("/api/v124-orderflow/export")
+@require_roles(OWNER, AUDITOR)
+def api_v124_orderflow_export():
+    """Download the one-week order-flow minute recorder (research only)."""
+    from pathlib import Path as _P
+    path = str(_P(config.V122B_TACTICAL_EVENT_FILE).with_name("v124_orderflow_minutes.jsonl"))
+    return _v12_export(path, "v124_orderflow_minutes.jsonl", "application/x-ndjson")
+
+
 @app.route("/api/v12-recorder-health")
 @require_roles(OWNER, AUDITOR)
 def api_v12_recorder_health():

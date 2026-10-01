@@ -22,6 +22,7 @@ from statistics import median
 from typing import Callable
 
 from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution, v3_call_forward_recorder
+from . import v124_orderflow_recorder
 
 
 log = logging.getLogger(__name__)
@@ -170,6 +171,11 @@ class TacticalStockStreamService:
             self.call_v1_forward_file,
             self.call_v1_forward_state_file,
         )
+        self.orderflow_file = (
+            str(Path(event_file).with_name("v124_orderflow_minutes.jsonl"))
+            if event_file else None
+        )
+        self._orderflow = v124_orderflow_recorder.OrderFlowMinuteRecorder(self.orderflow_file)
         self._shadow_samples_written = 0
         self._shadow_episode_keys = set()
         self._shadow_observation_keys = self._load_shadow_observation_keys()
@@ -349,6 +355,7 @@ class TacticalStockStreamService:
             self._option_samples = defaultdict(lambda: deque(maxlen=1200))
             self._call_v1_pass_state = {}
             self._call_v1_latch = v3_call_execution.MinuteDecisionLatch()
+            self._orderflow.reset()
             self._lifecycle = {}
             self._last_states = {}
             self._transition_ids = set()
@@ -1908,6 +1915,8 @@ class TacticalStockStreamService:
 
             kind = meta.get("kind")
             symbol = meta.get("symbol")
+            if kind == "CASH":
+                self._orderflow.on_cash_tick(symbol, tick, now)
             if kind in ("CASH", "INDEX"):
                 with self._lock:
                     if kind == "CASH":
