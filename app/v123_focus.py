@@ -16,6 +16,15 @@ import math
 
 STATE_VERSION = 1
 MAX_FOCUS = 6
+# Magnitude replacement (1 Oct 2026). Nearly every live event is
+# MULTISCALE_MOVE (priority 10), so the family-priority rule (+2 required)
+# could never free a slot and the day's largest movers (-5% to -9%) were
+# logged as FOCUS_CAPACITY misses. Move size is the one property that the
+# research found reliably predictable, so a much larger live move may replace
+# a stale, non-committed (DISCOVERED/BUILDING) thesis.
+MAGNITUDE_REPLACE_MIN_Z = 4.0
+MAGNITUDE_REPLACE_RATIO = 1.5
+MAGNITUDE_REPLACE_MIN_AGE_MINUTES = 10.0
 MAX_CONTINUATION_WATCH = 6
 MAX_DEEP_MONITORED = 12
 BUILDING_STALE_MINUTES = 6
@@ -964,6 +973,29 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
 
 
 
+def _magnitude_replacement(focus, event, now):
+    """Return the weakest stale non-committed Focus symbol that a much larger
+    incoming move may replace, or None. Committed theses (READY/ACTIVE/MANAGE/
+    PULLBACK) are never replaced."""
+    incoming = _f(event.get("movement_z"))
+    if incoming is None or abs(incoming) < MAGNITUDE_REPLACE_MIN_Z:
+        return None
+    best_symbol, best_key = None, None
+    for fsym, fitem in (focus or {}).items():
+        if fitem.get("lifecycle") not in ("DISCOVERED", "BUILDING"):
+            continue
+        age = _focus_age_minutes(fitem, now)
+        if age < MAGNITUDE_REPLACE_MIN_AGE_MINUTES:
+            continue
+        current = abs(_f(fitem.get("movement_z"), 0.0))
+        if abs(incoming) < MAGNITUDE_REPLACE_RATIO * current:
+            continue
+        key = (current, -age)
+        if best_key is None or key < best_key:
+            best_key, best_symbol = key, fsym
+    return best_symbol
+
+
 def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None):
     """Update persistent focus state from all live evidence sources."""
     now = now or dt.datetime.now()
@@ -1312,11 +1344,20 @@ def update_focus(state, observer, event_radar, tactical, scan_rows, *, now=None)
                 if replace_key is None or key < replace_key:
                     replace_key = key
                     replace_symbol = fsym
+            replace_note = "replaced by materially stronger live underlying event"
+            if replace_symbol is None:
+                replace_symbol = _magnitude_replacement(focus, event, now)
+                if replace_symbol is not None:
+                    replace_note = (
+                        "replaced by much larger live underlying move "
+                        f"(|z| {abs(_f(event.get('movement_z'), 0.0)):.1f} vs "
+                        f"{abs(_f(focus[replace_symbol].get('movement_z'), 0.0)):.1f})"
+                    )
             if replace_symbol is None:
                 promotion_trace.setdefault(symbol, []).append("FOCUS_CAPACITY_WHILE_COMMITTED_THESIS_PERSISTED")
                 continue
             old = dict(focus.pop(replace_symbol))
-            _history(old, "COMPLETED", now, "replaced by materially stronger live underlying event")
+            _history(old, "COMPLETED", now, replace_note)
             old["completed_at"] = _iso(now)
             recent.append(old)
 

@@ -489,7 +489,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .skew-opportunity h2{margin:4px 0 0;font-size:21px;letter-spacing:-.025em;color:#eef3f6}
 .skew-opportunity .sub{margin-top:5px;font-size:10px;color:#9c9270;line-height:1.45;max-width:880px}
 .skew-validation{flex:0 0 auto;border:1px solid #8b6d24;border-radius:999px;padding:7px 10px;background:rgba(240,185,11,.08);font:800 9px var(--mono);color:#e6c965;white-space:nowrap}
-.skew-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:7px;padding:10px 14px;border-bottom:1px solid #30291c;background:rgba(8,11,14,.55)}
+.skew-kpis{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:7px;padding:10px 14px;border-bottom:1px solid #30291c;background:rgba(8,11,14,.55)}
 .skew-kpi{padding:9px 10px;border:1px solid #342e21;border-radius:8px;background:#0d1319;min-width:0}
 .skew-kpi span{display:block;font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:#837b66;font-weight:800}
 .skew-kpi strong{display:block;margin-top:3px;font:800 13px var(--mono);color:#e5edf2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -993,7 +993,7 @@ button, a, summary, input, select { touch-action: manipulation; }
         <h2>Skew Opportunity Desk</h2>
         <div class="sub">This desk does not wait for the old Focus pipeline to admit a stock. It surfaces the 09:30/13:00 cross-sectional IV-skew extremes directly, keeps the market-aligned side as the primary research lane, and keeps opposite-side extremes visible for statistically confirmed reversal watch.</div>
       </div>
-      <div class="skew-validation">17-SESSION HYPOTHESIS · NOT YET VALIDATED</div>
+      <div class="skew-validation" title="Pre-registered history test, 1 Oct 2026: Dhan rolling-ATM option history, 116 sessions outside the 17 build sessions. 09:30 rank IC +2.2% (t 0.6); +1.9 bps/day after cost (95% CI -26..+30).">17-SESSION HYPOTHESIS · FAILED 116-SESSION OOS</div>
     </div>
     <div class="skew-kpis">
       <div class="skew-kpi"><span>Anchor</span><strong id="skew-desk-slot">{{ skewcur.get('signal_clock') or 'WAITING' }}</strong></div>
@@ -1002,10 +1002,12 @@ button, a, summary, input, select { touch-action: manipulation; }
       <div class="skew-kpi"><span>Primary</span><strong id="skew-desk-primary-count">{{ skewcur.get('selected_count',0) }}</strong></div>
       <div class="skew-kpi"><span>Confirmed live</span><strong id="skew-desk-confirmed">0</strong></div>
       <div class="skew-kpi"><span>Reversal watch</span><strong id="skew-desk-reversal-count">0</strong></div>
+      <div class="skew-kpi" title="Equal-weight move of every eligible F&amp;O stock since the skew anchor"><span>F&amp;O avg since anchor</span><strong id="skew-desk-market-bps">—</strong></div>
+      <div class="skew-kpi" title="Primary picks' average move after removing the F&amp;O average. Near zero = the picks only moved with the market; the skew added nothing."><span>Primary vs market</span><strong id="skew-desk-edge-bps">—</strong></div>
       <div class="skew-kpi"><span>Live update</span><strong id="skew-desk-updated">—</strong></div>
     </div>
     <div class="skew-guide">
-      <div class="primary"><b>PRIMARY SKEW</b>Top/bottom 5% IV-skew extreme whose side agrees with the broad F&amp;O market direction from prior 15:10. This is the setup supported by the 17-session research.</div>
+      <div class="primary"><b>PRIMARY SKEW</b>Top/bottom 5% IV-skew extreme whose side agrees with the broad F&amp;O market direction from prior 15:10. Built on 17 sessions; it failed the 116-session historical out-of-sample test, so read the <b style="display:inline">vs market</b> number, not the raw move.</div>
       <div class="reversal"><b>REVERSAL WATCH</b>An opposite-side skew extreme that later develops a statistically significant underlying move in the same direction. This is production research for recoveries/reversals and remains unvalidated.</div>
       <div class="watch"><b>EXTREME WATCH</b>Skew extreme is visible even without market agreement. It is context, not confirmation. The dashboard no longer hides these names just because the primary filter rejects them.</div>
     </div>
@@ -2411,6 +2413,9 @@ button, a, summary, input, select { touch-action: manipulation; }
     text('skew-desk-primary-count', primary.length);
     text('skew-desk-confirmed', cur.live_primary_confirmed || 0);
     text('skew-desk-reversal-count', reversal.length);
+    var mk=Number(cur.live_market_bps), edge=Number(cur.live_primary_mean_vs_market_bps);
+    text('skew-desk-market-bps', Number.isFinite(mk) ? signed(mk,0)+' bps' : '—');
+    text('skew-desk-edge-bps', Number.isFinite(edge) ? signed(edge,0)+' bps' : '—');
     var upd=String(cur.live_updated_at || shadow.live_updated_at || '');
     text('skew-desk-updated', upd ? upd.slice(11,19) : '—');
 
@@ -2419,7 +2424,9 @@ button, a, summary, input, select { touch-action: manipulation; }
       var lane=String(r.opportunity_lane||'EXTREME_WATCH');
       var cls=lane.toLowerCase();
       var move=Number(r.live_directional_bps);
-      var moveText=Number.isFinite(move)?signed(move,1)+' bps from '+esc(cur.signal_clock||'anchor'):'live move —';
+      var vsm=Number(r.live_vs_market_bps);
+      var moveText=Number.isFinite(move)?signed(move,1)+' bps from '+esc(cur.signal_clock||'anchor')+
+        (Number.isFinite(vsm)?' · vs market '+signed(vsm,1):''):'live move —';
       var obs=String(r.live_direction||r.direction_lock_state||'');
       var p=Number(r.movement_p_value), z=Number(r.movement_z), h=Number(r.movement_horizon_seconds);
       var timing=String(r.entry_window_state||'');

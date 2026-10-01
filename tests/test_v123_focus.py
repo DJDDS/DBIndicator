@@ -968,3 +968,64 @@ def test_regime_persistence_enters_building_without_legacy_event_family():
     )
     assert state["focus"]["PREMIERENE"]["lifecycle"] == "BUILDING"
     assert state["focus"]["PREMIERENE"]["event_family"] == "REGIME_PERSISTENCE"
+
+
+def _z_event(symbol, z, price=100.0):
+    ev = _observer_event(symbol, family="MULTISCALE_MOVE", price=price)
+    ev.update({
+        "movement_z": z,
+        "movement_p_value": 1e-4,
+        "movement_familywise_alpha": 0.01,
+        "movement_significant": True,
+        "movement_direction": "Bullish",
+        "movement_horizon_seconds": 300,
+    })
+    return ev
+
+
+def test_much_larger_mover_replaces_stale_discovered_thesis_when_focus_full():
+    """All live events share MULTISCALE_MOVE, so family priority alone can never
+    free a slot. A much larger move must replace the weakest stale thesis."""
+    t0 = dt.datetime(2026, 10, 1, 11, 0)
+    names = [f"S{i}" for i in range(v123_focus.MAX_FOCUS)]
+    weak = {n: 3.4 + i * 0.1 for i, n in enumerate(names)}
+    state = None
+    for minute in (0, 4, 8, 11):
+        events = [_z_event(n, weak[n]) for n in names]
+        state = v123_focus.update_focus(
+            state, {"events": events, "leaders": [], "laggards": []},
+            {"rows": []}, {"candidates": []}, [_scan(n) for n in names],
+            now=t0 + dt.timedelta(minutes=minute),
+        )
+    assert len(state["focus"]) == v123_focus.MAX_FOCUS
+
+    events = [_z_event(n, weak[n]) for n in names] + [_z_event("BIG", 9.0)]
+    state = v123_focus.update_focus(
+        state, {"events": events, "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan(n) for n in names] + [_scan("BIG")],
+        now=t0 + dt.timedelta(minutes=12),
+    )
+    assert "BIG" in state["focus"]
+    assert "S0" not in state["focus"]          # weakest |z| was replaced
+    replaced = [r for r in state["recent"] if r.get("symbol") == "S0"]
+    assert replaced and "much larger live underlying move" in str(replaced[-1]["history"][-1].get("note"))
+
+
+def test_similar_size_mover_does_not_churn_full_focus():
+    t0 = dt.datetime(2026, 10, 1, 11, 0)
+    names = [f"S{i}" for i in range(v123_focus.MAX_FOCUS)]
+    state = None
+    for minute in (0, 4, 8, 11):
+        state = v123_focus.update_focus(
+            state, {"events": [_z_event(n, 4.0) for n in names], "leaders": [], "laggards": []},
+            {"rows": []}, {"candidates": []}, [_scan(n) for n in names],
+            now=t0 + dt.timedelta(minutes=minute),
+        )
+    events = [_z_event(n, 4.0) for n in names] + [_z_event("NEW", 5.0)]
+    state = v123_focus.update_focus(
+        state, {"events": events, "leaders": [], "laggards": []},
+        {"rows": []}, {"candidates": []}, [_scan(n) for n in names] + [_scan("NEW")],
+        now=t0 + dt.timedelta(minutes=12),
+    )
+    assert "NEW" not in state["focus"]         # 5.0 < 1.5 x 4.0
+    assert set(state["focus"]) == set(names)

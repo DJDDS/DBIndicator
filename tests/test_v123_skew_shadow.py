@@ -242,14 +242,14 @@ def test_live_skew_status_surfaces_primary_and_reversal_without_trade_control(tm
     assert cur["live_reversal_watch"][0]["symbol"] == "S00"
     assert cur["live_reversal_watch"][0]["opportunity_lane"] == "REVERSAL_WATCH"
     assert live["controls_trading"] is False
-    assert live["validation_status"] == "VALIDATION_IN_PROCESS"
+    assert live["validation_status"] == "FAILED_HISTORICAL_OOS"
 
 
 def test_dashboard_has_production_skew_opportunity_desk():
     from pathlib import Path
     html = Path("app/templates/index.html").read_text(encoding="utf-8")
     assert 'id="skew-opportunity-desk"' in html
-    assert "17-SESSION HYPOTHESIS · NOT YET VALIDATED" in html
+    assert "17-SESSION HYPOTHESIS · FAILED 116-SESSION OOS" in html
     assert 'id="skew-desk-primary"' in html
     assert 'id="skew-desk-reversal"' in html
     assert 'id="skew-desk-extremes"' in html
@@ -378,3 +378,63 @@ def test_dashboard_shows_machine_selected_strike():
     assert "machine_option_strike" in html
     assert "machine_option_contract" in html
     assert "ENTRY ELIGIBLE" in html
+
+
+def test_live_skew_splits_market_and_stock_specific_move(tmp_path):
+    """A primary pick that only moved with the market must show ~0 vs market."""
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+    symbols = [f"S{i:02d}" for i in range(40)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    skews = {s: 0.0 for s in symbols}
+    skews["S00"], skews["S01"] = -9.0, -8.0      # bearish extremes
+    skews["S39"], skews["S38"] = 9.0, 8.0        # bullish extremes
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 99.0 for s in symbols}, skews)
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+    v123_skew_shadow.process_slot(snapshot_file=snapshot, state_file=state, ledger_file=ledger,
+                                  now=dt.datetime(2026, 10, 1, 9, 30), slot="OPEN_STABLE")
+    saved = json.loads(state.read_text())
+    assert len(saved["current"]["anchor_spots"]) == 40
+
+    # Whole market falls 2% after the anchor; every name falls exactly 2%.
+    live_rows = [{"symbol": s, "live_price": 99.0 * 0.98} for s in symbols]
+    live = v123_skew_shadow.live_status(state_file=state, live_rows=live_rows,
+                                        now=dt.datetime(2026, 10, 1, 11, 0))
+    cur = live["current"]
+    assert cur["market_direction"] == "Bearish"
+    assert round(cur["live_market_bps"], 1) == -200.0
+    primary = cur["live_primary"]
+    assert primary and all(round(r["live_directional_bps"], 1) == 200.0 for r in primary)
+    # Raw move looks like +200 bps, but none of it is stock-specific.
+    assert all(abs(r["live_vs_market_bps"]) < 1e-6 for r in primary)
+    assert abs(cur["live_primary_mean_vs_market_bps"]) < 1e-6
+    assert abs(cur["live_opposite_mean_vs_market_bps"]) < 1e-6
+
+
+def test_close_outcome_records_market_neutral_mean(tmp_path):
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+    symbols = [f"S{i:02d}" for i in range(40)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    skews = {s: 0.0 for s in symbols}
+    skews["S00"], skews["S01"] = -9.0, -8.0
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 99.0 for s in symbols}, skews)
+    exit_spots = {s: 97.02 for s in symbols}          # market -2%
+    exit_spots["S00"] = 95.04                          # S00 -4%: 200 bps stock-specific
+    close = _slot("2026-10-01", "PRE_CAS", exit_spots)
+    snapshot.write_text("\n".join(json.dumps(x) for x in (prev, today)) + "\n", encoding="utf-8")
+    v123_skew_shadow.process_slot(snapshot_file=snapshot, state_file=state, ledger_file=ledger,
+                                  now=dt.datetime(2026, 10, 1, 9, 30), slot="OPEN_STABLE")
+    with snapshot.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(close) + "\n")
+    v123_skew_shadow.process_slot(snapshot_file=snapshot, state_file=state, ledger_file=ledger,
+                                  now=dt.datetime(2026, 10, 1, 15, 10), slot="PRE_CAS")
+    outs = [json.loads(x) for x in ledger.read_text().splitlines()]
+    out = [x for x in outs if x.get("record_type") == "SKEW_SHADOW_OUTCOME"][-1]
+    assert round(out["market_move_bps"]) == -205      # 39 names -2%, S00 -4%
+    by = {o["symbol"]: o for o in out["outcomes"]}
+    assert by["S00"]["directional_vs_market_bps"] > 150

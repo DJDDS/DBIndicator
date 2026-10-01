@@ -29,6 +29,17 @@ EXIT_SLOT = "PRE_CAS"
 EXTREME_FRACTION = 0.05
 MAX_LEG_SPREAD_PCT = 10.0
 MIN_BASELINE_COVERAGE = 0.50
+MIN_MARKET_NEUTRAL_NAMES = 20
+
+# Historical out-of-sample verdict (1 Oct 2026, pre-registered, frozen rule):
+# Dhan rolling-ATM option history, 116 sessions outside the 17 build sessions.
+# 09:30 rank IC vs market-neutral move to 15:10 = +2.2% (t 0.6), lambda 0.08,
+# net hold-to-15:10 +1.9 bps/day (95% CI -26..+30). Build sessions: IC +8.8% (t 4.6).
+VALIDATION_STATUS = "FAILED_HISTORICAL_OOS"
+VALIDATION_SUMMARY = (
+    "17-session hypothesis FAILED HISTORICAL OOS — 116 other sessions: IC +2.2% (t 0.6), "
+    "+1.9 bps/day after cost. Shadow tracking only."
+)
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +108,8 @@ def shadow_status(path):
     return {
         "status": state.get("status") or "WAITING_FOR_SLOT",
         "controls_trading": False,
-        "research_warning": "RESEARCH IN PROGRESS — 17-session hypothesis — NOT VALIDATED",
+        "research_warning": VALIDATION_SUMMARY,
+        "validation_status": VALIDATION_STATUS,
         "current": current,
         "open_batches": len(state.get("open_batches") or {}),
         "completed_batches": int(state.get("completed_batches") or 0),
@@ -307,6 +319,46 @@ def _rank_and_filter(rows, market):
     return top, bottom, selected
 
 
+def _market_move_bps(anchor_spots, live_spots):
+    """Equal-weight average F&O move (bps) from the skew anchor to now.
+
+    Used to split each pick's move into "market" and "stock-specific" parts:
+    a market-aligned pick that only moved with the market carries no skew edge.
+    Returns (bps, coverage) or (None, coverage) when too few names overlap.
+    """
+    moves = []
+    for symbol, anchor in (anchor_spots or {}).items():
+        a = _finite(anchor)
+        live = _finite((live_spots or {}).get(symbol))
+        if a is None or a <= 0 or live is None or live <= 0:
+            continue
+        moves.append((live / a - 1.0) * 10000.0)
+    required = max(MIN_MARKET_NEUTRAL_NAMES, int(math.ceil(len(anchor_spots or {}) * MIN_BASELINE_COVERAGE)))
+    if len(moves) < required:
+        return None, len(moves)
+    return sum(moves) / len(moves), len(moves)
+
+
+def _batch_anchor_spots(batch):
+    """All eligible anchor spots; falls back to the extremes for batches written
+    before anchor_spots existed (both tails together approximate the market)."""
+    spots = dict((batch or {}).get("anchor_spots") or {})
+    if spots:
+        return spots, "ALL_ELIGIBLE"
+    for row in list((batch or {}).get("top_5pct") or []) + list((batch or {}).get("bottom_5pct") or []):
+        sym, spot = str(row.get("symbol") or ""), _finite(row.get("spot"))
+        if sym and spot:
+            spots[sym] = spot
+    return spots, "EXTREMES_ONLY"
+
+
+def _vs_market(directional_bps, side, market_bps):
+    if directional_bps is None or market_bps is None:
+        return None
+    signed = 1.0 if side == "Bullish" else -1.0
+    return directional_bps - signed * market_bps
+
+
 def _parse_dt(value):
     if isinstance(value, dt.datetime):
         return value
@@ -376,7 +428,7 @@ def _observer_context_map(rows):
     return out
 
 
-def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
+def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None, market_bps=None):
     row = dict(signal or {})
     symbol = str(row.get("symbol") or "")
     side = str(row.get("side") or "")
@@ -426,6 +478,8 @@ def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
         entry_window_state = "LATE_TRACK_ONLY"
 
     row["live_directional_bps"] = directional_bps
+    row["live_market_bps"] = market_bps
+    row["live_vs_market_bps"] = _vs_market(directional_bps, side, market_bps)
     row["market_aligned"] = bool(market_aligned)
     row["significant_same_side"] = bool(significant_same_side)
     row["opportunity_lane"] = lane
@@ -457,7 +511,7 @@ def _enrich_signal(signal, ctx, market_direction, *, signal_ts=None, now=None):
         else ("TRACK_ONLY" if selected_contract else "NO_OPTION_CONTRACT")
     )
     row["research_exit_clock"] = "15:10"
-    row["validation_status"] = "VALIDATION_IN_PROCESS"
+    row["validation_status"] = VALIDATION_STATUS
     row["controls_trading"] = False
     return row
 
@@ -475,23 +529,20 @@ def live_status(*, state_file, live_rows, now):
     current = dict(state.get("current") or {})
     if not current:
         status["live_updated_at"] = now.isoformat(timespec="seconds")
-        status["validation_status"] = "VALIDATION_IN_PROCESS"
+        status["validation_status"] = VALIDATION_STATUS
         return status
 
     ctx = _observer_context_map(live_rows)
     market_direction = current.get("market_direction")
-    primary = [
-        _enrich_signal(row, ctx, market_direction, signal_ts=current.get("signal_ts"), now=now)
-        for row in (current.get("selected") or [])
-    ]
-    top = [
-        _enrich_signal(row, ctx, market_direction, signal_ts=current.get("signal_ts"), now=now)
-        for row in (current.get("top_5pct") or [])
-    ]
-    bottom = [
-        _enrich_signal(row, ctx, market_direction, signal_ts=current.get("signal_ts"), now=now)
-        for row in (current.get("bottom_5pct") or [])
-    ]
+    live_prices = {sym: c.get("live_price") for sym, c in ctx.items()}
+    for sym, price in _live_spot_map(live_rows).items():
+        live_prices.setdefault(sym, price)
+    anchor_spots, market_basis = _batch_anchor_spots(current)
+    market_bps, market_n = _market_move_bps(anchor_spots, live_prices)
+    kw = dict(signal_ts=current.get("signal_ts"), now=now, market_bps=market_bps)
+    primary = [_enrich_signal(row, ctx, market_direction, **kw) for row in (current.get("selected") or [])]
+    top = [_enrich_signal(row, ctx, market_direction, **kw) for row in (current.get("top_5pct") or [])]
+    bottom = [_enrich_signal(row, ctx, market_direction, **kw) for row in (current.get("bottom_5pct") or [])]
     all_extremes = top + bottom
     reversal = [row for row in all_extremes if row.get("opportunity_lane") == "REVERSAL_WATCH"]
     extreme_watch = [row for row in all_extremes if row.get("opportunity_lane") == "EXTREME_WATCH"]
@@ -506,10 +557,24 @@ def live_status(*, state_file, live_rows, now):
         1 for row in primary if row.get("opportunity_lane") == "PRIMARY_CONFIRMED"
     )
     current["live_reversal_count"] = len(reversal)
+
+    def _mean(rows, key):
+        vals = [_finite(r.get(key)) for r in rows]
+        vals = [v for v in vals if v is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    # The honest scoreboard: does the market-aligned side beat the opposite extremes?
+    opposite = [r for r in all_extremes if not r.get("market_aligned")]
+    current["live_market_bps"] = market_bps
+    current["live_market_basis"] = market_basis
+    current["live_market_names"] = market_n
+    current["live_primary_mean_bps"] = _mean(primary, "live_directional_bps")
+    current["live_primary_mean_vs_market_bps"] = _mean(primary, "live_vs_market_bps")
+    current["live_opposite_mean_vs_market_bps"] = _mean(opposite, "live_vs_market_bps")
     current["live_updated_at"] = now.isoformat(timespec="seconds")
     status["current"] = current
     status["live_updated_at"] = current["live_updated_at"]
-    status["validation_status"] = "VALIDATION_IN_PROCESS"
+    status["validation_status"] = VALIDATION_STATUS
     status["controls_trading"] = False
     return status
 
@@ -533,6 +598,8 @@ def update_one_hour_outcomes(*, live_rows, state_file, ledger_file, now):
         if age < 3600:
             continue
 
+        anchor_spots, market_basis = _batch_anchor_spots(batch)
+        market_bps, market_n = _market_move_bps(anchor_spots, spots)
         outcomes = []
         for signal in batch.get("selected") or []:
             symbol = str(signal.get("symbol") or "")
@@ -549,13 +616,19 @@ def update_one_hour_outcomes(*, live_rows, state_file, ledger_file, now):
                 "entry_spot": entry,
                 "exit_spot": exit_spot,
                 "directional_spot_bps": directional_bps,
+                "directional_vs_market_bps": _vs_market(directional_bps, side, market_bps),
                 "net_6bps_proxy": directional_bps - 6.0,
                 "skew_pct_points": signal.get("skew_pct_points"),
                 "rank_percentile": signal.get("rank_percentile"),
             })
 
+        vm = [x["directional_vs_market_bps"] for x in outcomes if x.get("directional_vs_market_bps") is not None]
         result = {
             "record_type": "SKEW_SHADOW_60M",
+            "market_move_bps": market_bps,
+            "market_basis": market_basis,
+            "market_names": market_n,
+            "mean_vs_market_bps": sum(vm) / len(vm) if vm else None,
             "batch_id": batch_id,
             "date": batch.get("date"),
             "slot": batch.get("slot"),
@@ -619,6 +692,7 @@ def _process_entry(record, previous, state, ledger_file, now):
         "selected": selected,
         "top_5pct": top,
         "bottom_5pct": bottom,
+        "anchor_spots": {r["symbol"]: r["spot"] for r in rows if _finite(r.get("spot"))},
         "controls_trading": False,
     }
     state["open_batches"][batch_id] = batch
@@ -650,6 +724,8 @@ def _close_batches(record, state, ledger_file, now):
     for batch_id, batch in list((state.get("open_batches") or {}).items()):
         if str(batch.get("date") or "") != now.date().isoformat():
             continue
+        anchor_spots, market_basis = _batch_anchor_spots(batch)
+        market_bps, market_n = _market_move_bps(anchor_spots, exit_spots)
         outcomes = []
         for signal in batch.get("selected") or []:
             symbol = str(signal.get("symbol") or "")
@@ -666,6 +742,7 @@ def _close_batches(record, state, ledger_file, now):
                 "entry_spot": entry,
                 "exit_spot": exit_spot,
                 "directional_spot_bps": directional_bps,
+                "directional_vs_market_bps": _vs_market(directional_bps, side, market_bps),
                 "net_6bps_proxy": directional_bps - 6.0,
                 "skew_pct_points": signal.get("skew_pct_points"),
                 "rank_percentile": signal.get("rank_percentile"),
@@ -678,8 +755,13 @@ def _close_batches(record, state, ledger_file, now):
             sum(x["net_6bps_proxy"] for x in outcomes) / len(outcomes)
             if outcomes else None
         )
+        vm = [x["directional_vs_market_bps"] for x in outcomes if x.get("directional_vs_market_bps") is not None]
         close = {
             "record_type": "SKEW_SHADOW_OUTCOME",
+            "market_move_bps": market_bps,
+            "market_basis": market_basis,
+            "market_names": market_n,
+            "mean_vs_market_bps": sum(vm) / len(vm) if vm else None,
             "batch_id": batch_id,
             "date": batch.get("date"),
             "slot": batch.get("slot"),

@@ -145,3 +145,20 @@ def test_focus_dashboard_displays_call_v1_pass_age():
     assert "pass_age_seconds" in html
     assert "pass_age_label" in html
     assert "PASS age is descriptive only, not extra confidence" in html
+
+
+def test_blocked_reason_distinguishes_missing_ticks_from_illiquid_chain():
+    now = dt.datetime(2026, 10, 1, 10, 0)
+    base = {"type": "CE", "expiry": "2026-10-27", "dte": 26, "oi": 1000, "volume": 0}
+    no_ticks = [
+        dict(base, symbol=f"TEST26OCT{k}CE", strike=float(k), mid=None, bid=None, ask=None,
+             spread_pct=None, iv_pct=None, delta=None)
+        for k in (95, 100, 105)
+    ]
+    out = v3_call_execution.evaluate_call_candidates(
+        no_ticks, {}, [], now=now, direction="Bullish", spot=100.0,
+    )
+    assert out["state"] == "BLOCKED"
+    assert out["reason"] == "no live ATM±1 CALL ticks yet (subscribed, waiting for quotes)"
+    assert out["diagnostics"]["no_live_quote"] == 3
+    assert out["controls_trading"] is False

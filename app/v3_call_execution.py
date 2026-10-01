@@ -264,17 +264,26 @@ def evaluate_call_candidates(option_snapshots, option_history, cash_samples, *, 
     keep = set(strikes[max(0, ai - 1):min(len(strikes), ai + 2)])
 
     scored = []
+    diag = {"atm_neighbourhood": 0, "no_live_quote": 0, "no_iv_or_delta": 0, "no_history_sample": 0}
     for snap in exp_snaps:
         strike = _finite(snap.get("strike"))
         symbol = str(snap.get("symbol") or "")
         if strike not in keep or not symbol:
             continue
+        diag["atm_neighbourhood"] += 1
         offset = strikes.index(strike) - ai
         hist = (option_history or {}).get(symbol) or []
         features, ready = _features_for_contract(
             snap, hist, cash_samples or [], now, offset=offset, code=code,
         )
         if features is None:
+            mid = _finite(snap.get("mid"))
+            if mid is None or mid <= 0:
+                diag["no_live_quote"] += 1
+            elif _finite(snap.get("iv_pct")) is None or not _finite(snap.get("delta")):
+                diag["no_iv_or_delta"] += 1
+            else:
+                diag["no_history_sample"] += 1
             continue
         probability = score_features(features)
         bid, ask = _finite(snap.get("bid")), _finite(snap.get("ask"))
@@ -294,9 +303,20 @@ def evaluate_call_candidates(option_snapshots, option_history, cash_samples, *, 
     eligible = [x for x in scored if x["history_ready"] and x["quote_ok"]]
     eligible.sort(key=lambda x: (x["probability"], -abs(int(x["offset"]))), reverse=True)
     if not eligible:
+        if scored:
+            reason = "5-minute same-contract history still warming"
+        elif diag["atm_neighbourhood"] and diag["no_live_quote"] == diag["atm_neighbourhood"]:
+            # Subscribed contracts but no ticks yet: typical right after a
+            # service restart or a fresh subscription, not an illiquid chain.
+            reason = "no live ATM±1 CALL ticks yet (subscribed, waiting for quotes)"
+        elif diag["no_iv_or_delta"]:
+            reason = "ATM±1 CALL quoted but IV/delta could not be solved"
+        else:
+            reason = "no quoted ATM±1 CALL contract"
         return {
             "label": MODEL_LABEL, "state": "WARMING" if scored else "BLOCKED", "pass": False,
-            "reason": "5-minute same-contract history still warming" if scored else "no quoted ATM±1 CALL contract",
+            "reason": reason,
+            "diagnostics": diag,
             "threshold": MODEL_THRESHOLD, "evaluation_horizon_seconds": EVALUATION_HORIZON_SECONDS,
             "preferred_expiry": expiry.isoformat(), "expiry_code": code,
             "top_contracts": sorted(scored, key=lambda x: x["probability"], reverse=True)[:3],
