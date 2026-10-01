@@ -1360,6 +1360,7 @@ _state = {
     "v12_feasibility": {"status": "RECORDING — NO FEASIBILITY VERDICT", "trial25_locked": True},
     "v12_earnings": {"status": "EMPTY", "active_count": 0, "upcoming_7d": []},
     "trial25_shadow": {"status": "PREREGISTERED_WAITING_EVENTS", "completed": 0, "target": 40},
+    "v123_skew_shadow": {"status": "WAITING_FOR_SLOT", "controls_trading": False, "current": None},
     "v12_trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
     "v122b_candidates": [],
     "v122b_tactical": {
@@ -1578,6 +1579,7 @@ def _run_v12_live(kite, results, radar_snapshot, swing_snapshot, fno_symbols, *,
             "feasibility": {"status": "UNAVAILABLE", "trial25_locked": True},
             "earnings": {"status": "UNAVAILABLE", "active_count": 0, "upcoming_7d": []},
             "trial25_shadow": {"status": "ERROR", "error": str(exc), "completed": 0, "target": 40},
+            "skew_shadow": {"status": "ERROR", "controls_trading": False, "error": str(exc)},
             "trial25_status": v12_live.TRIAL25_LOCKED_STATUS,
         }
     out.setdefault("earnings", {})["refresh_status"] = (refresh or {}).get("status") or "UNKNOWN"
@@ -1950,6 +1952,7 @@ def _run_loop():
                             _state["v12_feasibility"] = v12_snapshot.get("feasibility") or {}
                             _state["v12_earnings"] = v12_snapshot.get("earnings") or {}
                             _state["trial25_shadow"] = v12_snapshot.get("trial25_shadow") or _state.get("trial25_shadow") or {}
+                            _state["v123_skew_shadow"] = v12_snapshot.get("skew_shadow") or _state.get("v123_skew_shadow") or {}
                             _state["v12_trial25_status"] = v12_snapshot.get("trial25_status") or v12_live.TRIAL25_LOCKED_STATUS
                             # v122b_candidates is maintained by _update_v123_focus.
                         wait_seconds = _record_scan_attempt_success(scan_ts)
