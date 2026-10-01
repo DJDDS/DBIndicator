@@ -415,7 +415,12 @@ def maybe_capture(
 ) -> dict:
     now = now or dt.datetime.now(IST)
     previous = load_state(state_file)
-    if previous.get("capture_date") == now.date().isoformat():
+    same_day = previous.get("capture_date") == now.date().isoformat()
+    retryable_same_day_error = same_day and previous.get("status") in {
+        "DATA UNAVAILABLE",
+        "CALENDAR UNAVAILABLE",
+    }
+    if same_day and not retryable_same_day_error:
         return previous
     if not in_capture_window(now):
         return previous
