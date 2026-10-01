@@ -306,3 +306,75 @@ def test_dashboard_colour_codes_skew_trade_window():
     assert "OPTION SPREAD OK ≤3%" in html
     assert "OPTIONS AVOID" in html
     assert "GREEN = research entry window (anchor to +15m)" in html
+
+
+def test_machine_selects_exact_skew_option_contract(tmp_path):
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+    symbols = [f"S{i:02d}" for i in range(20)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    skews = {s: 0.0 for s in symbols}
+    skews["S19"] = 9.0
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 101.0 for s in symbols}, skews)
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+
+    v123_skew_shadow.process_slot(
+        snapshot_file=snapshot,
+        state_file=state,
+        ledger_file=ledger,
+        now=dt.datetime(2026, 10, 1, 9, 30),
+        slot="OPEN_STABLE",
+    )
+    live = v123_skew_shadow.live_status(
+        state_file=state,
+        live_rows=[{"symbol":"S19","live_price":101.2}],
+        now=dt.datetime(2026, 10, 1, 9, 35),
+    )
+    row = live["current"]["live_primary"][0]
+    assert row["machine_option_type"] == "CE"
+    assert row["machine_option_contract"] == "S19CE"
+    assert row["machine_option_strike"] == 101.0
+    assert row["machine_option_expiry"] == "2026-10-29"
+    assert row["machine_option_entry_eligible"] is True
+    assert row["machine_option_action"] == "OPTION_ENTRY_ELIGIBLE"
+
+
+def test_machine_selects_put_for_bearish_skew(tmp_path):
+    snapshot = tmp_path / "snap.jsonl"
+    state = tmp_path / "state.json"
+    ledger = tmp_path / "ledger.jsonl"
+    symbols = [f"S{i:02d}" for i in range(20)]
+    prev = _slot("2026-09-30", "PRE_CAS", {s: 100.0 for s in symbols})
+    prev["ts"] = "2026-09-30T15:10:00"
+    skews = {s: 0.0 for s in symbols}
+    skews["S00"] = -9.0
+    today = _slot("2026-10-01", "OPEN_STABLE", {s: 99.0 for s in symbols}, skews)
+    snapshot.write_text(json.dumps(prev) + "\n" + json.dumps(today) + "\n", encoding="utf-8")
+
+    v123_skew_shadow.process_slot(
+        snapshot_file=snapshot,
+        state_file=state,
+        ledger_file=ledger,
+        now=dt.datetime(2026, 10, 1, 9, 30),
+        slot="OPEN_STABLE",
+    )
+    live = v123_skew_shadow.live_status(
+        state_file=state,
+        live_rows=[{"symbol":"S00","live_price":98.8}],
+        now=dt.datetime(2026, 10, 1, 9, 35),
+    )
+    row = live["current"]["live_primary"][0]
+    assert row["machine_option_type"] == "PE"
+    assert row["machine_option_contract"] == "S00PE"
+    assert row["machine_option_entry_eligible"] is True
+
+
+def test_dashboard_shows_machine_selected_strike():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert "MACHINE: " in html
+    assert "machine_option_strike" in html
+    assert "machine_option_contract" in html
+    assert "ENTRY ELIGIBLE" in html

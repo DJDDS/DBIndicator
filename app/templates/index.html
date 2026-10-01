@@ -2433,6 +2433,16 @@ button, a, summary, input, select { touch-action: manipulation; }
       }
       var optionClass=optionStatus==='OPTION_ELIGIBLE'?'green':'red';
       var optionText=optionStatus==='OPTION_ELIGIBLE'?'OPTION SPREAD OK ≤3%':'OPTIONS AVOID';
+      var machineContract=String(r.machine_option_contract||'');
+      var machineType=String(r.machine_option_type||'');
+      var machineStrike=Number(r.machine_option_strike);
+      var machineExpiry=String(r.machine_option_expiry||'');
+      var machineEligible=Boolean(r.machine_option_entry_eligible);
+      var machineClass=machineEligible?'green':(machineContract?'amber':'red');
+      var machineText=machineContract
+        ? ('MACHINE: '+(Number.isFinite(machineStrike)?num(machineStrike,2)+' ':'')+machineType+
+           (machineExpiry?' · '+machineExpiry:'')+(machineEligible?' · ENTRY ELIGIBLE':' · TRACK ONLY'))
+        : 'MACHINE: NO OPTION CONTRACT';
       return '<div class="skew-card '+esc(cls)+'">'+
         '<div class="top"><span class="symbol"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc(r.symbol||'—')+'</a></span>'+
         '<span class="side '+String(r.side||'').toLowerCase()+'">'+esc(r.side||'')+'</span>'+
@@ -2442,12 +2452,14 @@ button, a, summary, input, select { touch-action: manipulation; }
           '<span class="skew-badge '+decisionClass+'">'+esc(decisionText)+'</span>'+
           '<span class="skew-badge blue">FUTURES = PRIMARY RESEARCH VEHICLE</span>'+
           '<span class="skew-badge '+optionClass+'">'+esc(optionText)+'</span>'+
+          '<span class="skew-badge '+machineClass+'">'+esc(machineText)+'</span>'+
         '</div>'+
         '<div class="meta">'+
         (instrument?'research: '+esc(instrument.replaceAll('_',' ')):'')+
         (optionStatus?' · '+esc(optionStatus.replaceAll('_',' ')):'')+
         (timing?' · '+esc(timing.replaceAll('_',' ')):'')+
         (r.research_exit_clock?' · exit study '+esc(r.research_exit_clock):'')+
+        (machineContract?' · exact contract '+esc(machineContract):'')+
         '</div>'+
         '<div class="meta">skew '+num(r.skew_pct_points,2)+' pp · anchor '+num(r.spot,2)+
         ' · CE spread '+num(r.call_spread_pct,2)+'% · PE spread '+num(r.put_spread_pct,2)+'%'+
