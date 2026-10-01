@@ -32,13 +32,15 @@ MIN_BASELINE_COVERAGE = 0.50
 MIN_MARKET_NEUTRAL_NAMES = 20
 
 # Historical out-of-sample verdict (1 Oct 2026, pre-registered, frozen rule):
-# Dhan rolling-ATM option history, 116 sessions outside the 17 build sessions.
-# 09:30 rank IC vs market-neutral move to 15:10 = +2.2% (t 0.6), lambda 0.08,
-# net hold-to-15:10 +1.9 bps/day (95% CI -26..+30). Build sessions: IC +8.8% (t 4.6).
+# Dhan rolling-ATM option history, full 210-stock cross-section, 116 sessions
+# outside the 17 build sessions. 09:30 rank IC vs market-neutral move to 15:10
+# = +2.8% (t 2.9, 72/116 days positive), lambda 0.12 (build: 0.41).
+# Rule: P(+0.5 sigma first) 53.3% vs 50.2% control; net hold-to-15:10
+# +1.0 bps/day (95% CI -15..+18). Real information, too small to trade.
 VALIDATION_STATUS = "FAILED_HISTORICAL_OOS"
 VALIDATION_SUMMARY = (
-    "17-session hypothesis FAILED HISTORICAL OOS — 116 other sessions: IC +2.2% (t 0.6), "
-    "+1.9 bps/day after cost. Shadow tracking only."
+    "17-session hypothesis FAILED HISTORICAL OOS — 116 other sessions: real but small "
+    "information (IC +2.8%, t 2.9) worth +1.0 bps/day after cost. Shadow tracking only."
 )
 
 log = logging.getLogger(__name__)
