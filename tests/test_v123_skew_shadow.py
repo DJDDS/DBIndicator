@@ -243,3 +243,15 @@ def test_live_skew_status_surfaces_primary_and_reversal_without_trade_control(tm
     assert cur["live_reversal_watch"][0]["opportunity_lane"] == "REVERSAL_WATCH"
     assert live["controls_trading"] is False
     assert live["validation_status"] == "VALIDATION_IN_PROCESS"
+
+
+def test_dashboard_has_production_skew_opportunity_desk():
+    from pathlib import Path
+    html = Path("app/templates/index.html").read_text(encoding="utf-8")
+    assert 'id="skew-opportunity-desk"' in html
+    assert "17-SESSION HYPOTHESIS · NOT YET VALIDATED" in html
+    assert 'id="skew-desk-primary"' in html
+    assert 'id="skew-desk-reversal"' in html
+    assert 'id="skew-desk-extremes"' in html
+    assert "REVERSAL WATCH" in html
+    assert "Math Recorder, CALL V1, quant shadow, Trial 25 and missed-mover forensics remain separate and unchanged." in html
