@@ -22,10 +22,14 @@ jobs:
       - name: Build shard list
         env:
           SHARD: ${{ matrix.shard }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
           import json, os, urllib.request
-          data=json.load(urllib.request.urlopen("https://api.github.com/repos/rahulkanadia/IndianMarkets_DataBackfill/git/trees/main?recursive=1"))
+          req=urllib.request.Request(
+              "https://api.github.com/repos/rahulkanadia/IndianMarkets_DataBackfill/git/trees/main?recursive=1",
+              headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+          data=json.load(urllib.request.urlopen(req))
           files=sorted(x["path"] for x in data["tree"] if x["type"]=="blob" and x["path"].endswith(".parquet") and "INDEX" not in x["path"].upper())
           s=int(os.environ["SHARD"])
           sel=[p for i,p in enumerate(files) if i%20==s]
