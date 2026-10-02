@@ -1,0 +1,39 @@
+name: NIFTY500 clean-slate parallel lab
+on:
+  push:
+    branches:
+      - research/nifty500-clean-slate-parallel
+  workflow_dispatch:
+
+jobs:
+  target:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [persist15,persist30,persist60,persistent_regime,persistent10bps30]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36993994558
+          pattern: pullback-reclaim-shard-*
+          path: /tmp/shards
+      - name: Run target combinatorial search
+        env:
+          TARGET_ONLY: ${{ matrix.target }}
+          PERMUTATIONS: '40'
+        run: python research/nifty500_clean_slate_combinatorial.py
+      - name: Show target result
+        run: cat /tmp/final/summary.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clean-slate-${{ matrix.target }}
+          path: /tmp/final/
+          retention-days: 14
