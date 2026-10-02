@@ -1,0 +1,42 @@
+name: Inspect independent Dhan V11 artifact
+on:
+  push:
+    branches:
+      - research/independent-validation-20261002
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36675283340
+          name: v11-dhan-full-results
+          path: /tmp/v11
+      - name: Inspect parquet schema
+        run: |
+          python - <<'PY'
+          import glob, pandas as pd, json, os
+          fs=glob.glob('/tmp/v11/**/events.parquet',recursive=True)
+          print('files',fs)
+          p=fs[0]
+          df=pd.read_parquet(p)
+          print('shape',df.shape)
+          print('columns',json.dumps(list(df.columns)))
+          print('dtypes')
+          print(df.dtypes.to_string())
+          print('head')
+          print(df.head(5).to_string())
+          for c in ['split','variant','direction','event_type','horizon','stock','symbol']:
+              if c in df.columns:
+                  print('\nVALUE_COUNTS',c)
+                  print(df[c].value_counts(dropna=False).head(30).to_string())
+          PY
