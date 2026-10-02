@@ -1,0 +1,30 @@
+name: NIFTY500 smoke replay
+on:
+  push:
+    branches:
+      - research/nifty500-smoke
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow
+      - name: Download sample parquet files
+        run: |
+          mkdir -p /tmp/nifty500sample
+          for f in RELIANCE.parquet HDFCBANK.parquet TCS.parquet SBIN.parquet INFY.parquet NIFTY50-INDEX.parquet; do
+            curl -L --fail --retry 3 "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/$f" -o "/tmp/nifty500sample/$f"
+          done
+      - name: Run smoke replay
+        run: python research/nifty500_persistence_replay.py --data /tmp/nifty500sample --out /tmp/smoke
+      - name: Show results
+        run: |
+          cat /tmp/smoke/meta.json
+          cat /tmp/smoke/summary.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-smoke-results
+          path: /tmp/smoke/
