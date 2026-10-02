@@ -1,0 +1,29 @@
+name: Build PIT NIFTY500 FNO universe
+on:
+  push:
+    branches:
+      - research/nifty500-pit-fno-split
+  workflow_dispatch:
+
+jobs:
+  universe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas openpyxl requests
+      - name: Build universe
+        run: python research/build_pit_nifty500_fno_universe.py
+      - name: Show universe
+        run: |
+          cat /tmp/universe/meta.json
+          cat /tmp/universe/snapshot_manifest.csv || true
+          head -40 /tmp/universe/fo_history_normalized.csv || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pit-nifty500-fno-universe
+          path: /tmp/universe/
+          retention-days: 14
