@@ -12,7 +12,7 @@ from sklearn.inspection import permutation_importance
 
 ROOT=Path("/tmp/panels"); OUT=Path("/tmp/final"); OUT.mkdir(parents=True,exist_ok=True)
 H=[1,2,3,5,10,15,20,30,45,60,90,120]
-FUT=[f"fnorm{h}" for h in H]
+FUT=[f"fwd{h}_bps" for h in H]
 STATE=[
  "r1","r2","r3","r5","r10","r15","r30","r60",
  "rv5","rv10","rv20","rv60","range5","range10","range20","range60",
