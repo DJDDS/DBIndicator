@@ -1,0 +1,26 @@
+name: Build daily FNO history
+on:
+  push:
+    branches:
+      - research/fno-history-from-bhav
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas requests
+      - name: Build daily FNO history
+        run: python research/build_daily_fno_history.py
+      - name: Show summary
+        run: cat /tmp/fno_history/meta.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daily-fno-history-2018-2026
+          path: /tmp/fno_history/
+          retention-days: 14
