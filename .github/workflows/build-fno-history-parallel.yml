@@ -2,7 +2,7 @@ name: Build parallel FNO history
 on:
   push:
     branches:
-      - research/fno-history-parallel
+      - research/fno-history-fast
   workflow_dispatch:
 
 jobs:
