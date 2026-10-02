@@ -1,0 +1,35 @@
+name: NIFTY500 merge-only
+on:
+  push:
+    branches:
+      - research/nifty500-merge-only
+  workflow_dispatch:
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36989022529
+          pattern: nifty500-shard-*
+          path: /tmp/shards
+      - name: Merge and summarize
+        run: python research/nifty500_merge_results_fixed.py
+      - name: Print final result
+        run: |
+          cat /tmp/merged/meta.json
+          cat /tmp/merged/summary.csv
+          cat /tmp/merged/by_year.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-parallel-final
+          path: /tmp/merged/
+          retention-days: 14
