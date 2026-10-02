@@ -1,0 +1,61 @@
+name: Build parallel FNO history
+on:
+  push:
+    branches:
+      - research/fno-history-parallel
+  workflow_dispatch:
+
+jobs:
+  year:
+    strategy:
+      fail-fast: false
+      matrix:
+        year: [2018,2019,2020,2021,2022,2023,2024,2025,2026]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas requests
+      - name: Build one year
+        env:
+          YEAR: ${{ matrix.year }}
+        run: python research/build_daily_fno_history.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fno-history-${{ matrix.year }}
+          path: /tmp/fno_history/
+          retention-days: 14
+
+  merge:
+    needs: year
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fno-history-*
+          path: /tmp/fno_parts
+      - name: Merge
+        run: |
+          python - <<'PY'
+          import glob, pandas as pd, json, os
+          fs=glob.glob('/tmp/fno_parts/**/fno_membership_*.csv.gz',recursive=True)
+          d=pd.concat([pd.read_csv(f) for f in fs],ignore_index=True).drop_duplicates()
+          os.makedirs('/tmp/fno_merged',exist_ok=True)
+          d.to_csv('/tmp/fno_merged/fno_membership_daily_2018_2026.csv.gz',index=False,compression='gzip')
+          meta={'files':len(fs),'rows':len(d),'symbols':int(d.symbol.nunique()),'dates':int(d.date.nunique()),'start':d.date.min(),'end':d.date.max()}
+          open('/tmp/fno_merged/meta.json','w').write(json.dumps(meta,indent=2))
+          print(json.dumps(meta,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fno-history-merged
+          path: /tmp/fno_merged/
+          retention-days: 14
