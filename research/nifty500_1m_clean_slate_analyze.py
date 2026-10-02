@@ -41,26 +41,40 @@ def auc_safe(y,p):
     if len(np.unique(y))<2:return np.nan
     return roc_auc_score(y,p)
 
-def day_boot_auc(q,score_col,target_col,n=300,seed=123):
-    dates=np.array(sorted(q.date.dt.normalize().unique()))
-    rng=np.random.default_rng(seed)
-    vals=[]
+def day_boot_auc(q,score_col,target_col,n=200,seed=123):
+    # Resample whole trading days using sample weights; avoids rebuilding giant frames.
+    day=q.date.dt.normalize().to_numpy()
+    uniq,inv=np.unique(day,return_inverse=True)
+    y=q[target_col].to_numpy(); p=q[score_col].to_numpy()
+    rng=np.random.default_rng(seed); vals=[]
     for _ in range(n):
-        pick=rng.choice(dates,len(dates),replace=True)
-        parts=[]
-        for d in pick:
-            parts.append(q[q.date.dt.normalize()==d])
-        z=pd.concat(parts,ignore_index=True)
-        try: vals.append(roc_auc_score(z[target_col],z[score_col]))
+        counts=np.bincount(rng.integers(0,len(uniq),len(uniq)),minlength=len(uniq))
+        w=counts[inv].astype(float)
+        if w.sum()==0: continue
+        try: vals.append(roc_auc_score(y,p,sample_weight=w))
         except Exception: pass
     return [float(np.quantile(vals,.025)),float(np.quantile(vals,.975))] if vals else [None,None]
 
-def label_perm_p(y,p,n=500,seed=1):
-    y=np.asarray(y); p=np.asarray(p)
-    obs=auc_safe(y,p); rng=np.random.default_rng(seed); vals=[]
+def label_perm_p(y,p,n=200,seed=1):
+    # Permutation null on a deterministic <=30k subset. Observed AUC remains full-sample.
+    y=np.asarray(y,dtype=int); p=np.asarray(p,float)
+    obs=auc_safe(y,p)
+    if len(y)>30000:
+        rng0=np.random.default_rng(seed+991)
+        ix=np.sort(rng0.choice(len(y),30000,replace=False))
+        yy=y[ix]; pp=p[ix]
+    else:
+        yy=y.copy(); pp=p.copy()
+    # rank-sum AUC allows label permutations without re-sorting scores.
+    order=np.argsort(pp,kind="mergesort")
+    ranks=np.empty(len(pp),dtype=float); ranks[order]=np.arange(1,len(pp)+1,dtype=float)
+    n1=int(yy.sum()); n0=len(yy)-n1
+    rng=np.random.default_rng(seed); vals=[]
     for _ in range(n):
-        yp=rng.permutation(y)
-        vals.append(auc_safe(yp,p))
+        yp=rng.permutation(yy)
+        rs=float(ranks[yp==1].sum())
+        auc=(rs-n1*(n1+1)/2)/(n1*n0) if n1 and n0 else 0.5
+        vals.append(auc)
     vals=np.asarray(vals)
     return obs,float((1+(vals>=obs).sum())/(n+1)),float(vals.mean()),float(np.quantile(vals,.99))
 
