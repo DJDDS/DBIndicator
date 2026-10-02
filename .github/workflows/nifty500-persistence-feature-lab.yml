@@ -1,0 +1,73 @@
+name: NIFTY500 persistence feature lab
+on:
+  push:
+    branches:
+      - research/nifty500-persistence-features
+  workflow_dispatch:
+
+jobs:
+  shard:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow
+      - name: Build shard list
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          data=json.load(urllib.request.urlopen("https://api.github.com/repos/rahulkanadia/IndianMarkets_DataBackfill/git/trees/main?recursive=1"))
+          files=sorted(x["path"] for x in data["tree"] if x["type"]=="blob" and x["path"].endswith(".parquet") and "INDEX" not in x["path"].upper())
+          s=int(os.environ["SHARD"])
+          sel=[p for i,p in enumerate(files) if i%20==s]
+          open("/tmp/files.txt","w").write("\n".join(sel))
+          print("selected",len(sel))
+          PY
+      - name: Download shard files
+        run: |
+          mkdir -p /tmp/data
+          cat /tmp/files.txt | xargs -I{} -P 8 bash -c 'curl -L --fail --retry 4 --silent --show-error "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/{}" -o "/tmp/data/{}"'
+          curl -L --fail --retry 4 --silent --show-error "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/NIFTY50-INDEX.parquet" -o /tmp/data/NIFTY50-INDEX.parquet
+      - name: Feature replay
+        run: python research/nifty500_persistence_feature_replay.py --data /tmp/data --out /tmp/out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: persistence-feature-shard-${{ matrix.shard }}
+          path: /tmp/out/
+          retention-days: 7
+
+  analyze:
+    needs: shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: persistence-feature-shard-*
+          path: /tmp/shards
+      - name: Run persistence model lab
+        run: python research/nifty500_persistence_model_lab.py
+      - name: Show final results
+        run: |
+          cat /tmp/final/meta.json
+          cat /tmp/final/model_results.csv
+          head -80 /tmp/final/permutation_importance.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-persistence-feature-lab-final
+          path: /tmp/final/
+          retention-days: 14
