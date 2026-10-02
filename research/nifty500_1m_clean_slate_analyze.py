@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, math
+import json, math, os
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -41,26 +41,42 @@ def auc_safe(y,p):
     if len(np.unique(y))<2:return np.nan
     return roc_auc_score(y,p)
 
-def day_boot_auc(q,score_col,target_col,n=300,seed=123):
-    dates=np.array(sorted(q.date.dt.normalize().unique()))
+def day_boot_auc(q,score_col,target_col,n=200,seed=123):
+    # Cluster bootstrap by trading day using sample weights instead of physically
+    # concatenating duplicated days. Mathematically equivalent and much faster.
+    dnorm=q.date.dt.normalize()
+    codes,uniques=pd.factorize(dnorm,sort=True)
+    D=len(uniques)
+    y=q[target_col].to_numpy()
+    p=q[score_col].to_numpy()
     rng=np.random.default_rng(seed)
     vals=[]
+    probs=np.full(D,1.0/D)
     for _ in range(n):
-        pick=rng.choice(dates,len(dates),replace=True)
-        parts=[]
-        for d in pick:
-            parts.append(q[q.date.dt.normalize()==d])
-        z=pd.concat(parts,ignore_index=True)
-        try: vals.append(roc_auc_score(z[target_col],z[score_col]))
-        except Exception: pass
+        counts=rng.multinomial(D,probs)
+        w=counts[codes].astype(float)
+        try:
+            vals.append(roc_auc_score(y,p,sample_weight=w))
+        except Exception:
+            pass
     return [float(np.quantile(vals,.025)),float(np.quantile(vals,.975))] if vals else [None,None]
 
-def label_perm_p(y,p,n=500,seed=1):
+def label_perm_p(y,p,n=300,seed=1):
     y=np.asarray(y); p=np.asarray(p)
-    obs=auc_safe(y,p); rng=np.random.default_rng(seed); vals=[]
+    obs=auc_safe(y,p)
+    # Null distribution on a deterministic large test subsample. Observed AUC
+    # remains full-sample; the permutation null needs no million-row repetition.
+    if len(y)>60000:
+        rr=np.random.default_rng(seed+991)
+        ix=np.sort(rr.choice(len(y),60000,replace=False))
+        yn=y[ix]; pn=p[ix]
+    else:
+        yn=y; pn=p
+    n=min(int(n),300)
+    rng=np.random.default_rng(seed); vals=[]
     for _ in range(n):
-        yp=rng.permutation(y)
-        vals.append(auc_safe(yp,p))
+        yp=rng.permutation(yn)
+        vals.append(auc_safe(yp,pn))
     vals=np.asarray(vals)
     return obs,float((1+(vals>=obs).sum())/(n+1)),float(vals.mean()),float(np.quantile(vals,.99))
 
@@ -210,7 +226,13 @@ def run_group(name,q):
             "headline":metrics[(metrics.target.isin(["up","down"]))&(metrics.horizon.isin([15,30,60,120]))].to_dict("records")}
 
 summ=[]
-for name,mask in [("fno",df.is_fno.astype(bool)),("nonfno",~df.is_fno.astype(bool))]:
+group_only=os.environ.get("GROUP_ONLY","").strip().lower()
+groups=[("fno",df.is_fno.astype(bool)),("nonfno",~df.is_fno.astype(bool))]
+if group_only:
+    groups=[x for x in groups if x[0]==group_only]
+    if not groups:
+        raise SystemExit(f"unknown GROUP_ONLY={group_only}")
+for name,mask in groups:
     q=df[mask].copy()
     summ.append(run_group(name,q))
 (OUT/"summary.json").write_text(json.dumps(summ,indent=2,default=str))
