@@ -1,0 +1,52 @@
+name: NIFTY500 long-horizon persistence research
+on:
+  push:
+    branches:
+      - research/nifty500-10y-persistence
+  workflow_dispatch:
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+          df -h
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install research dependencies
+        run: pip install pandas numpy pyarrow
+
+      - name: Clone public NIFTY-500 minute archive
+        run: |
+          git clone --depth 1 https://github.com/rahulkanadia/IndianMarkets_DataBackfill.git /tmp/nifty500data
+          du -sh /tmp/nifty500data
+          find /tmp/nifty500data -maxdepth 1 -name '*.parquet' | wc -l
+
+      - name: Run underlying persistence replay
+        run: |
+          python research/nifty500_persistence_replay.py --data /tmp/nifty500data --out /tmp/nifty500_results
+
+      - name: Show result summary
+        if: always()
+        run: |
+          cat /tmp/nifty500_results/meta.json || true
+          head -50 /tmp/nifty500_results/summary.csv || true
+          head -30 /tmp/nifty500_results/by_year.csv || true
+
+      - name: Upload research results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-persistence-results
+          path: /tmp/nifty500_results/
+          retention-days: 14
