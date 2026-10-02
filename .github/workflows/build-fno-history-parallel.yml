@@ -22,7 +22,7 @@ jobs:
       - name: Build one year
         env:
           YEAR: ${{ matrix.year }}
-        run: python research/build_daily_fno_history.py
+        run: python research/build_daily_fno_history_fast.py
       - uses: actions/upload-artifact@v4
         with:
           name: fno-history-${{ matrix.year }}
