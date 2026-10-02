@@ -2,7 +2,7 @@ name: NIFTY500 1m analyze frozen panels
 on:
   push:
     branches:
-      - research/nifty500-1m-analyze-only
+      - research/nifty500-1m-analyze-fast
   workflow_dispatch:
 
 jobs:
