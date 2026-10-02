@@ -24,37 +24,58 @@ def get(url, **kw):
 r=get(FO_URL)
 (OUT/"fo_tracker.xlsx").write_bytes(r.content)
 xls=pd.ExcelFile(io.BytesIO(r.content))
-fo_frames=[]
+events=[]
+raws=[]
 for sh in xls.sheet_names:
-    d=pd.read_excel(io.BytesIO(r.content),sheet_name=sh)
-    d.columns=[str(c).strip() for c in d.columns]
+    d=pd.read_excel(io.BytesIO(r.content),sheet_name=sh,header=1)
+    d.columns=[str(x).strip() for x in d.columns]
     d["__sheet"]=sh
-    fo_frames.append(d)
-fo_raw=pd.concat(fo_frames,ignore_index=True)
+    raws.append(d.copy())
+    symc=find_col(d.columns,["symbol"])
+    namec=find_col(d.columns,["security","company","underlying"])
+    datec=find_col(d.columns,["effective date","date"])
+    if symc is None or datec is None:
+        print("Could not normalize sheet",sh,d.columns.tolist())
+        continue
+    dd=d[[symc]+([namec] if namec else [])+[datec]].copy()
+    dd.columns=["symbol"]+(["company_name"] if namec else [])+["effective_date"]
+    if "company_name" not in dd: dd["company_name"]=""
+    # NSE tracker uses grouped rows: date appears on first row and applies to the following symbols.
+    dd["effective_date"]=pd.to_datetime(dd["effective_date"],errors="coerce").ffill()
+    dd["symbol"]=dd["symbol"].astype(str).str.strip().str.upper()
+    dd=dd[dd.symbol.str.match(r"^[A-Z0-9&\\-]+$",na=False)]
+    dd["event_type"]="intro" if "intro" in sh.lower() else "exit"
+    events.append(dd[["symbol","company_name","effective_date","event_type"]])
+fo_raw=pd.concat(raws,ignore_index=True) if raws else pd.DataFrame()
 fo_raw.to_csv(OUT/"fo_tracker_raw.csv",index=False)
+fo_events=pd.concat(events,ignore_index=True) if events else pd.DataFrame(columns=["symbol","company_name","effective_date","event_type"])
+fo_events=fo_events.dropna(subset=["effective_date"]).drop_duplicates().sort_values(["symbol","effective_date","event_type"])
+fo_events.to_csv(OUT/"fo_events.csv",index=False)
 print("F&O sheets:",xls.sheet_names)
-print("F&O columns:",fo_raw.columns.tolist())
-print(fo_raw.head(20).to_string())
+print("F&O event rows:",len(fo_events))
+print(fo_events.head(40).to_string(index=False))
 
-# Try to normalize tracker columns.
-def find_col(cols, pats):
-    for c in cols:
-        lc=str(c).lower()
-        if any(p in lc for p in pats): return c
-    return None
-symc=find_col(fo_raw.columns,["symbol"])
-namec=find_col(fo_raw.columns,["security","company","underlying"])
-introc=find_col(fo_raw.columns,["introduction","introduced","intro"])
-exclc=find_col(fo_raw.columns,["exclusion","excluded","exit"])
-norm=pd.DataFrame()
-if symc:
-    norm["symbol"]=fo_raw[symc].astype(str).str.strip().str.upper()
-    norm["company_name"]=fo_raw[namec].astype(str).str.strip() if namec else ""
-    norm["intro_date"]=pd.to_datetime(fo_raw[introc],errors="coerce",dayfirst=True) if introc else pd.NaT
-    norm["exit_date"]=pd.to_datetime(fo_raw[exclc],errors="coerce",dayfirst=True) if exclc else pd.NaT
-    norm=norm[norm.symbol.str.match(r"^[A-Z0-9&\-]+$",na=False)].drop_duplicates()
-norm.to_csv(OUT/"fo_history_normalized.csv",index=False)
-print("Normalized F&O rows:",len(norm))
+# Build membership intervals from event stream. Start is left-censored if first event is an exit.
+intervals=[]
+for sym,g in fo_events.groupby("symbol"):
+    g=g.sort_values(["effective_date","event_type"])
+    open_date=None
+    company=""
+    for row in g.itertuples(index=False):
+        company=row.company_name or company
+        if row.event_type=="intro":
+            if open_date is None: open_date=row.effective_date
+        else:
+            if open_date is None:
+                intervals.append({"symbol":sym,"company_name":company,"start_date":pd.NaT,"end_date":row.effective_date,"start_confidence":"left_censored","end_confidence":"official_exit"})
+            else:
+                intervals.append({"symbol":sym,"company_name":company,"start_date":open_date,"end_date":row.effective_date,"start_confidence":"official_intro","end_confidence":"official_exit"})
+                open_date=None
+    if open_date is not None:
+        intervals.append({"symbol":sym,"company_name":company,"start_date":open_date,"end_date":pd.NaT,"start_confidence":"official_intro","end_confidence":"still_active"})
+fo_intervals=pd.DataFrame(intervals)
+fo_intervals.to_csv(OUT/"fo_history_normalized.csv",index=False)
+print("F&O intervals:",len(fo_intervals))
 
 # 2) Wayback historical NIFTY500 snapshots
 patterns=[
@@ -65,7 +86,7 @@ patterns=[
 caps=[]
 for pat in patterns:
     url="https://web.archive.org/cdx/search/cdx"
-    params={"url":pat,"from":"2017","to":"2026","output":"json","filter":"statuscode:200","filter":"mimetype:text/csv","fl":"timestamp,original,digest","collapse":"digest"}
+    params=[("url",pat),("from","2017"),("to","2026"),("output","json"),("filter","statuscode:200"),("fl","timestamp,original,digest,mimetype"),("collapse","digest")]
     try:
         rr=get(url,params=params)
         arr=rr.json()
