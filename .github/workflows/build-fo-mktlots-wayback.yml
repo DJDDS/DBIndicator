@@ -1,0 +1,25 @@
+name: Build FO market-lot PIT snapshots
+on:
+  push:
+    branches:
+      - research/nifty500-pit-fno-split
+  workflow_dispatch:
+jobs:
+  lots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas requests
+      - run: python research/build_fo_mktlots_wayback.py
+      - run: |
+          cat /tmp/fo_lots/meta.json
+          cat /tmp/fo_lots/manifest.csv || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-fo-mktlots-pit
+          path: /tmp/fo_lots/
+          retention-days: 14
