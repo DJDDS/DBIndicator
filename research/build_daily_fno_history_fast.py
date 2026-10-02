@@ -36,13 +36,16 @@ def fetch_one(d):
             name=z.namelist()[0]
             df=pd.read_csv(io.BytesIO(z.read(name)))
             cols={str(c).upper().strip():c for c in df.columns}
-            symc=cols.get("SYMBOL")
-            instrc=cols.get("INSTRUMENT")
+            symc=cols.get("SYMBOL") or cols.get("TCKRSYMB")
+            instrc=cols.get("INSTRUMENT") or cols.get("FININSTRMTP")
             if symc is None:
                 return str(d), []
             if instrc is not None:
-                ins=df[instrc].astype(str).str.upper()
-                q=df[ins.str.startswith("FUTSTK") | ins.str.startswith("OPTSTK")]
+                ins=df[instrc].astype(str).str.upper().str.strip()
+                if "FININSTRMTP" in cols:
+                    q=df[ins.isin(["STF","STO"])]
+                else:
+                    q=df[ins.str.startswith("FUTSTK") | ins.str.startswith("OPTSTK")]
             else:
                 q=df
             syms=sorted(set(q[symc].dropna().astype(str).str.strip().str.upper()))
