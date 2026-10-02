@@ -17,9 +17,14 @@ OUT.mkdir(parents=True,exist_ok=True)
 YEAR=int(os.environ["YEAR"])
 
 def fetch_one(d):
-    mon=calendar.month_abbr[d.month].upper()
-    dd=d.strftime("%d%b%Y").upper()
-    url=f"https://archives.nseindia.com/content/historical/DERIVATIVES/{d.year}/{mon}/fo{dd}bhav.csv.zip"
+    switch=date(2024,7,8)
+    if d < switch:
+        mon=calendar.month_abbr[d.month].upper()
+        dd=d.strftime("%d%b%Y").upper()
+        url=f"https://archives.nseindia.com/content/historical/DERIVATIVES/{d.year}/{mon}/fo{dd}bhav.csv.zip"
+    else:
+        compact=d.strftime("%Y%m%d")
+        url=f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{compact}_F_0000.csv.zip"
     headers={"User-Agent":"Mozilla/5.0"}
     for k in range(4):
         try:
