@@ -1,0 +1,35 @@
+name: NIFTY500 persistence analyze 19 shards
+on:
+  push:
+    branches:
+      - research/nifty500-feature-analyze19
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36992084596
+          pattern: persistence-feature-shard-*
+          path: /tmp/shards
+      - name: Run persistence model lab
+        run: python research/nifty500_persistence_model_lab.py
+      - name: Show final results
+        run: |
+          cat /tmp/final/meta.json
+          cat /tmp/final/model_results.csv
+          head -100 /tmp/final/permutation_importance.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-persistence-feature-lab-19shards
+          path: /tmp/final/
+          retention-days: 14
