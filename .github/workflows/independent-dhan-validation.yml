@@ -1,0 +1,32 @@
+name: Independent Dhan persistence validation
+on:
+  push:
+    branches:
+      - research/independent-validation-20261002
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36675283340
+          name: v11-dhan-full-results
+          path: /tmp/v11
+      - name: Run independent persistence validation
+        run: python research/independent_dhan_validation.py
+      - name: Show result
+        run: cat /tmp/independent/dhan_independent_validation.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: independent-dhan-persistence-validation
+          path: /tmp/independent/
+          retention-days: 14
