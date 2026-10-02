@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, math
+import json, math, os
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -224,7 +224,11 @@ def run_group(name,q):
             "headline":metrics[(metrics.target.isin(["up","down"]))&(metrics.horizon.isin([15,30,60,120]))].to_dict("records")}
 
 summ=[]
-for name,mask in [("fno",df.is_fno.astype(bool)),("nonfno",~df.is_fno.astype(bool))]:
+wanted=os.environ.get("GROUP_ONLY")
+groups=[("fno",df.is_fno.astype(bool)),("nonfno",~df.is_fno.astype(bool))]
+if wanted:
+    groups=[g for g in groups if g[0]==wanted]
+for name,mask in groups:
     q=df[mask].copy()
     summ.append(run_group(name,q))
 (OUT/"summary.json").write_text(json.dumps(summ,indent=2,default=str))
