@@ -2,7 +2,7 @@ name: NIFTY500 1m parallel population analysis
 on:
   push:
     branches:
-      - research/nifty500-1m-analyze-parallel-groups
+      - research/nifty500-1m-raw-future-target
   workflow_dispatch:
 
 jobs:
