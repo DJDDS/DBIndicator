@@ -1,0 +1,57 @@
+name: Build rigorous NIFTY500 PIT membership
+on:
+  push:
+    branches:
+      - research/nifty500-pit-fno-split
+  workflow_dispatch:
+
+jobs:
+  pit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install tools
+        run: pip install nbformat nbconvert ipykernel requests pandas pyarrow pypdf
+      - name: Clone PIT methodology
+        run: git clone --depth 1 https://github.com/NegiShubh05/Nifty500_Pit_data.git /tmp/pit
+      - name: Build and truncate notebook before OHLCV stage
+        run: |
+          cd /tmp/pit
+          python _build_notebook.py
+          python - <<'PY'
+          import nbformat, glob
+          files=glob.glob("*.ipynb")
+          print("notebooks",files)
+          p=files[0]
+          nb=nbformat.read(p,as_version=4)
+          keep=[]
+          for cell in nb.cells:
+              if cell.cell_type=="markdown" and "## 5." in cell.source:
+                  break
+              # remove inline pip install magic; deps already installed
+              if cell.cell_type=="code" and cell.source.lstrip().startswith("!pip install"):
+                  continue
+              keep.append(cell)
+          nb.cells=keep
+          nbformat.write(nb,"pit_membership_only.ipynb")
+          print("kept cells",len(keep))
+          PY
+      - name: Execute membership reconstruction
+        run: |
+          cd /tmp/pit
+          jupyter nbconvert --to notebook --execute pit_membership_only.ipynb --output pit_membership_executed.ipynb --ExecutePreprocessor.timeout=3600
+          ls -lh nifty500_pit_data || true
+          head -30 nifty500_pit_data/membership_intervals.csv || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rigorous-nifty500-pit-membership
+          path: |
+            /tmp/pit/nifty500_pit_data/membership_intervals.csv
+            /tmp/pit/nifty500_pit_data/events_raw.csv
+            /tmp/pit/nifty500_pit_data/constituent_snapshots/
+            /tmp/pit/pit_membership_executed.ipynb
+          retention-days: 14
