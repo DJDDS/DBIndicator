@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import io, zipfile, time, calendar, json
+import io, zipfile, time, calendar, json, os
 from pathlib import Path
 from datetime import date, timedelta
 import pandas as pd
@@ -56,7 +56,7 @@ while d<=end:
         print("progress",d,"days",days,"rows",len(rows),flush=True)
 
 out=pd.DataFrame(rows,columns=["date","symbol"])
-out.to_csv(OUT/"fno_membership_daily_2018_2026.csv.gz",index=False,compression="gzip")
+out.to_csv(OUT/f"fno_membership_{year}.csv.gz",index=False,compression="gzip")
 meta={"start":str(start),"end":str(end),"trading_days_found":days,"misses_or_holidays":misses,
       "rows":len(out),"symbols":int(out.symbol.nunique()) if len(out) else 0}
 (OUT/"meta.json").write_text(json.dumps(meta,indent=2))
