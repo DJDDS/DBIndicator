@@ -1,0 +1,42 @@
+name: NIFTY500 1m corrected raw-path analysis
+on:
+  push:
+    branches:
+      - research/nifty500-1m-rawpath-corrected
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [fno, nonfno]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37012471441
+          pattern: clean-1m-panel-*
+          path: /tmp/panels
+      - name: Analyze corrected raw forward paths
+        env:
+          GROUP_ONLY: ${{ matrix.group }}
+        run: python research/nifty500_1m_clean_slate_analyze.py
+      - name: Show result
+        run: |
+          cat /tmp/final/population_sizes.csv
+          cat /tmp/final/${{ matrix.group }}_cluster_characteristics.csv
+          cat /tmp/final/${{ matrix.group }}_metrics.csv
+          head -25 /tmp/final/${{ matrix.group }}_feature_importance.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corrected-1m-final-${{ matrix.group }}
+          path: /tmp/final/
+          retention-days: 14
