@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import io, zipfile, time, calendar, json, os
+import io, zipfile, time, calendar, json, os\nfrom concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, timedelta
 import pandas as pd
@@ -31,29 +31,33 @@ def fetch(d):
 
 start=date(2018,1,1)
 end=date(2026,10,2)
-rows=[]; days=0; misses=0
+dates=[]
 d=start
 while d<=end:
-    if d.weekday()<5:
-        df=fetch(d)
-        if df is not None and not df.empty:
-            cols={c.upper().strip():c for c in df.columns}
-            symc=cols.get("SYMBOL")
-            instrc=cols.get("INSTRUMENT")
-            if symc:
-                if instrc:
-                    q=df[df[instrc].astype(str).str.upper().str.startswith(("FUTSTK","OPTSTK"))]
-                else:
-                    q=df
-                syms=sorted(set(q[symc].dropna().astype(str).str.strip().str.upper()))
-                for s in syms:
-                    rows.append((str(d),s))
-                days+=1
-        else:
-            misses+=1
+    if d.weekday()<5: dates.append(d)
     d += timedelta(days=1)
-    if (d-start).days % 120 == 0:
-        print("progress",d,"days",days,"rows",len(rows),flush=True)
+
+def one_day(d):
+    df=fetch(d)
+    if df is None or df.empty: return d, []
+    cols={c.upper().strip():c for c in df.columns}
+    symc=cols.get("SYMBOL"); instrc=cols.get("INSTRUMENT")
+    if not symc: return d, []
+    q=df[df[instrc].astype(str).str.upper().str.startswith(("FUTSTK","OPTSTK"))] if instrc else df
+    syms=sorted(set(q[symc].dropna().astype(str).str.strip().str.upper()))
+    return d, syms
+
+rows=[]; days=0; misses=0
+with ThreadPoolExecutor(max_workers=12) as ex:
+    futs={ex.submit(one_day,d):d for d in dates}
+    done=0
+    for fut in as_completed(futs):
+        d,syms=fut.result()
+        if syms:
+            rows.extend((str(d),s) for s in syms); days+=1
+        else: misses+=1
+        done+=1
+        if done%40==0: print("progress",done,"/",len(dates),"days",days,"rows",len(rows),flush=True)
 
 out=pd.DataFrame(rows,columns=["date","symbol"])
 out.to_csv(OUT/f"fno_membership_{year}.csv.gz",index=False,compression="gzip")
