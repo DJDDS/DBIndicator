@@ -1,0 +1,98 @@
+name: NIFTY500 1m clean-slate discovery
+on:
+  push:
+    branches:
+      - research/nifty500-1m-clean-slate
+  workflow_dispatch:
+
+jobs:
+  extract:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow
+      - name: Download PIT NIFTY500 snapshots
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36996918706
+          name: pit-nifty500-fno-universe-v2
+          path: /tmp/pit
+      - name: Download historical FNO membership
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37007996919
+          name: fno-history-merged
+          path: /tmp/fno
+      - name: Build stock shard list
+        env:
+          SHARD: ${{ matrix.shard }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          req=urllib.request.Request(
+            "https://api.github.com/repos/rahulkanadia/IndianMarkets_DataBackfill/git/trees/main?recursive=1",
+            headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+          data=json.load(urllib.request.urlopen(req))
+          files=sorted(x["path"] for x in data["tree"]
+                       if x["type"]=="blob" and x["path"].endswith(".parquet") and "INDEX" not in x["path"].upper())
+          s=int(os.environ["SHARD"])
+          sel=[p for i,p in enumerate(files) if i%20==s]
+          open("/tmp/files.txt","w").write("\n".join(sel))
+          print("selected",len(sel))
+          PY
+      - name: Download 1-minute shard
+        run: |
+          mkdir -p /tmp/data
+          cat /tmp/files.txt | xargs -I{} -P 8 bash -c 'curl -L --fail --retry 5 --silent --show-error "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/{}" -o "/tmp/data/{}"'
+          curl -L --fail --retry 5 --silent --show-error "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/NIFTY50-INDEX.parquet" -o /tmp/data/NIFTY50-INDEX.parquet
+          find /tmp/data -name '*.parquet' | wc -l
+      - name: Extract clean-slate minute states
+        run: |
+          python research/nifty500_1m_clean_slate_extract.py             --data /tmp/data             --pit /tmp/pit             --fno /tmp/fno/fno_membership_daily_2018_2026.csv.gz             --out /tmp/panel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clean-1m-panel-${{ matrix.shard }}
+          path: /tmp/panel/
+          retention-days: 14
+
+  analyze:
+    needs: extract
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clean-1m-panel-*
+          path: /tmp/panels
+      - name: Unsupervised future-path discovery and probability analysis
+        run: python research/nifty500_1m_clean_slate_analyze.py
+      - name: Show results
+        run: |
+          cat /tmp/final/population_sizes.csv
+          cat /tmp/final/fno_cluster_characteristics.csv
+          cat /tmp/final/nonfno_cluster_characteristics.csv
+          cat /tmp/final/fno_metrics.csv
+          cat /tmp/final/nonfno_metrics.csv
+          head -25 /tmp/final/fno_feature_importance.csv
+          head -25 /tmp/final/nonfno_feature_importance.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-1m-clean-slate-final
+          path: /tmp/final/
+          retention-days: 14
