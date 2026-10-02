@@ -1,0 +1,43 @@
+name: NIFTY500 fast persistence replay
+on:
+  push:
+    branches:
+      - research/nifty500-fast-replay
+  workflow_dispatch:
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow
+      - name: Download compressed data archive
+        run: |
+          mkdir -p /tmp/nifty500data
+          curl -L --retry 5 --retry-delay 5 https://codeload.github.com/rahulkanadia/IndianMarkets_DataBackfill/tar.gz/refs/heads/main -o /tmp/nifty500.tar.gz
+          tar -xzf /tmp/nifty500.tar.gz -C /tmp
+          mv /tmp/IndianMarkets_DataBackfill-main/* /tmp/nifty500data/
+          rm -rf /tmp/IndianMarkets_DataBackfill-main /tmp/nifty500.tar.gz
+          du -sh /tmp/nifty500data
+          find /tmp/nifty500data -maxdepth 1 -name '*.parquet' | wc -l
+      - name: Replay
+        run: python research/nifty500_persistence_replay.py --data /tmp/nifty500data --out /tmp/nifty500_results
+      - name: Show summary
+        if: always()
+        run: |
+          cat /tmp/nifty500_results/meta.json || true
+          cat /tmp/nifty500_results/summary.csv || true
+          cat /tmp/nifty500_results/by_year.csv || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-fast-persistence-results
+          path: /tmp/nifty500_results/
+          retention-days: 14
