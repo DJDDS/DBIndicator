@@ -1,0 +1,44 @@
+name: NIFTY500 persistence shard19 repair
+on:
+  push:
+    branches:
+      - research/nifty500-feature-shard19
+  workflow_dispatch:
+
+jobs:
+  shard19:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow
+      - name: Build shard list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          req=urllib.request.Request(
+              "https://api.github.com/repos/rahulkanadia/IndianMarkets_DataBackfill/git/trees/main?recursive=1",
+              headers={"Authorization":"Bearer "+os.environ["GH_TOKEN"],"Accept":"application/vnd.github+json"})
+          data=json.load(urllib.request.urlopen(req))
+          files=sorted(x["path"] for x in data["tree"] if x["type"]=="blob" and x["path"].endswith(".parquet") and "INDEX" not in x["path"].upper())
+          sel=[p for i,p in enumerate(files) if i%20==19]
+          open("/tmp/files.txt","w").write("\n".join(sel))
+          print("selected",len(sel))
+          PY
+      - name: Download shard files
+        run: |
+          mkdir -p /tmp/data
+          cat /tmp/files.txt | xargs -I{} -P 8 bash -c 'curl -L --fail --retry 4 --silent --show-error "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/{}" -o "/tmp/data/{}"'
+          curl -L --fail --retry 4 --silent --show-error "https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/NIFTY50-INDEX.parquet" -o /tmp/data/NIFTY50-INDEX.parquet
+      - name: Feature replay
+        run: python research/nifty500_persistence_feature_replay.py --data /tmp/data --out /tmp/out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: persistence-feature-shard-19-repair
+          path: /tmp/out/
+          retention-days: 7
