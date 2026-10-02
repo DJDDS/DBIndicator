@@ -1,0 +1,40 @@
+name: Build NIFTY500 1m findings PDF
+on:
+  push:
+    branches:
+      - research/nifty500-1m-pdf-report
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow requests matplotlib reportlab
+      - name: Download corrected F&O results
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37034065591
+          name: corrected-1m-final-fno
+          path: /tmp/results/fno
+      - name: Download corrected non-F&O results
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37034065591
+          name: corrected-1m-final-nonfno
+          path: /tmp/results/nonfno
+      - name: Build report
+        run: python research/build_nifty500_1m_pdf_report.py
+      - name: List output
+        run: ls -lh /tmp/report && cat /tmp/report/example_manifest.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-1m-graphical-pdf-report
+          path: /tmp/report/
+          retention-days: 14
