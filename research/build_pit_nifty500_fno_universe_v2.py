@@ -93,7 +93,7 @@ patterns=[
 caps=[]
 for pat in patterns:
     url="https://web.archive.org/cdx/search/cdx"
-    params=[("url",pat),("from","2017"),("to","2026"),("output","json"),("filter","statuscode:200"),("fl","timestamp,original,digest,mimetype"),("collapse","digest")]
+    params=[("url",pat),("from","2010"),("to","2026"),("output","json"),("filter","statuscode:200"),("fl","timestamp,original,digest,mimetype"),("collapse","digest")]
     try:
         rr=get(url,params=params)
         arr=rr.json()
@@ -154,6 +154,6 @@ pd.DataFrame(snap_meta).to_csv(OUT/"snapshot_manifest.csv",index=False)
 print("Usable snapshots:",len(snap_meta))
 print(pd.DataFrame(snap_meta).to_string(index=False))
 (OUT/"meta.json").write_text(json.dumps({
- "fo_rows":len(norm),"wayback_candidates":len(caps),"usable_snapshots":len(snap_meta),
+ "fo_rows":len(fo_events),"wayback_candidates":len(caps),"usable_snapshots":len(snap_meta),
  "note":"Research-only universe reconstruction. Historical NIFTY500 snapshots from Wayback + official NSE F&O introduction/exclusion tracker."
 },indent=2))
