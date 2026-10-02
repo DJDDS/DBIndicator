@@ -1,0 +1,36 @@
+name: NIFTY500 clean-slate combinatorial lab
+on:
+  push:
+    branches:
+      - research/nifty500-clean-slate-combinatorial
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas numpy pyarrow scikit-learn
+      - name: Download historical event shards
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 36993994558
+          pattern: pullback-reclaim-shard-*
+          path: /tmp/shards
+      - name: Run clean-slate combinatorial probability search
+        run: python research/nifty500_clean_slate_combinatorial.py
+      - name: Print result
+        run: |
+          cat /tmp/final/meta.json
+          cat /tmp/final/summary.csv
+          head -80 /tmp/final/locked_test_results.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nifty500-clean-slate-combinatorial-final
+          path: /tmp/final/
+          retention-days: 14
