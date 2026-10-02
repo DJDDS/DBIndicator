@@ -1,0 +1,16 @@
+name: Probe historical FO bhavcopy
+on:
+  push:
+    branches:
+      - research/nifty500-pit-fno-split
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pandas requests
+      - run: python research/probe_fo_bhavcopy_urls.py
