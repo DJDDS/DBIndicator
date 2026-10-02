@@ -102,7 +102,7 @@ def run_group(name,q):
     for c in range(bestk):
         z=gd[gd.cluster==c]
         mean_path=np.array([z[f"fwd{h}_bps"].mean() for h in H])
-        integral=float(np.trapz(mean_path,np.array(H)))
+        integral=float(np.trapezoid(mean_path,np.array(H)))
         direction="UP" if integral>0 else "DOWN"
         run=z.pos_run if direction=="UP" else z.neg_run
         rec={"group":name,"cluster":c,"n":len(z),"direction":direction,
