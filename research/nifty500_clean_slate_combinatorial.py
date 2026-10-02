@@ -12,7 +12,7 @@ Probabilities use beta-binomial smoothing; bins are learned on train only.
 """
 from pathlib import Path
 from itertools import combinations
-import json, math
+import json, math, os
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score, brier_score_loss, log_loss
@@ -20,14 +20,16 @@ from sklearn.feature_selection import mutual_info_classif
 
 ROOT=Path("/tmp/shards")
 OUT=Path("/tmp/final"); OUT.mkdir(parents=True,exist_ok=True)
-TARGETS=["persist15","persist30","persist60","persistent_regime","persistent10bps30"]
+ALL_TARGETS=["persist15","persist30","persist60","persistent_regime","persistent10bps30"]
+_target=os.environ.get("TARGET_ONLY")
+TARGETS=[_target] if _target else ALL_TARGETS
 EXCLUDE={
  "year","direction","persist15","persist30","persist60","persistent_regime","persistent10bps30",
  "fwd15_bps","fwd30_bps","fwd60_bps","resid_fwd15_bps","resid_fwd30_bps","resid_fwd60_bps"
 }
 N_BINS=5
 ALPHA=8.0
-PERMUTATIONS=80
+PERMUTATIONS=int(os.environ.get("PERMUTATIONS","40"))
 TOP_FOR_TRIPLES=12
 MIN_CELL=40
 
