@@ -61,33 +61,41 @@ def parse_constituent_csv(content):
     return out
 
 def build_pit_snapshots():
+    """Load verified historical NIFTY500 Wayback snapshots from a committed public mirror.
+
+    The upstream raw file contains actual archived ind_nifty500list.csv captures
+    and extends through Jan-2026, allowing the original conservative bracketing
+    rule without a live Wayback dependency.
+    """
     cache=OUT/'pit_snapshots.json'
     if cache.exists():
         return [(pd.Timestamp(d),set(v)) for d,v in json.load(open(cache))]
-    cdx='https://web.archive.org/cdx/search/cdx'
-    pats=['nseindia.com/content/indices/ind_cnx500list.csv','nseindia.com/content/indices/ind_nifty500list.csv','niftyindices.com/IndexConstituent/ind_nifty500list.csv']
-    candidates=[]
-    for pat in pats:
-        try:
-            r=S.get(cdx,params={'url':pat,'output':'json','from':'2017','to':'2026','limit':'500','filter':'statuscode:200'},timeout=60)
-            r.raise_for_status(); rows=r.json()
-            if len(rows)>1:
-                hdr=rows[0]; candidates += [dict(zip(hdr,x)) for x in rows[1:]]
-        except Exception as e: print('CDX fail',pat,e)
-    bydate={}
-    for c in candidates:
-        bydate[datetime.strptime(c['timestamp'],'%Y%m%d%H%M%S').date().isoformat()]=c
+    url='https://raw.githubusercontent.com/srees16/centurion_core/main/data/nifty500_wayback_raw.json'
+    raw=json.loads(get_bytes(url,tries=5,timeout=120).decode('utf-8'))
+    legacy={
+        '2018-10':'2018-10-04','2019-02':'2019-02-01','2020-07':'2020-07-25',
+        '2022-05':'2022-05-04','2022-10':'2022-10-09','2023-04':'2023-04-04',
+        '2024-02':'2024-02-07','2024-02b':'2024-02-26','2025-06':'2025-06-16',
+        '2025-08':'2025-08-21'
+    }
     snaps=[]
-    for d,c in sorted(bydate.items()):
-        try:
-            syms=parse_constituent_csv(get_bytes(f"https://web.archive.org/web/{c['timestamp']}id_/{c['original']}",tries=2,timeout=60))
-            if 350<=len(syms)<=650: snaps.append((pd.Timestamp(d),syms))
-        except Exception: pass
-    ded=[]; prev=None
+    for label,vals in raw.items():
+        if str(label).startswith('_') or not isinstance(vals,list) or not vals:
+            continue
+        d=legacy.get(label,label)[:10]
+        try: dt=pd.Timestamp(d)
+        except Exception: continue
+        syms={str(x).strip().upper() for x in vals if str(x).strip()}
+        if 350<=len(syms)<=650:
+            snaps.append((dt,syms))
+    snaps.sort(key=lambda x:x[0])
+    ded=[];prev=None
     for d,s in snaps:
-        if prev is None or s!=prev: ded.append((d,s)); prev=s
+        if prev is None or s!=prev:
+            ded.append((d,s)); prev=s
     snaps=ded
-    if len(snaps)<4: raise RuntimeError(f'insufficient PIT snapshots: {len(snaps)}')
+    if len(snaps)<4:
+        raise RuntimeError(f'insufficient PIT snapshots from committed archive: {len(snaps)}')
     json.dump([(d.date().isoformat(),sorted(s)) for d,s in snaps],open(cache,'w'))
     print('PIT snapshots',len(snaps),[(str(d.date()),len(s)) for d,s in snaps])
     return snaps
