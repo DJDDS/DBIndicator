@@ -1,0 +1,37 @@
+name: Whole History Walk-Forward
+
+on:
+  push:
+    branches:
+      - research/whole-history-1m-20261003
+    paths:
+      - 'research/whole_history_walkforward.py'
+      - '.github/workflows/whole_history_walkforward.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  walkforward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install research dependencies
+        run: pip install -q pandas pyarrow requests scikit-learn lightgbm joblib
+      - name: Run whole-history walk-forward
+        env:
+          OUT_DIR: whole_history_out
+          SAMPLE_MOD: '20'
+        run: python research/whole_history_walkforward.py
+      - name: Upload research outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whole-history-walkforward
+          path: whole_history_out/
+          if-no-files-found: warn
+          retention-days: 14
