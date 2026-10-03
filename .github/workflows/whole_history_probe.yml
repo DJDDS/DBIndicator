@@ -1,0 +1,43 @@
+name: Whole History Probe
+
+on:
+  push:
+    branches:
+      - research/whole-history-1m-20261003
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -q pandas pyarrow requests
+      - name: Inspect source parquet schema
+        run: |
+          python - <<'PY'
+          import pandas as pd, requests
+          from pathlib import Path
+          urls = {
+            'ANGELONE': 'https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/ANGELONE.parquet',
+            'NIFTY50': 'https://raw.githubusercontent.com/rahulkanadia/IndianMarkets_DataBackfill/main/NIFTY50-INDEX.parquet',
+          }
+          for name, url in urls.items():
+              p = Path(f'/tmp/{name}.parquet')
+              r=requests.get(url, timeout=120); r.raise_for_status(); p.write_bytes(r.content)
+              df=pd.read_parquet(p)
+              print('===', name, '===')
+              print('shape', df.shape)
+              print('columns', list(df.columns))
+              print('dtypes', df.dtypes.astype(str).to_dict())
+              print('index', type(df.index).__name__, df.index.name, str(df.index.dtype))
+              print('head', df.head(3).to_dict('records'))
+              print('tail', df.tail(3).to_dict('records'))
+              for c in df.columns:
+                  if 'date' in c.lower() or 'time' in c.lower() or c.lower() in ('ts','timestamp'):
+                      try:
+                          s=pd.to_datetime(df[c])
+                          print(c, 'minmax', s.min(), s.max())
+                      except Exception as e: print(c, 'dateparse error', e)
+          PY
