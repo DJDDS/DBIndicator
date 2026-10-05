@@ -1,3 +1,4 @@
+import json
 import datetime as dt
 
 import pytest
@@ -138,4 +139,6 @@ def test_maybe_capture_does_not_overwrite_same_day_captured(monkeypatch, tmp_pat
         holiday_cache_file=holiday_file,
         now=now,
     )
-    assert result == original
+    assert result == {**original, "production_controls": False, "orders_enabled": False}
+    # Returned safety flags are required; the captured evidence itself stays frozen.
+    assert json.loads(state_file.read_text()) == original
