@@ -2404,5 +2404,11 @@ def start_background_scanner():
         v130_swing.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V13.0 swing desk failed to start")
+    # V13.1 intraday paper lanes (09:45 short detector, gap-down bounce basket, pre-open recorder). Fail-soft.
+    try:
+        from . import v131_intraday
+        v131_intraday.start_once(kite_auth.get_kite_client)
+    except Exception:
+        log.exception("V13.1 intraday paper lanes failed to start")
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()

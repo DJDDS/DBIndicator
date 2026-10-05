@@ -1,0 +1,37 @@
+{
+ "features": [
+  "gap",
+  "mv",
+  "fpc",
+  "nmv",
+  "ngap",
+  "rng_s",
+  "vrel",
+  "vwd",
+  "pos",
+  "r1",
+  "r5",
+  "d20h",
+  "mkt",
+  "brd",
+  "mgap",
+  "rel",
+  "nrel",
+  "atr20"
+ ],
+ "k": 3,
+ "cost_bps": 10,
+ "trained_on": "F&O stock-days 2015-01..2026-09 (Kite 5-min), 09:45 snapshot",
+ "walk_forward": {
+  "2017-18": "+47.5 bps (62%)",
+  "2019-26": "+30.3 bps (58%)",
+  "2023-26": "+20.5 bps (58%)",
+  "2026": "+14.3 bps (56%)"
+ },
+ "gap_basket": {
+  "2019-26 exit 10:15": "+130.7 bps (76%), 86 days",
+  "2019-26 exit 09:45": "+129.1 bps (72%)",
+  "2015-18 exit 10:15": "+185.5 bps (83%)",
+  "cost_bps": 15
+ }
+}

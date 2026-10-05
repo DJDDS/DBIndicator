@@ -111,6 +111,65 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
     <div class="small">Storage: {{ status.storage }}</div></div>
 </div>
 
+
+{% if intra %}
+<div class="card lane" style="border-top-color:#f0616d">
+  <h2><span>Bearish &amp; intraday lanes (paper)</span> · V13.1 · spotting only, no orders</h2>
+  {% if intra.error %}<div class="closed small">Intraday lanes unavailable: {{ intra.error }}</div>{% endif %}
+  {% set c = intra.constants or {} %}
+  <div class="grid3">
+    <div class="card" style="grid-column:span 2">
+      <h2>09:45 short detector · short 3, cover 15:15</h2>
+      {% set ts = intra.today_short %}
+      {% if ts %}
+        <div class="small">Today {{ ts.date }} · scored {{ ts.scored }} F&amp;O stocks · market since open {{ ts.market.move_since_open_pct }}% · {{ ts.market.share_up }}% of stocks up{% if not ts.ban_known %} · <span class="warn">F&amp;O ban list unavailable today, check bans before acting</span>{% endif %}</div>
+        <table style="margin-top:6px"><tr><th>Short</th><th>Entry 09:45</th><th>Move since open</th><th>vs market (ATR)</th><th>Volume ×normal</th><th>Cover 15:15</th><th>Result</th></tr>
+        {% for p in ts.picks %}<tr><td><b>{{ p.symbol }}</b></td><td>{{ '%.2f'|format(p.entry) }}</td><td>{{ p.move_since_open_pct }}%</td><td>{{ p.vs_market_atr }}</td><td>{{ p.volume_x_normal if p.volume_x_normal is not none else '—' }}</td>
+          <td>{{ '%.2f'|format(p.exit) if p.exit else 'open' }}</td><td class="{{ 'open' if (p.ret_bps or 0) > 0 else ('closed' if p.ret_bps is not none else '') }}">{{ ('%+.0f bps'|format(p.ret_bps)) if p.ret_bps is not none else '—' }}</td></tr>{% endfor %}</table>
+      {% else %}<div class="empty">No shorts yet today. Picks appear at 09:45 on trading days.</div>{% endif %}
+      <div class="small" style="margin-top:8px">How to read: short at the 09:45 price (futures or cash intraday), cover at 15:15, no stop (research: holding to 15:15 beat every target/stop tried). Results are after 10 bps cost.</div>
+      {% if intra.short_recent %}<details style="margin-top:8px"><summary class="small">Recent shorts</summary><table>
+        <tr><th>Date</th><th>Stock</th><th>Entry</th><th>Cover</th><th>Result</th><th>Best / worst after entry</th></tr>
+        {% for p in intra.short_recent %}<tr><td>{{ p.date }}</td><td>{{ p.symbol }}</td><td>{{ '%.2f'|format(p.entry) }}</td><td>{{ '%.2f'|format(p.exit) if p.exit else 'open' }}</td>
+          <td class="{{ 'open' if (p.ret_bps or 0) > 0 else ('closed' if p.ret_bps is not none else '') }}">{{ ('%+.0f'|format(p.ret_bps)) if p.ret_bps is not none else '—' }}</td><td class="small">{{ p.best_bps if p.best_bps is not none else '—' }} / {{ p.worst_bps if p.worst_bps is not none else '—' }} bps</td></tr>{% endfor %}</table></details>{% endif %}
+    </div>
+    <div class="card">
+      <h2>Short detector scorecard</h2>
+      {% set s = intra.score_short %}
+      <div class="kpis"><div class="kpi"><div class="v">{{ s.n }}</div><div class="l">paper shorts</div></div>
+        <div class="kpi"><div class="v">{{ (s.win|string + '%') if s.win is not none else '—' }}</div><div class="l">win rate</div></div>
+        <div class="kpi"><div class="v">{{ ('%+.0f'|format(s.avg_bps)) if s.avg_bps is not none else '—' }}</div><div class="l">avg bps / short</div></div></div>
+      <div class="small" style="margin-top:8px">Research, walk-forward after 10 bps cost: 2019-26 {{ c.walk_forward['2019-26'] if c.walk_forward else '' }}; 2023-26 {{ c.walk_forward['2023-26'] if c.walk_forward else '' }}; 2026 {{ c.walk_forward['2026'] if c.walk_forward else '' }}. Random shorts lose about -2 bps. Live is usually 60-80% of research: judge after 60+ shorts (about 4 weeks).</div>
+    </div>
+  </div>
+  <div class="grid3" style="margin-top:14px">
+    <div class="card" style="grid-column:span 2">
+      <h2>Gap-down bounce basket · BUY at the open, exit 10:15 (bullish, cash)</h2>
+      {% set tg = intra.today_gap %}
+      {% if tg %}
+        <div class="small">Today {{ tg.date }} · F&amp;O market gap {{ tg.market_gap_pct }}% · {{ 'ACTIVE (market opened more than 0.5% down)' if tg.active else 'not active (needs a market gap below -0.5%)' }}</div>
+        {% if tg.picks %}<table style="margin-top:6px"><tr><th>Buy</th><th>Entry (open)</th><th>Open vs prev low</th><th>1-sigma</th><th>09:45</th><th>10:15</th><th>Result (10:15)</th></tr>
+        {% for p in tg.picks %}<tr><td><b>{{ p.symbol }}</b></td><td>{{ '%.2f'|format(p.entry) }}</td><td>{{ p.gap_vs_prev_low_pct }}%</td><td>{{ p.sigma_pct }}%</td>
+          <td>{{ ('%+.0f'|format(p.ret_0945_bps)) if p.ret_0945_bps is not none else '—' }}</td><td>{{ '%.2f'|format(p.exit_1015) if p.exit_1015 else 'open' }}</td>
+          <td class="{{ 'open' if (p.ret_bps or 0) > 0 else ('closed' if p.ret_bps is not none else '') }}">{{ ('%+.0f bps'|format(p.ret_bps)) if p.ret_bps is not none else '—' }}</td></tr>{% endfor %}</table>{% endif %}
+      {% else %}<div class="empty">Checked at 09:16 on trading days.</div>{% endif %}
+      <div class="small" style="margin-top:8px">Practical entry: a buy order in the 09:00-09:08 pre-open session fills at the opening price. Results after 15 bps cost. Fires only on market gap-down days (about 11 days a year).</div>
+    </div>
+    <div class="card">
+      <h2>Bounce basket scorecard</h2>
+      {% set g = intra.score_gap %}
+      <div class="kpis"><div class="kpi"><div class="v">{{ g.n }}</div><div class="l">paper buys</div></div>
+        <div class="kpi"><div class="v">{{ (g.win|string + '%') if g.win is not none else '—' }}</div><div class="l">win rate</div></div>
+        <div class="kpi"><div class="v">{{ ('%+.0f'|format(g.avg_bps)) if g.avg_bps is not none else '—' }}</div><div class="l">avg bps</div></div></div>
+      <div class="small" style="margin-top:8px">Research 2019-26: {{ c.gap_basket['2019-26 exit 10:15'] if c.gap_basket else '' }} at the 10:15 exit.</div>
+      <h2 style="margin-top:12px">Intraday engine health</h2>
+      {% for k, v in (intra.steps or {}).items() %}<div class="small">{{ k }}: <span class="{{ 'open' if v.ok else 'closed' }}">{{ 'ok' if v.ok else 'failed' }}</span> · {{ v.at }}{% if not v.ok %} · {{ v.error }}{% endif %}</div>{% else %}<div class="empty">No step run yet today (prep starts 08:00).</div>{% endfor %}
+      <div class="small">Pre-open snapshots recorded: {{ intra.preopen_days }} · <a href="/api/v131/export/shorts" style="color:#8fb3ff">shorts</a> · <a href="/api/v131/export/gaps" style="color:#8fb3ff">gaps</a> · <a href="/api/v131/export/preopen" style="color:#8fb3ff">pre-open</a></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card"><h2>Settings (flexible - every rule is adjustable)</h2>
   <form class="settings" method="post" action="/api/v130/settings">
     <label>Mode<select name="mode">{% for m in ['A','G','H'] %}<option value="{{ m }}" {{ 'selected' if status.settings.mode == m }}>{{ m }}{{ ' - conservative (gate 40%, top-2)' if m=='A' else (' - default (gate 50%, top-2 + closed-gate BIG)' if m=='G' else ' - G + 3rd pick in expiry week') }}</option>{% endfor %}</select></label>

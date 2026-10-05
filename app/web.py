@@ -1207,7 +1207,12 @@ def create_app():
 def admin_v130():
     from . import v130_swing
     st = v130_swing.status()
-    return render_template("v130_admin.html", status=st, plan=st.get("plan"))
+    try:
+        from . import v131_intraday
+        intra = v131_intraday.status()
+    except Exception as exc:  # fail-soft: the swing desk page must still render
+        intra = {"error": str(exc)[:200]}
+    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra)
 
 
 @app.route("/api/v130/status")
@@ -1237,6 +1242,23 @@ def api_v130_settings():
     if request.form:
         return redirect("/admin/v130")
     return jsonify(out)
+
+
+@app.route("/api/v131/status")
+@require_roles(OWNER)
+def api_v131_status():
+    from . import v131_intraday
+    return Response(json.dumps(v131_intraday.status(), default=str), mimetype="application/json")
+
+
+@app.route("/api/v131/export/<kind>")
+@require_roles(OWNER)
+def api_v131_export(kind):
+    from . import v131_intraday
+    files = {"shorts": "shorts.jsonl", "gaps": "gaps.jsonl", "preopen": "preopen.jsonl"}
+    if kind not in files:
+        return jsonify({"error": "unknown export"}), 404
+    return _v12_export(str(v131_intraday._path(files[kind])), "v131_" + files[kind], "application/x-ndjson")
 
 
 @app.route("/api/v130/ledger/export")
