@@ -6,6 +6,7 @@ import pandas as pd
 from flask import Flask, jsonify, redirect, render_template, request, Response, send_file
 
 from . import alerts, audit_access, backtest, chart_patterns, background, config, delivery, early_signal, friday_weekend_alert, indicators, kite_auth, scanner, v8_dual, v9_playbooks, derivative_intelligence, opportunity_forward, v12_option_recorder, v121_index_recorder, v121_backup, v121_development, v123_quant_shadow
+from . import sector_service
 from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
@@ -793,6 +794,42 @@ def api_insights():
 def api_alerts_recent():
     return jsonify({"alerts": alerts.get_recent(limit=20)})
 
+
+
+@app.route("/sector-analysis")
+@require_roles(OWNER, MEMBER)
+def sector_analysis_page():
+    sector_service.ensure_started()
+    return render_template("sector_analysis.html")
+
+
+@app.route("/api/sector-analysis")
+@require_roles(OWNER, MEMBER)
+def api_sector_analysis():
+    sector_service.ensure_started()
+    return jsonify(sector_service.overview())
+
+
+@app.route("/api/sector-analysis/stock/<symbol>")
+@require_roles(OWNER, MEMBER)
+def api_sector_stock(symbol):
+    sector_service.ensure_started()
+    result = sector_service.stock_chart(symbol.upper())
+    return (jsonify(result), 200) if result is not None else (jsonify({"error": "Unknown sector constituent"}), 404)
+
+
+@app.route("/api/sector-analysis/<sector_id>")
+@require_roles(OWNER, MEMBER)
+def api_sector_detail(sector_id):
+    try:
+        window = int(request.args.get("window", "20"))
+    except ValueError:
+        return jsonify({"error": "Rotation window must be 5, 20 or 60 sessions"}), 400
+    if window not in (5, 20, 60):
+        return jsonify({"error": "Rotation window must be 5, 20 or 60 sessions"}), 400
+    sector_service.ensure_started()
+    result = sector_service.detail(sector_id, window)
+    return (jsonify(result), 200) if result is not None else (jsonify({"error": "Unknown sector index"}), 404)
 
 
 @app.route("/oi-screener")

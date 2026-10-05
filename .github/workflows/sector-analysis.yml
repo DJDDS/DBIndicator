@@ -1,0 +1,23 @@
+name: Sector Analysis verification
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  sector-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install existing dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Compile
+        run: python -m compileall -q app
+      - name: Sector arithmetic, cache and authenticated routes
+        run: python -m pytest -q tests/test_sector_analysis.py tests/test_sector_service.py tests/test_sector_routes.py
+      - name: JavaScript syntax
+        run: node --check app/static/sector_analysis.js
