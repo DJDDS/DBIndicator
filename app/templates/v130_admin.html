@@ -38,7 +38,9 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 <header>
   <h1>V13 Swing Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">SPOTTING - no orders are placed</span>
   <span class="tag">Plan for {{ plan.date if plan else '—' }} · entry {{ plan.entry_day if plan else '—' }}</span>
+  <span style="margin-left:auto"><a href="/" style="color:#8fb3ff">Dashboard</a> · <a href="/logout" data-logout style="color:#8fb3ff">Logout</a></span>
 </header>
+<script src="/static/logout.js"></script>
 <div class="wrap">
 
 <div class="card">

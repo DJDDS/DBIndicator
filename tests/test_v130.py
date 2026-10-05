@@ -118,3 +118,22 @@ def test_admin_template_renders_three_lanes(tmp_path):
               "storage": "x", "settings": rules.resolved({})}
     html = env.get_template("v130_admin.html").render(status=status, plan=plan)
     assert "Futures" in html and "Cash" in html and "Options (calls)" in html and "ADMIN ONLY" in html
+
+
+def test_logout_clears_basic_auth_without_lockout(monkeypatch):
+    import base64
+    from app import security
+    from app.web import app
+    monkeypatch.setenv("DBI_OWNER_PASSWORD", "t")
+    security.reset_security_state_for_tests()
+    c = app.test_client()
+    dummy = {"Authorization": "Basic " + base64.b64encode(b"logged-out:x").decode()}
+    assert c.get("/logout").status_code == 200
+    assert c.get("/logout?clear=1").status_code == 401
+    assert c.get("/logout?clear=1", headers=dummy).status_code == 200
+    for _ in range(12):                      # repeated visits after logout: always a fresh login prompt
+        r = c.get("/settings", headers=dummy)
+        assert r.status_code == 401 and "WWW-Authenticate" in r.headers
+    owner = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
+    page = c.get("/admin/v130", headers=owner)
+    assert page.status_code == 200 and b"data-logout" in page.data

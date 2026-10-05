@@ -896,7 +896,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       </button>
     </div>
     {% endif %}
-    <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/sector-analysis">Sector Analysis</a>{% if security_role == "owner" %}<a href="/admin/v130">Swing Desk (V13)</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a>{% endif %}</nav>
+    <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/sector-analysis">Sector Analysis</a>{% if security_role == "owner" %}<a href="/admin/v130">Swing Desk (V13)</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a>{% endif %}<a href="/logout" data-logout>Logout</a></nav><script src="/static/logout.js"></script>
   </div>
 </header>
 <div class="wrap">

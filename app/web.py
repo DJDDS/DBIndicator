@@ -506,6 +506,29 @@ def quick_settings():
     return redirect("/")
 
 
+@app.route("/logout")
+def logout():
+    """Clear the browser's cached Basic-Auth login (no auth required)."""
+    if request.args.get("clear"):
+        # The logout script retries with dummy user "logged-out"; accepting it
+        # here makes the browser cache the dummy login in place of the real one.
+        auth = request.authorization
+        if auth and auth.username == "logged-out":
+            resp = jsonify({"logged_out": True})
+        else:
+            resp = Response("", 401, {"WWW-Authenticate": 'Basic realm="DBIndicator" charset="UTF-8"'})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    html = ("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Logged out</title><body style='font-family:system-ui;background:#0f1318;color:#e6e9ee;"
+            "display:grid;place-items:center;height:100vh;margin:0'><div style='text-align:center'>"
+            "<h2>You are logged out</h2><p style='color:#8b95a3'>Close this tab, or log in again.</p>"
+            "<a href='/' style='background:#2b6cff;color:#fff;padding:10px 18px;border-radius:8px;"
+            "text-decoration:none;font-weight:600'>Log in again</a></div></body>")
+    resp = app.response_class(html, mimetype="text/html"); resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/kite/login")
 @require_roles(OWNER)
 def kite_login():

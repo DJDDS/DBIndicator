@@ -29,6 +29,7 @@ OWNER = "owner"
 MEMBER = "member"
 AUDITOR = "auditor"
 VALID_ROLES = frozenset({OWNER, MEMBER, AUDITOR})
+LOGGED_OUT_USER = "logged-out"
 
 _AUTH_FAILURES: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 _AUTH_LOCK = threading.Lock()
@@ -159,6 +160,10 @@ def require_roles(*allowed_roles: str):
             # request first and then retry after the 401 challenge. That is not
             # a failed password attempt and must never contribute to lockout.
             if not auth or not (auth.username or "") or not (auth.password or ""):
+                return _challenge()
+            # Dummy login left behind by the Logout link: ask for a real login,
+            # never count it as a failed attempt (it must not trigger lockout).
+            if auth.username == LOGGED_OUT_USER:
                 return _challenge()
 
             username = auth.username or ""
