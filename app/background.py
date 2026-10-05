@@ -2398,5 +2398,11 @@ def start_background_scanner():
     # It is fail-soft and uses the third KiteTicker connection.
     start_v123_market_stream_once()
     start_v122b_tactical_stream_once()
+    # V13.0 swing desk (admin-only spotting engine). Fail-soft: never blocks the scanner.
+    try:
+        from . import v130_swing
+        v130_swing.start_once(kite_auth.get_kite_client)
+    except Exception:
+        log.exception("V13.0 swing desk failed to start")
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()

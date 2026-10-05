@@ -1176,3 +1176,70 @@ def api_pattern_scan():
 def create_app():
     chart_patterns.start_scheduler_once()
     return app
+
+
+# ---------------------------------------------------------------- V13.0 swing desk (ADMIN ONLY, spotting) ----
+@app.route("/admin/v130")
+@require_roles(OWNER)
+def admin_v130():
+    from . import v130_swing
+    st = v130_swing.status()
+    return render_template("v130_admin.html", status=st, plan=st.get("plan"))
+
+
+@app.route("/api/v130/status")
+@require_roles(OWNER)
+def api_v130_status():
+    from . import v130_swing
+    return Response(json.dumps(v130_swing.status(), default=str), mimetype="application/json")
+
+
+@app.route("/api/v130/settings", methods=["POST"])
+@require_roles(OWNER)
+def api_v130_settings():
+    from . import v130_swing
+    raw = request.get_json(silent=True) or request.form.to_dict()
+    clean = {}
+    for k, v in raw.items():
+        if k in ("mode", "normal_instrument"):
+            clean[k] = str(v).upper()
+        elif k == "news_veto":
+            clean[k] = str(v).lower() in ("1", "true", "on", "yes")
+        else:
+            try:
+                clean[k] = float(v) if "." in str(v) or k in ("capital", "quiet_r5", "call_max_spread_pct") else int(v)
+            except (TypeError, ValueError):
+                continue
+    out = v130_swing.save_settings(clean)
+    if request.form:
+        return redirect("/admin/v130")
+    return jsonify(out)
+
+
+@app.route("/api/v130/ledger/export")
+@require_roles(OWNER)
+def api_v130_ledger_export():
+    from . import v130_swing
+    return _v12_export(str(v130_swing._path("ledger.jsonl")), "v130_ledger.jsonl", "application/x-ndjson")
+
+
+@app.route("/api/v130/plans/export")
+@require_roles(OWNER)
+def api_v130_plans_export():
+    from . import v130_swing
+    return _v12_export(str(v130_swing._path("plans.jsonl")), "v130_plans.jsonl", "application/x-ndjson")
+
+
+@app.route("/api/v130/run-evening", methods=["POST"])
+@require_roles(OWNER)
+def api_v130_run_evening():
+    """Manual re-run of tonight's plan (owner only). Refuses during market hours."""
+    from . import v130_swing
+    now = scanner.now_ist()
+    if now.weekday() < 5 and (9 * 60 + 0) <= now.hour * 60 + now.minute <= (15 * 60 + 35):
+        return jsonify({"status": "REFUSED", "reason": "market hours"}), 409
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        return jsonify({"status": "WAITING_LOGIN"}), 409
+    plan = v130_swing.run_evening(kite)
+    return Response(json.dumps(plan, default=str), mimetype="application/json")

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>V13 Swing Desk · Admin</title>
+<style>
+:root{--bg:#0f1216;--panel:#171b21;--panel2:#1d222a;--line:#2a313b;--text:#e6e9ee;--muted:#8b95a3;--good:#3fb950;--bad:#f0616d;--warn:#d6a33a;
+--fut:#4c8dff;--cash:#2fbf9b;--opt:#c58cff;--chip:#232a33}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:17px;margin:0;font-weight:650}.tag{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--chip);color:var(--muted)}
+.wrap{padding:16px 18px;display:grid;gap:14px;max-width:1280px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}@media(max-width:900px){.grid3{grid-template-columns:1fr}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{background:var(--panel2);border-radius:8px;padding:10px}.kpi .v{font-size:20px;font-weight:650}.kpi .l{font-size:12px;color:var(--muted)}
+.open{color:var(--good)}.closed{color:var(--bad)}.warn{color:var(--warn)}
+.lane{border-top:3px solid var(--line)}.lane.fut{border-top-color:var(--fut)}.lane.cash{border-top-color:var(--cash)}.lane.opt{border-top-color:var(--opt)}
+.lane h2 span{color:var(--text)}
+.pick{background:var(--panel2);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.pick .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.sym{font-size:16px;font-weight:700}.chip{font-size:11px;padding:2px 7px;border-radius:99px;background:var(--chip);margin-left:6px}
+.chip.EXPIRY{color:#ffd479}.chip.BIG{color:#ff9ad5}.chip.NORMAL{color:#9fb3c8}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left}th{color:var(--muted);font-weight:500}
+.lv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lv div{background:#141920;border-radius:6px;padding:6px 8px}
+.lv .l{font-size:11px;color:var(--muted)}.lv .v{font-weight:650}
+.empty{color:var(--muted);font-style:italic;padding:8px 0}
+.small{font-size:12px;color:var(--muted)}
+form.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+label{font-size:12px;color:var(--muted);display:grid;gap:3px}input,select{background:#0f1318;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px}
+button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px;font-weight:600;cursor:pointer}
+.reasons{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>V13 Swing Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">SPOTTING - no orders are placed</span>
+  <span class="tag">Plan for {{ plan.date if plan else '—' }} · entry {{ plan.entry_day if plan else '—' }}</span>
+</header>
+<div class="wrap">
+
+<div class="card">
+  <h2>Tonight's market gate</h2>
+  {% if plan %}
+  <div class="kpis">
+    <div class="kpi"><div class="v {{ 'open' if plan.gate.open else 'closed' }}">{{ 'OPEN' if plan.gate.open else 'CLOSED' }}</div><div class="l">Fear gate (score {{ '%.2f'|format(plan.gate.G) }} vs cut {{ '%.2f'|format(plan.gate.cut) }})</div></div>
+    <div class="kpi"><div class="v">{{ plan.market.vix }}</div><div class="l">India VIX</div></div>
+    <div class="kpi"><div class="v">{{ plan.tdte|int if plan.tdte == plan.tdte else '—' }}</div><div class="l">Trading days to expiry {{ '· EXPIRY WEEK' if plan.expiry_week else '' }}</div></div>
+    <div class="kpi"><div class="v {{ 'warn' if plan.crash_brake else '' }}">{{ 'ON (½ size)' if plan.crash_brake else 'off' }}</div><div class="l">Crash brake (Nifty 10-day &lt; −8%)</div></div>
+    <div class="kpi"><div class="v">{{ plan.picks|length }}</div><div class="l">Picks · mode {{ plan.mode }}</div></div>
+    <div class="kpi"><div class="v">{{ status.scorecard.ALL.n }}</div><div class="l">Closed spotting trades · win {{ ((status.scorecard.ALL.win or 0)*100)|round|int }}%</div></div>
+  </div>
+  {% else %}<div class="empty">No evening plan yet. It runs automatically between 18:45 and 22:30 IST on trading days once Kite is logged in.</div>{% endif %}
+</div>
+
+{% set fut = [] %}{% set cash = [] %}{% set opt = [] %}
+{% if plan %}{% for p in plan.picks %}{% for i in p.instruments %}
+  {% if i.type == 'FUTURES' %}{% set _ = fut.append((p, i)) %}{% elif i.type == 'CASH' %}{% set _ = cash.append((p, i)) %}{% elif i.type == 'CALL' %}{% set _ = opt.append((p, i)) %}{% endif %}
+{% endfor %}{% endfor %}{% endif %}
+
+<div class="grid3">
+  <div class="card lane fut"><h2><span>Futures</span> · {{ fut|length }} today</h2>
+    {% for p, i in fut %}<div class="pick">
+      <div class="top"><div><span class="sym">{{ p.sym }}</span><span class="chip {{ p.tag }}">{{ p.tag }}</span></div><div class="small">rank {{ p.rank }} · score {{ p.score }}</div></div>
+      <div class="small">Size: contract value {{ (i.notional_pct*100)|round(1) }}% of capital · buy at next open</div>
+      <div class="lv"><div><div class="l">Reference</div><div class="v">₹{{ p.exits.reference }}</div></div><div><div class="l">Target (+{{ (p.exits.target_pct*100)|round|int }}%)</div><div class="v open">₹{{ p.exits.target_price }}</div></div><div><div class="l">Stop on close ({{ (p.exits.stop_close_pct*100)|round|int }}%)</div><div class="v closed">₹{{ p.exits.stop_close_price }}</div></div></div>
+      <div class="small" style="margin-top:6px">Also exit at the first close at a 7-day high, or after {{ p.exits.max_days }} sessions. Levels reset to the actual open at 09:20.</div>
+    </div>{% else %}<div class="empty">No futures trade tonight.</div>{% endfor %}
+  </div>
+  <div class="card lane cash"><h2><span>Cash</span> · {{ cash|length }} today</h2>
+    {% for p, i in cash %}<div class="pick">
+      <div class="top"><div><span class="sym">{{ p.sym }}</span><span class="chip {{ p.tag }}">{{ p.tag }}</span></div><div class="small">rank {{ p.rank }}</div></div>
+      <div class="small">Size: {{ (i.notional_pct*100)|round(1) }}% of capital in shares (delivery)</div>
+      <div class="lv"><div><div class="l">Reference</div><div class="v">₹{{ p.exits.reference }}</div></div><div><div class="l">Target</div><div class="v open">₹{{ p.exits.target_price }}</div></div><div><div class="l">Stop on close</div><div class="v closed">₹{{ p.exits.stop_close_price }}</div></div></div>
+    </div>{% else %}<div class="empty">No cash trade tonight (NORMAL picks route to futures by default - change in settings).</div>{% endfor %}
+  </div>
+  <div class="card lane opt"><h2><span>Options (calls)</span> · {{ opt|length }} today</h2>
+    {% for p, i in opt %}<div class="pick">
+      <div class="top"><div><span class="sym">{{ p.sym }}</span><span class="chip {{ p.tag }}">{{ p.tag }}</span></div><div class="small">{{ 'required' if i.required else 'optional' }} · premium budget {{ (i.premium_pct*100)|round(1) }}%</div></div>
+      {% if i.status == 'BUY_CALL' %}
+        <div style="margin-top:6px"><b>{{ i.tradingsymbol }}</b> <span class="small">({{ i.label }}, expiry {{ i.expiry }}, IV {{ ((i.iv or 0)*100)|round(1) }}%, spread {{ i.spread_pct }}%)</span></div>
+        <div class="lv"><div><div class="l">Entry limit (mid)</div><div class="v">₹{{ i.limit }}</div></div><div><div class="l">Target (+50%)</div><div class="v open">₹{{ i.target }}</div></div><div><div class="l">Stop on close (−50%)</div><div class="v closed">₹{{ i.stop_close }}</div></div></div>
+        <div class="small" style="margin-top:6px">Never pay above ₹{{ i.max_price }} · {{ i.lots }} lot(s) × {{ i.lot_size }} · exit by session {{ i.exit_by_session }}{% if i.budget_note %} · <span class="warn">{{ i.budget_note }}</span>{% endif %}</div>
+      {% elif i.status == 'NO_CALL' %}<div class="small warn" style="margin-top:6px">No call: {{ i.reason }} {{ '→ ' ~ i.fallback if i.fallback else '' }}</div>
+      {% else %}<div class="small" style="margin-top:6px">Strike and premium are chosen live at 10:00 on {{ plan.entry_day }} (liquidity, IV, value score).</div>{% endif %}
+    </div>{% else %}<div class="empty">No option trade tonight.</div>{% endfor %}
+  </div>
+</div>
+
+<div class="card"><h2>Rejected tonight and why</h2>
+  {% if plan and plan.rejected %}<table><tr><th>Stock</th><th>Rank</th><th>Tag</th><th>Reasons</th></tr>
+  {% for r in plan.rejected %}<tr><td>{{ r.sym }}</td><td>{{ r.rank }}</td><td>{{ r.tag }}</td><td class="reasons">{{ r.reasons|join(' · ') }}</td></tr>{% endfor %}</table>
+  {% else %}<div class="empty">Nothing rejected.</div>{% endif %}
+</div>
+
+<div class="grid3">
+  <div class="card"><h2>Open spotting positions</h2>
+    {% if status.open %}<table><tr><th>Stock</th><th>Tag</th><th>Entry</th><th>Mark</th><th>Days</th></tr>
+    {% for p in status.open %}<tr><td>{{ p.sym }}</td><td>{{ p.tag }}</td><td>{{ p.entry_price or 'pending' }}</td><td>{{ ((p.mark_pct or 0)*100)|round(1) }}%</td><td>{{ p.sessions_held or 0 }}</td></tr>{% endfor %}</table>
+    {% else %}<div class="empty">None.</div>{% endif %}</div>
+  <div class="card"><h2>Scorecard by instrument</h2>
+    <table><tr><th></th><th>Trades</th><th>Win</th><th>Avg</th></tr>
+    {% for k in ['FUTURES','CASH','ALL'] %}{% set sc = status.scorecard[k] %}<tr><td>{{ k }}</td><td>{{ sc.n }}</td><td>{{ ((sc.win or 0)*100)|round|int }}%</td><td>{{ ((sc.avg_pct or 0)*100)|round(2) }}%</td></tr>{% endfor %}</table>
+    <div class="small" style="margin-top:6px">Research expectation (2019-26): win 65-72%, avg +0.5-0.9% per futures/cash trade; judge after 30-50 trades.</div></div>
+  <div class="card"><h2>Engine health</h2>
+    {% for k, v in status.scheduler.steps.items() %}<div class="small">{{ k }}: <span class="{{ 'open' if v.ok else 'closed' }}">{{ 'ok' if v.ok else 'failed' }}</span> · {{ v.at }}</div>{% else %}<div class="empty">Scheduler started, no step run yet.</div>{% endfor %}
+    <div class="small">Storage: {{ status.storage }}</div></div>
+</div>
+
+<div class="card"><h2>Settings (flexible - every rule is adjustable)</h2>
+  <form class="settings" method="post" action="/api/v130/settings">
+    <label>Mode<select name="mode">{% for m in ['A','G','H'] %}<option value="{{ m }}" {{ 'selected' if status.settings.mode == m }}>{{ m }}{{ ' - conservative (gate 40%, top-2)' if m=='A' else (' - default (gate 50%, top-2 + closed-gate BIG)' if m=='G' else ' - G + 3rd pick in expiry week') }}</option>{% endfor %}</select></label>
+    <label>Capital (₹)<input name="capital" value="{{ status.settings.capital|int }}"></label>
+    <label>Quiet-stock cut (|5-day move|)<input name="quiet_r5" value="{{ status.settings.quiet_r5 }}"></label>
+    <label>NORMAL picks trade in<select name="normal_instrument"><option {{ 'selected' if status.settings.normal_instrument=='FUTURES' }}>FUTURES</option><option {{ 'selected' if status.settings.normal_instrument=='CASH' }}>CASH</option></select></label>
+    <label>Max open positions<input name="max_open" value="{{ status.settings.max_open }}"></label>
+    <label>Call max spread %<input name="call_max_spread_pct" value="{{ status.settings.call_max_spread_pct }}"></label>
+    <label>Bad-news veto<select name="news_veto"><option value="true" {{ 'selected' if status.settings.news_veto }}>on</option><option value="false" {{ 'selected' if not status.settings.news_veto }}>off</option></select></label>
+    <label>&nbsp;<button type="submit">Save settings</button></label>
+  </form>
+</div>
+</div>
+</body>
+</html>
