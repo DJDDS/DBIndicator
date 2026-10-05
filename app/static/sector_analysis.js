@@ -7,7 +7,7 @@ const PLABEL = Object.fromEntries(PERIODS);
 const RANGES = [['3M',63],['6M',126],['1Y',252],['3Y',756]];
 const VARIANT = /midsmall|25\/50|ex bank|nifty500|reits/i;
 const S = {data:null, period:'1M', sectorId:null, detail:null, seq:0, sview:'list', variants:false,
-           sort:{key:'ret', dir:-1}, filter:'all', open:null, range:'1Y', highlight:null};
+           sort:{key:'ret', dir:-1}, filter:'all', open:null, range:'6M', cmode:'price', highlight:null};
 const charts = new Map();
 
 const ok = n => typeof n === 'number' && Number.isFinite(n);
@@ -112,7 +112,7 @@ async function selectSector(id, stock = null, user = false) {
   renderHead(row);
   // Show the stock names immediately from the overview list, then fill in numbers.
   S.detail = {sector: row, members: (row?.members_list || []).map(m => ({...m, returns: {}, vs_sector: {}, vs_nifty: {}})), loading: true};
-  renderStocks();
+  renderStocks(); renderSectorChart();
   if (user && window.matchMedia('(max-width:900px)').matches) $('detail').scrollIntoView({behavior: 'smooth', block: 'start'});
   const seq = ++S.seq;
   try {
@@ -122,7 +122,7 @@ async function selectSector(id, stock = null, user = false) {
     if (stock) { const tr = document.querySelector(`tr.row[data-sym="${CSS.escape(stock)}"]`); if (tr) { tr.scrollIntoView({block: 'center'}); toggleStock(stock); } }
   } catch (e) {
     if (seq !== S.seq) return;
-    S.detail.loading = false; S.detail.error = e.message; renderStocks();
+    S.detail.loading = false; S.detail.error = e.message; renderStocks(); renderSectorChart();
   }
 }
 
@@ -240,24 +240,68 @@ async function drawMini(sym) {
 function renderRanges() {
   $('ranges').innerHTML = RANGES.map(([k]) => `<button data-range="${k}" aria-pressed="${k === S.range}">${k}</button>`).join('');
 }
+const AX = {
+  tip: {trigger: 'axis', axisPointer: {type: 'cross', lineStyle: {color: '#41587a'}}, backgroundColor: '#0d1624', borderColor: '#223246', textStyle: {color: '#e6edf6', fontSize: 12}},
+  x: data => ({type: 'category', data, boundaryGap: true, axisLabel: {color: '#8d9cb0', hideOverlap: true}, axisLine: {lineStyle: {color: '#223246'}}, axisTick: {show: false}}),
+  y: {type: 'value', scale: true, position: 'right', axisLabel: {color: '#8d9cb0'}, splitLine: {lineStyle: {color: '#1a2737'}}},
+};
+function chartMessage(c, text) { c.clear(); c.setOption({title: {text, left: 'center', top: 'middle', textStyle: {color: '#8d9cb0', fontSize: 13, fontWeight: 400}}}, true); }
 function renderSectorChart() {
-  const d = S.detail, c = chart('sector-chart'); if (!c || !d?.chart) return;
+  const d = S.detail, c = chart('sector-chart'); if (!c) return;
+  document.querySelectorAll('[data-cmode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cmode === S.cmode)));
+  const name = short(d?.sector?.name || '');
+  $('chart-title').textContent = S.cmode === 'price' ? `${name} — price with 20 / 50 / 200-day averages` : `${name} vs NIFTY 50 (both start at 100)`;
+  if (!d || d.loading) { chartMessage(c, 'Loading sector chart…'); return; }
   const n = RANGES.find(r => r[0] === S.range)[1];
-  const sk = (d.chart.candles || []).slice(-n);
-  const bc = (d.benchmark_chart?.candles || d.benchmark_chart || []);
-  if (!sk.length) { c.setOption({title: {text: 'Sector price history is still loading', left: 'center', top: 'middle', textStyle: {color: '#8d9cb0', fontSize: 13}}}, true); return; }
-  const t0 = sk[0].time, bmap = new Map(bc.map(b => [b.time, b.close]));
-  const s0 = sk[0].close, b0 = bmap.get(t0) ?? bc.find(b => b.time >= t0)?.close;
-  c.setOption({
-    backgroundColor: 'transparent', animation: false, grid: {left: 46, right: 14, top: 30, bottom: 26},
-    legend: {top: 0, textStyle: {color: '#8d9cb0'}},
-    tooltip: {trigger: 'axis', backgroundColor: '#0d1624', borderColor: '#223246', textStyle: {color: '#e6edf6'}, valueFormatter: v => ok(v) ? v.toFixed(1) : '—'},
-    xAxis: {type: 'time', axisLabel: {color: '#8d9cb0'}, axisLine: {lineStyle: {color: '#223246'}}},
-    yAxis: {type: 'value', scale: true, axisLabel: {color: '#8d9cb0'}, splitLine: {lineStyle: {color: '#1a2737'}}},
-    series: [
-      {name: short(d.sector.name), type: 'line', showSymbol: false, data: sk.map(b => [b.time, b.close / s0 * 100]), color: '#6aa8ff', lineStyle: {width: 2.2}},
-      ...(ok(b0) ? [{name: 'NIFTY 50', type: 'line', showSymbol: false, data: bc.filter(b => b.time >= t0).map(b => [b.time, b.close / b0 * 100]), color: '#f5bf5c', lineStyle: {width: 1.5}}] : []),
-    ]}, true);
+  const all = d.chart?.candles || [];
+  const sk = all.slice(-n);
+  if (!sk.length) { chartMessage(c, 'Sector price history is still loading on the server'); $('chart-note').textContent = ''; return; }
+  const dates = sk.map(b => b.time), t0 = dates[0];
+  if (S.cmode === 'price') {
+    const smaMap = k => { const m = new Map((d.chart.sma?.[k] || []).map(p => [p.time, p.value])); return dates.map(t => m.get(t) ?? null); };
+    const last = sk[sk.length - 1], s = {};
+    ['20', '50', '200'].forEach(k => { const arr = smaMap(k); s[k] = arr[arr.length - 1]; });
+    c.setOption({
+      backgroundColor: 'transparent', animation: false,
+      grid: {left: 10, right: 62, top: 34, bottom: 52},
+      legend: {top: 0, left: 0, textStyle: {color: '#8d9cb0'}, data: ['Price', '20D avg', '50D avg', '200D avg']},
+      tooltip: {...AX.tip, formatter: ps => {
+        const k = ps.find(p => p.seriesName === 'Price'); const v = k?.data || [];
+        const row = (l, x) => `${l}: <b>${ok(x) ? fmt(x) : '—'}</b>`;
+        return `<b>${ps[0]?.axisValue}</b><br>` + (k ? [row('Open', v[1]), row('High', v[4]), row('Low', v[3]), row('Close', v[2])].join('<br>') : '') +
+          ps.filter(p => p.seriesName !== 'Price').map(p => `<br>${p.marker}${p.seriesName}: <b>${ok(p.data) ? fmt(p.data) : '—'}</b>`).join('');
+      }},
+      xAxis: AX.x(dates), yAxis: AX.y,
+      dataZoom: [{type: 'inside'}, {type: 'slider', height: 18, bottom: 6, borderColor: '#223246', textStyle: {color: '#8d9cb0'}, fillerColor: 'rgba(106,168,255,.12)'}],
+      series: [
+        {name: 'Price', type: 'candlestick', data: sk.map(b => [b.open, b.close, b.low, b.high]),
+         itemStyle: {color: '#2fcf8f', color0: '#f2667a', borderColor: '#2fcf8f', borderColor0: '#f2667a'},
+         markLine: {symbol: 'none', silent: true, label: {color: '#e6edf6', formatter: p => fmt(p.value)}, lineStyle: {color: '#6aa8ff', type: 'dashed'}, data: [{yAxis: last.close}]}},
+        {name: '20D avg', type: 'line', showSymbol: false, data: smaMap('20'), color: '#6aa8ff', lineStyle: {width: 1.2}},
+        {name: '50D avg', type: 'line', showSymbol: false, data: smaMap('50'), color: '#f5bf5c', lineStyle: {width: 1.4}},
+        {name: '200D avg', type: 'line', showSymbol: false, data: smaMap('200'), color: '#c4a0ff', lineStyle: {width: 1.6}},
+      ]}, true);
+    const pos = k => ok(s[k]) ? `${last.close > s[k] ? 'above' : 'below'} ${k}D avg (${pct((last.close / s[k] - 1) * 100)})` : null;
+    $('chart-note').textContent = `Last close ${fmt(last.close)} on ${last.time} · ` + ['20', '50', '200'].map(pos).filter(Boolean).join(' · ');
+  } else {
+    const bc = d.benchmark_chart?.candles || d.benchmark_chart || [];
+    const bmap = new Map(bc.map(b => [b.time, b.close]));
+    const s0 = sk[0].close, b0 = bmap.get(t0) ?? bc.find(b => b.time >= t0)?.close;
+    const sec = sk.map(b => b.close / s0 * 100);
+    const nif = ok(b0) ? dates.map(t => bmap.has(t) ? bmap.get(t) / b0 * 100 : null) : [];
+    c.setOption({
+      backgroundColor: 'transparent', animation: false, grid: {left: 10, right: 52, top: 34, bottom: 52},
+      legend: {top: 0, left: 0, textStyle: {color: '#8d9cb0'}},
+      tooltip: {...AX.tip, valueFormatter: v => ok(v) ? v.toFixed(1) : '—'},
+      xAxis: AX.x(dates), yAxis: AX.y,
+      dataZoom: [{type: 'inside'}, {type: 'slider', height: 18, bottom: 6, borderColor: '#223246', textStyle: {color: '#8d9cb0'}}],
+      series: [
+        {name: name, type: 'line', showSymbol: false, data: sec, color: '#6aa8ff', lineStyle: {width: 2.2}, areaStyle: {color: 'rgba(106,168,255,.07)'}},
+        ...(nif.length ? [{name: 'NIFTY 50', type: 'line', showSymbol: false, connectNulls: true, data: nif, color: '#f5bf5c', lineStyle: {width: 1.6}}] : []),
+      ]}, true);
+    const ls = sec[sec.length - 1], ln = nif.filter(ok).pop();
+    $('chart-note').textContent = ok(ln) ? `Over ${S.range}: ${name} ${pct(ls - 100)} vs NIFTY 50 ${pct(ln - 100)} → ${ls - ln >= 0 ? 'outperformed' : 'underperformed'} by ${fmt(Math.abs(ls - ln))} points.` : '';
+  }
   c.resize();
 }
 
@@ -268,6 +312,7 @@ document.addEventListener('click', e => {
   if (t.dataset.sview) { S.sview = t.dataset.sview; document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); renderSectors(); return; }
   if (t.dataset.filter) { S.filter = t.dataset.filter; renderStocks(); return; }
   if (t.dataset.range) { S.range = t.dataset.range; renderRanges(); renderSectorChart(); return; }
+  if (t.dataset.cmode) { S.cmode = t.dataset.cmode; renderSectorChart(); return; }
   if (t.dataset.sort) { const k = t.dataset.sort; S.sort = {key: k, dir: S.sort.key === k ? -S.sort.dir : -1}; renderStocks(); return; }
   if (t.dataset.sector) { $('search-results').hidden = true; $('search').value = ''; selectSector(t.dataset.sector, t.dataset.stock || null, true); return; }
   if (t.matches('tr.row')) { toggleStock(t.dataset.sym); }
@@ -281,7 +326,7 @@ $('show-variants').addEventListener('change', e => { S.variants = e.target.check
 /* ---------- boot ---------- */
 async function load() {
   try {
-    S.data = await getJSON('/api/sector-analysis');
+    S.data = await getJSON('/api/sector-analysis'); lastLive = Date.now();
     showStatus(); renderSectors();
     $('methodology').innerHTML = Object.entries(S.data.methodology || {}).map(([k, v]) => `<p><b>${esc(k)}</b> · ${esc(v)}</p>`).join('');
     if (!S.sectorId) {
@@ -292,5 +337,33 @@ async function load() {
   } catch (e) { $('status').textContent = 'Could not load sectors: ' + e.message; $('status').classList.add('warn'); }
 }
 renderPeriods(); renderRanges(); load();
-setInterval(async () => { try { S.data = await getJSON('/api/sector-analysis'); showStatus(); renderSectors(); } catch {} }, 120000);
+/* ---------- live refresh every 180 s ---------- */
+const LIVE_MS = 180000;
+let lastLive = Date.now(), refreshing = false;
+async function liveRefresh(manual = false) {
+  if (refreshing || (document.hidden && !manual)) return;
+  refreshing = true;
+  try {
+    S.data = await getJSON('/api/sector-analysis');
+    showStatus(); renderSectors();
+    if (S.sectorId) {
+      const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(S.sectorId)}?window=20`);
+      S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart();
+      stockCache.delete(S.open);               // re-draw the open stock with the newest candle
+      if (S.open) drawMini(S.open);
+    }
+    lastLive = Date.now();
+  } catch (e) { $('status').textContent = 'Live refresh failed: ' + e.message; $('status').classList.add('warn'); }
+  finally { refreshing = false; tickLive(); }
+}
+function tickLive() {
+  const el = $('live'); if (!el) return;
+  const age = Math.round((Date.now() - lastLive) / 1000), next = Math.max(0, Math.round(LIVE_MS / 1000 - age));
+  el.textContent = `● Live · updated ${new Date(lastLive).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', second: '2-digit'})} · next in ${next}s`;
+  el.classList.toggle('stale', age > 400);
+}
+setInterval(liveRefresh, LIVE_MS);
+setInterval(tickLive, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastLive > LIVE_MS) liveRefresh(); });
+$('live').addEventListener('click', () => liveRefresh(true));
 })();

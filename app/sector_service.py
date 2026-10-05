@@ -40,6 +40,26 @@ def _history(symbol):
     return seeded if seeded is not None else data.load_json(_path(symbol),{}).get('candles',[])
 
 
+def _chart_bars(name, now):
+    """Daily history plus today's still-forming candle from the latest fresh quote (charts only)."""
+    bars=_history(name)
+    with _lock:
+        stored=copy.deepcopy(_state['quotes'].get(name))
+    if not stored or not _fresh_timestamp(stored.get('timestamp'),now,final_quote=True):
+        return bars
+    q=stored.get('data') or {}
+    last=a.finite(q.get('last_price'))
+    if last is None:
+        return bars
+    ohlc=q.get('ohlc') or {}
+    o=a.finite(ohlc.get('open')) or last
+    h=max(v for v in (a.finite(ohlc.get('high')),last,o) if v is not None)
+    l=min(v for v in (a.finite(ohlc.get('low')),last,o) if v is not None and v>0)
+    today=now.date().isoformat()
+    live={'date':today+' 00:00:00+05:30','open':o,'high':h,'low':l,'close':last,'volume':a.finite(q.get('volume')) or 0}
+    return [b for b in bars if str(b.get('date'))[:10]!=today]+[live]
+
+
 def _status():
     keys=('running','done','total','error','updated_at','quote_at')
     with _lock:
@@ -166,8 +186,8 @@ def detail(sector_id, window=20):
     if weights_available:
         for m in members:
             contributions.append({'symbol':m['symbol'],'value':m['weight']*m['returns']['today']/100 if m['returns']['today'] is not None else None})
-    return {'sector':sector,'members':members,'chart':a.chart_series(_history(sector['name'])),
-            'benchmark_chart':a.chart_series(_history('NIFTY 50')),'breadth_series':breadth,
+    return {'sector':sector,'members':members,'chart':a.chart_series(_chart_bars(sector['name'],now)),
+            'benchmark_chart':a.chart_series(_chart_bars('NIFTY 50',now)),'breadth_series':breadth,
             'rotation':rotations,'rotation_window':window,'contributions':contributions,
             'contribution_note':'Current-weight approximation; not exact index attribution.' if weights_available else 'Unavailable: official constituent CSV does not supply dated index weights. Equal weights are not substituted.',
             'weight_date':entry.get('retrieved_at') if weights_available else None,'status':_status()}
@@ -185,7 +205,7 @@ def stock_chart(symbol):
     if not intraday['fresh']:
         intraday['vwap']=None
         intraday['volume_ratio']=None
-    return {'symbol':symbol,'chart':a.chart_series(_history(symbol)),'intraday':intraday,
+    return {'symbol':symbol,'chart':a.chart_series(_chart_bars(symbol,now)),'intraday':intraday,
             'status':_status(),'vwap_note':'Approximate 5-minute session VWAP; appears after queued history refresh.'}
 
 

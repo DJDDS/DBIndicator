@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sector Analysis · DBIndicator</title>
-<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='2') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='4') }}">
 <script defer src="{{ url_for('static',filename='vendor/echarts-5.6.0.min.js') }}"></script>
-<script defer src="{{ url_for('static',filename='sector_analysis.js', v='2') }}"></script>
+<script defer src="{{ url_for('static',filename='sector_analysis.js', v='4') }}"></script>
 <script defer src="{{ url_for('static',filename='logout.js') }}"></script>
 </head>
 <body>
@@ -22,6 +22,7 @@
     <input id="search" type="search" placeholder="Find a stock or sector…" autocomplete="off" aria-label="Find a stock or sector">
     <div id="search-results" class="search-results" hidden></div>
   </div>
+  <button id="live" class="live" type="button" title="Click to refresh now">● Live · loading…</button>
   <div id="status" class="status" role="status">Loading…</div>
 </div>
 
@@ -54,6 +55,20 @@
 
       <div class="block">
         <div class="block-head">
+          <h3 id="chart-title">Sector chart</h3>
+          <div class="chart-ctrls">
+            <div class="seg" role="group" aria-label="Chart type">
+              <button data-cmode="price" aria-pressed="true">Price + averages</button><button data-cmode="rel" aria-pressed="false">vs NIFTY 50</button>
+            </div>
+            <div class="seg" role="group" aria-label="Chart range" id="ranges"></div>
+          </div>
+        </div>
+        <div id="sector-chart" class="chart big"></div>
+        <p class="muted small" id="chart-note"></p>
+      </div>
+
+      <div class="block">
+        <div class="block-head">
           <h3 id="stocks-title">Stocks</h3>
           <div class="seg" role="group" aria-label="Filter stocks">
             <button data-filter="all" aria-pressed="true">All</button><button data-filter="up" aria-pressed="false">Gainers</button><button data-filter="down" aria-pressed="false">Losers</button>
@@ -63,13 +78,6 @@
         <div class="table-wrap"><table id="stock-table" class="stocks"></table></div>
       </div>
 
-      <div class="block">
-        <div class="block-head">
-          <h3>Sector vs NIFTY 50 <span class="muted small">(rebased to 100)</span></h3>
-          <div class="seg" role="group" aria-label="Chart range" id="ranges"></div>
-        </div>
-        <div id="sector-chart" class="chart"></div>
-      </div>
 
       <details class="block notes">
         <summary>How these numbers are calculated</summary>
