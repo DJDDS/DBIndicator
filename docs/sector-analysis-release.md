@@ -4,7 +4,7 @@ Approved observational workspace: official sector/index → all current constitu
 
 ## Exact production change
 
-Add `/sector-analysis` and authenticated read-only `/api/sector-analysis`, `/api/sector-analysis/<sector_id>` and `/api/sector-analysis/stock/<symbol>` routes. Add navbar buttons on Dashboard, OI Screener and Patterns. Add isolated analytics/provider/cache modules, responsive page, local ECharts 5.6.0 asset, official dated seed and sector tests/CI. No existing trading, recorder, frozen-research or background-scanner code changes.
+Add `/sector-analysis` and authenticated read-only `/api/sector-analysis`, `/api/sector-analysis/<sector_id>` and `/api/sector-analysis/stock/<symbol>` routes. Add navbar buttons on Dashboard, OI Screener and Patterns. Add isolated analytics/provider/cache modules, responsive page, local ECharts 5.6.0 asset, official dated seed and sector tests/CI. No existing trading, recorder, frozen-research or background-scanner code changes. One pre-existing alert regression test is corrected to match the existing safety-flag contract and assert capture-file immutability.
 
 Official seed fetched 2026-10-05: **34 sectoral indices, every membership file retrieved successfully, 476 unique stocks**. Catalogue and membership are refreshed with last-good fallback.
 
@@ -25,11 +25,11 @@ Overview offers sortable calendar-period returns, quarter history, relative stre
 
 ## Verification
 
-New financial/provider/cache/auth tests pass. Whole-suite baseline comparison: baseline 1215 passing + 10 failing; latest feature run 1239 passing + the identical 10 pre-existing failures; zero new failure nodes. Independent review's quote expiry, hydration retry, intraday freshness and scanner-slot isolation findings repaired with RED→GREEN tests. Desktop and 390px browser checks passed every view, range/period controls, stock comparison, VWAP, missing-weight state and page overflow; no JS exceptions. UI screenshots use synthetic fixtures only and are not evidence of live market calculations.
+New financial/provider/cache/auth tests pass. Whole-suite baseline comparison: baseline 1215 passing + 10 failing; latest feature run 1240 passing + 9 of the 10 pre-existing failures; zero new failure nodes. The stale Friday-weekend equality assertion was repaired to require both safety flags false and verify the captured file is unchanged; no alert behaviour changed. Independent review's quote expiry, hydration retry, intraday freshness and scanner-slot isolation findings repaired with RED→GREEN tests. Desktop and 390px browser checks passed every view, range/period controls, stock comparison, VWAP, missing-weight state and page overflow; no JS exceptions. UI screenshots use synthetic fixtures only and are not evidence of live market calculations.
 
 The pre-existing failures are:
 - Six in `test_stock_in_play_breakout.py`: intraday sponsorship, missing OI, swing stage/persistence, dashboard/backtest copy, retention bar, numpy boolean flags.
-- `tests/test_friday_weekend_alert.py::test_maybe_capture_does_not_overwrite_same_day_captured`.
+- The baseline Friday-weekend capture test failed because it omitted two required safety flags. This release corrects that test only; it now passes and verifies no recapture/file overwrite.
 - Two in `tests/test_v120_trade_console.py`: futures executable promotion and extended high-score downgrade.
 - `tests/test_v927_market_regime_forward.py::test_opportunity_radar_uses_multifactor_regime_as_bonus_not_veto`.
 

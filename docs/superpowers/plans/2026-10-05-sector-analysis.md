@@ -19,23 +19,23 @@ No trading/recorder changes. No main push before 16:00 IST. Missing is null. Off
 
 ### Task 1: Analytics
 Files: app/sector_analytics.py, tests/test_sector_analysis.py. Interface: summarize(candles, now, quote=None) -> dict; relative_returns(row, benchmark) -> dict; rank_members(rows, period, relative=False) -> dict; vwap_series(candles) -> list.
-- [ ] Write and run failing financial fixtures, including missing history, quarter boundaries, VWAP reset and rankings.
-- [ ] Implement pure functions; run fixtures.
+- [x] Write and run failing financial fixtures, including missing history, quarter boundaries, VWAP reset and rankings.
+- [x] Implement pure functions; run fixtures.
 
 ### Task 2: Provider and cache service
 Files: app/sector_data.py, app/sector_service.py; tests/test_sector_service.py. Interface: parse_catalogue(html), parse_members(csv); ensure_started(); overview(); detail(sector_id); stock_chart(symbol).
-- [ ] Write/run failing official HTML/CSV and persistence/no-data tests.
-- [ ] Implement dated official provider, single-flight off-market hydration and isolated last-good snapshot.
-- [ ] Run provider and service tests.
+- [x] Write/run failing official HTML/CSV and persistence/no-data tests.
+- [x] Implement dated official provider, single-flight off-market hydration and isolated last-good snapshot.
+- [x] Run provider and service tests.
 
 ### Task 3: Routes and dynamic UI
 Files: app/web.py, app/templates/sector_analysis.html, app/static/sector_analysis.js/css, navigation templates, tests/test_sector_routes.py.
-- [ ] Write/run route auth and empty-state tests.
-- [ ] Implement authenticated cached endpoints and interactive UI with locally bundled charts.
-- [ ] Verify chart controls desktop/mobile, empty/error states, no page overflow.
+- [x] Write/run route auth and empty-state tests.
+- [x] Implement authenticated cached endpoints and interactive UI with locally bundled charts.
+- [x] Verify chart controls desktop/mobile, empty/error states, no page overflow.
 
 ### Task 4: Release
 Files: .github/workflows/sector-analysis.yml, docs/sector-analysis-release.md.
-- [ ] Compile, run new tests and full-suite delta versus baseline; review changes.
-- [ ] Commit feature branch, publish PR and inspect CI.
-- [ ] Update scheduled deployment task with exact reviewed SHA and instructions; leave main untouched.
+- [x] Compile, run new tests and full-suite delta versus baseline; review changes.
+- [x] Commit feature branch, publish PR and inspect CI.
+- [x] Update scheduled deployment task with exact reviewed SHA and instructions; leave main untouched.
