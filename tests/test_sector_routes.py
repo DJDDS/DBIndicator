@@ -61,3 +61,14 @@ def test_chart_bars_append_live_candle_only_when_quote_is_fresh(monkeypatch):
     assert len(bars)==2 and bars[-1]['close']==103.0 and bars[-1]['high']==104.0 and bars[-1]['low']==100.0 and bars[-1]['date'].startswith('2026-10-06')
     monkeypatch.setitem(s._state['quotes'],'NIFTY IT',{'data':quote,'timestamp':(now-dt.timedelta(minutes=30)).isoformat()})
     assert len(s._chart_bars('NIFTY IT',now))==1          # stale quote: history only, never a made-up live candle
+
+
+def test_live_quotes_only_poll_during_market_window():
+    import datetime as dt
+    from app import sector_service as s
+    assert s._quote_window(dt.datetime(2026,10,5,10,0))          # Monday morning
+    assert s._quote_window(dt.datetime(2026,10,5,15,40))         # final quote window after the 15:30 close
+    assert not s._quote_window(dt.datetime(2026,10,5,15,46))
+    assert not s._quote_window(dt.datetime(2026,10,5,18,30))     # evening
+    assert not s._quote_window(dt.datetime(2026,10,5,8,59))
+    assert not s._quote_window(dt.datetime(2026,10,3,11,0))      # Saturday

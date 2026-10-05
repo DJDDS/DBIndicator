@@ -278,6 +278,11 @@ def _recalculate(name,now):
     with _lock: _summaries[name]=r
 
 
+def _quote_window(now):
+    """Live quote polling: weekdays 09:00-15:45 IST (15:30 close plus a short window to capture the final quote)."""
+    return now.weekday()<5 and dt.time(9,0)<=now.time()<=dt.time(15,45)
+
+
 def _market_hours(now):
     # Gate even on exchange holidays: under-loading is safer than a history sweep
     # colliding with the live cash-market clock. Quotes themselves prove freshness.
@@ -390,7 +395,8 @@ def _worker():
                 refresh_key=day+(' PM' if now.hour>=16 else ' AM')
                 if not _market_hours(now) and hydrate_day!=refresh_key:
                     if _hydrate(kite,now): hydrate_day=refresh_key
-                _refresh_quotes(kite,scanner.now_ist())
+                if _quote_window(scanner.now_ist()):
+                    _refresh_quotes(kite,scanner.now_ist())
                 _load_intraday(kite,scanner.now_ist())
                 _persist()
             else:

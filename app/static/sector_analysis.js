@@ -337,11 +337,20 @@ async function load() {
   } catch (e) { $('status').textContent = 'Could not load sectors: ' + e.message; $('status').classList.add('warn'); }
 }
 renderPeriods(); renderRanges(); load();
-/* ---------- live refresh every 180 s ---------- */
+/* ---------- live refresh every 180 s, market hours only ---------- */
 const LIVE_MS = 180000;
 let lastLive = Date.now(), refreshing = false;
+function istNow() {
+  const parts = new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false}).formatToParts(new Date());
+  const g = t => parts.find(p => p.type === t)?.value;
+  return {day: g('weekday'), mins: (+g('hour') % 24) * 60 + +g('minute')};
+}
+// Live window: weekdays 09:10-15:40 IST (close is 15:30; the extra minutes capture the final quote).
+function marketLive() { const t = istNow(); return !['Sat', 'Sun'].includes(t.day) && t.mins >= 9 * 60 + 10 && t.mins <= 15 * 60 + 40; }
+function quoteAgeMin() { const q = S.data?.status?.quote_at; if (!q) return null; return (Date.now() - new Date(q + '+05:30').getTime()) / 60000; }
 async function liveRefresh(manual = false) {
   if (refreshing || (document.hidden && !manual)) return;
+  if (!manual && !marketLive()) { tickLive(); return; }       // market closed: no polling at all
   refreshing = true;
   try {
     S.data = await getJSON('/api/sector-analysis');
@@ -349,21 +358,33 @@ async function liveRefresh(manual = false) {
     if (S.sectorId) {
       const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(S.sectorId)}?window=20`);
       S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart();
-      stockCache.delete(S.open);               // re-draw the open stock with the newest candle
+      stockCache.delete(S.open);
       if (S.open) drawMini(S.open);
     }
     lastLive = Date.now();
-  } catch (e) { $('status').textContent = 'Live refresh failed: ' + e.message; $('status').classList.add('warn'); }
+  } catch (e) { $('status').textContent = 'Refresh failed: ' + e.message; $('status').classList.add('warn'); }
   finally { refreshing = false; tickLive(); }
 }
 function tickLive() {
   const el = $('live'); if (!el) return;
+  const at = new Date(lastLive).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  el.classList.remove('stale', 'closed');
+  if (!marketLive()) {
+    el.classList.add('closed');
+    el.textContent = `○ Market closed · showing last close · loaded ${at}`;
+    return;
+  }
   const age = Math.round((Date.now() - lastLive) / 1000), next = Math.max(0, Math.round(LIVE_MS / 1000 - age));
-  el.textContent = `● Live · updated ${new Date(lastLive).toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', second: '2-digit'})} · next in ${next}s`;
-  el.classList.toggle('stale', age > 400);
+  const qa = quoteAgeMin();
+  if (qa === null || qa > 10) {
+    el.classList.add('stale');
+    el.textContent = `● No live quotes (${qa === null ? 'none received' : Math.round(qa) + ' min old'}) · holiday or Kite login needed · next check ${next}s`;
+    return;
+  }
+  el.textContent = `● Live · updated ${at} · next in ${next}s`;
 }
 setInterval(liveRefresh, LIVE_MS);
 setInterval(tickLive, 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastLive > LIVE_MS) liveRefresh(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && marketLive() && Date.now() - lastLive > LIVE_MS) liveRefresh(); });
 $('live').addEventListener('click', () => liveRefresh(true));
 })();
