@@ -84,6 +84,7 @@ def _sector_row(entry, benchmark, now):
     row['breadth']={str(n):_breadth(members,'sma',n) for n in a.MA_PERIODS}
     row['ema_breadth']={str(n):_breadth(members,'ema',n) for n in a.MA_PERIODS}
     valid=[r['returns']['today'] for r in members if r['returns']['today'] is not None]
+    row['advance_decline']=a.advance_decline(members)
     row['advancing_pct']=sum(v>0 for v in valid)/len(valid)*100 if valid else None
     row['median_return']=a.finite(pd.Series(valid,dtype=float).median()) if valid else None
     row['vs_nifty']=a.relative_returns(row,benchmark)

@@ -166,3 +166,15 @@ def rotation_series(sector_candles, benchmark_candles, window=20):
     momentum = rs - rs.shift(window)
     return [{'time': d.date().isoformat(), 'x': float(rs.loc[d]), 'y': float(momentum.loc[d])}
             for d in pair.index[-6:] if finite(rs.loc[d]) is not None and finite(momentum.loc[d]) is not None]
+
+
+def advance_decline(members):
+    """Fresh today's price changes only; missing is never an unchanged stock."""
+    values=[finite(r.get('returns',{}).get('today')) for r in members]
+    covered=[v for v in values if v is not None]
+    advances=sum(v>0 for v in covered)
+    declines=sum(v<0 for v in covered)
+    return {'advances':advances,'declines':declines,'unchanged':sum(v==0 for v in covered),
+            'unavailable':len(values)-len(covered),'covered':len(covered),'total':len(values),
+            'ratio':advances/declines if declines else None,
+            'net':advances-declines if covered else None}

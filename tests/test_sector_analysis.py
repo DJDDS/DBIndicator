@@ -76,3 +76,11 @@ def test_relative_returns_reject_mismatched_asof_dates():
 def test_quarter_without_end_coverage_is_missing():
     r=module().summarize(candles('2024-01-01','2026-07-10'),dt.datetime(2026,10,5,11))
     assert r['returns']['Q1'] is None
+
+
+def test_advance_decline_excludes_missing_and_handles_zero_declines():
+    a=module()
+    rows=[{'returns':{'today':v}} for v in [2,-1,0,None,float('nan')]]
+    assert a.advance_decline(rows)=={'advances':1,'declines':1,'unchanged':1,'unavailable':2,'covered':3,'total':5,'ratio':1.0,'net':0}
+    assert a.advance_decline([{'returns':{'today':2}}])['ratio'] is None
+    assert a.advance_decline([])['net'] is None
