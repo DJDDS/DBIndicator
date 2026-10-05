@@ -3,35 +3,80 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sector Analysis · DBIndicator</title>
-<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='2') }}">
 <script defer src="{{ url_for('static',filename='vendor/echarts-5.6.0.min.js') }}"></script>
-<script defer src="{{ url_for('static',filename='sector_analysis.js') }}"></script>
+<script defer src="{{ url_for('static',filename='sector_analysis.js', v='2') }}"></script>
+<script defer src="{{ url_for('static',filename='logout.js') }}"></script>
 </head>
 <body>
-<header><div><a class="brand" href="/sector-analysis">DBIndicator <span>SECTOR ANALYSIS</span></a><p>Market → sector → stock · strength, participation and structure</p></div>
-<nav aria-label="App navigation"><a href="/">Dashboard</a><a href="/oi-screener">OI Screener</a><a href="/sector-analysis" aria-current="page">Sector Analysis</a><a href="/patterns">Patterns</a></nav></header>
-<main>
-<div id="status" class="status" role="status">Loading cached sector data…</div>
-<section class="summary-strip" id="summary"></section>
-<div class="controls sticky"><label>Performance period<select id="period"><option value="today">Today</option><option value="1W">1 Week</option><option value="1M" selected>1 Month</option><option value="3M">3 Months</option><option value="6M">6 Months</option><option value="52W">52 Weeks</option><option value="QTD">Current QTD</option><option value="Q1">Q-1</option><option value="Q2">Q-2</option><option value="Q3">Q-3</option><option value="Q4">Q-4</option></select></label>
-<label>Sector<select id="sector"><option value="">Choose a sector</option></select></label>
-<label>Search<input id="search" type="search" placeholder="Sector or stock"></label><button id="refresh" type="button">Refresh view</button></div>
-<div class="tabs" role="tablist" aria-label="Sector views"><button role="tab" aria-selected="true" data-view="overview">Overview</button><button role="tab" aria-selected="false" data-view="heatmap">Heat Map</button><button role="tab" aria-selected="false" data-view="rotation">Rotation</button><button role="tab" aria-selected="false" data-view="detail">Sector Detail</button></div>
-<section id="overview" class="view"><div class="section-heading"><h1>Sector leaderboard</h1><button data-switch="heatmap">Open heat map ↗</button></div><p class="muted">Tap a sector heading to analyse it. Tap a column heading to sort. Missing data is shown as —.</p><div class="chart-grid"><section class="panel"><div class="section-heading"><h3>Sector ranking · selected period</h3><button data-fullscreen="ranking-chart">Fullscreen ↗</button></div><div id="ranking-chart" class="chart tall"></div></section><section class="panel"><div class="section-heading"><h3>Return versus participation</h3><button data-fullscreen="participation-chart">Fullscreen ↗</button></div><p class="muted">X: selected-period return. Y: current SMA20 breadth. Bubble size reflects the number of covered constituents.</p><div id="participation-chart" class="chart tall"></div></section></div><section class="panel"><div class="section-heading"><h3>Sector advance / decline · today</h3><button data-fullscreen="ad-chart">Fullscreen ↗</button></div><p class="muted">Stock counts versus previous close. Fresh quotes only; unavailable quotes are shown separately. Tap a sector bar for details.</p><div id="ad-chart" class="chart tall"></div></section><div class="table-scroll"><table id="sector-table"></table></div><div id="sector-cards" class="mobile-cards"></div></section>
-<section id="heatmap" class="view" hidden><div class="section-heading"><h2>Sector performance heat map</h2><button data-fullscreen="heat-chart">Fullscreen ↗</button></div><p class="muted">Actual percentage returns; intensity scales separately per period. Tap any cell to open that sector and period.</p><div class="chart-scroll"><div id="heat-chart" class="chart heat-chart" aria-label="Sector returns by period"></div></div><div class="section-heading"><h2>Moving-average breadth</h2><button data-fullscreen="ma-heat-chart">Fullscreen ↗</button></div><p class="muted">Percentage of covered current constituents above each completed daily SMA. Tooltips include coverage.</p><div class="chart-scroll"><div id="ma-heat-chart" class="chart heat-chart"></div></div></section>
-<section id="rotation" class="view" hidden><div class="section-heading"><h2>Relative-strength rotation</h2><div class="controls"><label>Lookback<select id="rotation-window"><option value="5">5 sessions</option><option value="20" selected>20 sessions</option><option value="60">60 sessions</option></select></label><button data-fullscreen="rotation-chart">Fullscreen ↗</button></div></div><p class="muted">X: sector/NIFTY ratio return. Y: change in that return versus the preceding equal window. Trails show six completed sessions. Descriptive rotation; no win probability implied.</p><div id="rotation-chart" class="chart tall"></div><div id="rotation-note" class="muted"></div></section>
-<section id="detail" class="view" hidden>
-<div class="section-heading"><h2><button id="detail-heading" class="heading-button">Choose a sector</button></h2><div class="controls"><button data-jump="price-panel">Chart ↓</button><button data-jump="constituent-panel">Constituents ↓</button><button data-jump="analysis-panel">Analysis ↓</button></div></div>
-<div id="verdict" class="verdict"></div><div id="detail-stats" class="summary-strip"></div>
-<section class="panel" id="price-panel"><div class="section-heading"><h3>Price and moving averages</h3><div class="controls"><label>Chart range<select id="range"><option value="1M">1 Month</option><option value="3M">3 Months</option><option value="6M">6 Months</option><option value="1Y" selected>1 Year</option><option value="3Y">3 Years</option><option value="5Y">5 Years</option></select></label><button data-fullscreen="price-chart">Fullscreen ↗</button></div></div><div class="ma-toggles" id="ma-toggles"></div><div id="price-chart" class="chart tall"></div><p id="price-note" class="muted"></p><details><summary>Exact SMA / EMA values and price distance</summary><div class="table-scroll"><table id="ma-table"></table></div></details></section>
-<section class="panel"><div class="section-heading"><h3>Compare performance · rebased to 100</h3><button data-fullscreen="compare-chart">Fullscreen ↗</button></div><label>Select a constituent to compare<select id="compare-stock"><option value="">Sector and NIFTY only</option></select></label><div id="compare-chart" class="chart"></div></section>
-<div class="chart-grid"><section class="panel"><div class="section-heading"><h3>Participation through time</h3><button data-fullscreen="breadth-chart">Fullscreen ↗</button></div><div id="breadth-chart" class="chart"></div><p class="muted">Current-membership SMA breadth, with per-date coverage. Sector price on the right axis. This does not reconstruct historical constituent membership.</p></section><section class="panel"><div class="section-heading"><h3>Four completed quarters + QTD</h3><button data-fullscreen="quarter-chart">Fullscreen ↗</button></div><div id="quarter-chart" class="chart"></div></section></div>
-<section class="panel"><div class="section-heading"><h3>Decline from the running high</h3><button data-fullscreen="drawdown-chart">Fullscreen ↗</button></div><p class="muted">Sector and NIFTY drawdown from their own running highs within the selected chart range. Reveals the depth and duration of setbacks.</p><div id="drawdown-chart" class="chart"></div></section><section class="panel"><div class="section-heading"><h3>Performance timeline</h3><button data-fullscreen="timeline-chart">Fullscreen ↗</button></div><div id="timeline-chart" class="chart short"></div></section>
-<section class="panel" id="analysis-panel"><div class="section-heading"><h3>Top 2 / bottom 2 · selected period</h3><label>Rank by<select id="rank-mode"><option value="returns">Absolute return</option><option value="vs_sector">Outperformance vs sector</option></select></label></div><div id="performers" class="performers"></div><p class="muted">Ranking is descriptive. Related news is not proof of causation. “Watch next” gives conditions, not a prediction.</p></section>
-<section class="panel"><div class="section-heading"><h3>Stock contribution</h3><button data-fullscreen="contribution-chart">Fullscreen ↗</button></div><p id="contribution-note" class="muted"></p><div id="contribution-chart" class="chart short"></div></section>
-<section class="panel" id="constituent-panel"><div class="section-heading"><h3>Every constituent</h3><div class="controls"><label>Heat map size<select id="tile-size"><option value="equal">Equal size</option><option value="weight">Index weight (if available)</option></select></label><label>Heat map metric<select id="tile-metric"><option value="returns">Selected-period return</option><option value="vs_sector">Relative to sector</option><option value="vs_nifty">Relative to NIFTY</option><option value="sma200">Distance from SMA200</option></select></label></div></div><section class="panel"><div class="section-heading"><h3>Stock return versus relative volume</h3><button data-fullscreen="volume-scatter-chart">Fullscreen ↗</button></div><p class="muted">Today’s return versus volume accumulated at the same clock time in prior sessions. Open a stock to load its intraday evidence. Uncovered stocks are excluded.</p><div id="volume-scatter-chart" class="chart"></div></section><div id="stock-heat" class="chart"></div><p id="stock-heat-note" class="muted"></p><div class="table-scroll"><table id="stock-table"></table></div></section>
-<section class="panel" id="stock-panel" hidden><div class="section-heading"><h3 id="stock-heading"></h3><div class="controls"><a id="stock-existing-chart" class="button">Open existing chart ↗</a><label>Stock chart<select id="stock-mode"><option value="daily">Daily + SMA / EMA</option><option value="intraday">Session + approximate VWAP</option></select></label><button data-fullscreen="stock-chart">Fullscreen ↗</button></div></div><div id="stock-chart" class="chart tall"></div><p id="stock-note" class="muted"></p></section>
-</section>
-<details class="panel methodology"><summary>Sources, calculations and interpretation</summary><div id="methodology"></div><p><a href="https://www.niftyindices.com/indices/equity/sectoral-indices" target="_blank" rel="noopener noreferrer">Official Nifty sector catalogue ↗</a></p></details>
+<header class="top">
+  <a class="brand" href="/sector-analysis">DBIndicator <span>Sector Analysis</span></a>
+  <nav aria-label="App navigation">
+    <a href="/">Dashboard</a><a href="/oi-screener">OI Screener</a><a href="/sector-analysis" aria-current="page">Sectors</a><a href="/patterns">Patterns</a><a href="/logout" data-logout>Logout</a>
+  </nav>
+</header>
+
+<div class="toolbar">
+  <div class="chips" id="periods" role="group" aria-label="Performance period"></div>
+  <div class="search">
+    <input id="search" type="search" placeholder="Find a stock or sector…" autocomplete="off" aria-label="Find a stock or sector">
+    <div id="search-results" class="search-results" hidden></div>
+  </div>
+  <div id="status" class="status" role="status">Loading…</div>
+</div>
+
+<main class="layout">
+  <!-- Sector list -->
+  <section class="card sectors" aria-label="Sectors">
+    <div class="card-head">
+      <h2>Sectors</h2>
+      <div class="seg" role="group" aria-label="Sector view">
+        <button data-sview="list" aria-pressed="true">List</button><button data-sview="heat" aria-pressed="false">Heat map</button>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="show-variants"> Show variant indices (MidSmall, 25/50, Ex-Bank, Nifty500)</label>
+    <div id="sector-list" class="sector-list"></div>
+    <div id="sector-heat" class="sector-heat" hidden></div>
+  </section>
+
+  <!-- Selected sector -->
+  <section class="card detail" id="detail" aria-live="polite">
+    <div id="detail-empty" class="empty">Choose a sector on the left to see its stocks.</div>
+    <div id="detail-body" hidden>
+      <div class="detail-head">
+        <div>
+          <h1 id="d-name"></h1>
+          <p class="muted" id="d-sub"></p>
+        </div>
+        <div class="d-price"><strong id="d-price"></strong><span id="d-ret"></span></div>
+      </div>
+      <div class="kpis" id="d-kpis"></div>
+
+      <div class="block">
+        <div class="block-head">
+          <h3 id="stocks-title">Stocks</h3>
+          <div class="seg" role="group" aria-label="Filter stocks">
+            <button data-filter="all" aria-pressed="true">All</button><button data-filter="up" aria-pressed="false">Gainers</button><button data-filter="down" aria-pressed="false">Losers</button>
+          </div>
+        </div>
+        <p class="muted small">Tap a stock for its chart. Tap a column to sort. “vs sector” compares the stock with this sector over the selected period.</p>
+        <div class="table-wrap"><table id="stock-table" class="stocks"></table></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head">
+          <h3>Sector vs NIFTY 50 <span class="muted small">(rebased to 100)</span></h3>
+          <div class="seg" role="group" aria-label="Chart range" id="ranges"></div>
+        </div>
+        <div id="sector-chart" class="chart"></div>
+      </div>
+
+      <details class="block notes">
+        <summary>How these numbers are calculated</summary>
+        <div id="methodology" class="small muted"></div>
+      </details>
+    </div>
+  </section>
 </main>
-</body></html>
+</body>
+</html>

@@ -1,103 +1,296 @@
-/* DBIndicator Sector Analysis. Data comes only from authenticated cached APIs. */
+/* DBIndicator Sector Analysis v2: sector list -> stocks, in one view. Data from cached authenticated APIs. */
 'use strict';
 (() => {
 const $ = id => document.getElementById(id);
-const periods = ['today','1W','1M','3M','6M','52W','QTD','Q1','Q2','Q3','Q4'];
-const labels = {today:'Today','1W':'1W','1M':'1M','3M':'3M','6M':'6M','52W':'52W',QTD:'QTD',Q1:'Q-1',Q2:'Q-2',Q3:'Q-3',Q4:'Q-4'};
-const colors = ['#73b8ff','#f7c572','#c4a0ff','#39d6a0','#ff9e73','#fb7185','#67d3e8','#bbdd88'];
-const state = {data:null,detail:null,stock:null,view:'overview',sort:'1M',ascending:false,loading:false,sequence:0,stockSequence:0,stockSort:null,stockAscending:false};
+const PERIODS = [['today','Today'],['1W','1W'],['1M','1M'],['3M','3M'],['6M','6M'],['52W','1Y'],['QTD','QTD']];
+const PLABEL = Object.fromEntries(PERIODS);
+const RANGES = [['3M',63],['6M',126],['1Y',252],['3Y',756]];
+const VARIANT = /midsmall|25\/50|ex bank|nifty500|reits/i;
+const S = {data:null, period:'1M', sectorId:null, detail:null, seq:0, sview:'list', variants:false,
+           sort:{key:'ret', dir:-1}, filter:'all', open:null, range:'1Y', highlight:null};
 const charts = new Map();
-const valid = n => typeof n === 'number' && Number.isFinite(n);
-const num = (n,d=2) => valid(n) ? n.toLocaleString('en-IN',{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
-const pct = n => valid(n) ? `${n>0?'+':''}${num(n)}%` : '—';
-const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const tone = n => valid(n) ? (n>0?'positive':n<0?'negative':'') : '';
-const colored = n => `<span class="${tone(n)}">${pct(n)}</span>`;
-const chosenPeriod = () => $('period').value;
-const safeLink = url => {try {const u=new URL(url);return ['https:','http:'].includes(u.protocol)?u.href:null;} catch{return null;}};
-const source = (url,label) => {const u=safeLink(url);return u?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`:esc(label);};
-const adText = r => {const a=r.advance_decline;return a?`${a.advances} ↑ / ${a.declines} ↓ / ${a.unchanged} = · A/D ${a.declines?num(a.ratio):a.covered?'no declines':'—'} · ${a.unavailable} unavailable`:'Awaiting fresh quotes';};
-const heading = r => `<button data-sector="${esc(r.id)}">${esc(r.name)}</button>`;
-const blank = (id,message) => {const chart=getChart(id);chart.clear();chart.setOption({title:{text:message,left:'center',top:'middle',textStyle:{color:'#94a6bd',fontSize:13,width:250,overflow:'break'}}});};
-function getChart(id) {if(!charts.has(id)) charts.set(id,echarts.init($(id),null,{renderer:'canvas'}));return charts.get(id);}
-function option(id,opt){const chart=getChart(id);chart.setOption({backgroundColor:'transparent',color:colors,textStyle:{color:'#94a6bd',fontFamily:'system-ui'},animationDuration:250,...opt},true);chart.resize();}
-const axes = {nameLocation:'middle',nameGap:34,axisLabel:{color:'#94a6bd',fontSize:10,hideOverlap:true},axisLine:{lineStyle:{color:'#33465c'}},splitLine:{lineStyle:{color:'#203047'}}};
-const tip = {trigger:'axis',backgroundColor:'#0d1624',borderColor:'#33465c',textStyle:{color:'#e7eef8',fontSize:12},confine:true};
-const zoom = [{type:'inside',start:0,end:100},{type:'slider',height:16,bottom:4,borderColor:'#26364b',textStyle:{color:'#94a6bd'},dataBackground:{lineStyle:{color:'#73b8ff'}}}];
-const grid = {left:58,right:24,top:45,bottom:65};
-function line(name,data,extra={}){return {name,type:'line',showSymbol:false,connectNulls:false,data,lineStyle:{width:2},...extra};}
-function metric(label,value,note='',attrs=''){return `<button class="metric" ${attrs}><small>${esc(label)}</small><strong>${esc(value)}</strong><span>${esc(note)}</span></button>`;}
-function setView(view){state.view=view;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==view);document.querySelectorAll('[data-view]').forEach(el=>el.setAttribute('aria-selected',String(el.dataset.view===view)));renderCharts();requestAnimationFrame(()=>charts.forEach(c=>c.resize()));}
-function status(s){const parts=[];if(s.running)parts.push(`Building history ${s.done}/${s.total}; completed rows appear as they load`);if(s.error)parts.push(s.error);parts.push(`Daily cache: ${s.updated_at??'not loaded'}`);parts.push(`Quote retrieval: ${s.quote_at??'not loaded'}`);$('status').textContent=parts.join(' · ');$('status').classList.toggle('warn',!!s.error||!s.updated_at);}
-async function get(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok){let message=`Request failed (${r.status})`;try{message=(await r.json()).error||message;}catch{}throw new Error(message);}return r.json();}
-async function refresh(){if(state.loading)return;state.loading=true;$('refresh').disabled=true;try{state.data=await get('/api/sector-analysis');status(state.data.status);renderOverview();const existing=$('sector').value;$('sector').innerHTML='<option value="">Choose a sector</option>'+state.data.sectors.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');if(state.data.sectors.some(r=>r.id===existing))$('sector').value=existing;else if(state.data.sectors.length)$('sector').value=state.data.sectors[0].id;
-$('methodology').innerHTML=Object.entries(state.data.methodology??{}).map(([k,v])=>`<p><b>${esc(k.toUpperCase())}</b> · ${esc(v)}</p>`).join('');if($('sector').value)await loadDetail();else renderCharts();}catch(e){$('status').textContent=e.message;$('status').classList.add('warn');}finally{state.loading=false;$('refresh').disabled=false;}}
-function sorted(rows,key=state.sort,mode='returns'){return [...rows].sort((a,b)=>{const av=key==='name'?a.name:(a[mode]?.[key]),bv=key==='name'?b.name:(b[mode]?.[key]);if(key==='name')return String(av).localeCompare(String(bv))*(state.ascending?1:-1);if(!valid(av))return valid(bv)?1:0;if(!valid(bv))return -1;return (av-bv)*(state.ascending?1:-1);});}
-function renderOverview(){if(!state.data)return;const all=state.data.sectors,p=chosenPeriod(),usable=all.filter(r=>valid(r.returns[p]));const top=[...usable].sort((a,b)=>b.returns[p]-a.returns[p])[0];const bottom=[...usable].sort((a,b)=>a.returns[p]-b.returns[p])[0];$('summary').innerHTML=metric('Sector coverage',`${all.filter(r=>r.bars>0).length} / ${all.length}`,'Official sectoral catalogue','data-switch="overview"')+metric(`Leader · ${labels[p]}`,top?top.name:'—',top?pct(top.returns[p]):'History required',top?`data-sector="${esc(top.id)}"`:'')+metric(`Laggard · ${labels[p]}`,bottom?bottom.name:'—',bottom?pct(bottom.returns[p]):'History required',bottom?`data-sector="${esc(bottom.id)}"`:'')+metric(`NIFTY 50 · ${labels[p]}`,pct(state.data.benchmark?.returns?.[p]),'Price-return benchmark','data-switch="rotation"');
-const search=$('search').value.toLowerCase();const rows=sorted(all.filter(r=>r.name.toLowerCase().includes(search)));
-$('sector-table').innerHTML='<thead><tr><th><button data-sort="name">Sector ↕</button></th>'+periods.map(p=>`<th><button data-sort="${p}">${labels[p]} ↕</button></th>`).join('')+'<th>vs NIFTY</th><th>Below 52W high</th><th>SMA / EMA</th><th>Advance / decline · today</th><th>SMA20 breadth</th><th>Coverage</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${heading(r)}<small>${esc(r.history_date??'History unavailable')}${r.quality?.discontinuity?' · ⚠ price discontinuity':''}</small></td>${periods.map(p=>`<td>${colored(r.returns[p])}</td>`).join('')}<td>${colored(r.vs_nifty[p])}</td><td>${colored(r.below_high52)}</td><td>${r.above_sma}/${r.ma_coverage} · ${r.above_ema}/${r.ma_coverage}</td><td>${esc(adText(r))}</td><td>${pct(r.breadth['20'].pct)}<small>${r.breadth['20'].covered} covered</small></td><td>${r.coverage.available}/${r.coverage.total}</td></tr>`).join('')+'</tbody>';
-$('sector-cards').innerHTML=rows.map(r=>`<article class="sector-mobile">${heading(r)}<div class="mini-grid">${[p,p==='1W'?'today':'1W',p==='52W'?'1M':'52W'].map(k=>`<div><small>${labels[k]}</small>${colored(r.returns[k])}</div>`).join('')}<div><small>vs NIFTY ${labels[p]}</small>${colored(r.vs_nifty[p])}</div><div><small>SMA20 breadth</small>${pct(r.breadth['20'].pct)}</div><div><small>Advance / decline · today</small>${esc(adText(r))}</div><div><small>History coverage</small>${r.coverage.available}/${r.coverage.total}</div></div><p class="muted">${esc(r.history_date??'Awaiting history')}${r.quality?.discontinuity?' · ⚠ possible corporate-action discontinuity':''}</p></article>`).join('');}
-async function loadDetail(){const id=$('sector').value;if(!id)return;const seq=++state.sequence;try{const d=await get(`/api/sector-analysis/${encodeURIComponent(id)}?window=${$('rotation-window').value}`);if(seq!==state.sequence)return;state.detail=d;const selected=$('compare-stock').value;$('compare-stock').innerHTML='<option value="">Sector and NIFTY only</option>'+d.members.map(r=>`<option value="${esc(r.symbol)}">${esc(r.symbol)}</option>`).join('');if(d.members.some(r=>r.symbol===selected))$('compare-stock').value=selected;else {state.stock=null;$('stock-panel').hidden=true;}renderDetail();renderCharts();}catch(e){if(seq===state.sequence)$('verdict').textContent=e.message;}}
-function maAlignment(r,kind){const v=r[kind];const vals=[20,50,100,200].map(n=>v?.[String(n)]);if(!valid(r.price)||!vals.every(valid))return 'Incomplete history';if(r.price>vals[0]&&vals.every((v,i)=>i===3||v>vals[i+1]))return 'Bull alignment';if(r.price<vals[0]&&vals.every((v,i)=>i===3||v<vals[i+1]))return 'Bear alignment';return 'Mixed / transition';}
-function renderDetail(){const d=state.detail;if(!d)return;const r=d.sector,p=chosenPeriod();$('detail-heading').textContent=r.name;const breadth=r.breadth['20'].pct;const relative=r.vs_nifty[p];let lead=valid(relative)?(relative>0?'Leading NIFTY':relative<0?'Lagging NIFTY':'Matching NIFTY'):'Relative strength unavailable';let participation=valid(breadth)?(breadth>=70?'Broad participation':breadth<=30?'Weak participation':'Mixed participation'):'Breadth unavailable';$('verdict').innerHTML=`<strong>${esc(lead)} · ${esc(participation)} · ${esc(maAlignment(r,'sma'))}</strong><p>${labels[p]}: ${colored(r.returns[p])}; vs NIFTY: ${colored(relative)} percentage-point difference. ${r.coverage.available}/${r.coverage.total} constituents have history.</p><p>${source(r.member_source||r.source,'Official membership')} · retrieved ${esc(r.retrieved_at??'unavailable')} · price timestamp ${esc(r.quote_timestamp??r.history_date??'unavailable')}${r.membership_error?' · ⚠ cached membership refresh failed':''}</p>${r.quality?.discontinuity?'<p class="negative">⚠ Large price discontinuity detected. Verify corporate actions before relying on historical returns.</p>':''}<p>${esc(r.evidence?.watch_next?.[0]??'')}</p><p>${esc(r.evidence?.watch_next?.[1]??'')}</p>`;
-$('detail-stats').innerHTML=metric('Selected-period return',pct(r.returns[p]),labels[p],'data-jump="quarter-chart"')+metric('Advance / decline · today',`${r.advance_decline?.advances??'—'} ↑ / ${r.advance_decline?.declines??'—'} ↓`,adText(r),'data-jump="constituent-panel"')+metric('SMA20 participation',pct(breadth),`5-session change: ${pct(r.breadth_change?.['20'])} pp`,'data-jump="breadth-chart"')+metric('From 52W high',pct(r.below_high52),`52W range position: ${pct(r.position52)}`,'data-jump="price-panel"');
-$('price-note').textContent=`Daily candles through ${r.history_date??'unavailable'} · ${r.bars} bars. SMA: ${maAlignment(r,'sma')}; EMA: ${maAlignment(r,'ema')}. Cash sector indices have no traded-volume VWAP.`;
-$('ma-table').innerHTML='<thead><tr><th>Period</th><th>SMA</th><th>Price distance</th><th>EMA</th><th>Price distance</th></tr></thead><tbody>'+[20,50,100,200].map(n=>`<tr><td>${n}</td><td>${num(r.sma[n])}</td><td>${colored(r.sma_distance[n])}</td><td>${num(r.ema[n])}</td><td>${colored(r.ema_distance[n])}</td></tr>`).join('')+'</tbody>';
-renderPerformers();renderStocks();$('contribution-note').textContent=d.contribution_note;}
-function renderPerformers(){const d=state.detail;if(!d)return;const mode=$('rank-mode').value,p=chosenPeriod();const members=d.members.filter(r=>valid(r[mode]?.[p]));const top=[...members].sort((a,b)=>b[mode][p]-a[mode][p]||a.symbol.localeCompare(b.symbol)).slice(0,2);const bottom=[...members].sort((a,b)=>a[mode][p]-b[mode][p]||a.symbol.localeCompare(b.symbol)).slice(0,2);const card=(r,type,i)=>`<article class="performer ${type}"><small>${type==='bottom'?'BOTTOM':'TOP'} ${i+1} · ${esc(labels[p])}</small><h4><button data-stock="${esc(r.symbol)}">${esc(r.symbol)} ↗</button> ${colored(r[mode][p])}</h4><p>${esc(r.name)} · ${esc(r.history_date??'no daily history')}</p><p><b>Observed</b></p><ul>${(r.evidence?.by_period?.[p]??r.evidence?.observed??[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p>Selected period vs sector: ${colored(r.vs_sector[p])}; vs NIFTY: ${colored(r.vs_nifty[p])} pp. SMA: ${esc(maAlignment(r,'sma'))}. Extension: ${num(r.extension_atr)} ATR.</p><p><b>Possible explanation</b> · ${esc(r.evidence?.explanation)}</p>${(r.evidence?.news??[]).map(n=>`<p>${source(n.url,n.title)}<br>${esc(n.source)} · ${esc(n.published_at)}</p>`).join('')}<p><b>Watch next</b></p><ul>${(r.evidence?.watch_next??[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>${r.event?`<p><b>Upcoming results</b> · ${esc(r.event.meeting_date)} · ${esc(r.event.purpose)}<br>Calendar observed ${esc(r.event_observed_at??'unavailable')}</p>`:'<p>Upcoming event: no verified event in the available calendar cache.</p>'}${r.quality?.discontinuity?'<p class="negative">⚠ Price discontinuity: verify splits / bonuses.</p>':''}</article>`;
-$('performers').innerHTML=top.map((r,i)=>card(r,'top',i)).join('')+bottom.map((r,i)=>card(r,'bottom',i)).join('');if(!members.length)$('performers').innerHTML='<p class="muted">No covered constituents for this period yet.</p>';}
-function renderStocks(){const d=state.detail;if(!d)return;const p=chosenPeriod(),search=$('search').value.toLowerCase();const rows=d.members.filter(r=>(r.symbol+' '+r.name).toLowerCase().includes(search)).sort((a,b)=>{const key=state.stockSort??p;if(!valid(a.returns[key]))return valid(b.returns[key])?1:0;if(!valid(b.returns[key]))return -1;return (a.returns[key]-b.returns[key])*(state.stockAscending?1:-1);});$('stock-table').innerHTML='<thead><tr><th>Stock · tap for charts</th><th>Weight</th>'+periods.map(k=>`<th><button data-stock-sort="${k}">${labels[k]} ↕</button></th>`).join('')+'<th>vs Sector</th><th>vs NIFTY</th><th>SMA / EMA</th><th>VWAP</th><th>From VWAP</th><th>Volume / normal</th><th>Below 52W high</th></tr></thead><tbody>'+rows.map(r=>`<tr><td><button data-stock="${esc(r.symbol)}">${esc(r.symbol)}</button><small>${esc(r.name)}</small><small>${esc(r.history_date??'History unavailable')}${r.quality?.discontinuity?' · ⚠ discontinuity':''}</small></td><td>${pct(r.weight)}</td>${periods.map(k=>`<td>${colored(r.returns[k])}</td>`).join('')}<td>${colored(r.vs_sector[p])}</td><td>${colored(r.vs_nifty[p])}</td><td>${r.above_sma}/${r.ma_coverage} · ${r.above_ema}/${r.ma_coverage}</td><td>${num(r.vwap)}<small>${esc(r.vwap_at??'Tap stock to load')}</small></td><td>${colored(r.vwap_distance)}</td><td>${num(r.volume_ratio)}×</td><td>${colored(r.below_high52)}</td></tr>`).join('')+'</tbody>';}
-function rangeBars(bars){if(!bars.length)return [];const range=$('range').value;const months={'1M':1,'3M':3,'6M':6,'1Y':12,'3Y':36,'5Y':60}[range];const boundary=new Date(`${bars.at(-1).time}T00:00:00Z`);boundary.setUTCMonth(boundary.getUTCMonth()-months);const date=boundary.toISOString().slice(0,10);return bars.filter(b=>b.time>=date);}
-function priceChart(id,chart,intraday=null){const bars=intraday??rangeBars(chart?.candles??[]);if(!bars.length){blank(id,'History is not available yet');return;}const dates=bars.map(b=>b.time);const selected=[...document.querySelectorAll('#ma-toggles input:checked')].map(el=>el.value);const series=[{name:'Price',type:'candlestick',data:bars.map(b=>[b.open,b.close,b.low,b.high]),itemStyle:{color:'#39d6a0',color0:'#fb7185',borderColor:'#39d6a0',borderColor0:'#fb7185'}}];if(!intraday){selected.forEach((key,i)=>{const [kind,n]=key.split('-');const points=new Map((chart[kind]?.[n]??[]).map(v=>[v.time,v.value]));series.push(line(`${kind.toUpperCase()} ${n}`,dates.map(t=>points.get(t)??null),{lineStyle:{width:1.4,color:colors[i%colors.length]}}));});}
-option(id,{tooltip:{...tip,axisPointer:{type:'cross'}},legend:{type:'scroll',top:0,textStyle:{color:'#94a6bd',fontSize:10}},grid,xAxis:{...axes,type:'category',data:dates,boundaryGap:true},yAxis:{...axes,type:'value',scale:true},dataZoom:zoom,series});}
-function compareChart(){const d=state.detail;if(!d)return;const sector=rangeBars(d.chart.candles),nifty=d.benchmark_chart.candles,stock=state.stock?.chart?.candles??[];if(!sector.length){blank('compare-chart','History is not available yet');return;}const dates=sector.map(b=>b.time);const sources=[[d.sector.name,sector],['NIFTY 50',nifty]];if($('compare-stock').value&&state.stock?.symbol===$('compare-stock').value)sources.push([state.stock.symbol,stock]);const maps=sources.map(([name,bars])=>[name,new Map(bars.map(b=>[b.time,b.close]))]);const commonStart=dates.find(t=>maps.every(([,m])=>valid(m.get(t))));if(!commonStart){blank('compare-chart','No shared dates for this comparison');return;}const shared=dates.filter(t=>t>=commonStart);option('compare-chart',{tooltip:tip,legend:{type:'scroll',textStyle:{color:'#94a6bd'}},grid,xAxis:{...axes,type:'category',data:shared},yAxis:{...axes,type:'value',scale:true,name:'Rebased 100'},dataZoom:zoom,series:maps.map(([name,m])=>line(name,shared.map(t=>valid(m.get(t))?m.get(t)/m.get(commonStart)*100:null)))});}
-function heatChart(){if(!state.data)return;const rows=state.data.sectors;const data=[];const scales=periods.map(p=>Math.max(1,...rows.map(r=>Math.abs(r.returns[p]??0))));rows.forEach((r,y)=>periods.forEach((p,x)=>{if(valid(r.returns[p]))data.push({value:[x,y,r.returns[p]/scales[x]],raw:r.returns[p],sector:r.id,period:p});}));option('heat-chart',{tooltip:{...tip,trigger:'item',formatter:p=>`${esc(rows[p.value[1]].name)}<br>${labels[periods[p.value[0]]]}: ${pct(p.data.raw)}`},grid:{left:205,right:30,top:30,bottom:55},xAxis:{...axes,type:'category',data:periods.map(p=>labels[p]),position:'top',splitArea:{show:true}},yAxis:{...axes,type:'category',data:rows.map(r=>r.name.replace(/Nifty /i,'')),inverse:true,axisLabel:{fontSize:10,width:185,overflow:'truncate'}},visualMap:{min:-1,max:1,show:false,inRange:{color:['#743341','#142338','#1c6d57']}},series:[{type:'heatmap',data,label:{show:true,fontSize:10,color:'#e7eef8',formatter:p=>pct(p.data.raw)},itemStyle:{borderColor:'#090f19',borderWidth:2}}]});getChart('heat-chart').off('click');getChart('heat-chart').on('click',p=>{if(p.data?.sector){$('period').value=p.data.period;chooseSector(p.data.sector);}});
-const breadth=[];rows.forEach((r,y)=>[20,50,100,200].forEach((n,x)=>{const v=r.breadth[n];if(valid(v.pct))breadth.push({value:[x,y,v.pct],covered:v.covered,total:r.coverage.total,sector:r.id});}));option('ma-heat-chart',{tooltip:{...tip,trigger:'item',formatter:p=>`${esc(rows[p.value[1]].name)}<br>${pct(p.value[2])} above SMA${[20,50,100,200][p.value[0]]}<br>${p.data.covered}/${p.data.total} covered`},grid:{left:205,right:30,top:30,bottom:55},xAxis:{...axes,type:'category',data:['SMA20','SMA50','SMA100','SMA200'],position:'top'},yAxis:{...axes,type:'category',data:rows.map(r=>r.name.replace(/Nifty /i,'')),inverse:true,axisLabel:{fontSize:10,width:185,overflow:'truncate'}},visualMap:{min:0,max:100,show:false,inRange:{color:['#743341','#142338','#1c6d57']}},series:[{type:'heatmap',data:breadth,label:{show:true,color:'#e7eef8',formatter:p=>`${num(p.value[2],0)}%`},itemStyle:{borderColor:'#090f19',borderWidth:2}}]});getChart('ma-heat-chart').off('click');getChart('ma-heat-chart').on('click',p=>{if(p.data?.sector)chooseSector(p.data.sector);});}
-function rotationChart(){const d=state.detail;if(!d){blank('rotation-chart','Select a sector to load rotation data');return;}const series=[];const lookup=new Map(state.data.sectors.map(r=>[r.id,r]));Object.entries(d.rotation).forEach(([id,points],i)=>{if(!points.length)return;const name=lookup.get(id)?.name??id;const last=points.at(-1);series.push({name,type:'line',data:points.map(p=>[p.x,p.y]),showSymbol:false,lineStyle:{width:1,opacity:.5,color:colors[i%colors.length]},silent:true});series.push({name,type:'scatter',data:[{value:[last.x,last.y],id,date:last.time}],symbolSize:id===$('sector').value?15:8,label:{show:id===$('sector').value,formatter:name,color:'#e7eef8'},itemStyle:{color:colors[i%colors.length]},markLine:i===0?{silent:true,symbol:'none',lineStyle:{color:'#536c8b',type:'dashed'},data:[{xAxis:0},{yAxis:0}]}:undefined});});if(!series.length){blank('rotation-chart','Both sector and benchmark history are required');return;}option('rotation-chart',{tooltip:{...tip,trigger:'item',formatter:p=>`${esc(p.seriesName)}<br>Relative ratio return: ${pct(p.value[0])}<br>Momentum change: ${num(p.value[1])} pp<br>${esc(p.data.date??'')}`},grid:{...grid,left:65,right:35},xAxis:{...axes,type:'value',name:'Relative strength %',nameLocation:'middle',nameGap:30},yAxis:{...axes,type:'value',name:'RS momentum · pp'},series,graphic:[['Leading','right',20,20,'#39d6a0'],['Improving','left',70,20,'#73b8ff'],['Weakening','right',20,null,'#f7c572'],['Lagging','left',70,null,'#fb7185']].map(([text,side,value,top,color])=>({type:'text',[side]:value,...(top===null?{bottom:40}:{top}),style:{text,fill:color,fontSize:12}}))});getChart('rotation-chart').off('click');getChart('rotation-chart').on('click',p=>{if(p.data?.id)chooseSector(p.data.id);});$('rotation-note').textContent=`${series.length/2}/${state.data.sectors.length} sectors have sufficient paired history. Window: ${d.rotation_window} sessions.`;}
-function detailCharts(){const d=state.detail;if(!d)return;priceChart('price-chart',d.chart);compareChart();const q=['Q4','Q3','Q2','Q1','QTD'];option('quarter-chart',{tooltip:tip,grid,xAxis:{...axes,type:'category',data:q.map(k=>d.sector.quarter_labels[k]??'Current QTD')},yAxis:{...axes,type:'value',axisLabel:{formatter:'{value}%'}},series:[{name:'Quarter return',type:'bar',data:q.map(k=>({value:d.sector.returns[k],itemStyle:{color:d.sector.returns[k]>=0?'#39d6a0':'#fb7185'}})),barMaxWidth:38}]});const p=['1W','1M','3M','6M','52W'];option('timeline-chart',{tooltip:tip,legend:{textStyle:{color:'#94a6bd'}},grid,xAxis:{...axes,type:'category',data:p},yAxis:{...axes,type:'value',axisLabel:{formatter:'{value}%'}},series:[{name:d.sector.name,type:'bar',data:p.map(k=>d.sector.returns[k])},{name:'NIFTY 50',type:'bar',data:p.map(k=>state.data.benchmark.returns[k])}]});
-const bars=rangeBars(d.chart.candles),dates=bars.map(b=>b.time),bmap=new Map(d.breadth_series.map(b=>[b.time,b]));if(dates.length)option('breadth-chart',{tooltip:tip,legend:{type:'scroll',textStyle:{color:'#94a6bd'},top:0},grid:{...grid,right:55},xAxis:{...axes,type:'category',data:dates},yAxis:[{...axes,type:'value',min:0,max:100,axisLabel:{formatter:'{value}%'}},{...axes,type:'value',scale:true}],dataZoom:zoom,series:[...['20','50','200'].map(n=>line(`Above SMA${n}`,dates.map(t=>bmap.get(t)?.[n]??null))),line('Sector price',bars.map(b=>b.close),{yAxisIndex:1,lineStyle:{color:'#74849a',width:1,type:'dashed'}})]});else blank('breadth-chart','History is not available yet');
-const contrib=d.contributions.filter(c=>valid(c.value)).sort((a,b)=>a.value-b.value);if(contrib.length)option('contribution-chart',{tooltip:{...tip,trigger:'item'},grid:{left:100,right:25,top:15,bottom:30},xAxis:{...axes,type:'value',name:'Percentage points'},yAxis:{...axes,type:'category',data:contrib.map(c=>c.symbol)},series:[{type:'bar',data:contrib.map(c=>({value:c.value,itemStyle:{color:c.value>=0?'#39d6a0':'#fb7185'}}))}]});else blank('contribution-chart','Dated index weights are unavailable');stockHeat();if(state.stock)renderStockChart();}
-function stockHeat(){const d=state.detail;if(!d)return;const p=chosenPeriod(),mode=$('tile-metric').value;const weight=$('tile-size').value==='weight';const canWeight=d.members.length&&d.members.every(r=>valid(r.weight));if(weight&&!canWeight){blank('stock-heat','Index-weight sizing is unavailable without weights');$('stock-heat-note').textContent=d.contribution_note;return;}const data=d.members.map(r=>{const value=mode==='sma200'?r.sma_distance['200']:r[mode]?.[p];const intensity=valid(value)?Math.min(Math.abs(value)/10,.8):0;const base=valid(value)?(value>0?`rgba(36,165,121,${.25+intensity})`:`rgba(205,68,91,${.25+intensity})`):'#233247';return {name:r.symbol,value:weight?r.weight:1,raw:value,symbol:r.symbol,itemStyle:{color:base},label:{formatter:`${r.symbol}\n${pct(value)}`}};});option('stock-heat',{tooltip:{...tip,trigger:'item',formatter:p=>`${esc(p.name)}<br>${pct(p.data.raw)}${mode==='vs_sector'||mode==='vs_nifty'?' · percentage-point difference':''}`},series:[{type:'treemap',data,roam:false,nodeClick:false,breadcrumb:{show:false},leafDepth:1,label:{show:true,color:'#fff',fontSize:11},itemStyle:{borderColor:'#101b2b',borderWidth:3,gapWidth:3}}]});getChart('stock-heat').off('click');getChart('stock-heat').on('click',p=>{if(p.data?.symbol)chooseStock(p.data.symbol);});$('stock-heat-note').textContent=`${d.members.filter(r=>valid(mode==='sma200'?r.sma_distance['200']:r[mode]?.[p])).length}/${d.members.length} covered · ${weight?'index weight':'equal tile size'} · ${mode==='sma200'?'distance from SMA200':labels[p]}. Tap a tile for charts.`;}
-function renderStockChart(){const s=state.stock;if(!s)return;$('stock-heading').textContent=s.symbol;$('stock-existing-chart').href=`/chart/${encodeURIComponent(s.symbol)}`;if($('stock-mode').value==='intraday'){const candles=s.intraday?.candles??[];if(!candles.length){blank('stock-chart','Session history queued; refresh after about a minute');$('stock-note').textContent=s.vwap_note;return;}const day=candles.at(-1).date.slice(0,10);const bars=candles.filter(c=>c.date.slice(0,10)===day).map(c=>({...c,time:c.date.slice(11,16)}));priceChart('stock-chart',s.chart,bars);const vwap=new Map((s.intraday.series??[]).filter(v=>v.time.slice(0,10)===day).map(v=>[v.time.slice(11,16),v.value]));getChart('stock-chart').setOption({series:[{name:'Price',type:'candlestick',data:bars.map(b=>[b.open,b.close,b.low,b.high])},line('Approximate VWAP',bars.map(b=>vwap.get(b.time)??null),{lineStyle:{color:'#f7c572',width:2}})]});$('stock-note').textContent=`Session ${day} · 5-minute OHLCV approximation · VWAP ${num(s.intraday.vwap)} · volume vs same-clock prior sessions ${num(s.intraday.volume_ratio)}× (${s.intraday.comparison_sessions??0} sessions) · retrieved ${s.intraday.as_of??'—'}`;}else{priceChart('stock-chart',s.chart);$('stock-note').textContent=`Daily chart · ${s.chart.candles.length} cached bars · moving-average toggles above apply here too. ${s.vwap_note}`;}}
-async function chooseStock(symbol,scroll=true){const seq=++state.stockSequence;try{const stock=await get(`/api/sector-analysis/stock/${encodeURIComponent(symbol)}`);if(seq!==state.stockSequence)return;state.stock=stock;$('stock-panel').hidden=false;$('compare-stock').value=symbol;renderStockChart();compareChart();if(scroll)$('stock-panel').scrollIntoView({behavior:'smooth',block:'start'});}catch(e){$('stock-panel').hidden=false;$('stock-note').textContent=e.message;}}
-async function chooseSector(id){$('sector').value=id;setView('detail');$('verdict').textContent='Loading sector analysis…';await loadDetail();}
-function advanceDeclineChart(){
-const rows=state.data?.sectors??[];if(!rows.length){blank('ad-chart','Awaiting sector membership');return;}
-$('ad-chart').style.height=`${Math.max(360,rows.length*24)}px`;
-const categories=[['Advancing','advances','#39d6a0'],['Declining','declines','#fb7185'],['Unchanged','unchanged','#f7c572'],['Unavailable','unavailable','#53647b']];
-option('ad-chart',{tooltip:{...tip,formatter:items=>{const r=rows[items[0].dataIndex];return `${esc(r.name)}<br>${esc(adText(r))}<br>${r.advance_decline?.covered??0}/${r.advance_decline?.total??0} fresh quotes`; }},legend:{type:'scroll',textStyle:{color:'#94a6bd'}},grid:{left:window.innerWidth<600?75:150,right:25,top:40,bottom:40},xAxis:{...axes,type:'value',min:0,minInterval:1,name:'Stocks'},yAxis:{...axes,type:'category',data:rows.map(r=>r.name.replace(/Nifty /i,'')),axisLabel:{fontSize:9,width:140,overflow:'truncate'}},dataZoom:[{type:'inside',yAxisIndex:0}],series:categories.map(([name,key,color])=>({name,type:'bar',stack:'stocks',barMaxWidth:14,itemStyle:{color},data:rows.map(r=>({value:r.advance_decline?.[key]??null,id:r.id}))}))});
-getChart('ad-chart').off('click');getChart('ad-chart').on('click',v=>{if(v.data?.id)chooseSector(v.data.id);});
+
+const ok = n => typeof n === 'number' && Number.isFinite(n);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (n, d=2) => ok(n) ? n.toLocaleString('en-IN', {minimumFractionDigits:d, maximumFractionDigits:d}) : '—';
+const pct = n => ok(n) ? `${n > 0 ? '+' : ''}${fmt(n)}%` : '—';
+const cls = n => ok(n) ? (n > 0 ? 'pos' : n < 0 ? 'neg' : '') : 'na';
+const cpct = n => `<span class="${cls(n)}">${pct(n)}</span>`;
+const short = name => String(name).replace(/^nifty\s*/i, '').replace(/\s*index$/i, '').trim() || name;
+const ret = (r, p = S.period) => r?.returns?.[p];
+
+async function getJSON(url) {
+  const r = await fetch(url, {cache: 'no-store'});
+  if (!r.ok) { let m = `Request failed (${r.status})`; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+  return r.json();
 }
-function overviewCharts(){
-if(!state.data)return;
-const p=chosenPeriod();const rows=state.data.sectors.filter(r=>valid(r.returns[p])).sort((a,b)=>a.returns[p]-b.returns[p]);
-if(!rows.length){blank('ranking-chart','History is not available yet');blank('participation-chart','Return and breadth history are required');return;}
-$('ranking-chart').style.height=`${Math.max(360,rows.length*22)}px`;option('ranking-chart',{tooltip:{...tip,trigger:'item',formatter:v=>`${esc(rows[v.dataIndex].name)}<br>${labels[p]}: ${pct(v.value)}`},grid:{left:window.innerWidth<600?75:150,right:28,top:10,bottom:40},xAxis:{...axes,type:'value',splitNumber:3,axisLabel:{hideOverlap:true,formatter:v=>`${num(v,1)}%`}},yAxis:{...axes,type:'category',data:rows.map(r=>r.name.replace(/Nifty /i,'')),axisLabel:{fontSize:9,width:140,overflow:'truncate'}},dataZoom:[{type:'inside',yAxisIndex:0,start:0,end:100}],series:[{type:'bar',data:rows.map(r=>({value:r.returns[p],id:r.id,itemStyle:{color:r.returns[p]>=0?'#39d6a0':'#fb7185'}})),barMaxWidth:12}]});
-getChart('ranking-chart').off('click');getChart('ranking-chart').on('click',v=>{if(v.data?.id)chooseSector(v.data.id);});
-const points=rows.filter(r=>valid(r.breadth['20'].pct)).map(r=>({name:r.name,id:r.id,value:[r.returns[p],r.breadth['20'].pct,r.coverage.available]}));
-option('participation-chart',{tooltip:{...tip,trigger:'item',formatter:v=>`${esc(v.name)}<br>${labels[p]}: ${pct(v.value[0])}<br>SMA20 breadth: ${pct(v.value[1])}<br>${v.value[2]} constituents with history`},grid,xAxis:{...axes,type:'value',name:'Return %'},yAxis:{...axes,type:'value',min:0,max:100,name:'SMA20 breadth %'},series:[{type:'scatter',data:points,symbolSize:v=>Math.min(35,8+Math.sqrt(v[2])*2),itemStyle:{color:'#73b8ff',opacity:.8},markLine:{symbol:'none',silent:true,label:{show:false},lineStyle:{color:'#536c8b',type:'dashed'},data:[{xAxis:0},{yAxis:50}]}}]});getChart('participation-chart').off('click');getChart('participation-chart').on('click',v=>{if(v.data?.id)chooseSector(v.data.id);});
+function chart(id) {
+  const el = $(id); if (!el || !window.echarts) return null;
+  let c = charts.get(id);
+  if (!c || c.getDom() !== el) { c = echarts.init(el, null, {renderer: 'canvas'}); charts.set(id, c); }
+  return c;
 }
-function extraDetailCharts(){const d=state.detail;if(!d)return;
-const sector=rangeBars(d.chart.candles);if(sector.length){const dates=sector.map(b=>b.time);const benchmark=new Map(d.benchmark_chart.candles.map(b=>[b.time,b.close]));const draw=values=>{let high=0;return values.map(v=>{if(!valid(v))return null;high=Math.max(high,v);return (v/high-1)*100;});};option('drawdown-chart',{tooltip:tip,legend:{textStyle:{color:'#94a6bd'}},grid,xAxis:{...axes,type:'category',data:dates},yAxis:{...axes,type:'value',max:0,axisLabel:{formatter:'{value}%'}},dataZoom:zoom,series:[line(d.sector.name,draw(sector.map(b=>b.close)),{areaStyle:{opacity:.12}}),line('NIFTY 50',draw(dates.map(t=>benchmark.get(t)??null)))]});}else blank('drawdown-chart','History is not available yet');
-const points=d.members.filter(r=>valid(r.returns.today)&&valid(r.volume_ratio)).map(r=>({name:r.symbol,symbol:r.symbol,value:[r.returns.today,r.volume_ratio]}));
-if(!points.length){blank('volume-scatter-chart','Open stock charts to load relative-volume evidence');return;}
-option('volume-scatter-chart',{tooltip:{...tip,trigger:'item',formatter:v=>`${esc(v.name)}<br>Today: ${pct(v.value[0])}<br>Same-clock relative volume: ${num(v.value[1])}×`},grid,xAxis:{...axes,type:'value',name:'Today return %'},yAxis:{...axes,type:'value',min:0,name:'Relative volume ×'},series:[{type:'scatter',data:points,symbolSize:12,itemStyle:{color:'#39d6a0'},markLine:{silent:true,symbol:'none',lineStyle:{color:'#536c8b',type:'dashed'},data:[{yAxis:1},{xAxis:0}]}}]});getChart('volume-scatter-chart').off('click');getChart('volume-scatter-chart').on('click',v=>{if(v.data?.symbol)chooseStock(v.data.symbol);});
+window.addEventListener('resize', () => charts.forEach(c => c.resize()));
+
+/* ---------- status ---------- */
+function showStatus() {
+  const s = S.data?.status || {}; const el = $('status'); const parts = [];
+  if (s.running) parts.push(`Loading price history ${s.done}/${s.total}`);
+  parts.push(`Daily data: ${s.updated_at ? s.updated_at.replace('T', ' ').slice(0, 16) : 'not loaded'}`);
+  parts.push(`Live quotes: ${s.quote_at ? s.quote_at.replace('T', ' ').slice(11, 16) : 'none'}`);
+  if (s.error) parts.push('⚠ ' + s.error);
+  el.textContent = parts.join(' · ');
+  el.classList.toggle('warn', !!s.error || !s.updated_at);
 }
-function renderCharts(){if(typeof echarts==='undefined'){$('status').textContent='Chart library failed to load. Refresh the page.';return;}if(state.view==='overview'){advanceDeclineChart();overviewCharts();}if(state.view==='heatmap')heatChart();if(state.view==='rotation')rotationChart();if(state.view==='detail'){detailCharts();extraDetailCharts();}}
-$('ma-toggles').innerHTML=['sma','ema'].flatMap(kind=>[20,50,100,200].map(n=>`<label><input type="checkbox" value="${kind}-${n}" ${kind==='sma'&&(n===20||n===200)?'checked':''}>${kind.toUpperCase()} ${n}</label>`)).join('');
-document.addEventListener('click',async event=>{const el=event.target.closest('button,a');if(!el)return;if(el.dataset.view)setView(el.dataset.view);if(el.dataset.switch)setView(el.dataset.switch);if(el.dataset.sector)await chooseSector(el.dataset.sector);if(el.dataset.stock)await chooseStock(el.dataset.stock);if(el.dataset.jump)$(el.dataset.jump)?.scrollIntoView({behavior:'smooth',block:'start'});if(el.dataset.sort){state.ascending=state.sort===el.dataset.sort?!state.ascending:false;state.sort=el.dataset.sort;renderOverview();}if(el.dataset.stockSort){state.stockAscending=state.stockSort===el.dataset.stockSort?!state.stockAscending:false;state.stockSort=el.dataset.stockSort;renderStocks();}if(el.dataset.fullscreen){const target=$(el.dataset.fullscreen);try{if(document.fullscreenElement)await document.exitFullscreen();else await target.requestFullscreen();}catch{$('status').textContent='Fullscreen is unavailable in this browser; rotate your phone for a wider chart.';}}});
-$('detail-heading').onclick=()=>$('price-panel').scrollIntoView({behavior:'smooth'});
-$('refresh').onclick=refresh;
-$('period').onchange=()=>{state.sort=chosenPeriod();state.ascending=false;renderOverview();renderDetail();renderCharts();};
-$('sector').onchange=()=>chooseSector($('sector').value);
-$('search').oninput=()=>{renderOverview();renderStocks();};
-$('rank-mode').onchange=renderPerformers;
-$('range').onchange=renderCharts;
-$('ma-toggles').onchange=renderCharts;
-$('rotation-window').onchange=loadDetail;
-$('tile-size').onchange=stockHeat;$('tile-metric').onchange=stockHeat;
-$('stock-mode').onchange=renderStockChart;
-$('compare-stock').onchange=async()=>{if($('compare-stock').value)await chooseStock($('compare-stock').value,false);else{state.stock=null;compareChart();}};
-window.addEventListener('resize',()=>charts.forEach(c=>c.resize()));document.addEventListener('fullscreenchange',()=>setTimeout(()=>charts.forEach(c=>c.resize()),100));
-refresh();setInterval(async()=>{if(document.hidden)return;await refresh();if(state.stock)await chooseStock(state.stock.symbol,false);},60000);
+
+/* ---------- period chips ---------- */
+function renderPeriods() {
+  $('periods').innerHTML = PERIODS.map(([k, l]) => `<button data-period="${k}" aria-pressed="${k === S.period}">${l}</button>`).join('');
+}
+
+/* ---------- sector list / heat map ---------- */
+function visibleSectors() {
+  const rows = (S.data?.sectors || []).filter(r => S.variants || !VARIANT.test(r.name) || r.id === S.sectorId);
+  return rows.sort((a, b) => {
+    const av = ret(a), bv = ret(b);
+    if (!ok(av)) return ok(bv) ? 1 : a.name.localeCompare(b.name);
+    if (!ok(bv)) return -1;
+    return bv - av;
+  });
+}
+function renderSectors() {
+  const rows = visibleSectors();
+  const max = Math.max(1, ...rows.map(r => Math.abs(ret(r) ?? 0)));
+  $('sector-list').innerHTML = rows.map(r => {
+    const v = ret(r), w = ok(v) ? Math.abs(v) / max * 50 : 0;
+    const bar = ok(v) ? `<i style="left:${v >= 0 ? 50 : 50 - w}%;width:${w}%;background:${v >= 0 ? 'var(--green)' : 'var(--red)'}"></i>` : '';
+    const b50 = r.breadth?.['50']?.pct, ad = r.advance_decline;
+    const adTxt = ad && ad.covered ? `${ad.advances}↑ ${ad.declines}↓` : '';
+    return `<button class="srow" data-sector="${esc(r.id)}" aria-current="${r.id === S.sectorId}">
+      <span class="nm" title="${esc(r.name)}">${esc(short(r.name))}</span><span class="rt ${cls(v)}">${pct(v)}</span>
+      <span class="meta"><span>${r.members_list?.length ?? r.coverage?.total ?? 0} stocks</span><span class="bar">${bar}</span>
+      <span title="Stocks above their 50-day average">${ok(b50) ? Math.round(b50) + '% >50D' : ''}</span><span>${adTxt}</span></span></button>`;
+  }).join('') || '<p class="muted">No sector data yet.</p>';
+  $('sector-heat').innerHTML = rows.map(r => {
+    const v = ret(r), a = ok(v) ? Math.min(1, Math.abs(v) / max) : 0;
+    const bg = !ok(v) ? '#223246' : v >= 0 ? `rgba(31,170,110,${0.25 + 0.75 * a})` : `rgba(220,70,95,${0.25 + 0.75 * a})`;
+    return `<button class="tile" data-sector="${esc(r.id)}" aria-current="${r.id === S.sectorId}" style="background:${bg}"><b>${esc(short(r.name))}</b><span>${pct(v)}</span></button>`;
+  }).join('');
+  $('sector-list').hidden = S.sview !== 'list'; $('sector-heat').hidden = S.sview !== 'heat';
+}
+
+/* ---------- search ---------- */
+function runSearch(q) {
+  const box = $('search-results'); q = q.trim().toUpperCase();
+  if (q.length < 2 || !S.data) { box.hidden = true; return; }
+  const sectors = S.data.sectors, stocks = new Map();
+  for (const s of sectors) for (const m of s.members_list || []) {
+    if (m.symbol.includes(q) || String(m.name).toUpperCase().includes(q)) {
+      if (!stocks.has(m.symbol)) stocks.set(m.symbol, {m, in: []});
+      stocks.get(m.symbol).in.push(s);
+    }
+  }
+  const secHits = sectors.filter(s => s.name.toUpperCase().includes(q)).slice(0, 5);
+  const items = [
+    ...secHits.map(s => `<button data-sector="${esc(s.id)}"><b>${esc(s.name)}</b><span>Sector · ${s.members_list?.length ?? 0} stocks · ${PLABEL[S.period]} ${pct(ret(s))}</span></button>`),
+    ...[...stocks.values()].sort((a, b) => (a.m.symbol.startsWith(q) ? 0 : 1) - (b.m.symbol.startsWith(q) ? 0 : 1)).slice(0, 12).map(({m, in: secs}) => {
+      const main = secs.find(s => !VARIANT.test(s.name)) || secs[0];
+      return `<button data-sector="${esc(main.id)}" data-stock="${esc(m.symbol)}"><b>${esc(m.symbol)}</b> <span>${esc(m.name)} — in ${secs.map(s => esc(short(s.name))).join(', ')}</span></button>`;
+    })];
+  box.innerHTML = items.join('') || `<button disabled><b>No match</b><span>“${esc(q)}” is not in any Nifty sector index.</span></button>`;
+  box.hidden = false;
+}
+
+/* ---------- detail ---------- */
+async function selectSector(id, stock = null, user = false) {
+  if (!id) return;
+  S.sectorId = id; S.open = null; S.highlight = stock; S.filter = 'all';
+  history.replaceState(null, '', '#' + encodeURIComponent(id));
+  renderSectors();
+  const row = S.data.sectors.find(r => r.id === id);
+  $('detail-empty').hidden = true; $('detail-body').hidden = false;
+  renderHead(row);
+  // Show the stock names immediately from the overview list, then fill in numbers.
+  S.detail = {sector: row, members: (row?.members_list || []).map(m => ({...m, returns: {}, vs_sector: {}, vs_nifty: {}})), loading: true};
+  renderStocks();
+  if (user && window.matchMedia('(max-width:900px)').matches) $('detail').scrollIntoView({behavior: 'smooth', block: 'start'});
+  const seq = ++S.seq;
+  try {
+    const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(id)}?window=20`);
+    if (seq !== S.seq) return;
+    S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart();
+    if (stock) { const tr = document.querySelector(`tr.row[data-sym="${CSS.escape(stock)}"]`); if (tr) { tr.scrollIntoView({block: 'center'}); toggleStock(stock); } }
+  } catch (e) {
+    if (seq !== S.seq) return;
+    S.detail.loading = false; S.detail.error = e.message; renderStocks();
+  }
+}
+
+function renderHead(r) {
+  if (!r) return;
+  const v = ret(r), b = r.breadth || {}, ad = r.advance_decline || {};
+  $('d-name').textContent = r.name;
+  $('d-sub').textContent = `${r.members_list?.length ?? r.coverage?.total ?? 0} stocks · official Nifty list${r.retrieved_at ? ' as of ' + String(r.retrieved_at).slice(0, 10) : ''}`;
+  $('d-price').textContent = fmt(r.price);
+  $('d-ret').innerHTML = `${cpct(v)} <span class="muted small">${PLABEL[S.period]}</span>`;
+  const kpi = (l, v) => `<div class="kpi"><small>${l}</small><strong>${v}</strong></div>`;
+  const br = n => ok(b[n]?.pct) ? `${Math.round(b[n].pct)}%` : '—';
+  $('d-kpis').innerHTML = [
+    kpi(`vs NIFTY · ${PLABEL[S.period]}`, cpct(r.vs_nifty?.[S.period])),
+    kpi('Today', cpct(r.returns?.today)),
+    kpi('Up / down today', ad.covered ? `<span class="pos">${ad.advances}</span> / <span class="neg">${ad.declines}</span>` : '—'),
+    kpi('Above 20-day avg', br('20')), kpi('Above 50-day avg', br('50')), kpi('Above 200-day avg', br('200')),
+  ].join('');
+}
+
+const BASE = {
+  sym: {key: 'sym', label: 'Stock', val: m => m.symbol},
+  price: {key: 'price', label: 'Price', val: m => m.price},
+  ret: {key: 'ret', label: () => PLABEL[S.period], val: m => m.returns?.[S.period], pct: true, hi: true},
+  vss: {key: 'vss', label: 'vs sector', val: m => m.vs_sector?.[S.period], pct: true},
+  vsn: {key: 'vsn', label: 'vs NIFTY', val: m => m.vs_nifty?.[S.period], pct: true},
+  h52: {key: 'h52', label: 'vs 52W high', val: m => ok(m.price) && ok(m.high52) && m.high52 > 0 ? (m.price / m.high52 - 1) * 100 : null, pct: true},
+  trend: {key: 'trend', label: 'Trend 20·50·200', val: m => trendScore(m)},
+};
+const OTHER = [['today', 'Today'], ['1W', '1W'], ['1M', '1M'], ['3M', '3M']].map(([p, l]) => ({key: 'p_' + p, label: l, val: m => m.returns?.[p], pct: true, period: p}));
+// Selected period sits right after price; the other short periods follow.
+function columns() { return [BASE.sym, BASE.price, BASE.ret, BASE.vss, ...OTHER.filter(c => c.period !== S.period), BASE.vsn, BASE.h52, BASE.trend]; }
+function trendScore(m) { if (!ok(m.price) || !m.sma) return null; return ['20', '50', '200'].reduce((s, n) => s + (ok(m.sma[n]) && m.price > m.sma[n] ? 1 : 0), 0); }
+function dots(m) {
+  if (!ok(m.price) || !m.sma) return '<span class="na">—</span>';
+  return `<span class="dots" title="Price above 20 / 50 / 200-day average">${['20', '50', '200'].map(n => `<i class="${!ok(m.sma[n]) ? '' : m.price > m.sma[n] ? 'on' : 'off'}"></i>`).join('')}</span>`;
+}
+
+function renderStocks() {
+  const d = S.detail; if (!d) return;
+  // Hide duplicate columns when the selected period is already shown.
+  const cols = columns();
+  let rows = [...(d.members || [])];
+  if (S.filter === 'up') rows = rows.filter(m => ok(m.returns?.[S.period]) && m.returns[S.period] > 0);
+  if (S.filter === 'down') rows = rows.filter(m => ok(m.returns?.[S.period]) && m.returns[S.period] < 0);
+  const sk = cols.some(c => c.key === S.sort.key) ? S.sort.key : 'ret';
+  const col = cols.find(c => c.key === sk);
+  rows.sort((a, b) => {
+    const av = col.val(a), bv = col.val(b);
+    if (col.key === 'sym') return String(av).localeCompare(String(bv)) * -S.sort.dir;
+    if (!ok(av)) return ok(bv) ? 1 : a.symbol.localeCompare(b.symbol);
+    if (!ok(bv)) return -1;
+    return (av - bv) * S.sort.dir;
+  });
+  const ups = (d.members || []).filter(m => ok(m.returns?.[S.period]) && m.returns[S.period] > 0).length;
+  const priced = (d.members || []).filter(m => ok(m.returns?.[S.period])).length;
+  $('stocks-title').innerHTML = `Stocks in ${esc(short(d.sector?.name || ''))} <span class="muted small">${d.members?.length || 0} total${priced ? ` · ${ups} up / ${priced - ups} down (${PLABEL[S.period]})` : ''}${d.loading ? ' · loading prices…' : ''}</span>`;
+  document.querySelectorAll('[data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === S.filter)));
+  const head = '<thead><tr>' + cols.map(c => `<th data-sort="${c.key}" class="${c.key === sk ? 'sorted' : ''}">${typeof c.label === 'function' ? c.label() : c.label}${c.key === sk ? (S.sort.dir < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('') + '</tr></thead>';
+  const span = cols.length;
+  const body = rows.map(m => {
+    const cells = cols.map(c => {
+      if (c.hi) return `<td class="hi">${cpct(c.val(m))}</td>`;
+      if (c.key === 'sym') return `<td><span class="sym">${esc(m.symbol)}</span><span class="cn">${esc(m.name || '')}</span></td>`;
+      if (c.key === 'price') return `<td>${fmt(m.price)}</td>`;
+      if (c.key === 'trend') return `<td>${dots(m)}</td>`;
+      return `<td>${cpct(c.val(m))}</td>`;
+    }).join('');
+    const open = S.open === m.symbol;
+    const exp = open ? `<tr class="expand"><td colspan="${span}">${expandHtml(m)}</td></tr>` : '';
+    return `<tr class="row${open ? ' open' : ''}" data-sym="${esc(m.symbol)}" tabindex="0">${cells}</tr>${exp}`;
+  }).join('');
+  const msg = d.error ? `<tr><td colspan="${span}" class="neg">Could not load prices: ${esc(d.error)}. Stock names are still shown.</td></tr>` : '';
+  $('stock-table').innerHTML = head + '<tbody>' + (body || `<tr><td colspan="${span}" class="muted">No stocks match this filter.</td></tr>`) + msg + '</tbody>';
+  if (S.open) drawMini(S.open);
+}
+
+function expandHtml(m) {
+  const lv = m.levels || {};
+  const L = (l, v) => `<span>${l} <b>${fmt(v)}</b></span>`;
+  return `<div class="exp-inner"><div id="mini-chart" class="mini"></div>
+    <div class="lv">${L('Prev high', lv.previous_high)}${L('Prev low', lv.previous_low)}${L('Swing high', lv.swing_high)}${L('Swing low', lv.swing_low)}${L('52W high', m.high52)}${L('52W low', m.low52)}
+    <a href="/chart/${encodeURIComponent(m.symbol)}">Open full chart ↗</a></div></div>`;
+}
+
+async function toggleStock(sym) {
+  S.open = S.open === sym ? null : sym; renderStocks();
+}
+const stockCache = new Map();
+async function drawMini(sym) {
+  const c = chart('mini-chart'); if (!c) return;
+  c.showLoading({text: 'Loading chart…', color: '#6aa8ff', textColor: '#8d9cb0', maskColor: 'rgba(15,24,36,.6)'});
+  try {
+    let d = stockCache.get(sym);
+    if (!d) { d = await getJSON(`/api/sector-analysis/stock/${encodeURIComponent(sym)}`); stockCache.set(sym, d); }
+    if (S.open !== sym) return;
+    const k = (d.chart?.candles || []).slice(-252);
+    if (!k.length) { c.hideLoading(); c.setOption({title: {text: 'Price history not loaded yet', left: 'center', top: 'middle', textStyle: {color: '#8d9cb0', fontSize: 13}}}, true); return; }
+    const t0 = k[0].time, sma = n => (d.chart.sma?.[n] || []).filter(p => p.time >= t0).map(p => [p.time, p.value]);
+    c.hideLoading();
+    c.setOption({
+      backgroundColor: 'transparent', animation: false, grid: {left: 52, right: 14, top: 28, bottom: 26},
+      legend: {top: 0, textStyle: {color: '#8d9cb0'}, data: [sym, '50D avg', '200D avg']},
+      tooltip: {trigger: 'axis', backgroundColor: '#0d1624', borderColor: '#223246', textStyle: {color: '#e6edf6'}},
+      xAxis: {type: 'time', axisLabel: {color: '#8d9cb0'}, axisLine: {lineStyle: {color: '#223246'}}},
+      yAxis: {type: 'value', scale: true, axisLabel: {color: '#8d9cb0'}, splitLine: {lineStyle: {color: '#1a2737'}}},
+      series: [
+        {name: sym, type: 'line', showSymbol: false, data: k.map(b => [b.time, b.close]), color: '#6aa8ff', lineStyle: {width: 2}, areaStyle: {color: 'rgba(106,168,255,.08)'}},
+        {name: '50D avg', type: 'line', showSymbol: false, data: sma('50'), color: '#f5bf5c', lineStyle: {width: 1.3}},
+        {name: '200D avg', type: 'line', showSymbol: false, data: sma('200'), color: '#c4a0ff', lineStyle: {width: 1.3}},
+      ]}, true);
+  } catch (e) { c.hideLoading(); c.setOption({title: {text: 'Chart unavailable: ' + e.message, left: 'center', top: 'middle', textStyle: {color: '#f2667a', fontSize: 12}}}, true); }
+}
+
+function renderRanges() {
+  $('ranges').innerHTML = RANGES.map(([k]) => `<button data-range="${k}" aria-pressed="${k === S.range}">${k}</button>`).join('');
+}
+function renderSectorChart() {
+  const d = S.detail, c = chart('sector-chart'); if (!c || !d?.chart) return;
+  const n = RANGES.find(r => r[0] === S.range)[1];
+  const sk = (d.chart.candles || []).slice(-n);
+  const bc = (d.benchmark_chart?.candles || d.benchmark_chart || []);
+  if (!sk.length) { c.setOption({title: {text: 'Sector price history is still loading', left: 'center', top: 'middle', textStyle: {color: '#8d9cb0', fontSize: 13}}}, true); return; }
+  const t0 = sk[0].time, bmap = new Map(bc.map(b => [b.time, b.close]));
+  const s0 = sk[0].close, b0 = bmap.get(t0) ?? bc.find(b => b.time >= t0)?.close;
+  c.setOption({
+    backgroundColor: 'transparent', animation: false, grid: {left: 46, right: 14, top: 30, bottom: 26},
+    legend: {top: 0, textStyle: {color: '#8d9cb0'}},
+    tooltip: {trigger: 'axis', backgroundColor: '#0d1624', borderColor: '#223246', textStyle: {color: '#e6edf6'}, valueFormatter: v => ok(v) ? v.toFixed(1) : '—'},
+    xAxis: {type: 'time', axisLabel: {color: '#8d9cb0'}, axisLine: {lineStyle: {color: '#223246'}}},
+    yAxis: {type: 'value', scale: true, axisLabel: {color: '#8d9cb0'}, splitLine: {lineStyle: {color: '#1a2737'}}},
+    series: [
+      {name: short(d.sector.name), type: 'line', showSymbol: false, data: sk.map(b => [b.time, b.close / s0 * 100]), color: '#6aa8ff', lineStyle: {width: 2.2}},
+      ...(ok(b0) ? [{name: 'NIFTY 50', type: 'line', showSymbol: false, data: bc.filter(b => b.time >= t0).map(b => [b.time, b.close / b0 * 100]), color: '#f5bf5c', lineStyle: {width: 1.5}}] : []),
+    ]}, true);
+  c.resize();
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click', e => {
+  const t = e.target.closest('button, th, tr.row'); if (!t) return;
+  if (t.dataset.period) { S.period = t.dataset.period; renderPeriods(); renderSectors(); if (S.detail) { renderHead(S.detail.sector); renderStocks(); } return; }
+  if (t.dataset.sview) { S.sview = t.dataset.sview; document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); renderSectors(); return; }
+  if (t.dataset.filter) { S.filter = t.dataset.filter; renderStocks(); return; }
+  if (t.dataset.range) { S.range = t.dataset.range; renderRanges(); renderSectorChart(); return; }
+  if (t.dataset.sort) { const k = t.dataset.sort; S.sort = {key: k, dir: S.sort.key === k ? -S.sort.dir : -1}; renderStocks(); return; }
+  if (t.dataset.sector) { $('search-results').hidden = true; $('search').value = ''; selectSector(t.dataset.sector, t.dataset.stock || null, true); return; }
+  if (t.matches('tr.row')) { toggleStock(t.dataset.sym); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('tr.row')) toggleStock(e.target.dataset.sym); if (e.key === 'Escape') $('search-results').hidden = true; });
+$('search').addEventListener('input', e => runSearch(e.target.value));
+$('search').addEventListener('focus', e => runSearch(e.target.value));
+document.addEventListener('click', e => { if (!e.target.closest('.search')) $('search-results').hidden = true; }, true);
+$('show-variants').addEventListener('change', e => { S.variants = e.target.checked; renderSectors(); });
+
+/* ---------- boot ---------- */
+async function load() {
+  try {
+    S.data = await getJSON('/api/sector-analysis');
+    showStatus(); renderSectors();
+    $('methodology').innerHTML = Object.entries(S.data.methodology || {}).map(([k, v]) => `<p><b>${esc(k)}</b> · ${esc(v)}</p>`).join('');
+    if (!S.sectorId) {
+      const want = decodeURIComponent(location.hash.slice(1));
+      const first = S.data.sectors.find(r => r.id === want) || visibleSectors()[0];
+      if (first) selectSector(first.id);
+    }
+  } catch (e) { $('status').textContent = 'Could not load sectors: ' + e.message; $('status').classList.add('warn'); }
+}
+renderPeriods(); renderRanges(); load();
+setInterval(async () => { try { S.data = await getJSON('/api/sector-analysis'); showStatus(); renderSectors(); } catch {} }, 120000);
 })();

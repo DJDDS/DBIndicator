@@ -38,3 +38,11 @@ def test_api_returns_cached_data_and_bad_selection_is_404(client,monkeypatch):
     monkeypatch.setattr(web.sector_service,'detail',lambda sector,window:None)
     assert client.get('/api/sector-analysis/missing',headers=auth()).status_code==404
     assert client.get('/api/sector-analysis/missing?window=bad',headers=auth()).status_code==400
+
+
+def test_overview_lists_member_symbols_for_each_sector(monkeypatch):
+    from app import sector_service as s
+    entry={'id':'nifty-it','name':'NIFTY IT','members':[{'symbol':'INFY','name':'Infosys Ltd.'},{'symbol':'TCS','name':'Tata Consultancy Services Ltd.'}]}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[entry]})
+    row=s.overview()['sectors'][0]
+    assert [m['symbol'] for m in row['members_list']]==['INFY','TCS']

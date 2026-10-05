@@ -89,6 +89,8 @@ def _sector_row(entry, benchmark, now):
     row['median_return']=a.finite(pd.Series(valid,dtype=float).median()) if valid else None
     row['vs_nifty']=a.relative_returns(row,benchmark)
     row['vwap']=None
+    # Light member list so the page can search stocks and show sector membership without a detail call.
+    row['members_list']=[{'symbol':m['symbol'],'name':m.get('name') or m['symbol']} for m in entry.get('members',[])]
     return row
 
 
