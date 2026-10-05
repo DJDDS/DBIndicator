@@ -81,7 +81,9 @@ class FakeKite:
         self.syms = [f"S{i:02d}" for i in range(n)]
     def instruments(self, ex):
         if ex == "NFO":
-            return [{"name": s, "instrument_type": "FUT", "segment": "NFO-FUT"} for s in self.syms] + [{"name": "NIFTY", "instrument_type": "FUT", "segment": "NFO-FUT"}]
+            puts = [{"name": s, "instrument_type": "PE", "segment": "NFO-OPT", "tradingsymbol": f"{s}26OCT{k}PE", "strike": float(k), "expiry": dt.date(2026, 10, 27), "lot_size": 500}
+                    for i, s in enumerate(self.syms) for k in range(90 + i, 112 + i, 2)]
+            return [{"name": s, "instrument_type": "FUT", "segment": "NFO-FUT"} for s in self.syms] + [{"name": "NIFTY", "instrument_type": "FUT", "segment": "NFO-FUT"}] + puts
         return [{"tradingsymbol": s, "instrument_token": 1000 + i, "segment": "NSE"} for i, s in enumerate(self.syms)]
     def historical_data(self, tok, a, b, interval):
         i = tok - 1000; base = 100 + i
@@ -97,6 +99,8 @@ class FakeKite:
     def quote(self, keys):
         out = {}
         for k in keys:
+            if k.startswith("NFO:"):
+                out[k] = {"last_price": 3.0, "depth": {"buy": [{"price": 2.95}], "sell": [{"price": 3.0}]}}; continue
             s = k.split(":")[1]; i = int(s[1:]); base = 100 + i
             o = base * (1 - 0.003 * (i % 4)); c = o * (1 + 0.002 * ((i % 9) - 4))
             out[k] = {"last_price": c, "volume": 9000 + 10 * i, "average_price": (o + c) / 2, "total_buy_quantity": 10, "total_sell_quantity": 12,
@@ -127,7 +131,8 @@ def test_end_to_end_paper_day(store):
     assert "S05" not in {p["symbol"] for p in day_rec["picks"]}
     assert v.run_short_outcomes(k, day) == 3
     for p in v._read_jsonl("shorts.jsonl")[-1]["picks"]:
-        assert p["status"] == "CLOSED"
+        assert p["status"] == "CLOSED" and p["put_status"] == "CLOSED" and p["put"].endswith("PE")
+        assert p["put_ret_pct"] == pytest.approx((2.95 / 3.0 - 1) * 100, abs=0.05)
         assert p["ret_bps"] == pytest.approx(-math.log(p["exit"] / p["entry"]) * 1e4 - 10, abs=0.1)
     st = v.status()
     assert st["score_short"]["n"] == 3 and st["preopen_days"] == 1
@@ -151,9 +156,11 @@ def test_admin_page_renders_intraday_lanes():
     intra = {"steps": {"short": {"ok": True, "at": "09:45"}}, "constants": v.constants(), "score_short": {"n": 3, "win": 67, "avg_bps": 21.0, "total_bps": 63},
              "score_gap": {"n": 0, "win": None, "avg_bps": None, "total_bps": None}, "preopen_days": 1,
              "today_short": {"date": "2026-10-06", "scored": 180, "ban_known": True, "market": {"move_since_open_pct": -0.4, "share_up": 31.0, "gap_pct": -0.2},
-                             "picks": [{"symbol": "ABC", "entry": 101.5, "move_since_open_pct": -1.2, "vs_market_atr": -0.8, "volume_x_normal": 2.1, "exit": 99.0, "ret_bps": 239.0}]},
+                             "picks": [{"symbol": "ABC", "entry": 101.5, "move_since_open_pct": -1.2, "vs_market_atr": -0.8, "volume_x_normal": 2.1, "exit": 99.0, "ret_bps": 239.0,
+                                        "put": "ABC26OCT100PE", "put_strike": 100.0, "put_expiry": "2026-10-27", "put_entry": 2.5, "put_spread_pct": 2.0, "put_lot": 500, "put_status": "CLOSED", "put_ret_pct": 41.0}]},
              "today_gap": {"date": "2026-10-06", "market_gap_pct": -0.21, "active": False, "picks": []}, "short_recent": [], "gap_recent": []}
     html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=intra)
+    assert "BUY ABC26OCT100PE" in html and "+41.0%" in html
     assert "09:45 short detector" in html and "ABC" in html and "Gap-down bounce basket" in html and "+239 bps" in html
 
 
@@ -171,3 +178,14 @@ def test_v131_routes_are_owner_only(monkeypatch):
     owner = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
     assert c.get("/api/v131/status", headers=owner).status_code == 200
     assert c.get("/api/v131/export/nope", headers=owner).status_code == 404
+
+
+def test_choose_put_and_spread_gate():
+    today = dt.date(2026, 10, 26)
+    cs = [{"ts": "A1", "k": 100.0, "e": "2026-10-27"}, {"ts": "A2", "k": 100.0, "e": "2026-11-24"}, {"ts": "A3", "k": 105.0, "e": "2026-11-24"}]
+    assert v.choose_put(cs, 101.0, today)["ts"] == "A2"          # 1 day to expiry is too close: next month, nearest strike
+    assert v.choose_put([], 100.0, today) is None
+    ok = v.put_from_quote({"depth": {"buy": [{"price": 9.9}], "sell": [{"price": 10.1}]}})
+    assert ok["put_status"] == "OPEN" and ok["put_entry"] == 10.1
+    wide = v.put_from_quote({"depth": {"buy": [{"price": 9.0}], "sell": [{"price": 10.0}]}})
+    assert wide["put_status"] == "NO_PUT" and "spread" in wide["put_reason"]

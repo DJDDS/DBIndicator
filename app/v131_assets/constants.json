@@ -33,5 +33,10 @@
   "2019-26 exit 09:45": "+129.1 bps (72%)",
   "2015-18 exit 10:15": "+185.5 bps (83%)",
   "cost_bps": 15
+ },
+ "put_model": {
+  "2019-26 modelled ATM put": "+10.9% of premium (55% win), median +3%, worst 5% -57%",
+  "note": "modelled from stock moves with a range-based IV; real-price sample in 2026 only 36 trades",
+  "max_spread_pct": 3.5
  }
 }

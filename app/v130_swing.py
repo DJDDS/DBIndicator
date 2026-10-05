@@ -399,7 +399,8 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
             if ins['type'] == 'CALL' and ins.get('status') == 'BUY_CALL' and not ins.get('exit_reason'):
                 q = (kite.quote([f"NFO:{ins['tradingsymbol']}"]).get(f"NFO:{ins['tradingsymbol']}") or {})
                 last = q.get('last_price'); hi = (q.get('ohlc') or {}).get('high')
-                ins['last'] = last; ins.setdefault('sessions', 0); ins['sessions'] += 1
+                ins['last'] = last; ins.setdefault('sessions', 0)
+                if ins.get('last_session') != str(today): ins['sessions'] += 1; ins['last_session'] = str(today)   # once per day, even after a restart
                 if hi and hi >= ins['target']: ins.update(exit_reason='TARGET', exit_price=ins['target'])
                 elif last and last <= ins['stop_close']: ins.update(exit_reason='STOP_CLOSE', exit_price=last)
                 elif ins['sessions'] >= ins['exit_by_session']: ins.update(exit_reason='TIME', exit_price=last)

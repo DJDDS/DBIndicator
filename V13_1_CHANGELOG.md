@@ -11,10 +11,19 @@ Shown on /admin/v130 under "Bearish & intraday lanes (paper)". Owner-only APIs: 
 - Parity: live feature code reproduces the research features (15 of 18 identical, market averages within 0.5%); same 3 shorts on 11 of 12
   sampled days; numpy model reader equals LightGBM to 0.0.
 
+### Put option (paper) on each short
+- ATM put on the nearest expiry with 3+ days left, bought at the 09:45 ask, sold at the 15:15 bid; skipped if the spread is above 3.5%.
+- Modelled 2019-26 (stock moves + range-based IV, not real option prices): +10.9% of premium per put, 55% win, median +3%, worst 5% -57%;
+  strongest in expiry week. Real 1-minute option prices covered only 36 of the 2026 picks - too few to judge. Recording real bid/ask now.
+
 ## Lane 2 - Gap-down bounce basket (bullish, cash)
 - Only on days the F&O universe opens more than 0.5% lower on average. Buy up to 10 stocks that open below yesterday's low by more than one
   90-day sigma while yesterday's close is above the 20-day average; entry at the opening price (pre-open order), exits recorded at 09:45
   and 10:15, 15 bps cost. Research 2019-26: +131 bps (76%) at 10:15, ~11 days a year. Parity: identical baskets on 10 of 10 sampled days.
+
+## Restart safety (V13.0 fixes)
+- Evening plan runs once per date even after a server restart (a restart could re-plan and add extra picks).
+- Call-option session count advances once per day even if outcomes run twice.
 
 ## Recorder
 - 09:09-09:14 pre-open snapshot of every F&O stock (indicative price, total buy/sell quantity) for future order-flow research.

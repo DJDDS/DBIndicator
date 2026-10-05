@@ -4,6 +4,8 @@ Lane 1  09:45 SHORT detector (bearish). At 09:45 IST every F&O stock gets a froz
         09:15-09:45 trading plus the stock's recent days. The 3 lowest scores are paper-SHORTED at the 09:45 price and
         covered at the 15:15 price (research: hold to 15:15 beat every target/stop tried). 10 bps round-trip cost.
         Research, walk-forward: 2019-26 +30 bps/short (58% win), every year 2017-26 positive, 2026 +14 bps.
+        Each short also gets a paper ATM PUT (nearest expiry with 3+ days left), bought at the 09:45 ask and sold at the
+        15:15 bid, skipped when the spread is above 3.5%. Modelled 2019-26 (not real prices): +11% of premium, 55% win.
 Lane 2  Gap-down BOUNCE basket (bullish, cash). Only on days the F&O universe opens more than 0.5% lower on average.
         Buy up to 10 stocks that opened below yesterday's LOW by more than one 90-day sigma while their prior close
         was above the 20-day average; entry at the opening (pre-open auction) price, exits recorded at 09:45 and 10:15.
@@ -175,6 +177,27 @@ def gap_candidates(prep: dict, opens: dict, k: int = 10) -> tuple[float | None, 
     return mgap, L.nsmallest(k, 'gapL')
 
 
+def choose_put(contracts: list, spot: float, today: dt.date, min_days: int = 3) -> dict | None:
+    """ATM put: strike nearest the 09:45 price, nearest expiry with at least `min_days` calendar days left (else the next one)."""
+    if not contracts or not spot: return None
+    ex = sorted({c['e'] for c in contracts})
+    ok = [e for e in ex if (dt.date.fromisoformat(e) - today).days >= min_days]
+    if not ok: return None
+    cand = [c for c in contracts if c['e'] == ok[0]]
+    return min(cand, key=lambda c: (abs(c['k'] - spot), -c['k']))
+
+
+def put_from_quote(q: dict, max_spread_pct: float = 3.5) -> dict:
+    dp = (q or {}).get('depth') or {}
+    bid = ((dp.get('buy') or [{}])[0] or {}).get('price') or 0; ask = ((dp.get('sell') or [{}])[0] or {}).get('price') or 0
+    if not bid or not ask or ask <= bid * 0.5:
+        return {'put_status': 'NO_PUT', 'put_reason': 'no two-sided quote'}
+    spr = (ask - bid) / ((ask + bid) / 2) * 100
+    if spr > max_spread_pct:
+        return {'put_status': 'NO_PUT', 'put_reason': f'spread {spr:.1f}% > {max_spread_pct}%', 'put_bid': bid, 'put_ask': ask}
+    return {'put_status': 'OPEN', 'put_bid': bid, 'put_ask': ask, 'put_entry': ask, 'put_spread_pct': round(spr, 2)}
+
+
 # ------------------------------------------------------------------------------------------ Kite I/O
 def _fo_universe(kite) -> dict:
     """{symbol: NSE instrument token} for stocks with NFO futures."""
@@ -225,6 +248,18 @@ def run_prep(kite, today: dt.date | None = None) -> int:
             log.warning('v131 prep %s: %s', s, exc)
     if n < max(30, 0.8 * len(uni)):
         raise RuntimeError(f'prep incomplete: only {n} of {len(uni)} F&O stocks')
+    try:                                               # put contracts per stock (two nearest expiries), for the paper put instruction
+        nfo = kite.instruments('NFO'); puts = {}
+        for i in nfo:
+            if i.get('instrument_type') == 'PE' and i.get('segment') == 'NFO-OPT' and i.get('name') in out:
+                e = i.get('expiry'); e = e.date() if isinstance(e, dt.datetime) else e
+                if e and e >= today:
+                    puts.setdefault(i['name'], []).append({'ts': i['tradingsymbol'], 'k': float(i['strike']), 'e': str(e), 'lot': i.get('lot_size')})
+        for sname, lst in puts.items():
+            ex = sorted({r['e'] for r in lst})[:2]
+            out[sname]['puts'] = [r for r in lst if r['e'] in ex]
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v131 put contracts: %s', exc)
     banned = None
     try:
         from .v130_swing import NSE
@@ -305,12 +340,22 @@ def run_shorts(kite, today: dt.date | None = None) -> int:
         raise RuntimeError('no fresh quotes yet (market holiday or Kite login needed)')
     X = snapshot_features(prep['stocks'], quotes)
     picks = pick_shorts(X, set(prep.get('banned') or []))
+    put_info = {}
+    try:
+        chosen = {r.symbol: choose_put(prep['stocks'].get(r.symbol, {}).get('puts') or [], r.c, today) for r in picks.itertuples()}
+        keys = ['NFO:' + c['ts'] for c in chosen.values() if c]
+        pq = kite.quote(keys) if keys else {}
+        for sym, c in chosen.items():
+            if not c: put_info[sym] = {'put_status': 'NO_PUT', 'put_reason': 'no put contract'}; continue
+            put_info[sym] = {'put': c['ts'], 'put_strike': c['k'], 'put_expiry': c['e'], 'put_lot': c.get('lot'), **put_from_quote(pq.get('NFO:' + c['ts']))}
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v131 put instruction: %s', exc)
     mk = X[['mkt', 'brd', 'mgap']].iloc[0].to_dict() if len(X) else {}
     day = {'date': str(today), 'at': now_ist(), 'scored': int(len(X)), 'ban_known': prep.get('ban_known'),
            'market': {'move_since_open_pct': round(mk.get('mkt', 0) * 100, 2), 'share_up': round(mk.get('brd', 0) * 100, 1), 'gap_pct': round(mk.get('mgap', 0) * 100, 2)},
            'picks': [{'symbol': r.symbol, 'entry': r.c, 'score': round(float(r.score), 1), 'move_since_open_pct': round(r.mv * 100, 2),
                       'vs_market_atr': round(float(r.nrel), 2), 'volume_x_normal': None if pd.isna(r.vrel) else round(float(r.vrel), 2),
-                      'status': 'OPEN'} for r in picks.itertuples()]}
+                      'status': 'OPEN', **put_info.get(r.symbol, {})} for r in picks.itertuples()]}
     _append('shorts.jsonl', day)
     st['short'] = str(today); save_state(st)
     return len(picks)
@@ -339,6 +384,14 @@ def run_short_outcomes(kite, today: dt.date | None = None) -> int:
             if ex is None: raise RuntimeError(f"15:15 bar not available yet for {p['symbol']}")
             after = b[(b.t >= 9 * 60 + 45) & (b.t <= 15 * 60 + 10)]
             e = p['entry']
+            if p.get('put_status') == 'OPEN' and p.get('put'):
+                try:
+                    pq = (kite.quote(['NFO:' + p['put']]) or {}).get('NFO:' + p['put']) or {}
+                    dp = pq.get('depth') or {}; bid = ((dp.get('buy') or [{}])[0] or {}).get('price') or pq.get('last_price')
+                    if bid:
+                        p.update(put_exit=bid, put_status='CLOSED', put_ret_pct=round((bid / p['put_entry'] - 1) * 100, 1))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning('v131 put exit %s: %s', p['put'], exc)
             p.update(exit=ex, status='CLOSED', ret_bps=round(-math.log(ex / e) * 1e4 - COST_SHORT, 1),
                      best_bps=round(math.log(e / after.low.min()) * 1e4, 1) if len(after) else None,
                      worst_bps=round(-math.log(after.high.max() / e) * 1e4, 1) if len(after) else None)
@@ -432,4 +485,5 @@ def status() -> dict:
             'short_recent': list(reversed(s_tr))[:30], 'gap_recent': list(reversed(g_tr))[:30],
             'gap_days': [{'date': d['date'], 'market_gap_pct': d.get('market_gap_pct'), 'active': d.get('active'), 'n': len(d['picks'])} for d in gaps][-10:][::-1],
             'score_short': _score(s_tr), 'score_gap': _score(g_tr), 'constants': constants(),
+            'score_put': _score([{'ret_bps': t['put_ret_pct']} for t in s_tr if isinstance(t.get('put_ret_pct'), (int, float))]),
             'preopen_days': len(_read_jsonl('preopen.jsonl')) if _path('preopen.jsonl').exists() else 0}
