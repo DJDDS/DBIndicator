@@ -137,3 +137,14 @@ def test_logout_clears_basic_auth_without_lockout(monkeypatch):
     owner = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
     page = c.get("/admin/v130", headers=owner)
     assert page.status_code == 200 and b"data-logout" in page.data
+
+
+def test_evening_plan_is_once_per_day_even_after_restart(tmp_path, monkeypatch):
+    from app import v130_swing as sw
+    monkeypatch.setattr(sw, "ROOT", tmp_path)
+    plan = {"date": "2026-10-05", "picks": [{"sym": "SUZLON"}, {"sym": "PFC"}]}
+    sw.save_state({"positions": [{"sym": "SUZLON", "status": "PENDING"}, {"sym": "PFC", "status": "PENDING"}], "last_plan": plan, "last_plan_date": "2026-10-05"})
+    def boom(*a, **k): raise AssertionError("must not rebuild tonight's plan")
+    monkeypatch.setattr(sw, "build_inputs", boom)
+    assert sw.run_evening(object(), dt.date(2026, 10, 5), nse=object()) == plan
+    assert len(sw.load_state()["positions"]) == 2

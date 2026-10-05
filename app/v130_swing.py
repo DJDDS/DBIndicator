@@ -302,6 +302,9 @@ def trading_days_between(a: dt.date, b: dt.date, hol: set) -> int:
 # ------------------------------------------------------------------------------------------ evening job
 def run_evening(kite, when: dt.date | None = None, *, nse: NSE | None = None, progress=None) -> dict:
     when = when or now_ist().date(); nse = nse or NSE(); s = load_settings()
+    st0 = load_state()
+    if st0.get('last_plan_date') == str(when) and st0.get('last_plan'):
+        return st0['last_plan']        # already planned tonight: a server restart must never add a second plan or duplicate positions
     I = build_inputs(kite, nse, when, progress=progress)
     X = core.stock_features(I['O'], I['H'], I['L'], I['C'], I['VAL'], I['DP'], I['FO'], I['M'], I['BAN'], I['RES'], I['INS_S'], I['INS_B'], I['UNIV'], I['SP'], I['SEC_OF'], rows='last')
     X = X[X.date == pd.Timestamp(when)]
