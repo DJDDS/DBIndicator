@@ -201,3 +201,23 @@ def test_prep_stops_at_once_when_kite_login_expired(store):
     with pytest.raises(RuntimeError, match="Kite login needed"):
         v.run_prep(k, dt.date(2026, 10, 6))
     assert Expired.calls == 1
+
+
+def test_admin_page_renders_open_trades_without_results():
+    from jinja2 import Environment, FileSystemLoader
+    from app import v130_rules as rules
+    env = Environment(loader=FileSystemLoader(str(Path(__file__).resolve().parents[1] / "app" / "templates")))
+    status = {"scorecard": {k: {"n": 0, "win": None, "avg_pct": None} for k in ("FUTURES", "CASH", "ALL")}, "open": [], "scheduler": {"steps": {}},
+              "storage": "x", "settings": rules.resolved({})}
+    open_short = {"symbol": "ABC", "entry": 101.5, "score": -40.0, "move_since_open_pct": -1.2, "vs_market_atr": -0.8, "volume_x_normal": 2.1, "status": "OPEN",
+                  "put": "ABC26OCT100PE", "put_strike": 100.0, "put_expiry": "2026-10-27", "put_lot": 500, "put_status": "OPEN", "put_bid": 2.4, "put_ask": 2.5, "put_entry": 2.5, "put_spread_pct": 4.0}
+    no_put = {"symbol": "XYZ", "entry": 55.0, "score": -38.0, "move_since_open_pct": -2.0, "vs_market_atr": -1.1, "volume_x_normal": None, "status": "OPEN",
+              "put_status": "NO_PUT", "put_reason": "spread 5.1% > 3.5%"}
+    gap = {"symbol": "GGG", "entry": 200.0, "gap_vs_prev_low_pct": -3.1, "sigma_pct": 1.9, "status": "OPEN"}
+    intra = {"steps": {}, "constants": v.constants(), "score_short": {"n": 0, "win": None, "avg_bps": None}, "score_gap": {"n": 0, "win": None, "avg_bps": None},
+             "score_put": {"n": 0, "win": None, "avg_bps": None, "total_bps": None}, "preopen_days": 1,
+             "today_short": {"date": "2026-10-06", "scored": 200, "ban_known": True, "market": {"move_since_open_pct": -0.3, "share_up": 40.0, "gap_pct": -0.1}, "picks": [open_short, no_put]},
+             "today_gap": {"date": "2026-10-06", "market_gap_pct": -0.8, "active": True, "picks": [gap]},
+             "short_recent": [dict(open_short, date="2026-10-06"), dict(no_put, date="2026-10-06")], "gap_recent": [dict(gap, date="2026-10-06")]}
+    html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=intra)
+    assert "ABC26OCT100PE" in html and "No put: spread 5.1%" in html and "GGG" in html and "open" in html
