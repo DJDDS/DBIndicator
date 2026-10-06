@@ -38,7 +38,7 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 <header>
   <h1>V13 Swing Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">SPOTTING - no orders are placed</span>
   <span class="tag">Plan for {{ plan.date if plan else '—' }} · entry {{ plan.entry_day if plan else '—' }}</span>
-  <span style="margin-left:auto"><a href="/" style="color:#8fb3ff">Dashboard</a> · <a href="/logout" data-logout style="color:#8fb3ff">Logout</a></span>
+  <span style="margin-left:auto"><a href="#setup-a" style="color:#8fb3ff">Setup A v1.1</a> · <a href="/" style="color:#8fb3ff">Dashboard</a> · <a href="/logout" data-logout style="color:#8fb3ff">Logout</a></span>
   <span id="autorf" class="tag" title="Click to refresh now" style="cursor:pointer">auto-refresh</span>
 </header>
 <script src="/static/logout.js"></script>
@@ -173,6 +173,69 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
       <div class="small">Pre-open snapshots recorded: {{ intra.preopen_days }} · <a href="/api/v131/export/shorts" style="color:#8fb3ff">shorts</a> · <a href="/api/v131/export/gaps" style="color:#8fb3ff">gaps</a> · <a href="/api/v131/export/preopen" style="color:#8fb3ff">pre-open</a></div>
     </div>
   </div>
+</div>
+{% endif %}
+
+{% if v11 %}
+<div class="card lane" id="setup-a" style="border-top-color:#2fbf9b">
+  <h2><span>Setup A v1.1 · dip-buy (paper)</span> · NIFTY-500 · runs every weekday from 19:15 · spotting only, no orders</h2>
+  {% if v11.error %}<div class="closed small">Setup A unavailable: {{ v11.error }}</div>{% else %}
+  {% set S = v11.summary %}
+  {% if not v11.bootstrapped %}<div class="warn small" style="margin-bottom:8px">First start: downloading ~470 days of NSE history ({{ v11.scheduler.bootstrap or 'starting' }}). Takes about 20-30 minutes, then the evening scan runs by itself.</div>{% endif %}
+  {% if S %}
+  <div class="kpis" style="margin-bottom:12px">
+    <div class="kpi"><div class="v">{{ S.date }}</div><div class="l">last scanned day · {{ S.computed_at[11:16] }} IST</div></div>
+    <div class="kpi"><div class="v {{ 'open' if (S.score or 0) >= v11.params.score else '' }}">{{ '%.3f'|format(S.score or 0) }}</div><div class="l">stress score (need ≥ {{ v11.params.score }})</div></div>
+    <div class="kpi"><div class="v {{ 'open' if (S.m5 or 0) <= v11.params.m5 else '' }}">{{ '%+.1f'|format((S.m5 or 0)*100) }}%</div><div class="l">NIFTY 5-day (need ≤ −2.5%)</div></div>
+    <div class="kpi"><div class="v {{ 'closed' if (S.vchg or 0) > v11.params.vix_jump else '' }}">{{ '%+.0f'|format((S.vchg or 0)*100) }}%</div><div class="l">VIX 5-day (block if > +50%) · VIX {{ S.vix }}</div></div>
+    <div class="kpi"><div class="v {{ 'open' if S.tonight else '' }}">{{ S.tonight|length }}</div><div class="l">signals tonight (≈8 evenings a year)</div></div>
+  </div>
+  {% set g = [0, (S.score or 0) / 0.8]|max %}
+  <div class="small">Stress gauge · {{ '%.0f'|format([g,1]|min*100) }}% of scale, line = trigger 0.468</div>
+  <div style="position:relative;height:10px;background:var(--panel2);border-radius:6px;margin:6px 0 14px">
+    <div style="height:100%;width:{{ '%.1f'|format([g,1]|min*100) }}%;border-radius:6px;background:{{ 'var(--good)' if (S.score or 0) >= v11.params.score else 'var(--muted)' }}"></div>
+    <div style="position:absolute;top:-4px;left:{{ '%.1f'|format(v11.params.score/0.8*100) }}%;width:2px;height:18px;background:var(--text)"></div></div>
+  <div class="grid3">
+    <div class="card" style="grid-column:span 2">
+      <h2>Tonight: BUY at tomorrow's open</h2>
+      {% if S.tonight %}<table><tr><th>Stock</th><th>Signal close</th><th>5-day</th><th>Target +6%</th><th>Stop −12% (close)</th><th>F&amp;O</th></tr>
+      {% for r in S.tonight %}<tr><td><b>{{ r.symbol }}</b></td><td>{{ '%.2f'|format(r.signal_close) }}</td><td>{{ '%+.1f'|format(r.r5_pct) }}%</td>
+        <td>{{ '%.2f'|format(r.signal_close*1.06) }}*</td><td>{{ '%.2f'|format(r.signal_close*0.88) }}*</td><td>{{ 'yes' if r.fo else '—' }}</td></tr>{% endfor %}</table>
+      <div class="small">* from tonight's close; the real levels are set from tomorrow's open price. Also exit on the first close at a 7-day closing high, or on day 20. Size 2.5% of capital, max 10 open.</div>
+      {% else %}<div class="empty">No signal tonight{% if not S.market_ok %} — market conditions not met{% endif %}. Normal: about 8 signal evenings a year.</div>{% endif %}
+      <h2 style="margin-top:14px">Open paper positions</h2>
+      {% if S.open %}<table><tr><th>Stock</th><th>Signal</th><th>Entry</th><th>Last close</th><th>Open P&amp;L</th><th>Target</th><th>Stop</th><th>Status</th></tr>
+      {% for r in S.open %}<tr><td><b>{{ r.symbol }}</b>{% if r.fo %} <span class="chip">F&amp;O</span>{% endif %}</td><td>{{ r.signal_date[:10] }}</td>
+        <td>{{ '%.2f'|format(r.entry_px) if r.entry_px else 'next open' }}</td><td>{{ '%.2f'|format(r.last_close) if r.last_close else '—' }}</td>
+        <td class="{{ 'open' if (r.open_ret_bps or 0) > 0 else 'closed' }}">{{ '%+.1f'|format((r.open_ret_bps or 0)/100) }}%</td>
+        <td>{{ '%.2f'|format(r.entry_px*1.06) if r.entry_px else '—' }}</td><td>{{ '%.2f'|format(r.entry_px*0.88) if r.entry_px else '—' }}</td><td>{{ r.status }}</td></tr>{% endfor %}</table>
+      {% else %}<div class="empty">No open positions.</div>{% endif %}
+      <details style="margin-top:10px"><summary class="small">Closed paper trades ({{ S.score_all.n }})</summary><table>
+        <tr><th>Signal</th><th>Stock</th><th>Src</th><th>Entry</th><th>Exit</th><th>Exit px</th><th>Reason</th><th>Days</th><th>Return</th></tr>
+        {% for r in S.closed %}<tr><td>{{ r.signal_date[:10] }}</td><td>{{ r.symbol }}</td><td>{{ r.source }}</td><td>{{ '%.2f'|format(r.entry_px) }}</td><td>{{ (r.exit_date or '')[:10] }}</td>
+          <td>{{ '%.2f'|format(r.exit_px) }}</td><td>{{ r.exit_reason }}</td><td>{{ r.days_held|int }}</td><td class="{{ 'open' if r.ret_bps > 0 else 'closed' }}">{{ '%+.1f'|format(r.ret_bps/100) }}%</td></tr>{% endfor %}</table></details>
+    </div>
+    <div class="card">
+      <h2>Scorecard</h2>
+      <table><tr><th></th><th>Trades</th><th>Win</th><th>Avg</th></tr>
+      {% for k, lbl in [('score_live','Live'),('score_replay','Replay'),('score_all','All')] %}{% set c = S[k] %}
+      <tr><td>{{ lbl }}</td><td>{{ c.n }}</td><td>{{ ('%.0f'|format(c.win*100) ~ '%') if c.win is not none else '—' }}</td><td>{{ ('%+.2f'|format(c.avg_bps/100) ~ '%') if c.avg_bps is not none else '—' }}</td></tr>{% endfor %}</table>
+      <div class="small" style="margin-top:6px">Paper equity at 2.5% per trade: <b>{{ '%+.2f'|format(S.equity_pct or 0) }}%</b> of capital · last-30 hit rate {{ ('%.0f'|format(S.hit30*100) ~ '%') if S.hit30 is not none else '—' }} · <span class="{{ 'warn' if S.flag == 'Watch' else 'open' }}">{{ S.flag }}</span></div>
+      <div class="small">Research expectation (2015-26): ~83% win, +2.3% avg after costs, worst-5% ≈ −18%.</div>
+      <h2 style="margin-top:12px">Scanner health</h2>
+      {% for k, v in (v11.scheduler.steps or {}).items() %}<div class="small">{{ k }}: <span class="{{ 'open' if v.ok else 'closed' }}">{{ 'ok' if v.ok else 'waiting/failed' }}</span> · {{ v.at }} · {{ v.result if v.ok else v.error }}</div>{% else %}<div class="empty">No run since the server started. Next: {{ v11.next_run }}.</div>{% endfor %}
+      <div class="small">Store: {{ S.days_in_store }} trading days from {{ S.store_from }} · liquid {{ S.n_liquid }} · at 7-day low above 200-DMA {{ S.n_base }}</div>
+      <div class="small">Next auto-run: {{ v11.next_run }} (retries every 15 min to 22:30 until NSE posts the day's files).</div>
+      <form method="post" action="/api/v11/run" style="margin-top:8px"><button type="submit" {{ 'disabled' if v11.running }}>{{ 'Running…' if v11.running else 'Run scan now' }}</button></form>
+      <div class="small" style="margin-top:6px"><a href="/api/v11/export/ledger" style="color:#8fb3ff">paper ledger CSV</a> · <a href="/api/v11/export/signals" style="color:#8fb3ff">signals CSV</a> · <a href="/api/v11/export/runs" style="color:#8fb3ff">run log</a></div>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty">No scan stored yet. Next: {{ v11.next_run }}.</div>
+  {% for k, v in (v11.scheduler.steps or {}).items() %}<div class="small">{{ k }}: <span class="{{ 'open' if v.ok else 'closed' }}">{{ 'ok' if v.ok else 'waiting/failed' }}</span> · {{ v.at }} · {{ v.result if v.ok else v.error }}</div>{% endfor %}
+  {% if v11.bootstrapped %}<form method="post" action="/api/v11/run" style="margin-top:8px"><button type="submit" {{ 'disabled' if v11.running }}>{{ 'Running…' if v11.running else 'Run scan now' }}</button></form>{% endif %}
+  {% endif %}
+  {% endif %}
 </div>
 {% endif %}
 

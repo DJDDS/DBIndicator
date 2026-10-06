@@ -35,3 +35,14 @@ Storage: <V12 storage root>/v131/.
 ## PySR
 - The earlier intraday PySR formula modelled the size of a drop, not which stock to short (-9 bps as a short picker), so it is not used.
 - A new PySR search for 09:45 short picks (2015-19 only; judged on 2020-26) ships as pysr_short945_run.py for the laptop.
+
+## Setup A v1.1 dip-buy on Railway (6 Oct 2026)
+- `app/v11_setup_a.py`: port of the laptop `scanner_v11.py` (rules frozen 3 Oct). Engine functions are line-for-line identical;
+  storage moved to `<V12 storage root>/v11/` (pickle, no pyarrow needed). Parity on DJ's real store: identical indicator arrays and
+  ledger (28 closed, 89% win, +373 bps; SOLARINDS / TEJASNET open).
+- Scheduler: weekdays 19:15-22:30 every 15 min until NSE posts the day's files; idempotent per date; catches up a missed evening
+  (up to 5 days). First start bootstraps ~470 trading days of NSE bhavcopy + index closes (resumable, outside market hours).
+  Needs no Kite login.
+- Seeds signal history and paper ledger from the laptop CSVs (`app/v11_assets/`).
+- `/admin/v130#setup-a`: gate KPIs + stress gauge, tonight's BUY list, open positions with target/stop, closed trades, scorecard,
+  health, "Run scan now" (POST /api/v11/run), CSV exports. Owner-only: /api/v11/status, /api/v11/run, /api/v11/export/<ledger|signals|runs>.

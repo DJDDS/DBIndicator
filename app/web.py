@@ -1243,7 +1243,40 @@ def admin_v130():
         intra = v131_intraday.status()
     except Exception as exc:  # fail-soft: the swing desk page must still render
         intra = {"error": str(exc)[:200]}
-    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra)
+    try:
+        from . import v11_setup_a
+        v11 = v11_setup_a.status()
+    except Exception as exc:  # fail-soft
+        v11 = {"error": str(exc)[:200]}
+    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11)
+
+
+@app.route("/api/v11/status")
+@require_roles(OWNER)
+def api_v11_status():
+    from . import v11_setup_a
+    return Response(json.dumps(v11_setup_a.status(), default=str), mimetype="application/json")
+
+
+@app.route("/api/v11/run", methods=["POST"])
+@require_roles(OWNER)
+def api_v11_run():
+    from . import v11_setup_a
+    msg = v11_setup_a.run_now_async()
+    if request.form or not request.is_json:
+        return redirect("/admin/v130#setup-a")
+    return jsonify({"status": msg})
+
+
+@app.route("/api/v11/export/<kind>")
+@require_roles(OWNER)
+def api_v11_export(kind):
+    from . import v11_setup_a
+    files = {"ledger": (v11_setup_a.LEDGER, "text/csv"), "signals": (v11_setup_a.HIST, "text/csv"), "runs": ("runs.jsonl", "application/x-ndjson")}
+    if kind not in files:
+        return jsonify({"error": "unknown export"}), 404
+    name, mime = files[kind]
+    return _v12_export(v11_setup_a._p(name), name, mime)
 
 
 @app.route("/api/v130/status")

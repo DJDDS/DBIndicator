@@ -2410,5 +2410,11 @@ def start_background_scanner():
         v131_intraday.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V13.1 intraday paper lanes failed to start")
+    # Setup A v1.1 dip-buy scanner (NSE end-of-day files only, no Kite needed). Fail-soft.
+    try:
+        from . import v11_setup_a
+        v11_setup_a.start_once()
+    except Exception:
+        log.exception("Setup A v1.1 scanner failed to start")
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()
