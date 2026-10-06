@@ -60,6 +60,21 @@ def _chart_bars(name, now):
     return [b for b in bars if str(b.get('date'))[:10]!=today]+[live]
 
 
+def _trim_chart(ch, n, close_only=False):
+    """Keep what the page draws: the last n daily bars, SMA 20/50/200 on those bars, no EMA; 2-decimal prices.
+    5 years of OHLC + 8 average series for sector and NIFTY was ~1 MB per sector open."""
+    candles=(ch or {}).get('candles',[])[-n:]
+    if not candles: return {'candles':[],'sma':{}}
+    t0=candles[0]['time']
+    r=lambda v: round(v,2) if isinstance(v,(int,float)) else v
+    if close_only:
+        return {'candles':[{'time':c['time'],'close':r(c['close'])} for c in candles]}
+    out={'candles':[{k:r(c[k]) for k in ('time','open','high','low','close')} for c in candles],'sma':{}}
+    for k in ('20','50','200'):
+        out['sma'][k]=[{'time':p['time'],'value':r(p['value'])} for p in (ch.get('sma') or {}).get(k,[]) if p['time']>=t0]
+    return out
+
+
 def _status():
     keys=('running','done','total','error','updated_at','quote_at')
     with _lock:
@@ -189,8 +204,11 @@ def detail(sector_id, window=20, lite=False):
     if weights_available:
         for m in members:
             contributions.append({'symbol':m['symbol'],'value':m['weight']*m['returns']['today']/100 if m['returns']['today'] is not None else None})
-    return {'sector':sector,'members':members,'chart':a.chart_series(_chart_bars(sector['name'],now)),
-            'benchmark_chart':a.chart_series(_chart_bars('NIFTY 50',now)),'breadth_series':breadth,
+    chart=a.chart_series(_chart_bars(sector['name'],now)); bench=a.chart_series(_chart_bars('NIFTY 50',now))
+    if lite:
+        chart=_trim_chart(chart,760); bench=_trim_chart(bench,760,close_only=True)   # 3Y is the longest range drawn
+    return {'sector':sector,'members':members,'chart':chart,
+            'benchmark_chart':bench,'breadth_series':breadth,
             'rotation':rotations,'rotation_window':window,'contributions':contributions,
             'contribution_note':'Current-weight approximation; not exact index attribution.' if weights_available else 'Unavailable: official constituent CSV does not supply dated index weights. Equal weights are not substituted.',
             'weight_date':entry.get('retrieved_at') if weights_available else None,'status':_status()}
@@ -208,7 +226,7 @@ def stock_chart(symbol):
     if not intraday['fresh']:
         intraday['vwap']=None
         intraday['volume_ratio']=None
-    return {'symbol':symbol,'chart':a.chart_series(_chart_bars(symbol,now)),'intraday':intraday,
+    return {'symbol':symbol,'chart':_trim_chart(a.chart_series(_chart_bars(symbol,now)),260),'intraday':intraday,
             'status':_status(),'vwap_note':'Approximate 5-minute session VWAP; appears after queued history refresh.'}
 
 
@@ -221,8 +239,10 @@ def sector_intraday(sector_id):
         out={}
         for name in (entry['name'],'NIFTY 50'):
             if len(_requested_intraday)<20: _requested_intraday.add(name)
-            d=_intraday.get(name,{})
-            out[name]={'candles':copy.deepcopy(d.get('candles',[])),'as_of':d.get('as_of'),'bar_asof':d.get('bar_asof')}
+            d=_intraday.get(name,{}); cs=d.get('candles',[])
+            day=str(cs[-1]['date'])[:10] if cs else None          # only the latest session is drawn
+            cs=[{k:(round(v,2) if isinstance(v,float) else v) for k,v in c.items() if k in ('date','open','high','low','close')} for c in cs if str(c['date'])[:10]==day]
+            out[name]={'candles':cs,'as_of':d.get('as_of'),'bar_asof':d.get('bar_asof')}
     return {'sector':entry['name'],'series':out,'note':'Completed 5-minute bars; refreshed by the background worker about once a minute.'}
 
 

@@ -21,6 +21,29 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 install_security_headers(app)
+
+
+@app.after_request
+def _gzip_response(response):
+    """Compress JSON/HTML/CSS/JS replies (sector and admin pages send 100 KB-1 MB). Never touches
+    streams (SSE), file passthroughs, small or already-encoded replies."""
+    try:
+        if (response.direct_passthrough or response.is_streamed or response.status_code < 200 or response.status_code >= 300
+                or "gzip" not in (request.headers.get("Accept-Encoding") or "").lower()
+                or response.headers.get("Content-Encoding")
+                or response.mimetype not in ("application/json", "text/html", "text/css", "application/javascript", "text/javascript", "application/x-ndjson")):
+            return response
+        data = response.get_data()
+        if len(data) < 1500:
+            return response
+        import gzip as _gz
+        response.set_data(_gz.compress(data, compresslevel=5))
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(response.get_data()))
+        response.vary.add("Accept-Encoding")
+    except Exception:  # noqa: BLE001 - compression must never break a reply
+        pass
+    return response
 _scanner_started = False
 _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
