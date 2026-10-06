@@ -468,6 +468,10 @@ def run_now_async() -> str:
 
 def status() -> dict:
     s = _read_summary()
-    nxt = 'tonight 19:15' if now_ist().hour * 60 + now_ist().minute < EVENING_START else 'next weekday 19:15'
+    n = now_ist(); hm = n.hour * 60 + n.minute; done_today = bool(s and s.get('date') == str(n.date()))
+    if n.weekday() >= 5 or done_today or hm > EVENING_END: nxt = 'next weekday 19:15'
+    elif not bootstrapped(): nxt = 'tonight, right after the history download finishes (checks every 15 min until 22:30)'
+    elif hm < EVENING_START: nxt = 'tonight 19:15'
+    else: nxt = f'tonight {(hm // 15 + 1) * 15 // 60:02d}:{(hm // 15 + 1) * 15 % 60:02d} (checks every 15 min until 22:30)'
     return dict(engine='Setup A v1.1 dip-buy (paper, spotting only - no orders)', storage=str(ROOT), scheduler=_status,
                 bootstrapped=bootstrapped(), summary=s, params=P, next_run=nxt, running=_run_lock.locked())
