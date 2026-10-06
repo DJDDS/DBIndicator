@@ -251,8 +251,12 @@ def install_security_headers(app) -> None:
         origin = request.headers.get("Origin")
         if not origin:
             return None
-        expected = request.host_url.rstrip("/")
-        if not hmac.compare_digest(origin.rstrip("/"), expected):
+        # Compare host only: behind Railway's TLS proxy request.host_url is http://
+        # while the browser's Origin is https://, which wrongly blocked same-site forms.
+        from urllib.parse import urlparse
+        origin_host = (urlparse(origin).netloc or "").lower()
+        expected = ((request.headers.get("X-Forwarded-Host") or request.host or "").split(",", 1)[0].strip()).lower()
+        if not origin_host or not hmac.compare_digest(origin_host, expected):
             log.warning(
                 "security.cross_site_write_blocked path=%s origin=%s",
                 request.path,
