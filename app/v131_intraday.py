@@ -207,12 +207,17 @@ def _fo_universe(kite) -> dict:
     return {i['tradingsymbol']: i['instrument_token'] for i in nse if i.get('tradingsymbol') in names and i.get('segment') == 'NSE'}
 
 
+def _auth_error(exc: Exception) -> bool:
+    t = (type(exc).__name__ + ' ' + str(exc)).lower()
+    return 'tokenexception' in t or 'access_token' in t or 'api_key' in t
+
+
 def _bars(kite, token: int, a: dt.datetime, b: dt.datetime, interval: str, tries: int = 3) -> pd.DataFrame:
     for attempt in range(tries):                       # Kite allows ~3 history calls/s shared with other engines: back off and retry
         try:
             raw = kite.historical_data(token, a, b, interval); break
-        except Exception:  # noqa: BLE001
-            if attempt == tries - 1: raise
+        except Exception as exc:  # noqa: BLE001
+            if attempt == tries - 1 or _auth_error(exc): raise
             time.sleep(1.5 * (attempt + 1))
     df = pd.DataFrame(raw)
     if df.empty: return df
@@ -245,6 +250,8 @@ def run_prep(kite, today: dt.date | None = None) -> int:
             p = prep_from_history(d, fv)
             if p: p['token'] = tok; out[s] = p; n += 1
         except Exception as exc:  # noqa: BLE001
+            if _auth_error(exc):
+                raise RuntimeError('Kite login needed (access token expired) - log in on the scanner') from exc
             log.warning('v131 prep %s: %s', s, exc)
     if n < max(30, 0.8 * len(uni)):
         raise RuntimeError(f'prep incomplete: only {n} of {len(uni)} F&O stocks')
@@ -450,7 +457,7 @@ def _loop(get_kite):
                     key = lambda k: f'{d}:{k}'
                     def due(k, a, b, every=1):
                         return a <= hm <= b and not done.get(key(k)) and (hm - a) % every == 0
-                    if due('prep', 480, 552, 4): done[key('prep')] = _step('prep', run_prep, kite)
+                    if due('prep', 480, 552, 2): done[key('prep')] = _step('prep', run_prep, kite)
                     if due('preopen', 549, 554): done[key('preopen')] = _step('preopen', run_preopen, kite)
                     if due('gap', 556, 570): done[key('gap')] = _step('gap', run_gap, kite)
                     if due('short', 585, 598): done[key('short')] = _step('short', run_shorts, kite)

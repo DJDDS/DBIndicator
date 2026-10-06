@@ -189,3 +189,15 @@ def test_choose_put_and_spread_gate():
     assert ok["put_status"] == "OPEN" and ok["put_entry"] == 10.1
     wide = v.put_from_quote({"depth": {"buy": [{"price": 9.0}], "sell": [{"price": 10.0}]}})
     assert wide["put_status"] == "NO_PUT" and "spread" in wide["put_reason"]
+
+
+def test_prep_stops_at_once_when_kite_login_expired(store):
+    class Expired(FakeKite):
+        calls = 0
+        def historical_data(self, *a):
+            Expired.calls += 1
+            raise Exception("Incorrect `api_key` or `access_token`.")
+    k = Expired(dt.date(2026, 10, 6))
+    with pytest.raises(RuntimeError, match="Kite login needed"):
+        v.run_prep(k, dt.date(2026, 10, 6))
+    assert Expired.calls == 1
