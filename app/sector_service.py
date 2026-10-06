@@ -150,7 +150,9 @@ def _evidence(row, sector, benchmark):
             'news':articles, 'by_period':{p:[f'{p}: {row["returns"][p]:+.2f}% price return.' if row.get('returns',{}).get(p) is not None else f'{p}: history unavailable.', f'Vs sector: {row.get("vs_sector",{}).get(p):+.2f} percentage points.' if row.get('vs_sector',{}).get(p) is not None else 'Matched sector comparison unavailable.'] for p in a.PERIODS}}
 
 
-def detail(sector_id, window=20):
+def detail(sector_id, window=20, lite=False):
+    """lite=True: what the sector page shows (members, returns, charts) - skips rotation for every sector,
+    the breadth history and per-stock news evidence, which together made each sector open take ~3 s."""
     now=scanner.now_ist()
     with _lock:
         entry=next((copy.deepcopy(e) for e in _state['catalogue'] if e['id']==sector_id),None)
@@ -168,19 +170,20 @@ def detail(sector_id, window=20):
         r['vwap']=intraday.get('vwap'); r['vwap_at']=intraday.get('as_of')
         r['vwap_distance']=a.change(r['price'],r['vwap'])
         r['volume_ratio']=intraday.get('volume_ratio')
-        r['evidence']=_evidence(r,sector,benchmark)
+        r['evidence']=None if lite else _evidence(r,sector,benchmark)
         event=(calendar.get('events') or {}).get(m['symbol'])
         if event and str(event.get('meeting_date','')) >= now.date().isoformat():
             r['event']=event
             r['event_observed_at']=calendar.get('last_refresh_at')
         members.append(r)
     # Prior daily snapshots establish breadth acceleration with valid denominators.
-    breadth=a.breadth_series([_history(m['symbol']) for m in members])
+    breadth=[] if lite else a.breadth_series([_history(m['symbol']) for m in members])
     sector['breadth_change']={str(n):(breadth[-1][str(n)]-breadth[-6][str(n)] if len(breadth)>=6 and breadth[-1][str(n)] is not None and breadth[-6][str(n)] is not None else None) for n in (20,50,200)}
-    sector['evidence']=_evidence(sector,sector,benchmark)
+    sector['evidence']=None if lite else _evidence(sector,sector,benchmark)
     rotations={}
-    for entry2 in overview()['sectors']:
-        rotations[entry2['id']]=a.rotation_series(_history(entry2['name']),_history('NIFTY 50'),window)
+    if not lite:
+        for entry2 in overview()['sectors']:
+            rotations[entry2['id']]=a.rotation_series(_history(entry2['name']),_history('NIFTY 50'),window)
     weights_available=bool(members) and all(a.finite(m.get('weight')) is not None for m in members)
     contributions=[]
     if weights_available:
@@ -207,6 +210,20 @@ def stock_chart(symbol):
         intraday['volume_ratio']=None
     return {'symbol':symbol,'chart':a.chart_series(_chart_bars(symbol,now)),'intraday':intraday,
             'status':_status(),'vwap_note':'Approximate 5-minute session VWAP; appears after queued history refresh.'}
+
+
+def sector_intraday(sector_id):
+    """Today's 5-minute candles for a sector index and NIFTY 50 (the sector chart's 1D view).
+    Queued for the background worker like stock charts; never fetched on the request thread."""
+    with _lock:
+        entry=next((e for e in _state['catalogue'] if e['id']==sector_id),None)
+        if entry is None: return None
+        out={}
+        for name in (entry['name'],'NIFTY 50'):
+            if len(_requested_intraday)<20: _requested_intraday.add(name)
+            d=_intraday.get(name,{})
+            out[name]={'candles':copy.deepcopy(d.get('candles',[])),'as_of':d.get('as_of'),'bar_asof':d.get('bar_asof')}
+    return {'sector':entry['name'],'series':out,'note':'Completed 5-minute bars; refreshed by the background worker about once a minute.'}
 
 
 def ensure_started():

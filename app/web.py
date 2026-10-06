@@ -841,6 +841,14 @@ def api_sector_stock(symbol):
     return (jsonify(result), 200) if result is not None else (jsonify({"error": "Unknown sector constituent"}), 404)
 
 
+@app.route("/api/sector-analysis/<sector_id>/intraday")
+@require_roles(OWNER, MEMBER)
+def api_sector_intraday(sector_id):
+    sector_service.ensure_started()
+    result = sector_service.sector_intraday(sector_id)
+    return (jsonify(result), 200) if result is not None else (jsonify({"error": "Unknown sector index"}), 404)
+
+
 @app.route("/api/sector-analysis/<sector_id>")
 @require_roles(OWNER, MEMBER)
 def api_sector_detail(sector_id):
@@ -851,7 +859,7 @@ def api_sector_detail(sector_id):
     if window not in (5, 20, 60):
         return jsonify({"error": "Rotation window must be 5, 20 or 60 sessions"}), 400
     sector_service.ensure_started()
-    result = sector_service.detail(sector_id, window)
+    result = sector_service.detail(sector_id, window, lite=request.args.get("lite") == "1")
     return (jsonify(result), 200) if result is not None else (jsonify({"error": "Unknown sector index"}), 404)
 
 

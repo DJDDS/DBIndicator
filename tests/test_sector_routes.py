@@ -35,7 +35,7 @@ def test_api_returns_cached_data_and_bad_selection_is_404(client,monkeypatch):
     monkeypatch.setattr(web.sector_service,'ensure_started',lambda:None)
     monkeypatch.setattr(web.sector_service,'overview',lambda:{'sectors':[],'status':{'error':'Kite login required'}})
     assert client.get('/api/sector-analysis',headers=auth()).json['sectors']==[]
-    monkeypatch.setattr(web.sector_service,'detail',lambda sector,window:None)
+    monkeypatch.setattr(web.sector_service,'detail',lambda sector,window,**k:None)
     assert client.get('/api/sector-analysis/missing',headers=auth()).status_code==404
     assert client.get('/api/sector-analysis/missing?window=bad',headers=auth()).status_code==400
 
@@ -72,3 +72,15 @@ def test_live_quotes_only_poll_during_market_window():
     assert not s._quote_window(dt.datetime(2026,10,5,18,30))     # evening
     assert not s._quote_window(dt.datetime(2026,10,5,8,59))
     assert not s._quote_window(dt.datetime(2026,10,3,11,0))      # Saturday
+
+
+def test_sector_intraday_and_lite_detail(monkeypatch):
+    from app import sector_service as s
+    entry={'id':'nifty-it','name':'NIFTY IT','members':[{'symbol':'INFY','name':'Infosys Ltd.'}]}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[entry]})
+    monkeypatch.setitem(s._intraday,'NIFTY IT',{'candles':[{'date':'2026-10-06 09:15:00+05:30','open':1,'high':1,'low':1,'close':1,'volume':0}],'as_of':'x'})
+    r=s.sector_intraday('nifty-it')
+    assert r['sector']=='NIFTY IT' and len(r['series']['NIFTY IT']['candles'])==1 and 'NIFTY 50' in r['series']
+    assert s.sector_intraday('missing') is None
+    d=s.detail('nifty-it',20,lite=True)
+    assert d['rotation']=={} and d['breadth_series']==[] and d['members'][0]['evidence'] is None

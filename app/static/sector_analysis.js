@@ -4,7 +4,7 @@
 const $ = id => document.getElementById(id);
 const PERIODS = [['today','Today'],['1W','1W'],['1M','1M'],['3M','3M'],['6M','6M'],['52W','1Y'],['QTD','QTD']];
 const PLABEL = Object.fromEntries(PERIODS);
-const RANGES = [['3M',63],['6M',126],['1Y',252],['3Y',756]];
+const RANGES = [['1D',0],['3M',63],['6M',126],['1Y',252],['3Y',756]];
 const VARIANT = /midsmall|25\/50|ex bank|nifty500|reits/i;
 const S = {data:null, period:'1M', sectorId:null, detail:null, seq:0, sview:'list', variants:false,
            sort:{key:'ret', dir:-1}, filter:'all', open:null, range:'6M', cmode:'price', highlight:null};
@@ -116,9 +116,9 @@ async function selectSector(id, stock = null, user = false) {
   if (user && window.matchMedia('(max-width:900px)').matches) $('detail').scrollIntoView({behavior: 'smooth', block: 'start'});
   const seq = ++S.seq;
   try {
-    const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(id)}?window=20`);
+    const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(id)}?window=20&lite=1`);
     if (seq !== S.seq) return;
-    S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart();
+    S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart(); if (S.range === '1D') { S.intra = null; intraTries = 0; loadIntraday(); }
     if (stock) { const tr = document.querySelector(`tr.row[data-sym="${CSS.escape(stock)}"]`); if (tr) { tr.scrollIntoView({block: 'center'}); toggleStock(stock); } }
   } catch (e) {
     if (seq !== S.seq) return;
@@ -252,6 +252,7 @@ function renderSectorChart() {
   const name = short(d?.sector?.name || '');
   $('chart-title').textContent = S.cmode === 'price' ? `${name} — price with 20 / 50 / 200-day averages` : `${name} vs NIFTY 50 (both start at 100)`;
   if (!d || d.loading) { chartMessage(c, 'Loading sector chart…'); return; }
+  if (S.range === '1D') { renderIntraday(c, d, name); return; }
   const n = RANGES.find(r => r[0] === S.range)[1];
   const all = d.chart?.candles || [];
   const sk = all.slice(-n);
@@ -305,13 +306,77 @@ function renderSectorChart() {
   c.resize();
 }
 
+/* ---------- 1D: today's 5-minute candles ---------- */
+let intraTimer = null, intraTries = 0;
+async function loadIntraday() {
+  if (!S.sectorId || S.range !== '1D') return;
+  const id = S.sectorId;
+  try {
+    const r = await getJSON(`/api/sector-analysis/${encodeURIComponent(id)}/intraday`);
+    if (id !== S.sectorId) return;
+    S.intra = r; renderSectorChart();
+    const sec = r.series?.[r.sector]?.candles || [];
+    clearTimeout(intraTimer);
+    if (!sec.length && intraTries < 8) { intraTries++; intraTimer = setTimeout(loadIntraday, 20000); }   // first load is queued on the server
+    else intraTries = 0;
+  } catch (e) { S.intra = {error: e.message}; renderSectorChart(); }
+}
+function dayBars(candles) {
+  if (!candles?.length) return [];
+  const day = String(candles[candles.length - 1].date).slice(0, 10);
+  return candles.filter(b => String(b.date).slice(0, 10) === day);
+}
+function prevClose(daily, day) {
+  const prev = (daily || []).filter(b => b.time < day); return prev.length ? prev[prev.length - 1].close : null;
+}
+function renderIntraday(c, d, name) {
+  const r = S.intra;
+  $('chart-title').textContent = S.cmode === 'price' ? `${name} — today, 5-minute candles` : `${name} vs NIFTY 50 — today, % from yesterday's close`;
+  if (!r || (r.sector && r.sector !== d.sector.name)) { chartMessage(c, 'Loading today’s 5-minute candles…'); $('chart-note').textContent = ''; return; }
+  if (r.error) { chartMessage(c, 'Intraday chart unavailable: ' + r.error); return; }
+  const sb = dayBars(r.series?.[d.sector.name]?.candles), nb = dayBars(r.series?.['NIFTY 50']?.candles);
+  if (!sb.length) { chartMessage(c, 'Fetching today’s 5-minute candles from Kite — they appear within a minute'); $('chart-note').textContent = ''; return; }
+  const day = String(sb[0].date).slice(0, 10), times = sb.map(b => String(b.date).slice(11, 16));
+  const pcS = prevClose(d.chart?.candles, day), pcN = prevClose(d.benchmark_chart?.candles || d.benchmark_chart, day);
+  const last = sb[sb.length - 1];
+  if (S.cmode === 'price') {
+    c.setOption({
+      backgroundColor: 'transparent', animation: false, grid: {left: 10, right: 62, top: 34, bottom: 52},
+      legend: {top: 0, left: 0, textStyle: {color: '#8d9cb0'}, data: ['Price']},
+      tooltip: {...AX.tip, formatter: ps => { const p = ps.find(x => x.seriesName === 'Price'); const v = p?.data || [];
+        return `<b>${ps[0]?.axisValue}</b><br>Open <b>${fmt(v[1])}</b><br>High <b>${fmt(v[4])}</b><br>Low <b>${fmt(v[3])}</b><br>Close <b>${fmt(v[2])}</b>`; }},
+      xAxis: AX.x(times), yAxis: AX.y,
+      dataZoom: [{type: 'inside'}],
+      series: [{name: 'Price', type: 'candlestick', data: sb.map(b => [b.open, b.close, b.low, b.high]),
+        itemStyle: {color: '#2fcf8f', color0: '#f2667a', borderColor: '#2fcf8f', borderColor0: '#f2667a'},
+        markLine: ok(pcS) ? {symbol: 'none', silent: true, label: {color: '#e6edf6', formatter: 'prev close ' + fmt(pcS)}, lineStyle: {color: '#f5bf5c', type: 'dashed'}, data: [{yAxis: pcS}]} : undefined}]}, true);
+    $('chart-note').textContent = `${day} · last completed bar ${times[times.length - 1]} · close ${fmt(last.close)}` + (ok(pcS) ? ` · ${pct((last.close / pcS - 1) * 100)} vs yesterday's close` : '');
+  } else {
+    const nmap = new Map(nb.map(b => [String(b.date).slice(11, 16), b.close]));
+    const sec = sb.map(b => ok(pcS) ? (b.close / pcS - 1) * 100 : null);
+    const nif = times.map(t => ok(pcN) && nmap.has(t) ? (nmap.get(t) / pcN - 1) * 100 : null);
+    c.setOption({
+      backgroundColor: 'transparent', animation: false, grid: {left: 10, right: 52, top: 34, bottom: 52},
+      legend: {top: 0, left: 0, textStyle: {color: '#8d9cb0'}},
+      tooltip: {...AX.tip, valueFormatter: v => ok(v) ? (v > 0 ? '+' : '') + v.toFixed(2) + '%' : '—'},
+      xAxis: AX.x(times), yAxis: {...AX.y, axisLabel: {color: '#8d9cb0', formatter: v => v + '%'}},
+      series: [
+        {name: name, type: 'line', showSymbol: false, data: sec, color: '#6aa8ff', lineStyle: {width: 2.2}},
+        {name: 'NIFTY 50', type: 'line', showSymbol: false, connectNulls: true, data: nif, color: '#f5bf5c', lineStyle: {width: 1.6}},
+      ]}, true);
+    const ls = sec.filter(ok).pop(), ln = nif.filter(ok).pop();
+    $('chart-note').textContent = ok(ls) && ok(ln) ? `Today so far: ${name} ${pct(ls)} vs NIFTY 50 ${pct(ln)} → ${ls - ln >= 0 ? 'stronger' : 'weaker'} by ${fmt(Math.abs(ls - ln))} points.` : '';
+  }
+  c.resize();
+}
+
 /* ---------- events ---------- */
 document.addEventListener('click', e => {
   const t = e.target.closest('button, th, tr.row'); if (!t) return;
   if (t.dataset.period) { S.period = t.dataset.period; renderPeriods(); renderSectors(); if (S.detail) { renderHead(S.detail.sector); renderStocks(); } return; }
   if (t.dataset.sview) { S.sview = t.dataset.sview; document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); renderSectors(); return; }
   if (t.dataset.filter) { S.filter = t.dataset.filter; renderStocks(); return; }
-  if (t.dataset.range) { S.range = t.dataset.range; renderRanges(); renderSectorChart(); return; }
+  if (t.dataset.range) { S.range = t.dataset.range; renderRanges(); renderSectorChart(); if (S.range === '1D') loadIntraday(); return; }
   if (t.dataset.cmode) { S.cmode = t.dataset.cmode; renderSectorChart(); return; }
   if (t.dataset.sort) { const k = t.dataset.sort; S.sort = {key: k, dir: S.sort.key === k ? -S.sort.dir : -1}; renderStocks(); return; }
   if (t.dataset.sector) { $('search-results').hidden = true; $('search').value = ''; selectSector(t.dataset.sector, t.dataset.stock || null, true); return; }
@@ -356,8 +421,8 @@ async function liveRefresh(manual = false) {
     S.data = await getJSON('/api/sector-analysis');
     showStatus(); renderSectors();
     if (S.sectorId) {
-      const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(S.sectorId)}?window=20`);
-      S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart();
+      const d = await getJSON(`/api/sector-analysis/${encodeURIComponent(S.sectorId)}?window=20&lite=1`);
+      S.detail = d; renderHead(d.sector); renderStocks(); renderSectorChart(); if (S.range === '1D') loadIntraday();
       stockCache.delete(S.open);
       if (S.open) drawMini(S.open);
     }
