@@ -2410,6 +2410,12 @@ def start_background_scanner():
         v131_intraday.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V13.1 intraday paper lanes failed to start")
+    # V13.2 movement predictor (09:16 unusual-move picks, no direction). Fail-soft.
+    try:
+        from . import v132_movers
+        v132_movers.start_once(kite_auth.get_kite_client)
+    except Exception:
+        log.exception("V13.2 movement predictor failed to start")
     # Setup A v1.1 dip-buy scanner (NSE end-of-day files only, no Kite needed). Fail-soft.
     try:
         from . import v11_setup_a

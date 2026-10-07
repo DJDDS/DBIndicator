@@ -176,6 +176,33 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 </div>
 {% endif %}
 
+{% if movers and not movers.get('error') %}
+<div class="card lane" id="movers" style="border-top-color:#e0a030">
+  <h2>09:16 movement predictor · which stock moves unusually today (no direction)</h2>
+  {% set mt = movers.today %}{% set mr = movers.research or {} %}
+  {% if mt %}
+    <div class="small">Today {{ mt.date }} · scored {{ mt.scored }} F&amp;O stocks · F&amp;O market gap {{ mt.market_gap_pct }}% ·
+      {% if mt.confident %}<b style="color:#e0a030">HIGH CONFIDENCE</b> (top pick {{ mt.top_prob_pct }}% &gt; 250-day median {{ mt.threshold_pct }}%){% else %}normal confidence (top pick {{ mt.top_prob_pct }}% vs 250-day median {{ mt.threshold_pct }}%){% endif %}
+      {% if not mt.news_ok or not mt.board_ok %} · <span class="warn">NSE news/board-meeting feed unavailable today: scores less reliable</span>{% endif %}</div>
+    <table style="margin-top:6px"><tr><th>#</th><th>Stock</th><th>Open</th><th>Gap</th><th>Normal move</th><th>Needs (either way)</th><th>Up level</th><th>Down level</th><th>Model</th><th>Events</th><th>Result</th></tr>
+    {% for p in mt.picks %}<tr><td>{{ loop.index }}</td><td><b>{{ p.symbol }}</b></td><td>{{ p.open }}</td><td>{{ p.gap_pct }}%</td><td>{{ p.normal_move_pct }}%</td><td>±{{ p.need_pct }}%</td><td>{{ p.up_level }}</td><td>{{ p.down_level }}</td><td>{{ p.prob_pct }}%</td>
+      <td class="small">{{ 'results yesterday' if p.results_yday else ('results today' if p.results_today else '') }}{{ (' · ' ~ p.overnight_filings ~ ' overnight filings') if p.overnight_filings else '' }}</td>
+      <td class="{{ 'open' if p.get('hit') else ('closed' if p.get('hit') is sameas false else '') }}">{% if p.get('hit') is not none %}{{ 'HIT' if p.hit else 'miss' }} · {{ p.max_move_pct }}% {{ p.dir }}{% else %}open{% endif %}</td></tr>{% endfor %}</table>
+  {% else %}<div class="empty">Picks appear at 09:16 on trading days (prep runs 08:10-09:08).</div>{% endif %}
+  {% set sc = movers.score or {} %}
+  <div class="kpis" style="margin-top:8px">
+    <div class="kpi"><div class="v">{{ (sc.top1_confident.hit|string + '%') if sc.top1_confident and sc.top1_confident.hit is not none else '—' }}</div><div class="l">high-confidence top pick ({{ sc.top1_confident.n if sc.top1_confident else 0 }})</div></div>
+    <div class="kpi"><div class="v">{{ (sc.top1.hit|string + '%') if sc.top1 and sc.top1.hit is not none else '—' }}</div><div class="l">top pick, all days ({{ sc.top1.n if sc.top1 else 0 }})</div></div>
+    <div class="kpi"><div class="v">{{ (sc.top3.hit|string + '%') if sc.top3 and sc.top3.hit is not none else '—' }}</div><div class="l">all top-3 picks ({{ sc.top3.n if sc.top3 else 0 }})</div></div></div>
+  <div class="small" style="margin-top:8px">HIT = the stock travels at least the "needs" distance from the 09:15 open, up or down, during the day (2% or 1.3× its own normal, whichever is larger). Research, walk-forward by year:
+    high-confidence days {{ mr.confident_2018_26 }}% (2018-26), {{ mr.confident_oct2024_on }}% from Oct-2024, {{ mr.confident_2026 }}% in 2026 · top pick all days {{ mr.top1_2018_26 }}% · an average stock on the same days {{ mr.avg_stock_on_confident_days }}%. Direction is NOT predicted.</div>
+  <h2 style="margin-top:10px">Engine health</h2>
+  {% for k, v in (movers.steps or {}).items() %}<div class="small">{{ k }}: <span class="{{ 'open' if v.ok else 'closed' }}">{{ 'ok' if v.ok else 'failed' }}</span> · {{ v.at }}{% if not v.ok %} · {{ v.error }}{% endif %}</div>{% else %}<div class="empty">No step run yet today.</div>{% endfor %}
+  {% if movers.recent %}<details style="margin-top:8px"><summary class="small">Recent days</summary><table><tr><th>Date</th><th>Confidence</th><th>Top pick</th><th>Needs</th><th>Moved</th><th>Result</th></tr>
+    {% for d in movers.recent %}{% set p = d.picks[0] if d.picks else {} %}<tr><td>{{ d.date }}</td><td>{{ 'HIGH' if d.confident else 'normal' }}</td><td>{{ p.get('symbol') }}</td><td>±{{ p.get('need_pct') }}%</td><td>{{ p.get('max_move_pct', '—') }}%</td><td>{{ 'HIT' if p.get('hit') else ('miss' if p.get('hit') is sameas false else 'open') }}</td></tr>{% endfor %}</table></details>{% endif %}
+</div>
+{% endif %}
+
 {% if v11 %}
 <div class="card lane" id="setup-a" style="border-top-color:#2fbf9b">
   <h2><span>Setup A v1.1 · dip-buy (paper)</span> · NIFTY-500 · runs every weekday from 19:15 · spotting only, no orders</h2>

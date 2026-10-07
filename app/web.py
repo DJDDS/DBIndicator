@@ -1248,7 +1248,19 @@ def admin_v130():
         v11 = v11_setup_a.status()
     except Exception as exc:  # fail-soft
         v11 = {"error": str(exc)[:200]}
-    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11)
+    try:
+        from . import v132_movers
+        movers = v132_movers.status()
+    except Exception as exc:  # fail-soft
+        movers = {"error": str(exc)[:200]}
+    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11, movers=movers)
+
+
+@app.route("/api/v132/status")
+@require_roles(OWNER)
+def api_v132_status():
+    from . import v132_movers
+    return Response(json.dumps(v132_movers.status(), default=str), mimetype="application/json")
 
 
 @app.route("/api/v11/status")
