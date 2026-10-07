@@ -12,6 +12,13 @@ from app import v132_movers as v
 from app.v130_gbm import TextGBM
 
 
+def test_stage2_model_matches_lightgbm_reference():
+    ref = np.load(Path(__file__).with_name("v132_stage2_reference.npz"))
+    m = TextGBM(v.ASSETS / "stage2_model.txt")
+    assert m.feature_names == v.meta()["stage2"]["features"]
+    assert np.allclose(m.predict(ref["X"]), ref["y"], atol=1e-9)
+
+
 def test_model_matches_lightgbm_reference_and_features():
     ref = np.load(Path(__file__).with_name("v132_model_reference.npz"))
     m = TextGBM(v.ASSETS / "mover_model.txt")
@@ -81,12 +88,15 @@ class FakeKite:
     def __init__(self, day, n=60, stamp=None):
         self.day = day; self.n = n; self.stamp = stamp or day
         self.syms = [f"S{i:02d}" for i in range(n)]
-        self.close_hl = {}
+        self.close_hl = {}; self.after = {}
     def instruments(self, ex):
         if ex == "NFO":
             return [{"name": s, "instrument_type": "FUT", "segment": "NFO-FUT"} for s in self.syms] + [{"name": "NIFTY", "instrument_type": "FUT", "segment": "NFO-FUT"}]
         return [{"tradingsymbol": s, "instrument_token": 1000 + i, "segment": "NSE"} for i, s in enumerate(self.syms)]
     def historical_data(self, tok, a, b, interval):
+        if interval == "5minute":
+            px = 100 + tok - 1000
+            return [{"date": dt.datetime.combine(a.date(), dt.time(9, 45)), "open": px, "high": px * self.after.get(tok, 1.004), "low": px * 0.998, "close": px, "volume": 10}]
         assert interval == "day"
         i = tok - 1000; d = _daily(n=len(pd.bdate_range(a.date(), b.date())), seed=i, start=100 + i)
         d.index = pd.bdate_range(a.date(), b.date()).date
@@ -97,7 +107,7 @@ class FakeKite:
             s = k.split(":")[1]; i = int(s[1:]); base = 100 + i
             o = base * (1 + 0.004 * ((i % 7) - 3))
             hl = self.close_hl.get(s, (o * 1.005, o * 0.995))
-            out[k] = {"last_price": o, "timestamp": dt.datetime.combine(self.stamp, dt.time(9, 16)), "ohlc": {"open": o, "high": hl[0], "low": hl[1], "close": base}}
+            out[k] = {"last_price": o * 1.003, "volume": 20000 + 100 * i, "average_price": o * 1.001, "timestamp": dt.datetime.combine(self.stamp, dt.time(9, 16)), "ohlc": {"open": o, "high": hl[0], "low": hl[1], "close": base}}
         return out
 
 
@@ -124,8 +134,15 @@ def test_end_to_end_day(store):
     assert store and "Spotting/paper only" in store[0]
     assert v.run_pick(k, day) == 1                                   # idempotent: no second Telegram
     assert len(store) == 1
+    assert v.run_stage2(k, day) == 10
+    s2 = v._read_jsonl("picks.jsonl")[0]["stage2"]
+    assert s2["symbol"] in [x["symbol"] for x in rec["shortlist"]] and s2["need_pct"] >= 1.5 and s2["up_level"] > s2["entry"] > s2["down_level"]
+    assert len(store) == 2 and "09:45" in store[1]
+    assert v.run_stage2(k, day) == 1
+    sym2 = s2["symbol"]; k.after = {1000 + int(sym2[1:]): 1.03}                 # +3% after 09:45 -> hit
     k.close_hl = {p["symbol"]: (p["open"] * 1.05, p["open"] * 0.99)}
     assert v.run_outcomes(k, day) == 3
+    assert v._read_jsonl("picks.jsonl")[0]["stage2"]["hit"] is True
     rec = v._read_jsonl("picks.jsonl")[0]
     assert rec["picks"][0]["hit"] is True and rec["picks"][0]["dir"] == "UP"
     assert all(q["hit"] is False for q in rec["picks"][1:])
@@ -158,11 +175,13 @@ def test_admin_page_renders_movers_card():
     pick = {"symbol": "ABC", "open": 101.5, "prob_pct": 71.2, "gap_pct": 3.1, "normal_move_pct": 2.2, "need_pct": 2.86, "up_level": 104.44, "down_level": 98.64,
             "results_yday": True, "results_today": False, "overnight_filings": 2, "status": "CLOSED", "hit": True, "max_move_pct": 4.1, "dir": "DOWN"}
     movers = {"today": {"date": "2026-10-07", "scored": 205, "market_gap_pct": 0.2, "confident": True, "top_prob_pct": 71.2, "threshold_pct": 55.0,
-                        "news_ok": True, "board_ok": True, "picks": [pick]},
+                        "news_ok": True, "board_ok": True, "picks": [pick],
+                        "stage2": {"symbol": "XYZ", "confident": True, "entry": 50.0, "need_pct": 1.5, "normal_move_pct": 2.0, "up_level": 50.76, "down_level": 49.26,
+                                   "prob_pct": 81.0, "moved_since_open_pct": 1.1, "hit": True, "max_move_pct": 2.2, "dir": "UP"}},
               "score": {"top1": {"n": 1, "hit": 100}, "top1_confident": {"n": 1, "hit": 100}, "top3": {"n": 1, "hit": 100}},
               "research": v.meta()["research"], "steps": {"pick": {"ok": True, "at": "09:16"}}, "recent": []}
     html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=None, movers=movers)
-    assert "09:16 movement predictor" in html and "HIGH CONFIDENCE" in html and "ABC" in html and "HIT" in html and "results yesterday" in html
+    assert "09:16 movement predictor" in html and "HIGH CONFIDENCE" in html and "ABC" in html and "HIT" in html and "results yesterday" in html and "09:45 FINAL PICK: XYZ" in html
 
 
 def test_v132_route_is_owner_only(monkeypatch):

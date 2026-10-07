@@ -13,7 +13,10 @@ Daily cycle (IST, weekdays, fail-soft, idempotent per day):
   08:10-09:08  prep: ~2 years of daily bars per F&O stock -> pre-open features; peer groups (once a year);
                NSE board meetings around today
   09:16-09:29  pick: opening prices + NSE overnight announcements -> score -> top 3 -> dashboard + Telegram
+  09:45-09:54  stage 2: re-rank the 09:16 top 10 with the first 30 minutes -> FINAL pick (move still left after 09:45)
   15:31-16:30  outcome: day high/low from Kite quote -> did each pick make the unusual move?
+Stage 2 research (walk-forward 2019-26): the re-ranked pick still travels >= max(1.5%, 0.7x normal) after 09:45 on 73% of
+days, 84% on its high-confidence days, against 62% for the 09:16 pick.
 Storage: <V12 storage root>/v132/  (prep_<date>.json, picks.jsonl, peers_<year>.json, conf_hist.json, state.json)
 """
 from __future__ import annotations
@@ -93,6 +96,21 @@ def model() -> TextGBM:
     if _model is None:
         _model = TextGBM(ASSETS / 'mover_model.txt')
     return _model
+
+
+_model2 = None
+
+
+def model2() -> TextGBM:
+    global _model2
+    if _model2 is None:
+        _model2 = TextGBM(ASSETS / 'stage2_model.txt')
+    return _model2
+
+
+def predict_proba2(X: pd.DataFrame) -> np.ndarray:
+    m = model2()
+    return 1.0 / (1.0 + np.exp(-m.predict(X[m.feature_names].to_numpy(float))))
 
 
 def predict_proba(X: pd.DataFrame) -> np.ndarray:
@@ -249,6 +267,37 @@ def market_from_pre(pre: dict) -> dict:
     rt = [p['r1'] for p in pre.values() if p.get('last_date') == last and p.get('r1') is not None]
     return {'m_exc': float(np.mean(ex)) if ex else None, 'm_ret': float(np.mean(rt)) if rt else None,
             'm_disp': float(np.std(rt, ddof=1)) if len(rt) > 1 else None, 'session': last}
+
+
+def stage2_features(shortlist: list, q945: dict, exc20: dict, vs20: dict) -> pd.DataFrame:
+    """09:45 inputs. shortlist: the 09:16 top-10 rows (symbol, prob, rank, open, gap, exc20, agap_exc, bm/res flags).
+    q945[sym] = dict(o, h, l, c, v, vwap) for the 09:15-09:45 window (Kite quote at 09:45: day ohlc so far, last, volume,
+    average price); exc20/vs20: every stock's normal daily travel and 20-day median 09:15-09:45 volume."""
+    mv, rg = [], []
+    for s, q in q945.items():
+        e = exc20.get(s)
+        if not e or not q or not all(q.get(k) for k in ('o', 'h', 'l', 'c')): continue
+        mv.append(math.log(q['c'] / q['o']) / e); rg.append(math.log(q['h'] / q['l']) / e)
+    m_mv30 = float(np.mean(mv)) if mv else np.nan; m_rng30 = float(np.median(rg)) if rg else np.nan
+    rows = []
+    for r in shortlist:
+        q = q945.get(r['symbol']); e = r['exc20']
+        if not q or not all(q.get(k) for k in ('o', 'h', 'l', 'c')): continue
+        o = r['open']; mv30 = math.log(q['c'] / o) / e
+        v = vs20.get(r['symbol'])
+        rows.append(dict(symbol=r['symbol'], p=r['prob'], rk1=float(r['rank']), f_rng30=math.log(q['h'] / q['l']) / e, f_mv30=mv30, f_absmv30=abs(mv30),
+                         f_withgap=math.copysign(1, r['gap']) * mv30 if r['gap'] else 0.0,
+                         f_vol30=math.log(q['v'] / v) if q.get('v') and v else np.nan,
+                         f_pos30=(q['c'] - q['l']) / (q['h'] - q['l']) if q['h'] > q['l'] else np.nan,
+                         f_vwapd=math.log(q['c'] / q['vwap']) / e if q.get('vwap') else np.nan,
+                         f_used=max(math.log(q['h'] / o), math.log(o / q['l'])) / e, m_mv30=m_mv30, m_rng30=m_rng30,
+                         agap_exc=r['agap_exc'], exc20=e, bm_yday_res=r['bm_yday_res'], bm_today_res=r['bm_today_res'], res_overnight=r['res_overnight'],
+                         gap=r['gap'], c945=q['c']))
+    return pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
+
+
+def need_move2(p_exc20: float) -> float:
+    return max(0.015, 0.7 * p_exc20)
 
 
 def need_move(p_exc20: float) -> float:
@@ -418,7 +467,10 @@ def run_pick(kite, today: dt.date | None = None) -> int:
                       'up_level': round(r.o * math.exp(need), 2), 'down_level': round(r.o * math.exp(-need), 2),
                       'results_yday': bool(r.bm_yday_res), 'results_today': bool(r.bm_today_res), 'overnight_filings': int(r.n_overnight),
                       'status': 'OPEN'})
-    day = {'date': str(today), 'at': now_ist(), 'confident': conf, 'threshold_pct': round(thr * 100, 1) if thr else None,
+    shortlist = [{'symbol': r.symbol, 'prob': float(r.prob), 'rank': i + 1, 'open': float(r.o), 'gap': float(r.gap), 'exc20': float(r.exc20),
+                  'agap_exc': float(r.agap_exc), 'bm_yday_res': float(r.bm_yday_res), 'bm_today_res': float(r.bm_today_res), 'res_overnight': float(r.res_overnight)}
+                 for i, r in enumerate(X.head(10).itertuples())]
+    day = {'date': str(today), 'at': now_ist(), 'confident': conf, 'shortlist': shortlist, 'threshold_pct': round(thr * 100, 1) if thr else None,
            'top_prob_pct': round(top_p * 100, 1), **info, 'picks': picks}
     rows = [r for r in _read_jsonl('picks.jsonl') if r.get('date') != str(today)] + [day]
     _rewrite_jsonl('picks.jsonl', rows)
@@ -440,6 +492,63 @@ def telegram_text(day: dict) -> str:
     return '\n'.join(lines)
 
 
+def _vs20(today: dt.date) -> dict:
+    """20-day median 09:15-09:45 volume per stock, computed by the V13.1 prep (same definition as research)."""
+    try:
+        p = json.loads((Path(config.V12_STORAGE_ROOT) / 'v131' / f'prep_{today}.json').read_text())
+        return {s: v.get('vs20') for s, v in (p.get('stocks') or {}).items() if v.get('vs20')}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def run_stage2(kite, today: dt.date | None = None) -> int:
+    today = today or now_ist().date()
+    st = load_state()
+    if st.get('stage2') == str(today): return 1
+    rows = _read_jsonl('picks.jsonl')
+    day = next((d for d in rows if d.get('date') == str(today)), None)
+    if not day or not day.get('shortlist'): raise RuntimeError('no 09:16 shortlist today')
+    prep = _read_json(f'prep_{today}.json', None) or {}
+    exc20 = {s: p.get('exc20') for s, p in (prep.get('pre') or {}).items()}
+    q = _quotes(kite, sorted(exc20))
+    q945 = {}
+    for s, v in q.items():
+        if not _fresh(v, today): continue
+        o = v.get('ohlc') or {}
+        q945[s] = {'o': o.get('open'), 'h': o.get('high'), 'l': o.get('low'), 'c': v.get('last_price'), 'v': v.get('volume'), 'vwap': v.get('average_price')}
+    if len(q945) < 50: raise RuntimeError('no fresh 09:45 quotes')
+    X = stage2_features(day['shortlist'], q945, exc20, _vs20(today))
+    if X.empty: raise RuntimeError('stage 2: nothing scored')
+    X['prob2'] = predict_proba2(X); X = X.sort_values('prob2', ascending=False).reset_index(drop=True)
+    hist = _read_json('conf2_hist.json', None) or meta().get('stage2', {}).get('conf_seed', [])
+    thr = conf_threshold(hist); top = X.iloc[0]
+    conf = bool(thr is not None and top.prob2 > thr)
+    need = need_move2(top.exc20)
+    day['stage2'] = {'at': now_ist(), 'confident': conf, 'threshold_pct': round(thr * 100, 1) if thr else None, 'symbol': top.symbol,
+                     'prob_pct': round(float(top.prob2) * 100, 1), 'entry': round(float(top.c945), 2), 'normal_move_pct': round(float(top.exc20) * 100, 2),
+                     'need_pct': round(need * 100, 2), 'up_level': round(float(top.c945) * math.exp(need), 2), 'down_level': round(float(top.c945) * math.exp(-need), 2),
+                     'moved_since_open_pct': round(float(top.f_mv30 * top.exc20) * 100, 2), 'status': 'OPEN',
+                     'ranked': [{'symbol': r.symbol, 'prob_pct': round(float(r.prob2) * 100, 1)} for r in X.head(5).itertuples()]}
+    _rewrite_jsonl('picks.jsonl', rows)
+    _write_json('conf2_hist.json', (hist + [float(top.prob2)])[-CONF_WINDOW * 2:])
+    st['stage2'] = str(today); save_state(st)
+    s2 = day['stage2']
+    _telegram(('✅ 09:45 FINAL PICK - HIGH CONFIDENCE' if conf else '09:45 final pick (normal confidence)') + f" · {today}\n"
+              f"{s2['symbol']} at {s2['entry']} · needs ±{s2['need_pct']}% more by 15:15 (normal {s2['normal_move_pct']}%) → {s2['up_level']} / {s2['down_level']} · {s2['prob_pct']}%\n"
+              'Direction not predicted. Spotting/paper only - not an order.')
+    return len(X)
+
+
+def _after945(kite, token: int, today: dt.date) -> tuple[float | None, float | None]:
+    raw = kite.historical_data(token, dt.datetime.combine(today, dt.time(9, 45)), dt.datetime.combine(today, dt.time(15, 15)), '5minute')
+    b = pd.DataFrame(raw)
+    if b.empty: return None, None
+    b['date'] = pd.to_datetime(b['date'])
+    if getattr(b['date'].dt, 'tz', None) is not None: b['date'] = b['date'].dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
+    m = b.date.dt.hour * 60 + b.date.dt.minute; b = b[(m >= 585) & (m <= 910)]
+    return (float(b.high.max()), float(b.low.min())) if len(b) else (None, None)
+
+
 def run_outcomes(kite, today: dt.date | None = None) -> int:
     today = today or now_ist().date()
     rows = _read_jsonl('picks.jsonl'); n = 0
@@ -454,6 +563,16 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
             up = math.log(h / p['open']); dn = math.log(p['open'] / l)
             p['max_move_pct'] = round(max(up, dn) * 100, 2); p['dir'] = 'UP' if up >= dn else 'DOWN'
             p['hit'] = bool(max(up, dn) * 100 >= p['need_pct']); p['high'] = h; p['low'] = l; p['status'] = 'CLOSED'; n += 1
+        s2 = day.get('stage2')
+        if s2 and s2.get('status') != 'CLOSED':
+            tok = ((_read_json(f'prep_{today}.json', None) or {}).get('pre') or {}).get(s2['symbol'], {}).get('token')
+            try:
+                h, l = _after945(kite, tok, today) if tok else (None, None)
+            except Exception as exc:  # noqa: BLE001
+                log.warning('v132 stage2 outcome: %s', exc); h = l = None
+            if h and l:
+                up = math.log(h / s2['entry']); dn = math.log(s2['entry'] / l)
+                s2.update(max_move_pct=round(max(up, dn) * 100, 2), dir='UP' if up >= dn else 'DOWN', hit=bool(max(up, dn) * 100 >= s2['need_pct']), status='CLOSED')
     _rewrite_jsonl('picks.jsonl', rows)
     if n == 0: raise RuntimeError('no outcomes recorded yet')
     return n
@@ -481,6 +600,7 @@ def _loop(get_kite):
                         return a <= hm <= b and not done.get(key(k)) and (hm - a) % every == 0
                     if due('prep', 490, 548, 3): done[key('prep')] = _step('prep', run_prep, kite)
                     if due('pick', 556, 569): done[key('pick')] = _step('pick', run_pick, kite)
+                    if due('stage2', 585, 594): done[key('stage2')] = _step('stage2', run_stage2, kite)
                     if due('outcome', 931, 990, 5): done[key('outcome')] = _step('outcome', run_outcomes, kite)
         except Exception:  # noqa: BLE001
             log.exception('v132 scheduler tick failed')
@@ -501,7 +621,8 @@ def scorecard(rows: list) -> dict:
     top = [d['picks'][0] for d in rows if d.get('picks')]
     conf = [d['picks'][0] for d in rows if d.get('picks') and d.get('confident')]
     allp = [p for d in rows for p in d.get('picks', [])]
-    return {'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp)}
+    s2 = [d['stage2'] for d in rows if d.get('stage2')]
+    return {'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')])}
 
 
 def status() -> dict:
