@@ -148,3 +148,18 @@ def test_evening_plan_is_once_per_day_even_after_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(sw, "build_inputs", boom)
     assert sw.run_evening(object(), dt.date(2026, 10, 5), nse=object()) == plan
     assert len(sw.load_state()["positions"]) == 2
+
+
+def test_empty_fo_universe_is_retried_not_saved(tmp_path, monkeypatch):
+    """08/09-Oct-2026: the 18:47 plan ran before NSE posted the F&O bhavcopy -> empty universe was saved and never retried."""
+    from app import v130_swing as sw
+    monkeypatch.setattr(sw, "ROOT", tmp_path)
+    days = pd.to_datetime(["2026-10-07", "2026-10-08"])
+    U = pd.DataFrame({"A": [True, False], "B": [True, False]}, index=days)
+    I = {k: None for k in ("O", "H", "L", "C", "VAL", "DP", "FO", "M", "BAN", "RES", "INS_S", "INS_B", "SP", "SEC_OF")}; I["UNIV"] = U
+    monkeypatch.setattr(sw, "build_inputs", lambda *a, **k: I)
+    monkeypatch.setattr(sw.core, "stock_features", lambda *a, **k: pd.DataFrame({"date": pd.to_datetime([]), "sym": []}))
+    monkeypatch.setattr(sw, "now_ist", lambda: dt.datetime(2026, 10, 8, 18, 47))
+    with pytest.raises(RuntimeError, match="not posted yet"):
+        sw.run_evening(object(), dt.date(2026, 10, 8), nse=object())
+    assert not sw.load_state().get("last_plan_date")              # nothing saved -> the 15-minute retries continue

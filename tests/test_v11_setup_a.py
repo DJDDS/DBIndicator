@@ -127,3 +127,24 @@ def test_admin_lane_and_routes(env, monkeypatch):
     for path in ('/api/v11/status', '/api/v11/export/ledger'):
         assert c.get(path, headers=mem).status_code == 403
     assert c.post('/api/v11/run', headers=mem).status_code == 403
+
+
+def test_wide_ledger_runs_beside_v11_and_restores_params(env):
+    before = dict(m.P)
+    nse = FakeNSE(_market())
+    m.run_evening(nse)
+    assert m.P == before                                            # the WIDE run never leaks its gates into v1.1
+    W = m._read_wide(); S = m._read_summary()
+    assert W and W['date'] == S['date'] and W['settings']['slots'] == 20 and not W['settings']['use_score']
+    assert {r['symbol'] for r in S['tonight']} <= {r['symbol'] for r in W['tonight']}   # looser gates: at least v1.1's signals
+    led = pd.read_csv(m._p(m.LEDGER_W)); assert len(led) >= len(W['tonight'])
+    st = m.status(); assert st['wide']['date'] == W['date'] and st['wide_settings']['m5'] == -0.025
+
+
+def test_wide_settings_change_restarts_the_wide_replay(env):
+    m.run_evening(FakeNSE(_market()))
+    assert m._exists(m.HIST_W)
+    w = m.save_wide_settings({'m5': -0.015, 'slots': 999, 'bogus': 1})
+    assert w['m5'] == -0.015 and w['slots'] == 50 and 'bogus' not in w
+    assert not m._exists(m.HIST_W) and not m._exists(m.SUMMARY_W)
+    m.save_wide_settings({'enabled': True})                          # no gate change -> files untouched

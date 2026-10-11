@@ -288,8 +288,8 @@ def seed_files() -> None:
         if not _exists(f) and (ASSETS / f).exists(): shutil.copyfile(ASSETS / f, _p(f))
 
 
-def record_signals(E, t_list, source):
-    f = _p(HIST)
+def record_signals(E, t_list, source, hist_name=None):
+    f = _p(hist_name or HIST)
     H_ = pd.read_csv(f, parse_dates=['signal_date']) if Path(f).exists() else pd.DataFrame(columns=['signal_date', 'symbol', 'source', 'signal_close', 'r5_pct', 'score'])
     rows = []
     for t in t_list:
@@ -304,9 +304,9 @@ def record_signals(E, t_list, source):
     H_.sort_values(['signal_date', 'r5_pct']).to_csv(f, index=False); return H_
 
 
-def rebuild_ledger(E, Hs):
-    """Deterministic paper ledger from the signal history: entry next open, exits per rules, max 10 open (biggest 5-day fall first)."""
-    f = _p(LEDGER)
+def rebuild_ledger(E, Hs, ledger_name=None):
+    """Deterministic paper ledger from the signal history: entry next open, exits per rules, max open slots (biggest 5-day fall first)."""
+    f = _p(ledger_name or LEDGER)
     old = pd.read_csv(f, parse_dates=['signal_date']) if Path(f).exists() else pd.DataFrame(columns=LCOLS)
     mine = {(str(r.signal_date.date()), r.symbol): (r.my_entry, r.my_exit, r.note) for r in old.itertuples()} if len(old) else {}
     days = list(E['days']); sidx = {x: i for i, x in enumerate(E['syms'])}; T = len(days)
@@ -393,6 +393,67 @@ def summarize(E, L, Hs) -> dict:
                 store_from=str(E['days'][0].date()))
 
 
+# ======================================================================= WIDE variant (second paper ledger, settings-driven)
+HIST_W, LEDGER_W, SUMMARY_W = 'v11w_signals_history.csv', 'v11w_paper_ledger.csv', 'summary_wide.json'
+WIDE_DEFAULTS = dict(enabled=True, m5=-0.025, use_score=False, score=0.468, r5=-0.068, slots=20, fo_only=True)
+# Research (Kite 2016-26, F&O stocks only, same exits): v1.1 gates ~29 trades/yr, 80% win, +1.7%/trade;
+# WIDE default (NIFTY 5d <= -2.5%, no stress score, 20 slots) ~72 trades/yr, 73% win, +1.1%/trade, worst year 57%.
+
+
+def wide_settings() -> dict:
+    try:
+        cur = json.loads(Path(_p('wide_settings.json')).read_text()) if _exists('wide_settings.json') else {}
+    except Exception:  # noqa: BLE001
+        cur = {}
+    w = {**WIDE_DEFAULTS, **{k: v for k, v in cur.items() if k in WIDE_DEFAULTS}}
+    w['m5'] = float(w['m5']); w['score'] = float(w['score']); w['r5'] = float(w['r5']); w['slots'] = int(max(1, min(50, int(w['slots']))))
+    for k in ('enabled', 'use_score', 'fo_only'): w[k] = bool(w[k])
+    return w
+
+
+def save_wide_settings(new: dict) -> dict:
+    old = wide_settings(); cur = dict(old); cur.update({k: v for k, v in (new or {}).items() if k in WIDE_DEFAULTS})
+    Path(_p('wide_settings.json')).write_text(json.dumps(cur, indent=1))
+    w = wide_settings()
+    if any(w[k] != old[k] for k in ('m5', 'use_score', 'score', 'r5', 'fo_only', 'slots')):
+        for f in (HIST_W, LEDGER_W, SUMMARY_W):          # gates changed: the WIDE ledger is replayed from the store at the next scan
+            if _exists(f): Path(_p(f)).unlink()
+    return w
+
+
+def run_wide(bh, nf, vx, prev_wide_date=None) -> dict | None:
+    """Same engine with the WIDE gates; separate signal history / ledger / summary files. P is restored afterwards."""
+    w = wide_settings()
+    if not w['enabled']: return None
+    saved = dict(P)
+    try:
+        P.update(m5=w['m5'], score=w['score'] if w['use_score'] else -9.0, r5=w['r5'], slots=w['slots'])
+        E = build(bh, nf, vx)
+        if w['fo_only']:
+            fo = fo_set()
+            if fo: E['sig'] = E['sig'] & np.array([x in fo for x in E['syms']])[None, :]
+        t = len(E['days']) - 1
+        first = not _exists(HIST_W)
+        if first:
+            Hs = record_signals(E, list(range(260, t + 1)), 'replay', hist_name=HIST_W)
+        else:
+            last = pd.Timestamp(prev_wide_date) if prev_wide_date else E['days'][t]
+            ts = [i for i in range(max(260, t - 4), t + 1) if E['days'][i] > last] or [t]
+            Hs = record_signals(E, ts, 'live', hist_name=HIST_W)
+        L = rebuild_ledger(E, Hs, ledger_name=LEDGER_W)
+        summ = summarize(E, L, Hs); summ['settings'] = w; summ['params'] = dict(P)
+        tmp = Path(_p('summary_wide.tmp')); tmp.write_text(json.dumps(summ, indent=1, default=str)); tmp.replace(_p(SUMMARY_W))
+        return summ
+    finally:
+        P.clear(); P.update(saved)
+
+
+def _read_wide() -> dict | None:
+    try:
+        return json.loads(Path(_p(SUMMARY_W)).read_text()) if _exists(SUMMARY_W) else None
+    except Exception: return None  # noqa: BLE001
+
+
 def _read_summary() -> dict | None:
     try:
         return json.loads(Path(_p('summary.json')).read_text()) if _exists('summary.json') else None
@@ -419,6 +480,10 @@ def run_evening(s=None, when: date | None = None, *, require_today=True) -> str:
         L = rebuild_ledger(E, Hs)
         summ = summarize(E, L, Hs); summ['update'] = info; summ['scanned_days'] = [str(E['days'][i].date()) for i in ts]
         tmp = Path(_p('summary.tmp')); tmp.write_text(json.dumps(summ, indent=1, default=str)); tmp.replace(_p('summary.json'))
+        try:
+            pw = _read_wide(); run_wide(bh, nf, vx, pw.get('date') if pw else None)
+        except Exception:  # noqa: BLE001 - the WIDE ledger must never block v1.1
+            log.exception('v11 wide ledger failed')
         with open(_p('runs.jsonl'), 'a', encoding='utf-8') as fh:
             fh.write(json.dumps(dict(at=summ['computed_at'], date=summ['date'], score=summ['score'], m5=summ['m5'], vchg=summ['vchg'],
                                      signals=[r['symbol'] for r in summ['tonight']], update=info), default=str) + '\n')
@@ -474,4 +539,4 @@ def status() -> dict:
     elif hm < EVENING_START: nxt = 'tonight 19:15'
     else: nxt = f'tonight {(hm // 15 + 1) * 15 // 60:02d}:{(hm // 15 + 1) * 15 % 60:02d} (checks every 15 min until 22:30)'
     return dict(engine='Setup A v1.1 dip-buy (paper, spotting only - no orders)', storage=str(ROOT), scheduler=_status,
-                bootstrapped=bootstrapped(), summary=s, params=P, next_run=nxt, running=_run_lock.locked())
+                bootstrapped=bootstrapped(), summary=s, params=P, next_run=nxt, running=_run_lock.locked(), wide=_read_wide(), wide_settings=wide_settings())

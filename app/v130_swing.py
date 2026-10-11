@@ -44,6 +44,9 @@ INDUSTRY_MAP = {'Financial Services': 'Nifty Financial Services', 'Information T
                 'Telecommunication': 'Nifty Infrastructure', 'Consumer Durables': 'Nifty India Consumption', 'Consumer Services': 'Nifty India Consumption',
                 'Chemicals': 'Nifty Commodities', 'Textiles': 'Nifty India Consumption', 'Services': 'Nifty Services Sector', 'Diversified': 'Nifty 500'}
 
+MIN_UNIVERSE = 50                 # an evening plan needs at least this many F&O stocks scored
+CARRY_FORWARD_FROM = 22 * 60       # from 22:00 (last retries) yesterday's F&O list is carried forward if tonight's file is still missing
+
 _lock = threading.Lock()
 _model = None
 _status: dict = {'started': None, 'last_error': None, 'steps': {}}
@@ -308,6 +311,19 @@ def run_evening(kite, when: dt.date | None = None, *, nse: NSE | None = None, pr
     I = build_inputs(kite, nse, when, progress=progress)
     X = core.stock_features(I['O'], I['H'], I['L'], I['C'], I['VAL'], I['DP'], I['FO'], I['M'], I['BAN'], I['RES'], I['INS_S'], I['INS_B'], I['UNIV'], I['SP'], I['SEC_OF'], rows='last')
     X = X[X.date == pd.Timestamp(when)]
+    if len(X) < MIN_UNIVERSE:
+        # Tonight's NSE F&O bhavcopy is not out yet -> the F&O list for `when` is empty. Never save an empty plan (that blocked the
+        # retries on 08/09-Oct-2026); raise so the scheduler retries every 15 min. On the last tries carry yesterday's F&O list forward.
+        U = I['UNIV']
+        late = (now_ist().hour * 60 + now_ist().minute) >= CARRY_FORWARD_FROM
+        if not (late and len(U) >= 2 and U.iloc[-2].sum() >= MIN_UNIVERSE):
+            raise RuntimeError(f'F&O universe for {when} has {len(X)} stocks - NSE F&O bhavcopy not posted yet; will retry')
+        U.iloc[-1] = U.iloc[-2]
+        X = core.stock_features(I['O'], I['H'], I['L'], I['C'], I['VAL'], I['DP'], I['FO'], I['M'], I['BAN'], I['RES'], I['INS_S'], I['INS_B'], U, I['SP'], I['SEC_OF'], rows='last')
+        X = X[X.date == pd.Timestamp(when)]
+        if len(X) < MIN_UNIVERSE:
+            raise RuntimeError(f'F&O universe for {when} still has {len(X)} stocks after carrying the list forward')
+        I['universe_carried'] = True
     X['ps'] = model().predict(X[core.ST].values.astype(np.float64))
     mk = core.market_features(I['C'], I['UNIV'], I['M'], I['VIX'], None, I['TDTE']); mrow = mk.iloc[-1]
     ref = gate_ref(); q = str(s['gate_quantile']); ref = {**ref, 'gate_cut': ref.get('gate_cuts', {}).get(q, ref['gate_cut'])}
@@ -322,7 +338,7 @@ def run_evening(kite, when: dt.date | None = None, *, nse: NSE | None = None, pr
             if pd.notna(ts): parsed.append({'ts': ts.to_pydatetime(), 'desc': it.get('desc'), 'text': it.get('attchmntText')})
         news[sym] = rules.news_flags(parsed, dt.datetime.combine(when, dt.time(18, 0)))
     plan = rules.evening_plan(X, mrow, gate, s, open_symbols=open_syms, n_open=len(open_syms), ban_next=I['ban_next'], results=I['res_info'], news=news)
-    plan.update(date=str(when), entry_day=str(I['next_day']), generated=now_ist(), n_universe=int(len(X)), n_symbols_loaded=I['n_symbols'],
+    plan.update(date=str(when), entry_day=str(I['next_day']), generated=now_ist(), n_universe=int(len(X)), n_symbols_loaded=I['n_symbols'], universe_carried=bool(I.get('universe_carried')),
                 market={k: (None if pd.isna(mrow.get(k)) else round(float(mrow.get(k)), 4)) for k in core.GATE_VARS + ['m10']},
                 top10=X.sort_values('ps', ascending=False).head(10)[['sym', 'ps', 'r5', 'close']].round(4).to_dict('records'), news=news)
     for p in plan['picks']:

@@ -2416,6 +2416,12 @@ def start_background_scanner():
         v132_movers.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V13.2 movement predictor failed to start")
+    # V13.3 09:25 direction desk (UP/DOWN lists for 30/60/90/120 min and the day, paper only). Fail-soft.
+    try:
+        from . import v133_direction
+        v133_direction.start_once(kite_auth.get_kite_client)
+    except Exception:
+        log.exception("V13.3 direction desk failed to start")
     # Setup A v1.1 dip-buy scanner (NSE end-of-day files only, no Kite needed). Fail-soft.
     try:
         from . import v11_setup_a

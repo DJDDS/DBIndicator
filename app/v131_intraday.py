@@ -363,6 +363,7 @@ def run_shorts(kite, today: dt.date | None = None) -> int:
            'picks': [{'symbol': r.symbol, 'entry': r.c, 'score': round(float(r.score), 1), 'move_since_open_pct': round(r.mv * 100, 2),
                       'vs_market_atr': round(float(r.nrel), 2), 'volume_x_normal': None if pd.isna(r.vrel) else round(float(r.vrel), 2),
                       'status': 'OPEN', **put_info.get(r.symbol, {})} for r in picks.itertuples()]}
+    day['view'] = market_view(today)
     _append('shorts.jsonl', day)
     st['short'] = str(today); save_state(st)
     return len(picks)
@@ -475,6 +476,19 @@ def start_once(get_kite) -> None:
     threading.Thread(target=_loop, args=(get_kite,), daemon=True, name='v131-intraday').start()
 
 
+def market_view(today: dt.date) -> dict | None:
+    """The V13.3 09:25 whole-day market view for today (fail-soft). Research (09:45 shorts x3, 2019-26): every day +16 bps / 58.6% win
+    (2026: -1 bps); on STRONG bearish 09:25 days +36 bps / 62.1% win, positive every year (2026: +23 bps)."""
+    try:
+        from . import v133_direction as v3
+        d = next((x for x in reversed(v3._read_jsonl('days.jsonl')) if x.get('date') == str(today)), None)
+        L = ((d or {}).get('lists') or {}).get('day')
+        if not L: return None
+        return {'lean': L['lean'], 'strong': bool(L['strong']), 'strong_bear': bool(L['strong'] and L['lean'] == 'DOWN'), 'strength': L.get('strength')}
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v131 market view: %s', exc); return None
+
+
 def _score(trades: list) -> dict:
     r = [t['ret_bps'] for t in trades if isinstance(t.get('ret_bps'), (int, float))]
     if not r: return {'n': 0, 'win': None, 'avg_bps': None, 'total_bps': None}
@@ -492,5 +506,7 @@ def status() -> dict:
             'short_recent': list(reversed(s_tr))[:30], 'gap_recent': list(reversed(g_tr))[:30],
             'gap_days': [{'date': d['date'], 'market_gap_pct': d.get('market_gap_pct'), 'active': d.get('active'), 'n': len(d['picks'])} for d in gaps][-10:][::-1],
             'score_short': _score(s_tr), 'score_gap': _score(g_tr), 'constants': constants(),
+            'score_short_bear': _score([t for d in shorts if (d.get('view') or {}).get('strong_bear') for t in d['picks']]),
+            'score_short_other': _score([t for d in shorts if d.get('view') and not d['view'].get('strong_bear') for t in d['picks']]),
             'score_put': _score([{'ret_bps': t['put_ret_pct']} for t in s_tr if isinstance(t.get('put_ret_pct'), (int, float))]),
             'preopen_days': len(_read_jsonl('preopen.jsonl')) if _path('preopen.jsonl').exists() else 0}

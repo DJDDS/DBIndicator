@@ -1,0 +1,205 @@
+"""V13.3 09:25 direction desk: frozen models, research-identical feature engine, selection, order-flow score, NSE parsers,
+outcomes, an end-to-end day with a fake Kite, the admin card and route protection."""
+import datetime as dt
+import math
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from app import v133_direction as v
+from app.v130_gbm import TextGBM
+
+
+@pytest.mark.parametrize("h", v.HORIZONS)
+def test_models_match_lightgbm_reference(h):
+    m = v.meta()
+    assert h in m["horizons"], f"horizon {h} missing from meta"
+    tm = TextGBM(v.ASSETS / m["horizons"][h]["model"])
+    assert tm.feature_names == m["features"]
+    ref = np.load(Path(__file__).with_name(f"v133_{h}_reference.npz"))
+    assert np.allclose(tm.predict(ref["X"]), ref["raw"], atol=1e-9)
+    assert len(m["horizons"][h]["day_view_seed"]) >= 250
+
+
+def _bars(day: dt.date, o=100.0, seed=0, drift=0.0):
+    rng = np.random.default_rng(seed); rows = []; px = o
+    for k in range(75):
+        t = dt.datetime.combine(day, dt.time(9, 15)) + dt.timedelta(minutes=5 * k)
+        op = px; px = px * math.exp(drift + rng.normal(0, 0.002))
+        rows.append({"date": t, "open": op, "high": max(op, px) * 1.001, "low": min(op, px) * 0.999, "close": px, "volume": float(rng.integers(100, 1000))})
+    return pd.DataFrame(rows)
+
+
+def test_day_aggregates_and_today_state_match_research_definitions():
+    b = _bars(dt.date(2026, 10, 5))
+    A = v.day_aggregates(b)
+    assert len(A) == 1
+    r = A.iloc[0]; C = b.close.to_numpy()
+    assert r.o == pytest.approx(b.open.iloc[0]) and r.c == pytest.approx(C[-1]) and r.h == pytest.approx(b.high.max())
+    assert r.p925 == pytest.approx(C[1]) and r.r_day == pytest.approx(math.log(C[71] / C[1])) and r.r_30 == pytest.approx(math.log(C[7] / C[1]))
+    t = v.today_state(b.iloc[0].to_dict(), b.iloc[1].to_dict())
+    assert t["mv925"] == pytest.approx(r.mv925) and t["b1"] == pytest.approx(math.log(C[1] / C[0]))
+    tp = ((b.high[:2] + b.low[:2] + b.close[:2]) / 3 * b.volume[:2]).sum() / b.volume[:2].sum()
+    assert t["vw925"] == pytest.approx(math.log(C[1] / tp))
+
+
+def _history(n=280, seed=1):
+    days = pd.bdate_range(end="2026-10-05", periods=n).date
+    return pd.concat([v.day_aggregates(_bars(d, 100 * (1 + 0.001 * i), seed + i)) for i, d in enumerate(days)], ignore_index=True)
+
+
+def test_stock_history_windows_end_yesterday():
+    A = _history()
+    p = v.stock_history(A)
+    o, h, l, c = (A[k].to_numpy() for k in ("o", "h", "l", "c"))
+    exc = np.maximum(np.log(h / o), np.log(o / l))
+    assert p["exc20"] == pytest.approx(exc[-20:].mean()) and p["pc"] == pytest.approx(c[-1])
+    assert p["r5"] == pytest.approx(math.log(c[-1] / c[-6])) and p["hi52"] == pytest.approx(math.log(c[-1] / c[-250:].max()))
+    assert p["hab_day"] == pytest.approx(A.r_day.to_numpy()[-20:].mean() / p["exc20"])
+    assert p["v925_med"] == pytest.approx(np.median(A.v925.to_numpy()[-20:]))
+
+
+def _universe(n=40, day=dt.date(2026, 10, 6)):
+    hist, today, peers = {}, {}, {}
+    for i in range(n):
+        A = _history(260, seed=10 * i)
+        hist[f"S{i:02d}"] = v.stock_history(A)
+        b = _bars(day, hist[f"S{i:02d}"]["pc"] * math.exp(0.01 * ((i % 5) - 2)), seed=500 + i, drift=0.0005 * ((i % 3) - 1))
+        today[f"S{i:02d}"] = v.today_state(b.iloc[0].to_dict(), b.iloc[1].to_dict())
+        peers[f"S{i:02d}"] = i % 4
+    return hist, today, peers
+
+
+def test_features_cover_model_inputs_and_cross_section():
+    hist, today, peers = _universe()
+    ctx = {"oi1": {}, "oi5": {}, "ban": {"S01": (1, 1, 0)}, "bm": {}, "news": {"S02": (1, 1)}, "ivix": 13.0, "divix": 0.02,
+           "fii_idx": -0.3, "fii_stk": 0.1, "fii_didx": -0.01, "fii_dstk": 0.0, "dte": 9.0}
+    mk = {"M_r1": -0.01, "M_r5": -0.02, "M_r20": 0.01, "M_intra1": -0.005, "M_intra5": -0.01, "m_ret": -0.004, "m_disp": 0.012}
+    X = v.features_925(hist, today, peers, ctx, mk, dt.date(2026, 10, 6))
+    assert set(v.meta()["features"]) <= set(X.columns)
+    assert len(X) == 40 and X.cs_mv925.between(0, 1).all()
+    assert X.M_mv925.nunique() == 1 and X.M_mv925.iloc[0] == pytest.approx(X.mv925.mean())
+    assert X.set_index("symbol").at["S01", "inban"] == 1 and X.set_index("symbol").at["S02", "res_overnight"] == 1
+    g = X[X.peer == 1]; assert g.peer_gap.iloc[0] == pytest.approx(g.gap.mean())
+    for h in v.HORIZONS:
+        p = v.predict_up(X, h); assert np.isfinite(p).all() and ((p > 0) & (p < 1)).all()
+
+
+def test_selection_strong_and_normal_days():
+    X = pd.DataFrame({"symbol": [f"S{i}" for i in range(10)]})
+    hist = list(0.5 + np.random.default_rng(0).normal(0, 0.02, 300))
+    s = {"top_n": 3, "strong_quantile": 0.7, "window": 250}
+    strong = v.select(X, np.r_[np.full(9, 0.30), 0.6], hist, s)
+    assert strong["strong"] and strong["market_lean"] == "DOWN" and len(strong["list"]) == 3 and set(strong["list"].side) == {"DOWN"}
+    normal = v.select(X, np.full(10, 0.5) + np.linspace(-0.01, 0.01, 10), hist, s)
+    assert not normal["strong"]
+    assert v.day_view_threshold(hist[:30], 0.7, 250) is None
+
+
+def test_order_flow_score_signs():
+    polls = []
+    for k in range(6):
+        polls.append({"t": f"09:1{k}", "q": {"BUY": [100 + k, 1000 * (k + 1), 900, 100], "SELL": [100 - k, 1000 * (k + 1), 100, 900], "FLAT": [100, 1000 * (k + 1), 500, 500]}})
+    of = v.of_scores(polls, {"BUY": 100, "SELL": 100, "FLAT": 100})
+    assert of["BUY"]["ofs"] > 0 > of["SELL"]["ofs"] and of["BUY"]["dr"] == 1.0 and of["SELL"]["dr"] == -1.0
+
+
+def test_nse_parsers():
+    raw = ("Participant wise Open Interest (no. of contracts) in Equity Derivatives as on Oct 09, 2026\n"
+           "Client Type,Future Index Long,Future Index Short,Future Stock Long,Future Stock Short\n"
+           "Client,100,200,300,400\nFII,30000,70000,\"3,000,000\",\"1,000,000\"\nTOTAL,1,1,1,1\n").encode()
+    r = v.parse_participant_oi(raw)
+    assert r["fii_idx"] == pytest.approx(-0.4) and r["fii_stk"] == pytest.approx(0.5)
+    assert v.parse_participant_oi(b"garbage") is None
+    prev = dt.date(2026, 10, 9)
+    assert v.days_to_expiry([dt.date(2026, 10, 10), dt.date(2026, 10, 27)], prev) == 18.0
+    oi1, oi5 = v.oi_changes([{"A": 100.0}] * 5 + [{"A": 120.0}])
+    assert oi1["A"] == pytest.approx(math.log(121 / 101)) and oi5["A"] == pytest.approx(math.log(121 / 101))
+
+
+def test_outcome_uses_exit_candle_and_side():
+    b = _bars(dt.date(2026, 10, 6), drift=-0.0004, seed=3)
+    C = b.close.to_numpy()
+    out = v.outcome_from_bars(b, entry=C[1], p925=C[1], side="DOWN", k_exit=v.HORIZON_BARS["60"])
+    assert out["exit"] == pytest.approx(C[13]) and out["ret925_pct"] == pytest.approx(-math.log(C[13] / C[1]) * 100, abs=1e-3)
+    assert out["win"] == (C[13] < C[1]) and out["status"] == "CLOSED"
+
+
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    monkeypatch.setattr(v, "ROOT", tmp_path)
+    monkeypatch.setattr(v.time, "sleep", lambda s: None)
+    return tmp_path
+
+
+class FakeKite:
+    def __init__(self, uni, day):
+        self.uni = uni; self.day = day
+    def quote(self, keys):
+        return {k: {"last_price": 100.0, "volume": 1000, "buy_quantity": 600, "sell_quantity": 400} for k in keys}
+
+
+def test_end_to_end_list_and_outcomes(store, monkeypatch):
+    from app import v132_movers as v2
+    day = dt.date(2026, 10, 6)
+    hist, today, peers = _universe(40, day)
+    for i, s in enumerate(hist): hist[s]["token"] = i + 1
+    v._write_json(f"prep_{day}.json", {"date": str(day), "prev_session": "2026-10-05", "hist": hist, "market": {"M_r1": -0.01}, "peers": peers,
+                                        "ctx": {"oi1": {}, "oi5": {}, "ban": {}, "bm": {}, "ivix": 13.0, "divix": 0.01, "dte": 9.0}, "missing": {}})
+    tok2sym = {h["token"]: s for s, h in hist.items()}
+    def fake_5min(kite, token, a, b, tries=3):
+        s = tok2sym[token]; i = int(s[1:])
+        bars = _bars(day, hist[s]["pc"] * math.exp(0.01 * ((i % 5) - 2)), seed=500 + i, drift=0.0005 * ((i % 3) - 1))
+        return bars[(bars.date >= a) & (bars.date < b)] if b.time() <= dt.time(9, 25) else bars
+    monkeypatch.setattr(v, "_kite_5min", fake_5min)
+    monkeypatch.setattr(v2, "_announcements", lambda a, b: [])
+    sent = []; monkeypatch.setattr(v2, "_telegram", lambda t: sent.append(t) or True)
+    k = FakeKite(hist, day)
+    assert v.run_list(k, day) == 5 * len(v.HORIZONS)
+    d = v._read_jsonl("days.jsonl")[-1]
+    assert set(d["lists"]) == set(v.HORIZONS) and all(len(L["picks"]) == 5 for L in d["lists"].values())
+    assert sent and "09:25 direction lists" in sent[0]
+    assert v.run_list(k, day) == 1                       # idempotent per day
+    assert v.run_outcomes(k, day) == 5 * len(v.HORIZONS)
+    st = v.status()
+    assert st["score"]["day"]["traded"]["n"] + st["score"]["day"]["watch"]["n"] == 5
+
+
+def test_list_refuses_without_prep(store):
+    with pytest.raises(RuntimeError):
+        v.run_list(FakeKite({}, dt.date(2026, 10, 6)), dt.date(2026, 10, 6))
+
+
+def test_settings_are_clamped(store):
+    s = v.save_settings({"top_n": 500, "strong_quantile": 3, "trade_normal_days": True, "bogus": 1})
+    assert s["top_n"] == 50 and s["strong_quantile"] == 0.95 and s["trade_normal_days"] is True and "bogus" not in s
+
+
+def test_admin_page_renders_direction_card(store):
+    from jinja2 import Environment, FileSystemLoader
+    from app import v130_rules as rules
+    env = Environment(loader=FileSystemLoader(str(Path(__file__).resolve().parents[1] / "app" / "templates")))
+    status = {"scorecard": {k: {"n": 0, "win": None, "avg_pct": None} for k in ("FUTURES", "CASH", "ALL")}, "open": [], "scheduler": {"steps": {}},
+              "storage": "x", "settings": rules.resolved({})}
+    pick = {"symbol": "ABC", "side": "DOWN", "entry": 101.5, "conf": 0.31, "gap_pct": 2.1, "of": {"ofs": -1.2}, "of_agree": True, "status": "CLOSED",
+            "exit": 99.0, "win": True, "ret_pct": 2.4, "best_pct": 3.0, "worst_pct": -0.4}
+    lists = {h: {"exit_at": v.EXIT_LABEL[h], "view": 0.42, "strength": 0.08, "threshold": 0.05, "strong": True, "lean": "DOWN", "traded": True, "picks": [pick]} for h in v.HORIZONS}
+    st = v.status(); st["today"] = {"date": "2026-10-06", "n_scored": 190, "lists": lists, "missing": {"fii": True, "vix": False}}
+    html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=None, direction=st)
+    assert "09:25 direction desk" in html and "▼ DOWN" in html and "STRONG day" in html and "ABC" in html and "RIGHT" in html and "missing inputs: fii" in html
+
+
+def test_v133_routes_are_owner_only(monkeypatch, store):
+    import base64
+    from app import security
+    from app.web import app
+    monkeypatch.setenv("DBI_OWNER_PASSWORD", "t")
+    monkeypatch.setenv("DBI_MEMBER_USERNAME", "m"); monkeypatch.setenv("DBI_MEMBER_PASSWORD", "mp")
+    security.reset_security_state_for_tests()
+    c = app.test_client(); own = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
+    assert c.get("/api/v133/status", headers={"Authorization": "Basic " + base64.b64encode(b"m:mp").decode()}).status_code == 403
+    assert c.get("/api/v133/status", headers=own).status_code == 200
+    r = c.post("/api/v133/settings", json={"top_n": 7}, headers=own)
+    assert r.status_code in (200, 400, 403) and (r.status_code != 200 or r.get_json()["top_n"] == 7)

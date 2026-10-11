@@ -1253,7 +1253,48 @@ def admin_v130():
         movers = v132_movers.status()
     except Exception as exc:  # fail-soft
         movers = {"error": str(exc)[:200]}
-    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11, movers=movers)
+    try:
+        from . import v133_direction
+        direction = v133_direction.status()
+    except Exception as exc:  # fail-soft
+        direction = {"error": str(exc)[:200]}
+    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11, movers=movers, direction=direction)
+
+
+@app.route("/api/v133/status")
+@require_roles(OWNER)
+def api_v133_status():
+    from . import v133_direction
+    return Response(json.dumps(v133_direction.status(), default=str), mimetype="application/json")
+
+
+@app.route("/api/v133/settings", methods=["POST"])
+@require_roles(OWNER)
+def api_v133_settings():
+    from . import v133_direction
+    src = request.get_json(silent=True) or request.form
+    new = {}
+    for k in ("top_n", "window"):
+        if src.get(k) not in (None, ""):
+            try: new[k] = int(src.get(k))
+            except (TypeError, ValueError): pass
+    if src.get("strong_quantile") not in (None, ""):
+        try: new["strong_quantile"] = float(src.get("strong_quantile"))
+        except (TypeError, ValueError): pass
+    for k in ("trade_normal_days", "telegram"):
+        if k in src: new[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
+        elif src.get("_cb"): new[k] = False          # HTML form: an unticked checkbox is simply absent
+    s = v133_direction.save_settings(new)
+    if request.form or not request.is_json:
+        return redirect("/admin/v130#direction")
+    return jsonify(s)
+
+
+@app.route("/api/v133/export")
+@require_roles(OWNER)
+def api_v133_export():
+    from . import v133_direction
+    return _v12_export(str(v133_direction._path("days.jsonl")), "v133_direction_days.jsonl", "application/x-ndjson")
 
 
 @app.route("/api/v132/status")
@@ -1280,11 +1321,34 @@ def api_v11_run():
     return jsonify({"status": msg})
 
 
+@app.route("/api/v11/wide-settings", methods=["POST"])
+@require_roles(OWNER)
+def api_v11_wide_settings():
+    from . import v11_setup_a
+    src = request.get_json(silent=True) or request.form
+    new = {}
+    for k in ("m5", "r5", "score"):
+        if src.get(k) not in (None, ""):
+            try: new[k] = float(src.get(k))
+            except (TypeError, ValueError): pass
+    if src.get("slots") not in (None, ""):
+        try: new["slots"] = int(src.get("slots"))
+        except (TypeError, ValueError): pass
+    for k in ("use_score", "fo_only", "enabled"):
+        if k in src: new[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
+        elif src.get("_cb"): new[k] = False
+    w = v11_setup_a.save_wide_settings(new)
+    if request.form or not request.is_json:
+        return redirect("/admin/v130#setup-a")
+    return jsonify(w)
+
+
 @app.route("/api/v11/export/<kind>")
 @require_roles(OWNER)
 def api_v11_export(kind):
     from . import v11_setup_a
-    files = {"ledger": (v11_setup_a.LEDGER, "text/csv"), "signals": (v11_setup_a.HIST, "text/csv"), "runs": ("runs.jsonl", "application/x-ndjson")}
+    files = {"ledger": (v11_setup_a.LEDGER, "text/csv"), "signals": (v11_setup_a.HIST, "text/csv"), "runs": ("runs.jsonl", "application/x-ndjson"),
+             "wide_ledger": (v11_setup_a.LEDGER_W, "text/csv"), "wide_signals": (v11_setup_a.HIST_W, "text/csv")}
     if kind not in files:
         return jsonify({"error": "unknown export"}), 404
     name, mime = files[kind]
