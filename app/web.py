@@ -1273,6 +1273,15 @@ def admin_intraday():
     return render_template("intraday_admin.html", direction=direction, intra=intra)
 
 
+@app.route("/admin/call-v1-replacement")
+@require_roles(OWNER)
+def admin_call_v1_replacement():
+    from . import v133_direction
+    from .direction_replacement import stored_presentation
+    replacement = stored_presentation(v133_direction.ROOT, v133_direction.now_ist())
+    return render_template("call_v1_replacement.html", replacement=replacement)
+
+
 @app.route("/api/v133/status")
 @require_roles(OWNER)
 def api_v133_status():

@@ -1,0 +1,13 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30"><title>Underlying Direction — Call V1 replacement preview</title>
+<style>body{font:16px system-ui;background:#0c1420;color:#e0e9f4;margin:0;padding:20px}main{max-width:760px;margin:auto}a{color:#8db9ff}.card{padding:22px;border:1px solid #354760;border-radius:12px;margin:18px 0}h1{font-size:26px}strong{color:#f0c76b}.direction{font-size:28px}.muted{color:#a6b5c8;line-height:1.6}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:10px;border-bottom:1px solid #354760}</style>
+</head><body><main><a href="/">Dashboard</a> · <a href="/admin/intraday#direction">Existing direction desk and audit</a>
+<h1>Underlying Direction · replacement preview</h1>
+<p><strong>RESEARCH — NOT VALIDATED FOR ENTRY.</strong> One strongest UP or DOWN pick on qualifying days. Call V1 is retired from the default decision cards in this draft.</p>
+<section class="card"><b>{{ replacement.state|replace('_',' ') }}</b>
+{% if replacement.pick %}<p class="direction">{{ replacement.pick.symbol }} · {{ replacement.pick.side }}</p><p class="muted">Record available {{ replacement.recorded_at }} IST · research horizon ends {{ replacement.exit_at }} IST.</p>{% endif %}
+<p>{{ replacement.reason }}</p><p class="muted">{{ replacement.profile }}. Visibility does not grant entry permission. No option recommendation, live fill assumption or order.</p></section>
+<section class="card"><h2>Why this candidate</h2><table><tr><th>Saved metadata claim</th><th>Hold to 15:15</th></tr><tr><td>2018–2023 development</td><td>66.2%</td></tr><tr><td>2024–2026 reported later period</td><td>65.8%</td></tr><tr><td>Worst later year</td><td>61.5%</td></tr><tr><td>Frequency</td><td>About 49 sessions/year</td></tr></table>
+<p class="muted">These figures describe the single-pick, strong-day underlying rule, not three daily stocks, profit booking or option returns. The original trade-level results and delayed-entry performance have not been verified here. The claimed pooled rate falls within the target, but the weakest reported year falls below 63%.</p></section>
+<p class="muted">This page reads existing records only. It creates no recorder, retunes no model and starts no background task. A missing, old or incompatible record yields no setup.</p>
+</main></body></html>
