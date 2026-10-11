@@ -1368,6 +1368,11 @@ class TacticalStockStreamService:
                     )
                 except Exception:
                     snapshot = None
+            if snapshot:
+                snapshot["quote_age_s"] = self._tick_age(option_tick, now)
+            cash_age = self._tick_age(cash_tick, now)
+            if cash_age is None or cash_age > self.stale_seconds:
+                spot = None
             self._call_v1_forward.observe_market(
                 now=now,
                 symbol=symbol,
@@ -1535,7 +1540,8 @@ class TacticalStockStreamService:
                 now=now,
                 symbol=symbol,
                 spot=live_price,
-                candidate=call_execution_candidate,
+                candidate=(call_execution_candidate if feed_health.get("fresh") and not underlying_stale
+                           else v3_call_execution.blocked_result("forward entry feed unavailable")),
                 contract_snapshot=selected_call_snapshot,
             )
 

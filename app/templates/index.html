@@ -2235,7 +2235,8 @@ button, a, summary, input, select { touch-action: manipulation; }
       ? String(shadow.samples_written||0)+' samples · '+String(shadow.episodes_with_close_record||0)+' closed episodes'
       : 'research only · no trade control');
     var callRec=tactical.call_v1_forward_recorder||{};
-    setText('v123-kpi-callrec',callRec.status==='RECORDING_FORWARD'?'LIVE':'WAIT');
+    setText('v123-kpi-callrec',callRec.status==='RECORDING_FORWARD'
+      ?((tactical.feed_health||{}).fresh?'LIVE':'WAIT FEED'):'WAIT');
     setText('v123-kpi-callrec-sub',callRec.status==='RECORDING_FORWARD'
       ? String(callRec.entries||0)+' entries · '+String(callRec.completed||0)+' complete · '+String(callRec.open_events||0)+' open'
       : 'live bid/ask forward validation');
@@ -2249,7 +2250,7 @@ button, a, summary, input, select { touch-action: manipulation; }
         tracked[String(r.symbol)+'|'+String(r.direction)]=true;
         return Object.assign({},r,{call_execution_candidate:{state:'TRACKING',trade_window:Object.assign({},r.trade_window,{entry_allowed:r.entry_allowed})}});
       }).concat(cands.filter(function(r){return r&&(r.call_v1_scout||r.flow_scout)&&!tracked[String(r.symbol)+'|'+String(r.direction)];}));
-      if(!scouts.length){box.innerHTML='<div class="focus-empty">No bullish scout is being scored right now.</div>';return;}
+      if(!scouts.length){box.innerHTML='<div class="focus-empty">No CALL or PUT scout is being monitored right now.</div>';return;}
       function esc2(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
       box.innerHTML=scouts.map(function(r){
         var c=r.call_execution_candidate||{}, w=c.trade_window||null, st=String(c.state||'WAIT').toUpperCase();
@@ -2291,7 +2292,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       if(String(coverage.mode||'')==='WHOLE_UNIVERSE'){
         coverageBox.textContent=
           'Whole-universe audit · '+String(coverage.observed_rows||0)+'/'+String(coverage.universe_count||0)+
-          ' live rows · '+String(coverage.meaningful_movers||0)+' movers ≥0.75% · '+
+          ' live rows · '+String(coverage.meaningful_movers||0)+(coverage.meaningful_definition==='FAMILYWISE_SIGNIFICANT_MULTISCALE_MOVE'?' significant movers · ':' movers ≥0.75% · ')+
           String(coverage.captured_movers||0)+' in Focus/Continuation · '+
           String(coverage.pipeline_misses||0)+' pipeline misses';
       }else{

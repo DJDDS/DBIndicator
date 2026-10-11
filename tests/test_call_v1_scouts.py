@@ -28,6 +28,13 @@ def test_bullish_only_day_keeps_all_scout_slots_for_call_v1():
     assert [r["symbol"] for r in out if r.get("call_v1_scout")] == ["B", "E", "C", "D"]
 
 
+def test_bearish_only_day_keeps_put_scouts_without_scoring_call_model():
+    observer = {"events": [_ev("A", -4, "Bearish"), _ev("B", -9, "Bearish")]}
+    out = background._with_call_v1_scouts([], {"continuation_watch": {}}, observer, [], set())
+    assert [r["symbol"] for r in out] == ["B", "A"]
+    assert all(r["flow_scout"] and r["scout_side"] == "PUT" and not r["call_v1_scout"] for r in out)
+
+
 def test_scouts_respect_option_feasibility_and_pool_limit():
     focus_rows = [{"symbol": f"F{i}", "direction": "Bullish"} for i in range(v122b_tactical.TACTICAL_POOL_MAX)]
     observer = {"events": [_ev("A", 9.0)]}

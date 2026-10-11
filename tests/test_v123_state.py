@@ -1,7 +1,26 @@
 import datetime as dt
+import json
 
 from app import v123_focus, v123_state
 from app.v123_market_stream import UniverseMomentumStreamService
+
+
+def test_forensic_recorder_matches_significant_multiscale_movers(tmp_path):
+    now = dt.datetime(2026, 10, 9, 10, 0)
+    rows = [
+        {"symbol": "FAST", "day_change_pct": 0.2, "movement_direction": "Bearish",
+         "movement_p_value": 0.001, "movement_familywise_alpha": 0.01,
+         "movement_horizon_seconds": 300, "movement_z": -4},
+        {"symbol": "OLD", "day_change_pct": 2, "movement_direction": "Bullish",
+         "movement_p_value": 0.5, "movement_familywise_alpha": 0.01,
+         "movement_horizon_seconds": 300},
+    ]
+    rec = v123_state.ForensicFlightRecorder(str(tmp_path))
+    assert rec.record({"quant_rows": rows}, {"forensics": {}}, now=now) == 1
+    saved = [json.loads(x) for x in (tmp_path / "v123_forensic_2026-10-09.jsonl").read_text().splitlines()]
+    assert saved[0]["symbol"] == "FAST"
+    assert saved[0]["direction"] == "Bearish"
+    assert saved[0]["movement_z"] == -4
 
 
 def _focus_state(now):

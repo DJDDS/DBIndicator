@@ -33,6 +33,7 @@ def _snap(bid=9.8, ask=10.2, mid=10.0):
         "vega": 0.08,
         "oi": 10000,
         "volume": 500,
+        "quote_age_s": 1.0,
     }
 
 
@@ -146,3 +147,30 @@ def test_nonpass_releases_latch_without_creating_entry(tmp_path):
         now=t0, symbol="TEST", spot=100.0, candidate=no, contract_snapshot=None
     ) is None
     assert rec.status()["entries"] == 0
+
+
+def test_stale_exit_quote_cannot_be_recorded_as_executable(tmp_path):
+    rec = CallV1ForwardRecorder(tmp_path / "f.jsonl", tmp_path / "s.json")
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    rec.observe_signal(now=t0, symbol="TEST", spot=100, candidate=_candidate(), contract_snapshot=_snap())
+    rec.observe_market(now=t0 + dt.timedelta(seconds=61), symbol="TEST", contract="TEST26OCT100CE",
+                       spot=100, snapshot=dict(_snap(), quote_age_s=60))
+    assert rec.status()["outcomes"] == 0
+    rec.observe_market(now=t0 + dt.timedelta(seconds=106), symbol="TEST", contract="TEST26OCT100CE",
+                       spot=100, snapshot=dict(_snap(), quote_age_s=60))
+    lines = [json.loads(x) for x in (tmp_path / "f.jsonl").read_text().splitlines()]
+    assert next(x for x in lines if x.get("horizon") == "1m")["status"] == "MISSING_QUOTE"
+
+
+def test_forward_entry_rejects_stale_unknown_age_or_wrong_contract(tmp_path):
+    rec = CallV1ForwardRecorder(tmp_path / "f.jsonl", tmp_path / "s.json")
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    for snap in [dict(_snap(), quote_age_s=60), dict(_snap(), quote_age_s=None),
+                 dict(_snap(), symbol="OTHERCE")]:
+        assert rec.observe_signal(now=t0, symbol="TEST", spot=100, candidate=_candidate(),
+                                  contract_snapshot=snap) is None
+    assert rec.status()["entries"] == 0
+
+
+def test_recorder_without_a_ledger_does_not_claim_it_is_recording():
+    assert CallV1ForwardRecorder(None, None).status()["status"] == "DISABLED"

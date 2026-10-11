@@ -12,6 +12,8 @@ import math
 import threading
 from pathlib import Path
 
+from .v3_call_execution import MAX_QUOTE_AGE_SECONDS
+
 HORIZONS = {"1m": 60, "3m": 180, "5m": 300, "10m": 600, "12m": 720, "15m": 900}
 MAX_OUTCOME_DELAY_SECONDS = 45
 MAX_EVENT_AGE_SECONDS = 20 * 60
@@ -103,7 +105,7 @@ class CallV1ForwardRecorder:
     def status(self):
         with self._lock:
             return {
-                "status": "RECORDING_FORWARD",
+                "status": "RECORDING_FORWARD" if self.ledger_file else "DISABLED",
                 "entries": int(self._state.get("entries") or 0),
                 "outcomes": int(self._state.get("outcomes") or 0),
                 "completed": int(self._state.get("completed") or 0),
@@ -112,6 +114,8 @@ class CallV1ForwardRecorder:
                 "last_outcome_at": self._state.get("last_outcome_at"),
                 "ledger_file": Path(self.ledger_file).name if self.ledger_file else None,
                 "state_file": Path(self.state_file).name if self.state_file else None,
+                "horizons_seconds": dict(HORIZONS),
+                "minimum_rearm_seconds": MIN_REARM_SECONDS,
                 "controls_trading": False,
             }
 
@@ -172,6 +176,10 @@ class CallV1ForwardRecorder:
                     return latch.get("event_id")
 
             snap = dict(contract_snapshot or {})
+            quote_age = _finite(snap.get("quote_age_s"))
+            if (str(snap.get("symbol") or "") != contract
+                    or quote_age is None or not 0 <= quote_age <= MAX_QUOTE_AGE_SECONDS):
+                return None
             bid = _finite(snap.get("bid"))
             ask = _finite(snap.get("ask"))
             mid = _finite(snap.get("mid"))
@@ -209,6 +217,7 @@ class CallV1ForwardRecorder:
                 "entry_vega": _finite(snap.get("vega")),
                 "entry_oi": _finite(snap.get("oi")),
                 "entry_volume": _finite(snap.get("volume")),
+                "entry_quote_age_s": quote_age,
                 "outcomes": {},
             }
             self._state["open_events"][event_id] = event
@@ -287,6 +296,10 @@ class CallV1ForwardRecorder:
                         continue
 
                     exit_bid = _finite(snap.get("bid"))
+                    quote_age = _finite(snap.get("quote_age_s"))
+                    if (str(snap.get("symbol") or "") != contract
+                            or quote_age is None or not 0 <= quote_age <= MAX_QUOTE_AGE_SECONDS):
+                        continue
                     exit_ask = _finite(snap.get("ask"))
                     exit_mid = _finite(snap.get("mid"))
                     exit_spot = _finite(spot)
@@ -310,6 +323,7 @@ class CallV1ForwardRecorder:
                         "exit_delta": _finite(snap.get("delta")),
                         "exit_oi": _finite(snap.get("oi")),
                         "exit_volume": _finite(snap.get("volume")),
+                        "exit_quote_age_s": quote_age,
                         "exit_spot": exit_spot,
                         "executable_return_pct": (
                             (exit_bid / entry_ask - 1.0) * 100.0

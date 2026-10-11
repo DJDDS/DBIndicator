@@ -72,6 +72,8 @@ def test_removed_candidate_window_quotes_remain_locked_and_do_not_allow_late_ent
 def test_call_window_entry_gate_rechecks_disconnect_inside_cached_minute(monkeypatch):
     t0 = dt.datetime(2026, 10, 9, 10, 0)
     svc = _service(t0)
+    recorded = []
+    monkeypatch.setattr(svc._call_v1_forward, "observe_signal", lambda **kwargs: recorded.append(kwargs))
     svc._candidates = {"ABC": {"symbol": "ABC", "direction": "Bullish", "close": 100,
                                 "call_v1_scout": True}}
     svc._metadata = {1: {"kind": "CASH", "symbol": "ABC"}}
@@ -87,10 +89,12 @@ def test_call_window_entry_gate_rechecks_disconnect_inside_cached_minute(monkeyp
     svc._last_tick_at = t0
     svc._evaluate(t0 + dt.timedelta(seconds=1))
     assert svc.snapshot()["call_v1_windows"][0]["entry_allowed"] is True
+    assert recorded[-1]["candidate"]["pass"] is True
     svc._connected = False
     svc._evaluate(t0 + dt.timedelta(seconds=2))
     snapshot = svc.snapshot()
     assert snapshot["feed_health"]["fresh"] is False
+    assert recorded[-1]["candidate"]["pass"] is False
     assert snapshot["call_v1_windows"][0]["entry_allowed"] is False
     assert snapshot["candidates"][0]["call_execution_candidate"]["trade_window"]["entry_allowed"] is False
 
@@ -114,6 +118,29 @@ def test_active_call_window_keeps_exact_subscriptions_without_forward_recorder(m
     assert set(metadata) == {1, 2}
     assert metadata[2]["tradingsymbol"] == "OLDCE"
     assert svc._resolve_universe(None, [], t0 + dt.timedelta(seconds=300)) == {}
+
+
+def test_forward_outcome_caller_propagates_quote_age_and_omits_stale_spot(monkeypatch):
+    now = dt.datetime(2026, 10, 9, 10, 1)
+    svc = _service(now)
+    observed = []
+    monkeypatch.setattr(svc._call_v1_forward, "active_subscriptions",
+                        lambda: [{"symbol": "ABC", "contract": "OLDCE"}])
+    monkeypatch.setattr(svc._call_v1_forward, "observe_market", lambda **kwargs: observed.append(kwargs))
+    monkeypatch.setattr(v122b_stream.derivative_intelligence, "contract_snapshot",
+                        lambda *args: {"symbol": "OLDCE", "bid": 9.8, "ask": 9.9})
+    metadata = {1: {"kind": "CASH", "symbol": "ABC"},
+                2: {"kind": "OPTION", "symbol": "ABC", "tradingsymbol": "OLDCE"}}
+    ticks = {1: {"last_price": 100, "_received_at": now - dt.timedelta(seconds=60)},
+             2: {"_received_at": now - dt.timedelta(seconds=1)}}
+    svc._record_call_v1_forward_outcomes(now, metadata, ticks)
+    assert observed[-1]["snapshot"]["quote_age_s"] == 1
+    assert observed[-1]["spot"] is None
+    ticks[1]["_received_at"] = now
+    ticks[2]["_received_at"] = now - dt.timedelta(seconds=60)
+    svc._record_call_v1_forward_outcomes(now, metadata, ticks)
+    assert observed[-1]["snapshot"]["quote_age_s"] == 60
+    assert observed[-1]["spot"] == 100
 
 
 def test_trigger_clock_can_restart_for_fresh_entry_episode():
