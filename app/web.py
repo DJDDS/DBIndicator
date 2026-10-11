@@ -1307,6 +1307,9 @@ def api_v133_settings():
 @require_roles(OWNER)
 def api_v133_export():
     from . import v133_direction
+    if request.args.get("kind") == "lab":
+        p = v133_direction.export_lab_zip()
+        return send_file(str(p), mimetype="application/zip", as_attachment=True, download_name="v133_orderflow_lab.zip")
     return _v12_export(str(v133_direction._path("days.jsonl")), "v133_direction_days.jsonl", "application/x-ndjson")
 
 

@@ -1,6 +1,7 @@
 """V13.3 09:25 direction desk: frozen models, research-identical feature engine, selection, order-flow score, NSE parsers,
 outcomes, an end-to-end day with a fake Kite, the admin card and route protection."""
 import datetime as dt
+import json
 import math
 from pathlib import Path
 
@@ -232,3 +233,87 @@ def test_v133_routes_are_owner_only(monkeypatch, store):
     assert c.get("/admin/intraday", headers={"Authorization": "Basic " + base64.b64encode(b"m:mp").decode()}).status_code == 403
     r = c.post("/api/v133/settings", json={"top_n": 7}, headers=own)
     assert r.status_code in (200, 400, 403) and (r.status_code != 200 or r.get_json()["top_n"] == 7)
+
+
+# ------------------------------------------------------------------ order-flow lab
+def _q(ltp, vol, bq, sq, oi=None, bo=10, ao=10):
+    return {"last_price": ltp, "volume": vol, "buy_quantity": bq, "sell_quantity": sq, "average_price": 100.0, "last_quantity": 5, "oi": oi,
+            "ohlc": {"open": 100.0}, "depth": {"buy": [{"price": ltp - 0.05, "quantity": bq // 10, "orders": bo}] * 5,
+                                               "sell": [{"price": ltp + 0.05, "quantity": sq // 10, "orders": ao}] * 5}}
+
+
+def test_lab_snapshot_and_futures_map():
+    r = v.snap(_q(101.0, 5000, 900, 100, oi=7000))
+    assert len(r) == len(v.SNAP_COLS) and r[0] == 101.0 and r[6] == 7000 and r[9] == 450 and r[11] == 50 and r[13] == 100.0
+    nfo = [{"instrument_type": "FUT", "segment": "NFO-FUT", "name": "ABC", "expiry": dt.date(2026, 10, 27), "tradingsymbol": "ABC26OCTFUT"},
+           {"instrument_type": "FUT", "segment": "NFO-FUT", "name": "ABC", "expiry": dt.date(2026, 11, 24), "tradingsymbol": "ABC26NOVFUT"},
+           {"instrument_type": "FUT", "segment": "NFO-FUT", "name": "OLD", "expiry": dt.date(2026, 9, 29), "tradingsymbol": "OLD26SEPFUT"}]
+    assert v.futures_map(nfo, {"ABC", "OLD"}, dt.date(2026, 10, 6)) == {"ABC": "ABC26OCTFUT"}
+
+
+def _lab_polls(day):
+    polls = [{"t": f"{day}T09:1{k}:00", "ph": "pre", "q": {"BUY": v.snap(_q(100, 0, 800, 200)), "SELL": v.snap(_q(100, 0, 200, 800))}} for k in (8, 9)]
+    for k in range(10):
+        t = f"{day}T09:{15 + k:02d}:00"
+        polls.append({"t": t, "ph": "fast",
+                      "q": {"BUY": v.snap(_q(100 + 0.1 * k, 1000 * (k + 1), 900, 100, bo=5, ao=20)), "SELL": v.snap(_q(100 - 0.1 * k, 1000 * (k + 1), 100, 900, bo=20, ao=5)),
+                            "FLAT": v.snap(_q(100, 1000 * (k + 1), 500, 500))},
+                      "f": {"BUY": v.snap(_q(100.5 + 0.1 * k, 500 * (k + 1), 700, 300, oi=1000 + 50 * k)),
+                            "SELL": v.snap(_q(100.5 - 0.1 * k, 500 * (k + 1), 300, 700, oi=1000 + 50 * k))}})
+    polls.append({"t": f"{day}T09:40:00", "ph": "slow", "q": {"BUY": v.snap(_q(90, 1, 1, 999))}})      # after the cutoff: ignored
+    return polls
+
+
+def test_lab_feature_signs():
+    F = v.of_features(_lab_polls("2026-10-06")).set_index("symbol")
+    for c in ("ofs", "imb_avg", "imb_last", "d5_avg", "ord5_avg", "big_side", "dr", "pre_imb", "fut_imb", "fut_dr", "buildup", "mv"):
+        assert F.loc["BUY", c] > 0 > F.loc["SELL", c], c
+    assert set(v.LAB_FEATURES) <= set(F.columns) and np.isnan(F.loc["FLAT", "buildup"])
+
+
+def test_lab_pipeline_poll_labels_leaderboard_export(store, monkeypatch):
+    day = dt.date(2026, 10, 6)
+    hist = {s: {"token": i + 1} for i, s in enumerate(["S%02d" % i for i in range(40)])}
+    v._write_json(f"prep_{day}.json", {"date": str(day), "prev_session": "2026-10-05", "hist": hist})
+    v._write_json(f"futs_{day}.json", {s: s + "FUT" for s in hist})
+
+    class K:
+        calls = 0
+        def quote(self, keys):
+            K.calls += 1; out = {}
+            for k in keys:
+                i = int(k.split(":")[1][1:3]); up = i % 2 == 0
+                out[k] = _q(100.0 + (0.5 if up else -0.5), 1000 * K.calls, 900 if up else 100, 100 if up else 900, oi=1000 + K.calls)
+            return out
+    kk = K()
+    v._of_buf.clear()
+    for ph in ("pre", "fast", "fast", "slow"):
+        assert v.run_of_poll(kk, day, ph) == 40
+    st = v.of_status(str(day))
+    assert st["polls"] == 4 and st["stocks"] == 40 and st["futures"] == 40 and st["by_phase"] == {"pre": 1, "fast": 2, "slow": 1}
+    polls = v._read_of(day)
+    assert len(polls) == 4 and len(polls[1]["f"]) == 40
+    for p, t in zip(polls, ("09:10:00", "09:15:00", "09:20:00", "09:45:00")): p["t"] = f"{day}T{t}"
+    v._path(f"of_{day}.jsonl").write_text("".join(json.dumps(p) + "\n" for p in polls))
+
+    def fake_5min(kite, token, a, b, tries=3):         # even stocks rise all day, odd stocks fall: order flow is right
+        up = (token - 1) % 2 == 0
+        return _bars(day, 100.0, seed=token, drift=0.002 if up else -0.002)
+    monkeypatch.setattr(v, "_kite_5min", fake_5min)
+    assert v.run_labels(kk, day) == 1
+    assert v._path(f"bars_{day}.json.gz").exists() and v._path(f"of_{day}.jsonl.gz").exists() and not v._path(f"of_{day}.jsonl").exists()
+    assert len(v._read_of(day)) == 4                     # packed file still readable
+    lab = v.lab_summary()
+    assert lab["sessions"] == 1 and lab["table"]
+    imb = next(r for r in lab["table"] if r["feature"] == "imb_avg")["h"]["day"]
+    assert imb["hit"] == 100.0 and imb["calls"] == 10
+    assert v.run_labels(kk, day) == 1                    # idempotent: labels are not downloaded twice
+    import zipfile
+    names = zipfile.ZipFile(v.export_lab_zip()).namelist()
+    assert f"of_{day}.jsonl.gz" in names and f"bars_{day}.json.gz" in names and "of_lab.json" in names
+
+
+def test_list_saves_every_stock_scores(store, monkeypatch):
+    test_end_to_end_list_and_outcomes(store, monkeypatch)
+    sc = v._read_gz("scores_2026-10-06.json.gz", None)
+    assert sc and len(sc["data"]) == 40 and all(f"p_{h}" in sc["columns"] for h in v.HORIZONS)

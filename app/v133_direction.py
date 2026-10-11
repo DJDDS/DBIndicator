@@ -19,14 +19,19 @@ Research (walk-forward by year 2018-26, live-feasible inputs): strong-day top-5 
 Daily cycle (IST, weekdays, fail-soft, idempotent per day):
   07:50-09:10  prep: 5-minute history (incremental cache) -> per-stock history inputs; market history; peers (yearly);
                NSE: F&O bhavcopy OI, ban list, board meetings, participant OI; INDIA VIX; days to expiry
-  09:15-09:25  order-flow polls (quote of every F&O stock every ~10 s)
-  09:25-09:40  list: first two candles of every stock -> features -> model -> day view -> list + paper entries + Telegram
+  09:08-15:15  ORDER-FLOW LAB recorder (own thread): full quote of every F&O stock + its near-month future, pre-open every 60 s,
+               09:15-09:39 every 10 s, then every 5 min -> of_<date>.jsonl (packed to .jsonl.gz after the close)
+  09:25-09:40  list: first two candles of every stock -> features -> model -> day view -> list + paper entries + Telegram;
+               every stock's inputs + P(up) -> scores_<date>.json.gz
   15:20-16:30  outcome: candles of the listed stocks -> exit at 15:15, returns at +30/60/90/120 min, best/worst
-Storage: <V12 storage root>/v133/  (aggs.parquet, prep_<date>.json, of_<date>.json, days.jsonl, dayview.json, settings.json)
+  15:35-16:40  labels: 5-minute candles of EVERY stock -> bars_<date>.json.gz; order-flow leaderboard -> of_lab.json
+Storage: <V12 storage root>/v133/  (aggs.parquet, prep_<date>.json, futs_<date>.json, of_<date>.jsonl[.gz], scores_<date>.json.gz,
+         bars_<date>.json.gz, of_lab.json, days.jsonl, dayview.json, settings.json)
 """
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import io
 import json
 import logging
@@ -55,6 +60,7 @@ DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_no
 _lock = threading.Lock()
 _model = None
 _status: dict = {'started': None, 'steps': {}, 'last_error': None}
+_real_sleep = time.sleep         # scheduler threads keep the real sleep even if a test patches time.sleep
 _of_buf: dict = {}              # date -> list of polls (in memory, flushed to of_<date>.json)
 
 
@@ -94,6 +100,38 @@ def _read_jsonl(name: str) -> list:
 def _rewrite_jsonl(name: str, rows: list) -> None:
     p = _path(name); tmp = p.with_suffix('.tmp')
     tmp.write_text(''.join(json.dumps(r, default=str) + '\n' for r in rows)); tmp.replace(p)
+
+
+def _write_gz(name: str, obj) -> None:
+    p = _path(name); tmp = p.with_name(p.name + '.tmp')
+    with gzip.open(tmp, 'wt', encoding='utf-8') as fh: json.dump(obj, fh, default=str, separators=(',', ':'))
+    tmp.replace(p)
+
+
+def _read_gz(name: str, default):
+    p = _path(name)
+    try:
+        if not p.exists(): return default
+        with gzip.open(p, 'rt', encoding='utf-8') as fh: return json.load(fh)
+    except Exception:  # noqa: BLE001
+        log.exception('v133: unreadable %s', name); return default
+
+
+def _read_of(day) -> list:
+    """One day's order-flow polls: of_<d>.jsonl (today, appended live), of_<d>.jsonl.gz (packed after the close) or the old of_<d>.json."""
+    out = []
+    for name, op in ((f'of_{day}.jsonl', open), (f'of_{day}.jsonl.gz', gzip.open)):
+        p = _path(name)
+        if p.exists():
+            try:
+                with op(p, 'rt', encoding='utf-8') as fh:
+                    for line in fh:
+                        try: out.append(json.loads(line))
+                        except Exception: pass  # noqa: BLE001
+            except Exception:  # noqa: BLE001
+                log.exception('v133: unreadable %s', name)
+            if out: return out
+    return list(_read_json(f'of_{day}.json', []) or [])
 
 
 HORIZONS = ('30', '60', '90', '120', 'day')
@@ -315,7 +353,7 @@ def of_scores(polls: list, opens: dict) -> dict:
     prev: dict = {}
     for pl in polls:
         for s, v in (pl.get('q') or {}).items():
-            try: ltp, vol, bq, sq = (float(x) if x is not None else np.nan for x in v)
+            try: ltp, vol, bq, sq = (float(x) if x is not None else np.nan for x in list(v)[:4])
             except (TypeError, ValueError): continue
             a = acc.setdefault(s, {'imb': [], 'buy': 0.0, 'sell': 0.0, 'last': np.nan})
             if np.isfinite(bq) and np.isfinite(sq) and bq + sq > 0: a['imb'].append((bq - sq) / (bq + sq))
@@ -337,6 +375,147 @@ def of_scores(polls: list, opens: dict) -> dict:
     F['ofs'] = z(F.imb) + z(F.dr) + 0.5 * z(F.mv)
     return {r.symbol: {'ofs': round(float(r.ofs), 3), 'imb': None if np.isnan(r.imb) else round(float(r.imb), 3),
                        'dr': None if np.isnan(r.dr) else round(float(r.dr), 3)} for r in F.itertuples()}
+
+
+# ================================================================== ORDER-FLOW LAB (pure part)
+# Every poll stores, per stock (NSE) and its near-month future (NFO), one compact row in SNAP_COLS order.
+SNAP_COLS = ('ltp', 'vol', 'bq', 'sq', 'vwap', 'lq', 'oi', 'bid', 'ask', 'bq5', 'aq5', 'bo5', 'ao5', 'open')
+OF_PRE = (548, 555)       # 09:08-09:14  every 60 s  (pre-open book after the 09:08 match)
+OF_FAST = (555, 580)      # 09:15-09:39  every 10 s
+OF_SLOW = (580, 916)      # 09:40-15:15  every 5 min
+LAB_FEATURES = {          # sign convention: positive value = order flow says UP
+    'ofs': 'pre-registered score: z(book imbalance) + z(tick-rule delta) + 0.5 z(move)',
+    'imb_avg': 'total bid qty vs ask qty, average 09:15-09:25', 'imb_last': 'total bid vs ask qty at 09:25',
+    'imb_chg': 'change in total book imbalance 09:15 -> 09:25', 'd5_avg': 'top-5 depth qty imbalance, average',
+    'ord5_avg': 'top-5 depth ORDER-COUNT imbalance (many small vs few large)', 'big_side': 'qty-per-order: bids heavier than asks (big players)',
+    'dr': 'tick-rule volume delta (buy vs sell initiated)', 'vwap_gap': 'price vs today VWAP at 09:25', 'mv': 'move open -> 09:25',
+    'pre_imb': 'pre-open (09:08-09:14) bid vs ask qty', 'fut_imb': 'near-month FUTURES book imbalance, average',
+    'fut_dr': 'futures tick-rule volume delta', 'buildup': 'futures OI change x price direction (+ long build-up / short covering, - short build-up / long unwinding)',
+    'basis_chg': 'futures premium change 09:15 -> 09:25 (bps)'}
+
+
+def futures_map(nfo: list, names: set, today: dt.date) -> dict:
+    """{sym: near-month futures tradingsymbol} (nearest FUT expiry on/after today)."""
+    by: dict = {}
+    for i in nfo or []:
+        if i.get('instrument_type') != 'FUT' or i.get('name') not in names or not str(i.get('segment', 'NFO-FUT')).startswith('NFO'): continue
+        e = i.get('expiry'); e = e if isinstance(e, dt.date) else pd.Timestamp(e).date()
+        if e < today: continue
+        if i['name'] not in by or e < by[i['name']][0]: by[i['name']] = (e, i['tradingsymbol'])
+    return {s: ts for s, (e, ts) in by.items()}
+
+
+def snap(v: dict) -> list:
+    """Kite full quote -> compact row (SNAP_COLS)."""
+    d = v.get('depth') or {}; b = d.get('buy') or []; a = d.get('sell') or []
+    g = lambda L, k: sum(float(x.get(k) or 0) for x in L[:5])
+    top = lambda L: (L[0].get('price') or None) if L else None
+    r = lambda x: None if x is None else (round(float(x), 2) if isinstance(x, float) else x)
+    return [r(v.get('last_price')), v.get('volume'), v.get('buy_quantity'), v.get('sell_quantity'), r(v.get('average_price')),
+            v.get('last_quantity'), v.get('oi'), top(b), top(a), g(b, 'quantity'), g(a, 'quantity'), g(b, 'orders'), g(a, 'orders'),
+            r((v.get('ohlc') or {}).get('open'))]
+
+
+def _num(x) -> float:
+    try: return float(x) if x is not None else np.nan
+    except (TypeError, ValueError): return np.nan
+
+
+def _ratio(a, b) -> float:
+    a, b = _num(a), _num(b)
+    return (a - b) / (a + b) if np.isfinite(a) and np.isfinite(b) and a + b > 0 else np.nan
+
+
+def _tick_delta(rows: list) -> float:
+    buy = sell = 0.0; prev = None
+    for r in rows:
+        p, v = _num(r[0]), _num(r[1])
+        if prev is not None and np.isfinite(v) and np.isfinite(prev[1]) and v > prev[1] and np.isfinite(p) and np.isfinite(prev[0]):
+            if p > prev[0]: buy += v - prev[1]
+            elif p < prev[0]: sell += v - prev[1]
+        prev = (p, v)
+    return (buy - sell) / (buy + sell) if buy + sell > 0 else np.nan
+
+
+def of_features(polls: list, cutoff: str = '09:25:00') -> pd.DataFrame:
+    """All order-flow lab features per stock from one day's polls up to `cutoff` (positive = UP). polls: [{'t','ph','q','f'}]."""
+    fast = [p for p in polls if p.get('ph', 'fast') == 'fast' and str(p.get('t', ''))[11:19] <= cutoff]
+    pre = [p for p in polls if p.get('ph') == 'pre']
+    if not fast: return pd.DataFrame()
+    S: dict = {}; Fu: dict = {}
+    for p in fast:
+        for s, row in (p.get('q') or {}).items(): S.setdefault(s, []).append(row)
+        for s, row in (p.get('f') or {}).items(): Fu.setdefault(s, []).append(row)
+    pre_last = {}
+    for p in pre:
+        for s, row in (p.get('q') or {}).items(): pre_last[s] = row
+    out = []
+    for s, rows in S.items():
+        rows = [list(r) + [None] * (len(SNAP_COLS) - len(r)) for r in rows]
+        imb = [_ratio(r[2], r[3]) for r in rows]; imb = [x for x in imb if np.isfinite(x)]
+        d5 = [_ratio(r[9], r[10]) for r in rows]; d5 = [x for x in d5 if np.isfinite(x)]
+        o5 = [_ratio(r[11], r[12]) for r in rows]; o5 = [x for x in o5 if np.isfinite(x)]
+        qpo = [(_num(r[9]) / _num(r[11]), _num(r[10]) / _num(r[12])) for r in rows if _num(r[11]) > 0 and _num(r[12]) > 0]
+        last = rows[-1]; ltp = _num(last[0]); op = _num(last[13]); vw = _num(last[4])
+        f = {'symbol': s, 'imb_avg': np.mean(imb) if imb else np.nan, 'imb_last': imb[-1] if imb else np.nan,
+             'imb_chg': imb[-1] - imb[0] if len(imb) > 1 else np.nan, 'd5_avg': np.mean(d5) if d5 else np.nan,
+             'ord5_avg': -np.mean(o5) if o5 else np.nan,          # more ASK orders for the same qty -> small sellers / big buyers
+             'big_side': np.mean([math.log(a / b) for a, b in qpo if a > 0 and b > 0]) if qpo else np.nan,
+             'dr': _tick_delta(rows), 'vwap_gap': math.log(ltp / vw) if ltp > 0 and vw > 0 else np.nan,
+             'mv': math.log(ltp / op) if ltp > 0 and op > 0 else np.nan,
+             'pre_imb': _ratio(pre_last[s][2], pre_last[s][3]) if s in pre_last and len(pre_last[s]) > 3 else np.nan}
+        fr = Fu.get(s) or []
+        if fr:
+            fr = [list(r) + [None] * (len(SNAP_COLS) - len(r)) for r in fr]
+            fi = [_ratio(r[2], r[3]) for r in fr]; fi = [x for x in fi if np.isfinite(x)]
+            f['fut_imb'] = np.mean(fi) if fi else np.nan; f['fut_dr'] = _tick_delta(fr)
+            o0, o1 = _num(fr[0][6]), _num(fr[-1][6]); p0, p1 = _num(fr[0][0]), _num(fr[-1][0])
+            f['buildup'] = math.log(o1 / o0) * np.sign(p1 - p0) if o0 > 0 and o1 > 0 and p0 > 0 and p1 > 0 else np.nan
+            s0, s1 = _num(rows[0][0]), ltp
+            f['basis_chg'] = (math.log(p1 / s1) - math.log(p0 / s0)) * 1e4 if min(p0, p1, s0, s1) > 0 else np.nan
+        out.append(f)
+    F = pd.DataFrame(out)
+    for c in LAB_FEATURES:
+        if c not in F: F[c] = np.nan
+    z = lambda x: ((x - x.mean()) / x.std()).fillna(0) if x.notna().sum() > 2 and x.std() > 0 else x * 0
+    F['ofs'] = z(F.imb_avg) + z(F.dr) + 0.5 * z(F.mv)
+    return F
+
+
+def lab_outcomes(bars: dict) -> pd.DataFrame:
+    """bars: {sym: [[k, o, h, l, c, v], ...]} -> log return from the 09:25 price (close of candle 1) to each horizon's exit candle."""
+    rows = []
+    for s, B in bars.items():
+        C = pd.Series(np.nan, index=range(75))
+        for r in B:
+            if 0 <= int(r[0]) <= 74: C[int(r[0])] = r[4]
+        C = C.ffill()
+        if not (np.isfinite(C[1]) and C[1] > 0): continue
+        rows.append({'symbol': s, **{f'r_{h}': math.log(C[k] / C[1]) if np.isfinite(C[k]) and C[k] > 0 else np.nan for h, k in HORIZON_BARS.items()}})
+    return pd.DataFrame(rows)
+
+
+def lab_leaderboard(daily: list, top_k: int = 5) -> list:
+    """daily: [(date, features DataFrame, outcomes DataFrame)]. Per feature x horizon: mean daily rank-IC with t-stat, and the hit rate of
+    calling UP on each day's top_k stocks by the feature and DOWN on its bottom_k (direction right at the horizon's exit)."""
+    out = []
+    for f in LAB_FEATURES:
+        for h in HORIZON_BARS:
+            ics, hits = [], []
+            for _, F, O in daily:
+                if f not in F or F[f].notna().sum() < 3 * top_k: continue
+                J = F[['symbol', f]].merge(O[['symbol', f'r_{h}']], on='symbol').dropna()
+                if len(J) < 3 * top_k or J[f].nunique() < 2 or J[f'r_{h}'].nunique() < 2: continue
+                ic = J[f].rank().corr(J[f'r_{h}'].rank())
+                if np.isfinite(ic): ics.append(ic)
+                J = J.sort_values(f); r = J[f'r_{h}']
+                hits += list(r.tail(top_k) > 0) + list(r.head(top_k) < 0)
+            if not ics: continue
+            sd = float(np.std(ics, ddof=1)) if len(ics) > 1 else np.nan
+            out.append({'feature': f, 'h': h, 'days': len(ics), 'ic': round(float(np.mean(ics)), 4),
+                        't': round(float(np.mean(ics)) / sd * math.sqrt(len(ics)), 2) if sd and np.isfinite(sd) and sd > 0 else None,
+                        'hit': round(100 * float(np.mean(hits)), 1) if hits else None, 'calls': len(hits)})
+    return out
 
 
 # ================================================================== NSE parsers
@@ -498,6 +677,7 @@ def run_prep(kite, today: dt.date | None = None) -> int:
         dte = days_to_expiry([e if isinstance(e, dt.date) else pd.Timestamp(e).date() for e in exps], prev)
         chains = option_chain_map(nfo, set(uni), today)
         _write_json(f'chains_{today}.json', chains)
+        _write_json(f'futs_{today}.json', futures_map(nfo, set(uni), today))
     except Exception as exc:  # noqa: BLE001
         log.warning('v133 expiry/options: %s', exc)
     bm = v2._board_meetings(today)
@@ -515,19 +695,31 @@ def _quote_full(kite, syms: list) -> dict:
     return out
 
 
-def run_of_poll(kite, today: dt.date | None = None) -> int:
-    """One order-flow poll (called every ~10 s between 09:15 and 09:25)."""
+def run_of_poll(kite, today: dt.date | None = None, phase: str = 'fast') -> int:
+    """One order-flow LAB poll: full quote (book totals, top-5 depth qty + order counts, VWAP, last trade qty) of every F&O stock AND its
+    near-month future (OI, futures book) in one Kite call; appended as one line to of_<date>.jsonl (a restart never loses earlier polls).
+    phase: 'pre' 09:08-09:14 (pre-open book), 'fast' 09:15-09:39 every 10 s, 'slow' 09:40-15:15 every 5 min."""
     today = today or now_ist().date()
     prep = _read_json(f'prep_{today}.json', None)
     if not prep: raise RuntimeError('prep not ready')
-    q = _quote_full(kite, sorted(prep['hist']))
-    pl = {'t': now_ist().isoformat(timespec='seconds'),
-          'q': {s: [v.get('last_price'), v.get('volume'), v.get('buy_quantity'), v.get('sell_quantity')] for s, v in q.items()}}
-    if str(today) not in _of_buf:                     # after a restart, continue the day's file instead of overwriting it
-        _of_buf[str(today)] = list(_read_json(f'of_{today}.json', []) or [])
-    buf = _of_buf[str(today)]; buf.append(pl)
-    _write_json(f'of_{today}.json', buf)
-    return len(pl['q'])
+    syms = sorted(prep['hist']); futs = _read_json(f'futs_{today}.json', {}) or {}
+    keys = ['NSE:' + s for s in syms] + ['NFO:' + futs[s] for s in syms if futs.get(s)]
+    raw = {}
+    for i in range(0, len(keys), 490):
+        raw.update(kite.quote(keys[i:i + 490]) or {})
+    inv = {v: s for s, v in futs.items()}
+    q, f = {}, {}
+    for k, v in raw.items():
+        ex, ts = k.split(':', 1)
+        if ex == 'NSE': q[ts] = snap(v)
+        elif ts in inv: f[inv[ts]] = snap(v)
+    pl = {'t': now_ist().isoformat(timespec='seconds'), 'ph': phase, 'q': q, 'f': f}
+    with _path(f'of_{today}.jsonl').open('a', encoding='utf-8') as fh:
+        fh.write(json.dumps(pl, separators=(',', ':'), default=str) + '\n')
+    st = _of_buf.setdefault(str(today), {'polls': 0, 'stocks': 0, 'futures': 0, 'first': None, 'last': None, 'by_phase': {}})
+    st['polls'] += 1; st['stocks'] = max(st['stocks'], len(q)); st['futures'] = max(st['futures'], len(f))
+    st['first'] = st['first'] or pl['t']; st['last'] = pl['t']; st['by_phase'][phase] = st['by_phase'].get(phase, 0) + 1
+    return len(q)
 
 
 def run_list(kite, today: dt.date | None = None) -> int:
@@ -557,12 +749,17 @@ def run_list(kite, today: dt.date | None = None) -> int:
     X = features_925(prep['hist'], st, prep['peers'], ctx, prep['market'], today)
     s = load_settings(); M = meta()
     hv = _read_json('dayview.json', None) or {}
-    of = of_scores(_read_json(f'of_{today}.json', []) or [], {k: v['o'] for k, v in st.items()})
+    of = of_scores([p for p in _read_of(today) if p.get('ph', 'fast') == 'fast' and str(p.get('t', ''))[11:19] <= '09:25:00'],
+                   {k: v['o'] for k, v in st.items()})
     sels, preds = {}, {}
     for h in HORIZONS:
         hv.setdefault(h, M['horizons'][h]['day_view_seed'])
         preds[h] = predict_up(X, h)
         sels[h] = select(X, preds[h], hv[h], s)
+    try:      # LAB: every stock's 09:25 inputs + the 5 models' P(up), so order flow can later be tested on top of the model
+        _write_gz(f'scores_{today}.json.gz', X.assign(**{f'p_{h}': np.round(preds[h], 5) for h in HORIZONS}).round(6).to_dict('split'))
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v133 scores file: %s', exc)
     # HIGH-CONVICTION: ensemble of the 5 horizon models (research: strongest 20% of days, top 1, hold to 15:15 -> 66% 2018-23 / 66% 2024-26)
     hv.setdefault('hc', M['ensemble']['day_view_seed'])
     sels['hc'] = select(X, np.mean([preds[h] for h in HORIZONS], axis=0), hv['hc'],
@@ -650,6 +847,74 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
     _rewrite_jsonl('days.jsonl', days)
     if n == 0: raise RuntimeError('no outcomes recorded yet')
     return n
+
+
+def run_labels(kite, today: dt.date | None = None) -> int:
+    """LAB, after the close: today's 5-minute candles of EVERY F&O stock (the answers for every stock, not only the picks), then pack
+    today's poll file and refresh the order-flow leaderboard (of_lab.json)."""
+    today = today or now_ist().date()
+    name = f'bars_{today}.json.gz'
+    prep = _read_json(f'prep_{today}.json', None)
+    if not prep: raise RuntimeError('no prep for today')
+    if not _path(name).exists():
+        from .v132_movers import _auth_error
+        out = {}
+        for s, p in prep['hist'].items():
+            try:
+                b = _kite_5min(kite, p['token'], dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30)))
+            except Exception as exc:  # noqa: BLE001
+                if _auth_error(exc): raise RuntimeError('Kite login needed') from exc
+                log.warning('v133 labels %s: %s', s, exc); continue
+            time.sleep(0.34)
+            if b.empty: continue
+            k = ((b.date.dt.hour * 60 + b.date.dt.minute - 555) // 5).astype(int)
+            out[s] = [[int(kk), r.open, r.high, r.low, r.close, int(r.volume)] for kk, r in zip(k, b.itertuples()) if 0 <= kk <= 74]
+        if len(out) < max(30, 0.6 * len(prep['hist'])): raise RuntimeError(f'labels: only {len(out)} stocks have candles yet')
+        _write_gz(name, out)
+    pack_of(today)
+    lab = refresh_lab()
+    return lab.get('sessions', 0)
+
+
+def pack_of(day) -> bool:
+    """Compress the day's appended poll file (of_<d>.jsonl -> .jsonl.gz, ~5x smaller)."""
+    src = _path(f'of_{day}.jsonl'); dst = _path(f'of_{day}.jsonl.gz')
+    if not src.exists(): return False
+    tmp = dst.with_name(dst.name + '.tmp')
+    with src.open('rb') as a, gzip.open(tmp, 'wb') as b: b.write(a.read())
+    tmp.replace(dst); src.unlink()
+    return True
+
+
+def lab_days() -> list:
+    """Dates that have both order-flow polls and end-of-day labels."""
+    ds = sorted({p.name[5:15] for p in ROOT.glob('bars_*.json.gz')}) if ROOT.exists() else []
+    return [d for d in ds if any(_path(n).exists() for n in (f'of_{d}.jsonl.gz', f'of_{d}.jsonl', f'of_{d}.json'))]
+
+
+def refresh_lab() -> dict:
+    daily = []
+    for d in lab_days():
+        F = of_features(_read_of(d)); O = lab_outcomes(_read_gz(f'bars_{d}.json.gz', {}) or {})
+        if not F.empty and not O.empty: daily.append((d, F, O))
+    rows = lab_leaderboard(daily)
+    lab = {'at': now_ist(), 'sessions': len(daily), 'first': daily[0][0] if daily else None, 'last': daily[-1][0] if daily else None,
+           'target_sessions': 40, 'features': LAB_FEATURES, 'rows': rows}
+    _write_json('of_lab.json', lab)
+    return lab
+
+
+def export_lab_zip() -> Path:
+    """One zip (for the research formula fit): every day's polls, labels and 09:25 model scores + the leaderboard."""
+    import zipfile
+    p = _path('of_lab_export.zip'); tmp = p.with_name(p.name + '.tmp')
+    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_STORED) as z:
+        seen = set()
+        for pat in ('of_*.jsonl.gz', 'of_*.jsonl', 'of_*.json', 'bars_*.json.gz', 'scores_*.json.gz', 'futs_*.json', 'days.jsonl'):
+            for f in sorted(ROOT.glob(pat)):
+                if f.name not in seen and not f.name.endswith(('.zip', '.tmp')): seen.add(f.name); z.write(f, f.name)
+    tmp.replace(p)
+    return p
 
 
 def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_exit: int = K_EXIT, book_pct: float | None = None) -> dict | None:
@@ -744,25 +1009,40 @@ def _step(name: str, fn, *a) -> bool:
 
 def _loop(get_kite):
     done: dict = {}
-    last_poll = 0.0
     while True:
         try:
             now = now_ist(); d = now.date(); hm = now.hour * 60 + now.minute
-            if d.weekday() < 5 and 470 <= hm <= 990:
+            if d.weekday() < 5 and 470 <= hm <= 1000:
                 kite = get_kite()
                 if kite is not None:
                     key = lambda k: f'{d}:{k}'
                     def due(k, a, b, every=1):
                         return a <= hm <= b and not done.get(key(k)) and (hm - a) % every == 0
                     if due('prep', 470, 550, 4): done[key('prep')] = _step('prep', run_prep, kite)
-                    if 555 <= hm < 565 and time.time() - last_poll >= 10:
-                        last_poll = time.time(); _step('of_poll', run_of_poll, kite)
                     if 565 <= hm <= 580 and now.second >= 20 and not done.get(key('list')):
                         done[key('list')] = _step('list', run_list, kite)
                     if due('outcome', 920, 990, 5): done[key('outcome')] = _step('outcome', run_outcomes, kite)
+                    if due('labels', 935, 1000, 5): done[key('labels')] = _step('labels', run_labels, kite)
         except Exception:  # noqa: BLE001
             log.exception('v133 scheduler tick failed')
-        time.sleep(5)
+        _real_sleep(5)
+
+
+def _of_loop(get_kite):
+    """Order-flow LAB recorder on its own thread, so the 09:25 list (about a minute of candle downloads) never pauses the polls."""
+    last = {'pre': 0.0, 'fast': 0.0, 'slow': 0.0}
+    every = {'pre': 60, 'fast': 10, 'slow': 300}
+    while True:
+        try:
+            now = now_ist(); hm = now.hour * 60 + now.minute
+            ph = next((p for p, (a, b) in (('pre', OF_PRE), ('fast', OF_FAST), ('slow', OF_SLOW)) if a <= hm < b), None)
+            if now.weekday() < 5 and ph and time.time() - last[ph] >= every[ph]:
+                kite = get_kite()
+                if kite is not None and _path(f'prep_{now.date()}.json').exists():
+                    last[ph] = time.time(); _step(f'of_poll_{ph}', run_of_poll, kite, None, ph)
+        except Exception:  # noqa: BLE001
+            log.exception('v133 order-flow tick failed')
+        _real_sleep(1)
 
 
 def start_once(get_kite) -> None:
@@ -770,6 +1050,7 @@ def start_once(get_kite) -> None:
         if _status.get('started'): return
         _status['started'] = now_ist()
     threading.Thread(target=_loop, args=(get_kite,), daemon=True, name='v133-direction').start()
+    threading.Thread(target=_of_loop, args=(get_kite,), daemon=True, name='v133-orderflow').start()
 
 
 # ================================================================== status / scorecard
@@ -809,10 +1090,27 @@ def status() -> dict:
             'today': next((d for d in reversed(days) if d['date'] == today), None), 'recent': list(reversed(days))[:20],
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
             'hc_research': (m.get('ensemble') or {}).get('research', {}), 'pool_research': (m.get('ensemble') or {}).get('pool', {}),
-            'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today)}
+            'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today),
+            'lab': lab_summary()}
 
 
 def of_status(day: str) -> dict:
-    polls = _of_buf.get(day) or (_read_json(f'of_{day}.json', []) or [])
-    syms = {k for pl in polls for k in (pl.get('q') or {})}
-    return {'polls': len(polls), 'stocks': len(syms), 'first': polls[0]['t'] if polls else None, 'last': polls[-1]['t'] if polls else None}
+    if day in _of_buf: return dict(_of_buf[day])
+    polls = _read_of(day)
+    if not polls: return {'polls': 0, 'stocks': 0, 'futures': 0, 'first': None, 'last': None, 'by_phase': {}}
+    st = {'polls': len(polls), 'stocks': max(len(p.get('q') or {}) for p in polls), 'futures': max(len(p.get('f') or {}) for p in polls),
+          'first': polls[0]['t'], 'last': polls[-1]['t'], 'by_phase': {}}
+    for p in polls: st['by_phase'][p.get('ph', 'fast')] = st['by_phase'].get(p.get('ph', 'fast'), 0) + 1
+    _of_buf[day] = st
+    return dict(st)
+
+
+def lab_summary() -> dict:
+    """Leaderboard for the page: per feature, the hit rate / IC t-stat at each horizon, best features first (by |t| at the day horizon)."""
+    lab = _read_json('of_lab.json', None) or {}
+    rows = lab.get('rows') or []
+    by: dict = {}
+    for r in rows: by.setdefault(r['feature'], {})[r['h']] = r
+    order = sorted(by, key=lambda f: -abs((by[f].get('day') or {}).get('t') or 0))
+    return {'sessions': lab.get('sessions', 0), 'target': lab.get('target_sessions', 40), 'first': lab.get('first'), 'last': lab.get('last'),
+            'at': lab.get('at'), 'table': [{'feature': f, 'desc': LAB_FEATURES.get(f, ''), 'h': by[f]} for f in order]}
