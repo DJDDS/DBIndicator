@@ -49,7 +49,8 @@ K_EXIT = 71                     # 5-minute bar index of 15:10-15:15 (bar k cover
 HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
 DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
-                    'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0}
+                    'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0,
+                    'hc_quantile': 0.8, 'hc_top_n': 1, 'hc_book_pct': 1.0}
 
 _lock = threading.Lock()
 _model = None
@@ -96,7 +97,9 @@ def _rewrite_jsonl(name: str, rows: list) -> None:
 
 
 HORIZONS = ('30', '60', '90', '120', 'day')
-EXIT_LABEL = {'30': '09:55', '60': '10:25', '90': '10:55', '120': '11:25', 'day': '15:15'}
+LISTS = ('hc',) + HORIZONS          # 'hc' = HIGH-CONVICTION pick: mean of the 5 horizon models, strongest days only, top 1, exit 15:15
+EXIT_LABEL = {'30': '09:55', '60': '10:25', '90': '10:55', '120': '11:25', 'day': '15:15', 'hc': '15:15'}
+EXIT_BAR = {**HORIZON_BARS, 'hc': K_EXIT}
 
 
 def meta() -> dict:
@@ -127,6 +130,8 @@ def load_settings() -> dict:
     s['trade_normal_days'] = bool(s['trade_normal_days']); s['telegram'] = bool(s['telegram']); s['options'] = bool(s['options'])
     s['book_target_pct'] = float(min(5.0, max(0.1, float(s['book_target_pct']))))
     s['opt_max_spread_pct'] = float(min(20.0, max(0.5, float(s['opt_max_spread_pct']))))
+    s['hc_quantile'] = float(min(0.97, max(0.5, float(s['hc_quantile'])))); s['hc_top_n'] = int(max(1, min(5, int(s['hc_top_n']))))
+    s['hc_book_pct'] = float(min(5.0, max(0.1, float(s['hc_book_pct']))))
     return s
 
 
@@ -553,10 +558,15 @@ def run_list(kite, today: dt.date | None = None) -> int:
     s = load_settings(); M = meta()
     hv = _read_json('dayview.json', None) or {}
     of = of_scores(_read_json(f'of_{today}.json', []) or [], {k: v['o'] for k, v in st.items()})
-    sels = {}
+    sels, preds = {}, {}
     for h in HORIZONS:
         hv.setdefault(h, M['horizons'][h]['day_view_seed'])
-        sels[h] = select(X, predict_up(X, h), hv[h], s)
+        preds[h] = predict_up(X, h)
+        sels[h] = select(X, preds[h], hv[h], s)
+    # HIGH-CONVICTION: ensemble of the 5 horizon models (research: strongest 20% of days, top 1, hold to 15:15 -> 66% 2018-23 / 66% 2024-26)
+    hv.setdefault('hc', M['ensemble']['day_view_seed'])
+    sels['hc'] = select(X, np.mean([preds[h] for h in HORIZONS], axis=0), hv['hc'],
+                        {**s, 'strong_quantile': s['hc_quantile'], 'top_n': s['hc_top_n']})
     syms = sorted({x for sel in sels.values() for x in sel['list'].symbol})
     q = _quote_full(kite, syms) if syms else {}
     opts: dict = {}
@@ -577,7 +587,7 @@ def run_list(kite, today: dt.date | None = None) -> int:
             log.warning('v133 options: %s', exc)
     lists = {}
     for h, sel in sels.items():
-        trade = sel['strong'] or s['trade_normal_days']; picks = []
+        trade = sel['strong'] or (s['trade_normal_days'] and h != 'hc'); picks = []
         for r in sel['list'].itertuples():
             ltp = (q.get(r.symbol) or {}).get('last_price')
             o = of.get(r.symbol); agree = None if not o else bool((o['ofs'] > 0) == (r.side == 'UP'))
@@ -586,6 +596,7 @@ def run_list(kite, today: dt.date | None = None) -> int:
                           'of': o, 'of_agree': agree, 'status': 'OPEN' if trade else 'WATCH',
                           'option': dict(opts[(r.symbol, r.side)]) if (r.symbol, r.side) in opts else None})
         lists[h] = {'exit_at': EXIT_LABEL[h], 'view': round(sel['view'], 4), 'strength': round(sel['view_strength'], 4),
+                    'book_pct': s['hc_book_pct'] if h == 'hc' else s['book_target_pct'],
                     'threshold': None if sel['threshold'] is None else round(sel['threshold'], 4), 'strong': sel['strong'],
                     'lean': sel['market_lean'], 'traded': trade, 'picks': picks}
         hv[h] = (hv[h] + [round(sel['view'], 6)])[-600:]
@@ -598,11 +609,13 @@ def run_list(kite, today: dt.date | None = None) -> int:
 
 def telegram_text(day: dict) -> str:
     out = [f"V13.3 09:25 direction lists - {day['date']} (paper only, no orders)"]
-    for h in HORIZONS:
+    for h in LISTS:
         L = (day.get('lists') or {}).get(h)
         if not L: continue
+        if h == 'hc' and not L['strong']: out.append('\n[HIGH-CONVICTION] no pick today (market view not strong enough)'); continue
         tag = 'STRONG - paper trades' if L['strong'] else 'normal - watch only'
-        out.append(f"\n[{h if h == 'day' else h + ' min'} -> exit {L['exit_at']}] {tag}, lean {L['lean']}")
+        name = 'HIGH-CONVICTION pick' if h == 'hc' else (h if h == 'day' else h + ' min')
+        out.append(f"\n[{name} -> exit {L['exit_at']}] {tag}, lean {L['lean']}")
         out += [f"{i + 1}. {p['symbol']} {'▲ UP' if p['side'] == 'UP' else '▼ DOWN'} @ {p['entry']}"
                 + ('' if p['of_agree'] is None else (' OF+' if p['of_agree'] else ' OF-'))
                 + (f" | {p['option']['ts']} ask {p['option']['ask']}" if (p.get('option') or {}).get('status') == 'OPEN' else '') for i, p in enumerate(L['picks'])]
@@ -624,7 +637,7 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                 if p['symbol'] not in bars_cache:
                     bars_cache[p['symbol']] = _kite_5min(kite, tok, dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30)))
                     time.sleep(0.34)
-                res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], HORIZON_BARS[h], book_pct=day.get('settings', {}).get('book_target_pct'))
+                res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], EXIT_BAR[h], book_pct=L.get('book_pct') or day.get('settings', {}).get('book_target_pct'))
                 if res: p.update(res); n += 1
                 op = p.get('option') or {}
                 if op.get('status') == 'OPEN' and op.get('token'):
@@ -632,7 +645,7 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                         kk = ('opt', op['token'])
                         if kk not in bars_cache:
                             bars_cache[kk] = _kite_5min(kite, op['token'], dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30))); time.sleep(0.34)
-                        op.update(option_outcome(bars_cache[kk], op, HORIZON_BARS[h]) or {})
+                        op.update(option_outcome(bars_cache[kk], op, EXIT_BAR[h]) or {})
                     except Exception as exc:  # noqa: BLE001
                         log.warning('v133 option outcome %s: %s', op.get('ts'), exc)
     _rewrite_jsonl('days.jsonl', days)
@@ -767,7 +780,7 @@ def scorecard(days: list) -> dict:
         r = [p['ret_pct'] for p in ps if isinstance(p.get('ret_pct'), (int, float))]
         return {'n': len(w), 'win': round(100 * sum(w) / len(w), 1) if w else None, 'avg_pct': round(float(np.mean(r)), 3) if r else None}
     out = {'days': len(days)}
-    for h in HORIZONS:
+    for h in LISTS:
         Ls = [d['lists'][h] for d in days if (d.get('lists') or {}).get(h)]
         traded = [p for L in Ls if L.get('traded') for p in L['picks']]
         watch = [p for L in Ls if not L.get('traded') for p in L['picks']]
@@ -791,7 +804,8 @@ def status() -> dict:
     return {'started': _status.get('started'), 'steps': _status.get('steps', {}), 'last_error': _status.get('last_error'),
             'today': next((d for d in reversed(days) if d['date'] == today), None), 'recent': list(reversed(days))[:20],
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
-            'settings': load_settings(), 'horizons': list(HORIZONS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today)}
+            'hc_research': (m.get('ensemble') or {}).get('research', {}),
+            'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today)}
 
 
 def of_status(day: str) -> dict:

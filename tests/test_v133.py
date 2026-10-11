@@ -21,6 +21,7 @@ def test_models_match_lightgbm_reference(h):
     ref = np.load(Path(__file__).with_name(f"v133_{h}_reference.npz"))
     assert np.allclose(tm.predict(ref["X"]), ref["raw"], atol=1e-9)
     assert len(m["horizons"][h]["day_view_seed"]) >= 250
+    assert len(m["ensemble"]["day_view_seed"]) >= 250 and m["ensemble"]["research"]["q80_hold"]["win_2024_26"] > 60
 
 
 def _bars(day: dt.date, o=100.0, seed=0, drift=0.0):
@@ -157,12 +158,13 @@ def test_end_to_end_list_and_outcomes(store, monkeypatch):
     monkeypatch.setattr(v2, "_announcements", lambda a, b: [])
     sent = []; monkeypatch.setattr(v2, "_telegram", lambda t: sent.append(t) or True)
     k = FakeKite(hist, day)
-    assert v.run_list(k, day) == 3 * len(v.HORIZONS)
+    assert v.run_list(k, day) == 3 * len(v.HORIZONS) + 1
     d = v._read_jsonl("days.jsonl")[-1]
-    assert set(d["lists"]) == set(v.HORIZONS) and all(len(L["picks"]) == 3 for L in d["lists"].values())
+    assert set(d["lists"]) == set(v.LISTS) and all(len(d["lists"][h]["picks"]) == 3 for h in v.HORIZONS) and len(d["lists"]["hc"]["picks"]) == 1
+    assert d["lists"]["hc"]["book_pct"] == 1.0 and d["lists"]["hc"]["exit_at"] == "15:15"
     assert sent and "09:25 direction lists" in sent[0]
     assert v.run_list(k, day) == 1                       # idempotent per day
-    assert v.run_outcomes(k, day) == 3 * len(v.HORIZONS)
+    assert v.run_outcomes(k, day) == 3 * len(v.HORIZONS) + 1
     st = v.status()
     assert st["score"]["day"]["traded"]["n"] + st["score"]["day"]["watch"]["n"] == 3
     p0 = d["lists"]["day"]["picks"][0]
@@ -185,11 +187,11 @@ def test_intraday_page_renders_direction_card(store):
     pick = {"symbol": "ABC", "side": "DOWN", "entry": 101.5, "conf": 0.31, "gap_pct": 2.1, "of": {"ofs": -1.2}, "of_agree": True, "status": "CLOSED",
             "exit": 99.0, "win": True, "ret_pct": 2.4, "best_pct": 3.0, "worst_pct": -0.4, "booked": True, "book_ret_pct": 0.69, "book_win": True,
             "option": {"status": "CLOSED", "ts": "ABC26OCT100PE", "entry": 3.2, "spread_pct": 1.1, "lot": 500, "ret_pct": 41.0, "win": True}}
-    lists = {h: {"exit_at": v.EXIT_LABEL[h], "view": 0.42, "strength": 0.08, "threshold": 0.05, "strong": True, "lean": "DOWN", "traded": True, "picks": [pick]} for h in v.HORIZONS}
+    lists = {h: {"exit_at": v.EXIT_LABEL[h], "view": 0.42, "strength": 0.08, "threshold": 0.05, "strong": True, "lean": "DOWN", "traded": True, "picks": [pick], "book_pct": 1.0} for h in v.LISTS}
     st = v.status(); st["today"] = {"date": "2026-10-06", "at": "2026-10-06 09:26:31", "n_scored": 190, "lists": lists, "missing": {"fii": True, "vix": False}}
     intra = {"score_short": {"n": 12, "win": 50, "avg_bps": -55.0}, "score_short_bear": {}, "score_short_other": {"n": 12, "win": 50, "avg_bps": -55.0}}
     html = env.get_template("intraday_admin.html").render(direction=st, intra=intra)
-    for txt in ("Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:45 short detector", "+41.0%"):
+    for txt in ("HIGH-CONVICTION PICK", "high-conviction", "Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:45 short detector", "+41.0%"):
         assert txt in html, txt
     assert "Intraday Desk" in env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None)
 

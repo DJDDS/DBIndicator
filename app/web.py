@@ -1286,11 +1286,11 @@ def api_v133_settings():
     from . import v133_direction
     src = request.get_json(silent=True) or request.form
     new = {}
-    for k in ("top_n", "window"):
+    for k in ("top_n", "window", "hc_top_n"):
         if src.get(k) not in (None, ""):
             try: new[k] = int(src.get(k))
             except (TypeError, ValueError): pass
-    for k in ("strong_quantile", "book_target_pct", "opt_max_spread_pct"):
+    for k in ("strong_quantile", "book_target_pct", "opt_max_spread_pct", "hc_quantile", "hc_book_pct"):
         if src.get(k) not in (None, ""):
             try: new[k] = float(src.get(k))
             except (TypeError, ValueError): pass
