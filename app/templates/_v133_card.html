@@ -1,0 +1,51 @@
+{# V13.3 09:25 direction desk card (paper only). Rendered on /admin/intraday. #}
+{% set dt_ = direction.today %}{% set dsc = direction.score or {} %}{% set dres = direction.research or {} %}{% set ds = direction.settings or {} %}
+<div class="card lane" id="direction" style="border-top-color:#5b8def">
+  <h2>09:25 direction desk · UP / DOWN calls for 30, 60, 90, 120 min and the whole day</h2>
+  {% if dt_ %}
+    <div class="small">Scored {{ dt_.n_scored }} F&amp;O stocks at 09:25 · list ready {{ (dt_.at|string)[11:19] }}
+      {% set miss = (dt_.missing or {}).items()|selectattr(1)|map(attribute=0)|list %}{% if miss %} · <span class="warn">missing inputs: {{ miss|join(', ') }}</span>{% endif %}</div>
+    <div class="hz" style="margin-top:8px">
+    {% for h in direction.horizons %}{% set L = (dt_.lists or {}).get(h) %}{% if L %}
+      <div class="pick">
+        <div class="top"><div><b>{{ 'Whole day' if h == 'day' else h ~ ' min' }}</b> <span class="small">exit {{ L.exit_at }}</span>
+          <span class="pill {{ 'strong' if L.strong else 'normal' }}">{{ 'STRONG day · paper trades' if L.strong else 'normal day · watch only' }}</span></div>
+          <div class="small">market lean <b class="{{ 'side-up' if L.lean == 'UP' else 'side-dn' }}">{{ L.lean }}</b> · view {{ L.strength }} vs bar {{ L.threshold if L.threshold is not none else '—' }}</div></div>
+        <table style="margin-top:6px"><tr><th>#</th><th>Stock</th><th>Call</th><th>Entry</th><th>Conf.</th><th>Order flow</th><th>Option (paper)</th><th>Exit</th><th>Hold result</th><th>Booked at +{{ ds.book_target_pct }}%</th><th>Best / worst</th></tr>
+        {% for p in L.picks %}{% set op = p.get('option') or {} %}<tr>
+          <td>{{ loop.index }}</td><td><b>{{ p.symbol }}</b></td><td class="{{ 'side-up' if p.side == 'UP' else 'side-dn' }}">{{ '▲ UP' if p.side == 'UP' else '▼ DOWN' }}</td>
+          <td>{{ p.entry }}</td><td>{{ '%.2f'|format(p.conf) }}</td>
+          <td class="small">{% if p.of_agree is none %}—{% elif p.of_agree %}<span class="open">agrees</span> ({{ p.of.ofs }}){% else %}<span class="closed">against</span> ({{ p.of.ofs }}){% endif %}</td>
+          <td class="small opt">{% if op.get('status') in ('OPEN', 'CLOSED') %}{{ op.ts }} · ask {{ op.entry }} · spr {{ op.spread_pct }}% · lot {{ op.lot }}{% if op.get('ret_pct') is not none %} → <b class="{{ 'open' if op.win else 'closed' }}">{{ '%+.1f'|format(op.ret_pct) }}%</b>{% endif %}{% elif op %}{{ op.reason or 'no option' }}{% else %}—{% endif %}</td>
+          <td>{{ p.get('exit', '—') }}</td>
+          <td class="{{ 'open' if p.get('win') else ('closed' if p.get('win') is sameas false else '') }}">{% if p.get('win') is not none %}{{ 'RIGHT' if p.win else 'wrong' }} · {{ '%+.2f'|format(p.ret_pct) }}%{% else %}{{ p.status|lower }}{% endif %}</td>
+          <td class="{{ 'open' if p.get('book_win') else ('closed' if p.get('book_win') is sameas false else '') }}">{% if p.get('book_ret_pct') is not none %}{{ 'booked' if p.booked else 'not hit' }} · {{ '%+.2f'|format(p.book_ret_pct) }}%{% else %}—{% endif %}</td>
+          <td class="small">{{ p.get('best_pct', '—') }} / {{ p.get('worst_pct', '—') }}%</td></tr>{% endfor %}</table>
+      </div>{% endif %}{% endfor %}
+    </div>
+  {% else %}<div class="empty">Lists appear about 09:26 on trading days (prep 07:50-09:10, order-flow polls 09:15-09:25).</div>{% endif %}
+
+  <h2 style="margin-top:12px">Scorecard (paper, strong days)</h2>
+  <table><tr><th>Horizon</th><th>Hold to exit</th><th>Booked at +{{ ds.book_target_pct }}%</th><th>DOWN calls</th><th>UP calls</th><th>Order flow agrees</th><th>Order flow against</th><th>Options (paper)</th><th>Watch-only calls</th><th>Research (strong days, top 5)</th></tr>
+  {% for h in direction.horizons %}{% set s = dsc.get(h) or {} %}{% set r = (dres.get(h) or {}).get('strong_top5') or {} %}
+    <tr><td>{{ 'day' if h == 'day' else h ~ ' min' }}</td>
+    {% for k in ('traded', 'book', 'down', 'up', 'of_agree', 'of_against', 'options', 'watch') %}{% set x = s.get(k) or {} %}<td>{{ (x.get('win')|string + '%') if x.get('win') is not none else '—' }} <span class="small">({{ x.get('n') or 0 }}{{ (', %+.2f'|format(x.get('avg_pct')) ~ '%') if x.get('avg_pct') is not none else '' }})</span></td>{% endfor %}
+    <td class="small">{% if r.get('win') is not none %}{{ r.get('win') }}% ({{ r.get('n') }}), {{ r.get('pnl_pct') }}%/trade, last 12m {{ r.get('last12m') }}%{% else %}—{% endif %}</td></tr>{% endfor %}</table>
+  <div class="small" style="margin-top:6px">RIGHT = price moved the called way from 09:25 to the exit time (research definition); % results are from the paper entry after 0.06% costs.
+    Booked = exit as soon as the stock is +{{ ds.book_target_pct }}% your way, else at the exit time (research, whole day: +0.75% → ~78% win, +0.17%/trade vs hold 61%, +0.47%).
+    Option = CALL for UP / PUT for DOWN, nearest expiry ≥3 days, ATM unless its spread is too wide (then 1 strike OTM); bought at the ask, valued at the exit candle less half the spread. Earlier research: option buying on movers often loses to IV crush - judge on paper first.
+    Order flow: all F&amp;O stocks polled 09:15-09:25 (book imbalance + tick-rule volume delta + move) - recorded, judged after ~40 sessions.</div>
+  {% set of = direction.of_today or {} %}
+  <div class="small" style="margin-top:4px">Order-flow polls today: {{ of.get('polls') or 0 }} · stocks covered {{ of.get('stocks') or 0 }}{% if of.get('first') %} · {{ of.first[11:19] }}–{{ of.last[11:19] }}{% endif %}</div>
+
+  <form method="post" action="/api/v133/settings" class="small" style="margin-top:10px">Settings: stocks per list <input name="top_n" size="3" value="{{ ds.top_n }}">
+    · strong-day bar (quantile) <input name="strong_quantile" size="4" value="{{ ds.strong_quantile }}"> · window <input name="window" size="4" value="{{ ds.window }}">
+    · book profit at +<input name="book_target_pct" size="4" value="{{ ds.book_target_pct }}">%
+    · option max spread <input name="opt_max_spread_pct" size="4" value="{{ ds.opt_max_spread_pct }}">%
+    · <label style="display:inline"><input type="checkbox" name="options" value="1" {{ 'checked' if ds.options }}> suggest options</label>
+    · <label style="display:inline"><input type="checkbox" name="trade_normal_days" value="1" {{ 'checked' if ds.trade_normal_days }}> paper-trade normal days too</label>
+    · <label style="display:inline"><input type="checkbox" name="telegram" value="1" {{ 'checked' if ds.telegram }}> Telegram</label>
+    <input type="hidden" name="_cb" value="1"> <button>Save</button> · <a href="/api/v133/export" style="color:#8fb3ff">export days</a></form>
+  <h2 style="margin-top:10px">Engine health</h2>
+  {% for k, v in (direction.steps or {}).items() %}<div class="small">{{ k }}: <span class="{{ 'open' if v.ok else 'closed' }}">{{ 'ok' if v.ok else 'failed' }}</span> · {{ v.at }}{% if not v.ok %} · {{ v.error }}{% endif %}</div>{% else %}<div class="empty">No step run yet today.</div>{% endfor %}
+</div>

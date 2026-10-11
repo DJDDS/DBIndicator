@@ -157,14 +157,16 @@ def test_end_to_end_list_and_outcomes(store, monkeypatch):
     monkeypatch.setattr(v2, "_announcements", lambda a, b: [])
     sent = []; monkeypatch.setattr(v2, "_telegram", lambda t: sent.append(t) or True)
     k = FakeKite(hist, day)
-    assert v.run_list(k, day) == 5 * len(v.HORIZONS)
+    assert v.run_list(k, day) == 3 * len(v.HORIZONS)
     d = v._read_jsonl("days.jsonl")[-1]
-    assert set(d["lists"]) == set(v.HORIZONS) and all(len(L["picks"]) == 5 for L in d["lists"].values())
+    assert set(d["lists"]) == set(v.HORIZONS) and all(len(L["picks"]) == 3 for L in d["lists"].values())
     assert sent and "09:25 direction lists" in sent[0]
     assert v.run_list(k, day) == 1                       # idempotent per day
-    assert v.run_outcomes(k, day) == 5 * len(v.HORIZONS)
+    assert v.run_outcomes(k, day) == 3 * len(v.HORIZONS)
     st = v.status()
-    assert st["score"]["day"]["traded"]["n"] + st["score"]["day"]["watch"]["n"] == 5
+    assert st["score"]["day"]["traded"]["n"] + st["score"]["day"]["watch"]["n"] == 3
+    p0 = d["lists"]["day"]["picks"][0]
+    assert "book_ret_pct" in v._read_jsonl("days.jsonl")[-1]["lists"]["day"]["picks"][0] and p0["option"]["status"] == "NO_OPTION"
 
 
 def test_list_refuses_without_prep(store):
@@ -174,21 +176,43 @@ def test_list_refuses_without_prep(store):
 
 def test_settings_are_clamped(store):
     s = v.save_settings({"top_n": 500, "strong_quantile": 3, "trade_normal_days": True, "bogus": 1})
-    assert s["top_n"] == 50 and s["strong_quantile"] == 0.95 and s["trade_normal_days"] is True and "bogus" not in s
+    assert s["top_n"] == 50 and s["strong_quantile"] == 0.95 and v.load_settings()["book_target_pct"] == 0.75 and s["trade_normal_days"] is True and "bogus" not in s
 
 
-def test_admin_page_renders_direction_card(store):
+def test_intraday_page_renders_direction_card(store):
     from jinja2 import Environment, FileSystemLoader
-    from app import v130_rules as rules
     env = Environment(loader=FileSystemLoader(str(Path(__file__).resolve().parents[1] / "app" / "templates")))
-    status = {"scorecard": {k: {"n": 0, "win": None, "avg_pct": None} for k in ("FUTURES", "CASH", "ALL")}, "open": [], "scheduler": {"steps": {}},
-              "storage": "x", "settings": rules.resolved({})}
     pick = {"symbol": "ABC", "side": "DOWN", "entry": 101.5, "conf": 0.31, "gap_pct": 2.1, "of": {"ofs": -1.2}, "of_agree": True, "status": "CLOSED",
-            "exit": 99.0, "win": True, "ret_pct": 2.4, "best_pct": 3.0, "worst_pct": -0.4}
+            "exit": 99.0, "win": True, "ret_pct": 2.4, "best_pct": 3.0, "worst_pct": -0.4, "booked": True, "book_ret_pct": 0.69, "book_win": True,
+            "option": {"status": "CLOSED", "ts": "ABC26OCT100PE", "entry": 3.2, "spread_pct": 1.1, "lot": 500, "ret_pct": 41.0, "win": True}}
     lists = {h: {"exit_at": v.EXIT_LABEL[h], "view": 0.42, "strength": 0.08, "threshold": 0.05, "strong": True, "lean": "DOWN", "traded": True, "picks": [pick]} for h in v.HORIZONS}
-    st = v.status(); st["today"] = {"date": "2026-10-06", "n_scored": 190, "lists": lists, "missing": {"fii": True, "vix": False}}
-    html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=None, direction=st)
-    assert "09:25 direction desk" in html and "▼ DOWN" in html and "STRONG day" in html and "ABC" in html and "RIGHT" in html and "missing inputs: fii" in html
+    st = v.status(); st["today"] = {"date": "2026-10-06", "at": "2026-10-06 09:26:31", "n_scored": 190, "lists": lists, "missing": {"fii": True, "vix": False}}
+    intra = {"score_short": {"n": 12, "win": 50, "avg_bps": -55.0}, "score_short_bear": {}, "score_short_other": {"n": 12, "win": 50, "avg_bps": -55.0}}
+    html = env.get_template("intraday_admin.html").render(direction=st, intra=intra)
+    for txt in ("Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:45 short detector", "+41.0%"):
+        assert txt in html, txt
+    assert "Intraday Desk" in env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None)
+
+
+def test_booking_exit_and_option_choice():
+    b = _bars(dt.date(2026, 10, 6), drift=0.0006, seed=4); C = b.close.to_numpy()
+    out = v.outcome_from_bars(b, entry=C[1], p925=C[1], side="UP", book_pct=0.5)
+    up = (b.high[2:72].max() / C[1] - 1) * 100
+    assert out["booked"] == (up >= 0.5) and (not out["booked"] or out["book_ret_pct"] == pytest.approx(0.5 - 0.06))
+    nfo = [{"segment": "NFO-OPT", "name": "ABC", "instrument_type": t, "expiry": e, "strike": k, "tradingsymbol": f"ABC{e:%d%b}{int(k)}{t}", "instrument_token": i, "lot_size": 500}
+           for i, (t, e, k) in enumerate((t, e, k) for t in ("CE", "PE") for e in (dt.date(2026, 10, 7), dt.date(2026, 10, 27)) for k in (95.0, 100.0, 105.0))]
+    ch = v.option_chain_map(nfo, {"ABC"}, dt.date(2026, 10, 6))
+    assert ch["ABC"]["expiry"] == "2026-10-27" and len(ch["ABC"]["CE"]) == 3      # the 1-day expiry is skipped
+    c_up = v.option_candidates(ch["ABC"], "UP", 101.0); c_dn = v.option_candidates(ch["ABC"], "DOWN", 101.0)
+    assert [c["strike"] for c in c_up] == [100.0, 105.0] and [c["strike"] for c in c_dn] == [100.0, 95.0] and c_dn[0]["type"] == "PE"
+    q = {c_up[0]["ts"]: {"depth": {"buy": [{"price": 4.0}], "sell": [{"price": 4.6}]}},          # ATM spread 14% -> too wide
+         c_up[1]["ts"]: {"depth": {"buy": [{"price": 2.0}], "sell": [{"price": 2.04}]}, "oi": 9000}}
+    o = v.choose_option(c_up, q, 3.0)
+    assert o["label"] == "OTM1" and o["entry"] == 2.04 and o["status"] == "OPEN"
+    assert v.choose_option(c_up, {}, 3.0)["status"] == "NO_OPTION"
+    ob = pd.DataFrame({"date": [dt.datetime(2026, 10, 6, 15, 10)], "close": [3.0]})
+    r = v.option_outcome(ob, {"entry": 2.0, "spread_pct": 2.0}, v.K_EXIT)
+    assert r["exit"] == pytest.approx(2.97) and r["win"] is True
 
 
 def test_v133_routes_are_owner_only(monkeypatch, store):
@@ -201,5 +225,7 @@ def test_v133_routes_are_owner_only(monkeypatch, store):
     c = app.test_client(); own = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
     assert c.get("/api/v133/status", headers={"Authorization": "Basic " + base64.b64encode(b"m:mp").decode()}).status_code == 403
     assert c.get("/api/v133/status", headers=own).status_code == 200
+    assert c.get("/admin/intraday", headers=own).status_code == 200
+    assert c.get("/admin/intraday", headers={"Authorization": "Basic " + base64.b64encode(b"m:mp").decode()}).status_code == 403
     r = c.post("/api/v133/settings", json={"top_n": 7}, headers=own)
     assert r.status_code in (200, 400, 403) and (r.status_code != 200 or r.get_json()["top_n"] == 7)

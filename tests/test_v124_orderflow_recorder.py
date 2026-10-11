@@ -72,3 +72,35 @@ def test_ofi_sign_and_minute_fields(tmp_path):
     assert rows[0]["ofi"] > 0 and rows[0]["ofi_norm"] is not None
     assert rows[0]["volume"] is None          # no prior minute to difference against
     assert rows[1]["volume"] == 100.0
+
+
+def test_gap_resets_stale_state_and_quiet_minutes_are_flushed(tmp_path):
+    path = tmp_path / "of.jsonl"
+    rec = OrderFlowMinuteRecorder(path)
+    t0 = dt.datetime(2026, 10, 1, 10, 0, 1)
+    rec.on_cash_tick("ABC", _tick(100.00, 1000, 99.95, 100.05), t0)
+    rec.on_cash_tick("ABC", _tick(100.05, 1300, 100.00, 100.10), t0 + dt.timedelta(seconds=5))
+    # the stock goes quiet (left the focus list): its 10:00 minute must still be written
+    assert rec.flush_stale(t0 + dt.timedelta(seconds=30)) == 0          # minute not finished yet
+    assert rec.flush_stale(t0 + dt.timedelta(seconds=70)) == 1
+    rows = [json.loads(x) for x in path.read_text().splitlines()]
+    assert rows[0]["minute"].startswith("2026-10-01T10:00") and rows[0]["buy_vol"] == 300
+    # back 2 hours later with much higher cumulative volume: no stale difference, no duplicate of the flushed minute
+    t1 = dt.datetime(2026, 10, 1, 12, 0, 1)
+    rec.on_cash_tick("ABC", _tick(101.00, 90000, 100.95, 101.05), t1)
+    rec.on_cash_tick("ABC", _tick(101.00, 90100, 100.95, 101.05), t1 + dt.timedelta(seconds=61))
+    rows = [json.loads(x) for x in path.read_text().splitlines()]
+    assert len(rows) == 2 and rows[1]["minute"].startswith("2026-10-01T12:00")
+    assert rows[1]["buy_vol"] == 0 and rows[1]["sell_vol"] == 0 and rows[1]["volume"] is None
+
+
+def test_next_day_does_not_carry_yesterday(tmp_path):
+    path = tmp_path / "of.jsonl"
+    rec = OrderFlowMinuteRecorder(path)
+    rec.on_cash_tick("ABC", _tick(100.00, 5_000_000, 99.95, 100.05), dt.datetime(2026, 10, 1, 15, 29, 50))
+    rec.on_cash_tick("ABC", _tick(99.00, 1000, 98.95, 99.05), dt.datetime(2026, 10, 2, 9, 15, 2))
+    rec.on_cash_tick("ABC", _tick(99.10, 1500, 99.05, 99.15), dt.datetime(2026, 10, 2, 9, 15, 30))
+    rec.flush_stale(dt.datetime(2026, 10, 2, 9, 17, 0), force=True)
+    rows = [json.loads(x) for x in path.read_text().splitlines()]
+    assert rows[0]["minute"].startswith("2026-10-01T15:29")          # yesterday's last minute is kept, not lost
+    assert rows[1]["minute"].startswith("2026-10-02T09:15") and rows[1]["buy_vol"] == 500

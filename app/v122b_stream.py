@@ -1899,6 +1899,10 @@ class TacticalStockStreamService:
         })
 
     def _handle_ticks(self, ticks, now):
+        try:
+            self._orderflow.flush_stale(now)       # finished minutes of stocks that went quiet / left the focus list
+        except Exception:  # noqa: BLE001 - the recorder must never break the stream
+            pass
         with self._lock:
             metadata = dict(self._metadata)
         for raw in ticks or []:

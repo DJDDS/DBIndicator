@@ -25,6 +25,8 @@ from pathlib import Path
 SESSION_START = dt.time(9, 15)
 SESSION_END = dt.time(15, 30)
 SCHEMA = "v124_orderflow_minute_v2"
+GAP_RESET_S = 120          # a stock silent for longer than this (left the focus list, new day) starts fresh: no stale prev price/volume
+FLUSH_EVERY_S = 15         # how often finished minutes of quiet stocks are written out
 
 
 def ofi_increment(prev_bid, prev_bidq, prev_ask, prev_askq, bid, bidq, ask, askq):
@@ -104,6 +106,7 @@ class OrderFlowMinuteRecorder:
         self._state: dict[str, dict] = {}
         self.rows_written = 0
         self.last_error = None
+        self._last_flush = None
 
     def reset(self):
         with self._lock:
@@ -124,11 +127,15 @@ class OrderFlowMinuteRecorder:
         emit = None
         with self._lock:
             st = self._state.get(symbol)
-            if st is not None and st["minute"] != minute:
-                emit = self._row(symbol, st)
+            prev = {}
+            if st is not None and (st["minute"] != minute or st.get("emitted")):
+                if not st.get("emitted"):
+                    emit = self._row(symbol, st)
+                last_t = st.get("last_t")
+                fresh_gap = last_t is None or (now - last_t).total_seconds() > GAP_RESET_S or last_t.date() != now.date()
+                prev = {} if fresh_gap else st      # bug fix: never difference volume / classify against a stale (pre-gap, previous-day) tick
                 st = None
             if st is None:
-                prev = self._state.get(symbol) or {}
                 st = {
                     "minute": minute,
                     "open": px,
@@ -181,6 +188,7 @@ class OrderFlowMinuteRecorder:
                 st["imb_sum"] += book["l5_imb"]
                 st["imb_n"] += 1
             st["ticks"] += 1
+            st["last_t"] = now
             st["close"] = px
             st["book"] = book
             st["prev_px"] = st["last_px"] = px
@@ -192,6 +200,24 @@ class OrderFlowMinuteRecorder:
             st["prev_askq"] = st["last_askq"] = book["askq"]
         if emit:
             self._write(emit)
+
+    def flush_stale(self, now: dt.datetime, force: bool = False) -> int:
+        """Write out minutes that have finished for stocks with no newer tick (bug fix: the last minute before a stock left
+        the focus list, and the 15:29 minute, were never written). Rate-limited unless force=True."""
+        if not self.path or now is None:
+            return 0
+        if not force and self._last_flush and (now - self._last_flush).total_seconds() < FLUSH_EVERY_S:
+            return 0
+        self._last_flush = now
+        cutoff = now.replace(second=0, microsecond=0)
+        rows = []
+        with self._lock:
+            for sym, st in self._state.items():
+                if not st.get("emitted") and st["minute"] < cutoff and (force or (now - st["minute"]).total_seconds() >= 65):
+                    rows.append(self._row(sym, st)); st["emitted"] = True
+        for r in rows:
+            self._write(r)
+        return len(rows)
 
     @staticmethod
     def _row(symbol, st):

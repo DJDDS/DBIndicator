@@ -1253,12 +1253,24 @@ def admin_v130():
         movers = v132_movers.status()
     except Exception as exc:  # fail-soft
         movers = {"error": str(exc)[:200]}
+    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11, movers=movers)
+
+
+@app.route("/admin/intraday")
+@require_roles(OWNER)
+def admin_intraday():
+    """Intraday desk (ADMIN ONLY, paper): 09:25 direction lists per horizon, option suggestion, booking exit, short-detector summary."""
     try:
         from . import v133_direction
         direction = v133_direction.status()
-    except Exception as exc:  # fail-soft
+    except Exception as exc:  # fail-soft: the page must still render
         direction = {"error": str(exc)[:200]}
-    return render_template("v130_admin.html", status=st, plan=st.get("plan"), intra=intra, v11=v11, movers=movers, direction=direction)
+    try:
+        from . import v131_intraday
+        intra = v131_intraday.status()
+    except Exception as exc:  # fail-soft
+        intra = {"error": str(exc)[:200]}
+    return render_template("intraday_admin.html", direction=direction, intra=intra)
 
 
 @app.route("/api/v133/status")
@@ -1278,15 +1290,16 @@ def api_v133_settings():
         if src.get(k) not in (None, ""):
             try: new[k] = int(src.get(k))
             except (TypeError, ValueError): pass
-    if src.get("strong_quantile") not in (None, ""):
-        try: new["strong_quantile"] = float(src.get("strong_quantile"))
-        except (TypeError, ValueError): pass
-    for k in ("trade_normal_days", "telegram"):
+    for k in ("strong_quantile", "book_target_pct", "opt_max_spread_pct"):
+        if src.get(k) not in (None, ""):
+            try: new[k] = float(src.get(k))
+            except (TypeError, ValueError): pass
+    for k in ("trade_normal_days", "telegram", "options"):
         if k in src: new[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
         elif src.get("_cb"): new[k] = False          # HTML form: an unticked checkbox is simply absent
     s = v133_direction.save_settings(new)
     if request.form or not request.is_json:
-        return redirect("/admin/v130#direction")
+        return redirect("/admin/intraday#direction")
     return jsonify(s)
 
 

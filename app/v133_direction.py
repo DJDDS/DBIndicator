@@ -48,7 +48,8 @@ IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 K_EXIT = 71                     # 5-minute bar index of 15:10-15:15 (bar k covers 09:15+5k .. 09:20+5k)
 HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
-DEFAULT_SETTINGS = {'top_n': 5, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True}
+DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
+                    'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0}
 
 _lock = threading.Lock()
 _model = None
@@ -123,7 +124,9 @@ def load_settings() -> dict:
     s['top_n'] = int(max(1, min(50, int(s['top_n']))))
     s['strong_quantile'] = float(min(0.95, max(0.0, float(s['strong_quantile']))))
     s['window'] = int(max(60, int(s['window'])))
-    s['trade_normal_days'] = bool(s['trade_normal_days']); s['telegram'] = bool(s['telegram'])
+    s['trade_normal_days'] = bool(s['trade_normal_days']); s['telegram'] = bool(s['telegram']); s['options'] = bool(s['options'])
+    s['book_target_pct'] = float(min(5.0, max(0.1, float(s['book_target_pct']))))
+    s['opt_max_spread_pct'] = float(min(20.0, max(0.5, float(s['opt_max_spread_pct']))))
     return s
 
 
@@ -488,8 +491,10 @@ def run_prep(kite, today: dt.date | None = None) -> int:
         nfo = kite.instruments('NFO')
         exps = sorted({i['expiry'] for i in nfo if i.get('instrument_type') == 'CE' and i.get('name') in uni and i.get('expiry')})
         dte = days_to_expiry([e if isinstance(e, dt.date) else pd.Timestamp(e).date() for e in exps], prev)
+        chains = option_chain_map(nfo, set(uni), today)
+        _write_json(f'chains_{today}.json', chains)
     except Exception as exc:  # noqa: BLE001
-        log.warning('v133 expiry: %s', exc)
+        log.warning('v133 expiry/options: %s', exc)
     bm = v2._board_meetings(today)
     ctx = {'oi1': oi1, 'oi5': oi5, 'ban': ban, 'bm': v2.board_flags(bm or [], today, prev), 'ivix': ivix, 'divix': divix, 'dte': dte, **fii}
     _write_json(name, {'date': str(today), 'prev_session': str(prev), 'built_at': now_ist(), 'hist': hist, 'market': mk, 'peers': peers,
@@ -513,7 +518,9 @@ def run_of_poll(kite, today: dt.date | None = None) -> int:
     q = _quote_full(kite, sorted(prep['hist']))
     pl = {'t': now_ist().isoformat(timespec='seconds'),
           'q': {s: [v.get('last_price'), v.get('volume'), v.get('buy_quantity'), v.get('sell_quantity')] for s, v in q.items()}}
-    buf = _of_buf.setdefault(str(today), []); buf.append(pl)
+    if str(today) not in _of_buf:                     # after a restart, continue the day's file instead of overwriting it
+        _of_buf[str(today)] = list(_read_json(f'of_{today}.json', []) or [])
+    buf = _of_buf[str(today)]; buf.append(pl)
     _write_json(f'of_{today}.json', buf)
     return len(pl['q'])
 
@@ -552,6 +559,22 @@ def run_list(kite, today: dt.date | None = None) -> int:
         sels[h] = select(X, predict_up(X, h), hv[h], s)
     syms = sorted({x for sel in sels.values() for x in sel['list'].symbol})
     q = _quote_full(kite, syms) if syms else {}
+    opts: dict = {}
+    if s['options']:
+        try:
+            chains = _read_json(f'chains_{today}.json', {}) or {}
+            want = {(r.symbol, r.side) for sel in sels.values() for r in sel['list'].itertuples()}
+            cands = {k: option_candidates(chains.get(k[0]), k[1], (q.get(k[0]) or {}).get('last_price') or 0) for k in want}
+            keys = sorted({c['ts'] for cs in cands.values() for c in cs})
+            oq = {}
+            for i in range(0, len(keys), 450):
+                for kk, vv in (kite.quote(['NFO:' + x for x in keys[i:i + 450]]) or {}).items(): oq[kk.split(':', 1)[1]] = vv
+            for k, cs in cands.items():
+                o = choose_option(cs, oq, s['opt_max_spread_pct'])
+                if o.get('status') == 'OPEN': o.update(expiry=(chains.get(k[0]) or {}).get('expiry'), lot=(chains.get(k[0]) or {}).get('lot'))
+                opts[k] = o
+        except Exception as exc:  # noqa: BLE001
+            log.warning('v133 options: %s', exc)
     lists = {}
     for h, sel in sels.items():
         trade = sel['strong'] or s['trade_normal_days']; picks = []
@@ -560,7 +583,8 @@ def run_list(kite, today: dt.date | None = None) -> int:
             o = of.get(r.symbol); agree = None if not o else bool((o['ofs'] > 0) == (r.side == 'UP'))
             picks.append({'symbol': r.symbol, 'side': r.side, 'p_up': round(float(r.p_up), 4), 'conf': round(float(r.conf), 4), 'open': r.o,
                           'p925': r.p925, 'entry': ltp or r.p925, 'gap_pct': round(r.gap * 100, 2), 'exc20_pct': round(r.exc20 * 100, 2),
-                          'of': o, 'of_agree': agree, 'status': 'OPEN' if trade else 'WATCH'})
+                          'of': o, 'of_agree': agree, 'status': 'OPEN' if trade else 'WATCH',
+                          'option': dict(opts[(r.symbol, r.side)]) if (r.symbol, r.side) in opts else None})
         lists[h] = {'exit_at': EXIT_LABEL[h], 'view': round(sel['view'], 4), 'strength': round(sel['view_strength'], 4),
                     'threshold': None if sel['threshold'] is None else round(sel['threshold'], 4), 'strong': sel['strong'],
                     'lean': sel['market_lean'], 'traded': trade, 'picks': picks}
@@ -580,7 +604,8 @@ def telegram_text(day: dict) -> str:
         tag = 'STRONG - paper trades' if L['strong'] else 'normal - watch only'
         out.append(f"\n[{h if h == 'day' else h + ' min'} -> exit {L['exit_at']}] {tag}, lean {L['lean']}")
         out += [f"{i + 1}. {p['symbol']} {'▲ UP' if p['side'] == 'UP' else '▼ DOWN'} @ {p['entry']}"
-                + ('' if p['of_agree'] is None else (' OF+' if p['of_agree'] else ' OF-')) for i, p in enumerate(L['picks'])]
+                + ('' if p['of_agree'] is None else (' OF+' if p['of_agree'] else ' OF-'))
+                + (f" | {p['option']['ts']} ask {p['option']['ask']}" if (p.get('option') or {}).get('status') == 'OPEN' else '') for i, p in enumerate(L['picks'])]
     return '\n'.join(out)
 
 
@@ -599,14 +624,23 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                 if p['symbol'] not in bars_cache:
                     bars_cache[p['symbol']] = _kite_5min(kite, tok, dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30)))
                     time.sleep(0.34)
-                res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], HORIZON_BARS[h])
+                res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], HORIZON_BARS[h], book_pct=day.get('settings', {}).get('book_target_pct'))
                 if res: p.update(res); n += 1
+                op = p.get('option') or {}
+                if op.get('status') == 'OPEN' and op.get('token'):
+                    try:
+                        kk = ('opt', op['token'])
+                        if kk not in bars_cache:
+                            bars_cache[kk] = _kite_5min(kite, op['token'], dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30))); time.sleep(0.34)
+                        op.update(option_outcome(bars_cache[kk], op, HORIZON_BARS[h]) or {})
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning('v133 option outcome %s: %s', op.get('ts'), exc)
     _rewrite_jsonl('days.jsonl', days)
     if n == 0: raise RuntimeError('no outcomes recorded yet')
     return n
 
 
-def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_exit: int = K_EXIT) -> dict | None:
+def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_exit: int = K_EXIT, book_pct: float | None = None) -> dict | None:
     """Exit at the close of candle k_exit (research: 09:55 / 10:25 / 10:55 / 11:25 / 15:15); win is judged from the 09:25 price
     exactly as in research, ret_pct is the paper result from the actual entry price after 0.06% costs."""
     if b is None or b.empty: return None
@@ -622,8 +656,68 @@ def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_e
         hi, lo = float(win_bars.high.max()), float(win_bars.low.min())
         out['best_pct'] = round((math.log(hi / entry) if sg > 0 else math.log(entry / lo)) * 100, 3)
         out['worst_pct'] = round((math.log(lo / entry) if sg > 0 else math.log(entry / hi)) * 100, 3)
+    if book_pct:
+        # profit-booking exit (research, whole-day calls: +0.75% target -> 78.5% win, +0.17%/trade vs hold 61% / +0.47%)
+        T = book_pct / 100.0; booked = False
+        for hh, ll in zip(win_bars.high.to_numpy(float), win_bars.low.to_numpy(float)):
+            fav = (hh / entry - 1) if sg > 0 else (1 - ll / entry)
+            if np.isfinite(fav) and fav >= T: booked = True; break
+        out['book_pct'] = book_pct; out['booked'] = booked
+        out['book_ret_pct'] = round((T - COST) * 100, 3) if booked else out['ret_pct']
+        out['book_win'] = bool(out['book_ret_pct'] > 0)
     out['status'] = 'CLOSED'
     return out
+
+
+# ================================================================== option suggestion (CALL for UP, PUT for DOWN) - paper only
+def option_chain_map(nfo: list, names: set, today: dt.date, min_days: int = 3) -> dict:
+    """{sym: {'expiry', 'lot', 'CE': [[strike, tradingsymbol, token], ...], 'PE': [...]}} for the nearest stock-option expiry at least
+    `min_days` calendar days away (no last-days expiry gamma for an intraday idea)."""
+    by: dict = {}
+    for i in nfo or []:
+        if i.get('segment') != 'NFO-OPT' or i.get('name') not in names or i.get('instrument_type') not in ('CE', 'PE'): continue
+        e = i.get('expiry'); e = e if isinstance(e, dt.date) else pd.Timestamp(e).date()
+        if (e - today).days < min_days: continue
+        by.setdefault(i['name'], {}).setdefault(e, []).append(i)
+    out = {}
+    for s, exps in by.items():
+        e = min(exps); rows = exps[e]
+        out[s] = {'expiry': str(e), 'lot': int(rows[0].get('lot_size') or 0),
+                  'CE': sorted([[float(r['strike']), r['tradingsymbol'], int(r['instrument_token'])] for r in rows if r['instrument_type'] == 'CE']),
+                  'PE': sorted([[float(r['strike']), r['tradingsymbol'], int(r['instrument_token'])] for r in rows if r['instrument_type'] == 'PE'])}
+    return out
+
+
+def option_candidates(chain: dict, side: str, spot: float) -> list:
+    """ATM and one strike out of the money for the call direction (UP -> CE, DOWN -> PE)."""
+    typ = 'CE' if side == 'UP' else 'PE'; rows = (chain or {}).get(typ) or []
+    if not rows or not spot: return []
+    ks = [r[0] for r in rows]; a = int(np.argmin([abs(k - spot) for k in ks]))
+    otm = a + 1 if typ == 'CE' else a - 1
+    return [dict(label=lab, strike=rows[i][0], ts=rows[i][1], token=rows[i][2], type=typ) for lab, i in (('ATM', a), ('OTM1', otm)) if 0 <= i < len(rows)]
+
+
+def choose_option(cands: list, quotes: dict, max_spread_pct: float) -> dict:
+    """Best contract = ATM if its two-sided spread is within the limit, else the OTM1 strike; none if neither is tradable."""
+    tried = []
+    for c in cands:
+        q = quotes.get(c['ts']) or {}; d = q.get('depth') or {}
+        bid = ((d.get('buy') or [{}])[0] or {}).get('price'); ask = ((d.get('sell') or [{}])[0] or {}).get('price')
+        if not (bid and ask and ask >= bid > 0): tried.append(f"{c['label']} no two-sided quote"); continue
+        spr = (ask - bid) / ((ask + bid) / 2) * 100
+        if spr > max_spread_pct: tried.append(f"{c['label']} spread {spr:.1f}%"); continue
+        return {**c, 'bid': bid, 'ask': ask, 'entry': ask, 'spread_pct': round(spr, 2), 'oi': q.get('oi'), 'ltp': q.get('last_price'), 'status': 'OPEN'}
+    return {'status': 'NO_OPTION', 'reason': '; '.join(tried) or 'no contract'}
+
+
+def option_outcome(b: pd.DataFrame, op: dict, k_exit: int) -> dict | None:
+    """Paper option exit: close of the option's candle at the exit bar, less half the entry spread (proxy for selling at the bid)."""
+    if b is None or b.empty or not op.get('entry'): return None
+    m = b.date.dt.hour * 60 + b.date.dt.minute; k = ((m - 555) // 5).astype(int)
+    c = b.close[k <= k_exit]
+    if c.empty: return None
+    px = float(c.iloc[-1]) * (1 - (op.get('spread_pct') or 0) / 200.0)
+    return {'exit': round(px, 2), 'ret_pct': round((px / op['entry'] - 1) * 100, 2), 'win': bool(px > op['entry']), 'status': 'CLOSED'}
 
 
 # ================================================================== scheduler
@@ -677,9 +771,14 @@ def scorecard(days: list) -> dict:
         Ls = [d['lists'][h] for d in days if (d.get('lists') or {}).get(h)]
         traded = [p for L in Ls if L.get('traded') for p in L['picks']]
         watch = [p for L in Ls if not L.get('traded') for p in L['picks']]
+        bk = [{'win': p.get('book_win'), 'ret_pct': p.get('book_ret_pct')} for p in traded if 'book_win' in p]
+        ops = [p['option'] for p in traded if (p.get('option') or {}).get('status') == 'CLOSED']
+        out.setdefault('_extra', {})[h] = {'book': sc(bk), 'options': sc(ops)}
         out[h] = {'traded': sc(traded), 'watch': sc(watch), 'down': sc([p for p in traded if p['side'] == 'DOWN']),
                   'up': sc([p for p in traded if p['side'] == 'UP']), 'of_agree': sc([p for p in traded + watch if p.get('of_agree') is True]),
-                  'of_against': sc([p for p in traded + watch if p.get('of_agree') is False]), 'strong_days': sum(1 for L in Ls if L.get('strong'))}
+                  'of_against': sc([p for p in traded + watch if p.get('of_agree') is False]), 'strong_days': sum(1 for L in Ls if L.get('strong')),
+                  'book': sc(bk), 'options': sc(ops)}
+    out.pop('_extra', None)
     return out
 
 
@@ -692,4 +791,10 @@ def status() -> dict:
     return {'started': _status.get('started'), 'steps': _status.get('steps', {}), 'last_error': _status.get('last_error'),
             'today': next((d for d in reversed(days) if d['date'] == today), None), 'recent': list(reversed(days))[:20],
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
-            'settings': load_settings(), 'horizons': list(HORIZONS), 'exit_label': EXIT_LABEL}
+            'settings': load_settings(), 'horizons': list(HORIZONS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today)}
+
+
+def of_status(day: str) -> dict:
+    polls = _of_buf.get(day) or (_read_json(f'of_{day}.json', []) or [])
+    syms = {k for pl in polls for k in (pl.get('q') or {})}
+    return {'polls': len(polls), 'stocks': len(syms), 'first': polls[0]['t'] if polls else None, 'last': polls[-1]['t'] if polls else None}
