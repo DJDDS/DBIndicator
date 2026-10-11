@@ -2082,7 +2082,11 @@ button, a, summary, input, select { touch-action: manipulation; }
         // model horizon; longer holds are being forward-tested, not assumed).
         var winAsk=Number(callV1Win.reference_ask), winP=Number(callV1Win.signal_probability);
         var liveAsk=Number(callV1Win.live_ask);
-        if(String(callV1Win.phase)==='ENTRY_OPEN' && callV1Win.entry_price_ok===false){
+        if(String(callV1Win.phase)==='ENTRY_OPEN' && callV1Win.entry_allowed===false){
+          callV1State='TRACKING';
+          callV1Decision='CALL V1 TRACKING · '+n(callV1Win.entry_seconds_left,0)+'s left';
+          callV1Action='NO NEW ENTRY · candidate/feed/quote gate';
+        }else if(String(callV1Win.phase)==='ENTRY_OPEN' && callV1Win.entry_price_ok===false){
           callV1State='PASS';
           callV1Decision='CALL V1 PRICE MOVED · '+n(callV1Win.entry_seconds_left,0)+'s left';
           callV1Action="DON'T CHASE"+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):' · no fresh quote');
@@ -2092,10 +2096,10 @@ button, a, summary, input, select { touch-action: manipulation; }
           callV1Action='CALL ENTRY WINDOW'+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):'');
         }else{
           callV1State='PASS';
-          var pnl=Number(callV1Win.running_pnl_pct);
+          var pnl=callV1Win.running_pnl_pct==null?NaN:Number(callV1Win.running_pnl_pct);
           callV1Decision=(callV1Win.stop_hit?'CALL V1 STOP HIT · exit now':'CALL V1 HOLDING · exit in '+mmss(callV1Win.hold_seconds_left));
           callV1Action=(callV1Win.stop_hit?'EXIT · premium down 25%':'HOLD · NO NEW ENTRY')+
-            (Number.isFinite(pnl)?' · P&L '+(pnl>=0?'+':'')+n(pnl,1)+'%':'')+
+            (Number.isFinite(pnl)?' · reference return '+(pnl>=0?'+':'')+n(pnl,1)+'%':'')+
             (callV1Win.beyond_model_horizon?' · past 5m model horizon (extended hold, testing)':'');
         }
         callV1Detail=String(callV1Win.contract)+
@@ -2239,7 +2243,12 @@ button, a, summary, input, select { touch-action: manipulation; }
     (function renderCallScouts(){
       var box=document.getElementById('v123-call-scouts'); if(!box) return;
       var cands=Array.isArray(tactical.candidates)?tactical.candidates:[];
-      var scouts=cands.filter(function(r){return r&&(r.call_v1_scout||r.flow_scout);});
+      var windows=Array.isArray(tactical.call_v1_windows)?tactical.call_v1_windows:[];
+      var tracked={};
+      var scouts=windows.map(function(r){
+        tracked[String(r.symbol)+'|'+String(r.direction)]=true;
+        return Object.assign({},r,{call_execution_candidate:{state:'TRACKING',trade_window:Object.assign({},r.trade_window,{entry_allowed:r.entry_allowed})}});
+      }).concat(cands.filter(function(r){return r&&(r.call_v1_scout||r.flow_scout)&&!tracked[String(r.symbol)+'|'+String(r.direction)];}));
       if(!scouts.length){box.innerHTML='<div class="focus-empty">No bullish scout is being scored right now.</div>';return;}
       function esc2(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
       box.innerHTML=scouts.map(function(r){
@@ -2250,16 +2259,16 @@ button, a, summary, input, select { touch-action: manipulation; }
           w=null;
         }else if(w&&w.contract){
           line=(String(w.phase)==='ENTRY_OPEN'
-            ?(w.entry_price_ok===false?'PRICE MOVED · don\'t chase':'ENTRY OPEN · '+Math.round(Number(w.entry_seconds_left)||0)+'s left')
+            ?(w.entry_allowed===false?'TRACK ONLY · no new entry':w.entry_price_ok===false?'PRICE MOVED · don\'t chase':'ENTRY OPEN · '+Math.round(Number(w.entry_seconds_left)||0)+'s left')
             :(w.stop_hit?'STOP HIT · exit now':'HOLDING · exit '+String(w.exit_at||'').slice(11,19))+
-              (Number.isFinite(Number(w.running_pnl_pct))?' · P&L '+(Number(w.running_pnl_pct)>=0?'+':'')+Number(w.running_pnl_pct).toFixed(1)+'%':''))+' · '+esc2(w.contract)+
+              (w.running_pnl_pct!=null&&Number.isFinite(Number(w.running_pnl_pct))?' · reference return '+(Number(w.running_pnl_pct)>=0?'+':'')+Number(w.running_pnl_pct).toFixed(1)+'%':''))+' · '+esc2(w.contract)+
             (Number.isFinite(Number(w.reference_ask))?' · ref ask '+Number(w.reference_ask).toFixed(2):'');
         }else if(st==='BELOW_GATE'){
           line='below gate · p '+(Number.isFinite(Number(c.probability))?Number(c.probability).toFixed(3):'—');
         }else{
           line=st.replace(/_/g,' ').toLowerCase()+(c.reason?' · '+esc2(c.reason):'');
         }
-        var cls=w&&w.contract?(String(w.phase)==='ENTRY_OPEN'&&w.entry_price_ok!==false?'pass':'hold'):'wait';
+        var cls=w&&w.contract?(String(w.phase)==='ENTRY_OPEN'&&w.entry_price_ok!==false&&w.entry_allowed!==false?'pass':'hold'):'wait';
         return '<div class="focus-card scout '+cls+'"><div class="focus-card-head"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc2(r.symbol)+'</a>'+
           (isPut?' <span class="side bearish">Bearish scout</span>':' <span class="side bullish">Bullish scout</span>')+(Number.isFinite(Number(r.live_price))?' · CMP '+Number(r.live_price).toFixed(2):'')+'</div>'+
           '<div class="focus-meta">'+(isPut?'':'CALL V1: ')+line+'</div></div>';

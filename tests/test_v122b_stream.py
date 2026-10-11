@@ -22,6 +22,100 @@ def _service(now):
     )
 
 
+def test_call_window_survives_candidate_removal_and_expires_on_original_clock():
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    svc = _service(t0)
+    svc._call_v1_latch.decide("ABC", "Bullish", t0, lambda _: {
+        "state": "PASS", "pass": True, "selected_contract": "ABC26OCT100CE",
+        "selected_ask": 10.0, "selected_mid": 9.9, "probability": 0.8,
+    })
+    # Provider no longer contains ABC. Tracking must not become a fresh signal.
+    svc._evaluate(t0 + dt.timedelta(seconds=90))
+    snapshot = svc.snapshot()
+    assert snapshot["candidates"] == []
+    window = snapshot["call_v1_windows"][0]
+    assert window["symbol"] == "ABC"
+    assert window["trade_window"]["contract"] == "ABC26OCT100CE"
+    assert window["trade_window"]["phase"] == "HOLDING"
+    assert window["trade_window"]["hold_seconds_left"] == 210
+    assert window["entry_allowed"] is False
+    assert window["candidate_present"] is False
+    assert window["trade_window"]["running_pnl_pct"] is None
+    svc._evaluate(t0 + dt.timedelta(seconds=300))
+    assert svc.snapshot()["call_v1_windows"] == []
+
+
+def test_removed_candidate_window_quotes_remain_locked_and_do_not_allow_late_entry(monkeypatch):
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    svc = _service(t0)
+    svc._call_v1_latch.decide("ABC", "Bullish", t0, lambda _: {
+        "state": "PASS", "pass": True, "selected_contract": "OLDCE",
+        "selected_ask": 10.0, "probability": 0.8,
+    })
+    monkeypatch.setattr(svc, "_option_snapshots", lambda *args: [
+        {"symbol": "OLDCE", "bid": 9.8, "ask": 9.9, "quote_age_s": 1},
+        {"symbol": "NEWCE", "bid": 20, "ask": 20.1, "quote_age_s": 1},
+    ])
+    svc._evaluate(t0 + dt.timedelta(seconds=20))
+    row = svc.snapshot()["call_v1_windows"][0]
+    assert row["trade_window"]["contract"] == "OLDCE"
+    assert row["trade_window"]["running_pnl_pct"] == -2.0
+    assert row["trade_window"]["entry_price_ok"] is True
+    assert row["entry_allowed"] is False
+    monkeypatch.setattr(svc, "_option_snapshots", lambda *args: [
+        {"symbol": "OLDCE", "bid": 9.8, "ask": 9.9, "quote_age_s": 60},
+    ])
+    svc._evaluate(t0 + dt.timedelta(seconds=30))
+    assert svc.snapshot()["call_v1_windows"][0]["trade_window"]["running_pnl_pct"] is None
+
+
+def test_call_window_entry_gate_rechecks_disconnect_inside_cached_minute(monkeypatch):
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    svc = _service(t0)
+    svc._candidates = {"ABC": {"symbol": "ABC", "direction": "Bullish", "close": 100,
+                                "call_v1_scout": True}}
+    svc._metadata = {1: {"kind": "CASH", "symbol": "ABC"}}
+    svc._latest_ticks = {1: {"last_price": 100, "_received_at": t0}}
+    monkeypatch.setattr(svc, "_option_snapshots", lambda *args: [
+        {"symbol": "OLDCE", "bid": 9.8, "ask": 9.9, "quote_age_s": 1},
+    ])
+    svc._call_v1_latch.decide("ABC", "Bullish", t0, lambda _: {
+        "state": "PASS", "pass": True, "selected_contract": "OLDCE",
+        "selected_ask": 10.0, "probability": 0.8,
+    })
+    svc._connected = True
+    svc._last_tick_at = t0
+    svc._evaluate(t0 + dt.timedelta(seconds=1))
+    assert svc.snapshot()["call_v1_windows"][0]["entry_allowed"] is True
+    svc._connected = False
+    svc._evaluate(t0 + dt.timedelta(seconds=2))
+    snapshot = svc.snapshot()
+    assert snapshot["feed_health"]["fresh"] is False
+    assert snapshot["call_v1_windows"][0]["entry_allowed"] is False
+    assert snapshot["candidates"][0]["call_execution_candidate"]["trade_window"]["entry_allowed"] is False
+
+
+def test_active_call_window_keeps_exact_subscriptions_without_forward_recorder(monkeypatch):
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    svc = _service(t0)
+    monkeypatch.setattr(v122b_stream.scanner, "cached_nse_instrument_tokens",
+                        lambda names: {"ABC": 1} if "ABC" in names else {})
+    monkeypatch.setattr(v122b_stream.scanner, "get_futures_contracts_map", lambda _: {})
+    monkeypatch.setattr(v122b_stream.scanner, "get_index_token", lambda *args: None)
+    monkeypatch.setattr(v122b_stream.derivative_intelligence, "get_option_contracts_map", lambda _: {
+        "ABC": [{"instrument_token": 2, "tradingsymbol": "OLDCE", "instrument_type": "CE"},
+                {"instrument_token": 3, "tradingsymbol": "NEWCE", "instrument_type": "CE"}],
+    })
+    svc._call_v1_latch.decide("ABC", "Bullish", t0, lambda _: {
+        "state": "PASS", "pass": True, "selected_contract": "OLDCE", "selected_ask": 10,
+    })
+    assert svc._call_v1_forward.active_subscriptions() == []
+    metadata = svc._resolve_universe(None, [], t0 + dt.timedelta(seconds=90))
+    assert set(metadata) == {1, 2}
+    assert metadata[2]["tradingsymbol"] == "OLDCE"
+    assert svc._resolve_universe(None, [], t0 + dt.timedelta(seconds=300)) == {}
+
+
 def test_trigger_clock_can_restart_for_fresh_entry_episode():
     t0 = dt.datetime(2026, 9, 24, 10, 0)
     svc = _service(t0)

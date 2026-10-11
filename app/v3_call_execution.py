@@ -437,10 +437,36 @@ class MinuteDecisionLatch:
         if window is not None and now >= window["hold_until"]:
             self._windows.pop(key, None)
             window = None
+        out["trade_window"] = self._render_window(window, now, live_snaps)
+        return out
+
+    def active_subscriptions(self, now):
+        return [
+            {"symbol": symbol, "direction": direction, "contract": window["contract"]}
+            for (symbol, direction), window in list(self._windows.items())
+            if now < window["hold_until"]
+        ]
+
+    def active_windows(self, now, snapshots=None):
+        """Read existing episodes without scoring, reopening, or extending them."""
+        out = []
+        for key, window in list(self._windows.items()):
+            if now >= window["hold_until"]:
+                self._windows.pop(key, None)
+                continue
+            symbol, direction = key
+            out.append({
+                "symbol": symbol, "direction": direction,
+                "trade_window": self._render_window(window, now, (snapshots or {}).get(symbol)),
+            })
+        return out
+
+    @staticmethod
+    def _render_window(window, now, live_snaps=None):
         if window is not None:
             entry_left = (window["entry_open_until"] - now).total_seconds()
             hold_left = (window["hold_until"] - now).total_seconds()
-            out["trade_window"] = {
+            out = {
                 "phase": "ENTRY_OPEN" if entry_left > 0 else "HOLDING",
                 "contract": window["contract"],
                 "strike": window["strike"],
@@ -465,8 +491,9 @@ class MinuteDecisionLatch:
             live_bid = _finite((live or {}).get("bid"))
             live_age = _finite((live or {}).get("quote_age_s"))
             ref_ask = _finite(window["reference_ask"])
-            fresh = live_ask is not None and (live_age is None or live_age <= MAX_QUOTE_AGE_SECONDS)
-            out["trade_window"].update({
+            quote_fresh = live_age is not None and 0 <= live_age <= MAX_QUOTE_AGE_SECONDS
+            fresh = live_ask is not None and live_ask > 0 and quote_fresh
+            out.update({
                 "live_ask": live_ask,
                 "live_quote_age_s": live_age,
                 # No-chase guard: during ENTRY_OPEN the entry is valid only at or
@@ -475,14 +502,14 @@ class MinuteDecisionLatch:
             })
             # Running result if bought at the reference ask and sold at the live bid.
             pnl = None
-            if live_bid is not None and ref_ask and (live_age is None or live_age <= MAX_QUOTE_AGE_SECONDS):
+            if live_bid is not None and live_bid > 0 and ref_ask and ref_ask > 0 and quote_fresh:
                 pnl = (live_bid / ref_ask - 1.0) * 100.0
-            out["trade_window"].update({
+            out.update({
                 "live_bid": live_bid,
                 "running_pnl_pct": round(pnl, 2) if pnl is not None else None,
                 "stop_pct": -STOP_LOSS_FRACTION * 100.0,
                 "stop_hit": bool(pnl is not None and pnl <= -STOP_LOSS_FRACTION * 100.0),
             })
         else:
-            out["trade_window"] = None
+            out = None
         return out
