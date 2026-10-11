@@ -158,15 +158,16 @@ def test_end_to_end_list_and_outcomes(store, monkeypatch):
     monkeypatch.setattr(v2, "_announcements", lambda a, b: [])
     sent = []; monkeypatch.setattr(v2, "_telegram", lambda t: sent.append(t) or True)
     k = FakeKite(hist, day)
-    assert v.run_list(k, day) == 3 * len(v.HORIZONS) + 1
+    assert v.run_list(k, day) == 3 * len(v.HORIZONS) + 3
     d = v._read_jsonl("days.jsonl")[-1]
-    assert set(d["lists"]) == set(v.LISTS) and all(len(d["lists"][h]["picks"]) == 3 for h in v.HORIZONS) and len(d["lists"]["hc"]["picks"]) == 1
+    assert set(d["lists"]) == set(v.LISTS) and all(len(d["lists"][h]["picks"]) == 3 for h in v.HORIZONS) and len(d["lists"]["hc"]["picks"]) == 3 and d["lists"]["hc"]["traded"] is True
     assert d["lists"]["hc"]["book_pct"] == 1.0 and d["lists"]["hc"]["exit_at"] == "15:15"
     assert sent and "09:25 direction lists" in sent[0]
     assert v.run_list(k, day) == 1                       # idempotent per day
-    assert v.run_outcomes(k, day) == 3 * len(v.HORIZONS) + 1
+    assert v.run_outcomes(k, day) == 3 * len(v.HORIZONS) + 3
     st = v.status()
     assert st["score"]["day"]["traded"]["n"] + st["score"]["day"]["watch"]["n"] == 3
+    assert st["score"]["pool"]["days"] == 1 and st["score"]["pool"]["ge1"] is not None
     p0 = d["lists"]["day"]["picks"][0]
     assert "book_ret_pct" in v._read_jsonl("days.jsonl")[-1]["lists"]["day"]["picks"][0] and p0["option"]["status"] == "NO_OPTION"
 
@@ -191,7 +192,7 @@ def test_intraday_page_renders_direction_card(store):
     st = v.status(); st["today"] = {"date": "2026-10-06", "at": "2026-10-06 09:26:31", "n_scored": 190, "lists": lists, "missing": {"fii": True, "vix": False}}
     intra = {"score_short": {"n": 12, "win": 50, "avg_bps": -55.0}, "score_short_bear": {}, "score_short_other": {"n": 12, "win": 50, "avg_bps": -55.0}}
     html = env.get_template("intraday_admin.html").render(direction=st, intra=intra)
-    for txt in ("HIGH-CONVICTION PICK", "high-conviction", "Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:45 short detector", "+41.0%"):
+    for txt in ("DAILY POOL OF 1", "daily pool", "at least 1 of 3", "Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:45 short detector", "+41.0%"):
         assert txt in html, txt
     assert "Intraday Desk" in env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None)
 

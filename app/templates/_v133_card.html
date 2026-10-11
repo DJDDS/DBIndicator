@@ -5,22 +5,24 @@
   {% if dt_ %}
     <div class="small">Scored {{ dt_.n_scored }} F&amp;O stocks at 09:25 · list ready {{ (dt_.at|string)[11:19] }}
       {% set miss = (dt_.missing or {}).items()|selectattr(1)|map(attribute=0)|list %}{% if miss %} · <span class="warn">missing inputs: {{ miss|join(', ') }}</span>{% endif %}</div>
-    {% set HC = (dt_.lists or {}).get('hc') %}{% set hr = direction.hc_research or {} %}
+    {% set HC = (dt_.lists or {}).get('hc') %}{% set pr = direction.pool_research or {} %}{% set hr = direction.hc_research or {} %}
     {% if HC %}
     <div class="pick" style="margin-top:8px;border:1px solid #e0a030">
-      <div class="top"><div><b style="color:#e0a030">★ HIGH-CONVICTION PICK</b> <span class="small">exit {{ HC.exit_at }} · track +{{ HC.book_pct }}% booking</span>
-        <span class="pill {{ 'strong' if HC.strong else 'normal' }}">{{ 'ACTIVE today' if HC.strong else 'no pick today - market view not strong enough' }}</span></div>
+      <div class="top"><div><b style="color:#e0a030">★ DAILY POOL OF {{ HC.picks|length }}</b> <span class="small">every day · exit 15:15 or book at +{{ HC.book_pct }}%</span>
+        <span class="pill {{ 'strong' if HC.strong else 'normal' }}">{{ '★ STRONG day (historically ~66% held to 15:15)' if HC.strong else 'normal day' }}</span></div>
         <div class="small">ensemble view {{ HC.strength }} vs bar {{ HC.threshold if HC.threshold is not none else '—' }} · lean <b class="{{ 'side-up' if HC.lean == 'UP' else 'side-dn' }}">{{ HC.lean }}</b></div></div>
-      {% if HC.strong %}<table style="margin-top:6px"><tr><th>Stock</th><th>Call</th><th>Entry</th><th>Conf.</th><th>Order flow</th><th>Option (paper)</th><th>Exit</th><th>Hold result</th><th>Booked at +{{ HC.book_pct }}%</th><th>Best / worst</th></tr>
-        {% for p in HC.picks %}{% set op = p.get('option') or {} %}<tr><td><b>{{ p.symbol }}</b></td><td class="{{ 'side-up' if p.side == 'UP' else 'side-dn' }}">{{ '▲ UP' if p.side == 'UP' else '▼ DOWN' }}</td><td>{{ p.entry }}</td><td>{{ '%.2f'|format(p.conf) }}</td>
+      <table style="margin-top:6px"><tr><th>#</th><th>Stock</th><th>Call</th><th>Entry</th><th>Conf.</th><th>Order flow</th><th>Option (paper)</th><th>Exit</th><th>Hold result</th><th>Booked at +{{ HC.book_pct }}%</th><th>Best / worst</th></tr>
+        {% for p in HC.picks %}{% set op = p.get('option') or {} %}<tr><td>{{ loop.index }}</td><td><b>{{ p.symbol }}</b></td><td class="{{ 'side-up' if p.side == 'UP' else 'side-dn' }}">{{ '▲ UP' if p.side == 'UP' else '▼ DOWN' }}</td><td>{{ p.entry }}</td><td>{{ '%.2f'|format(p.conf) }}</td>
           <td class="small">{% if p.of_agree is none %}—{% elif p.of_agree %}<span class="open">agrees</span>{% else %}<span class="closed">against</span>{% endif %}</td>
           <td class="small opt">{% if op.get('status') in ('OPEN', 'CLOSED') %}{{ op.ts }} · ask {{ op.entry }}{% if op.get('ret_pct') is not none %} → <b class="{{ 'open' if op.win else 'closed' }}">{{ '%+.1f'|format(op.ret_pct) }}%</b>{% endif %}{% elif op %}{{ op.reason or 'no option' }}{% else %}—{% endif %}</td>
           <td>{{ p.get('exit', '—') }}</td>
           <td class="{{ 'open' if p.get('win') else ('closed' if p.get('win') is sameas false else '') }}">{% if p.get('win') is not none %}{{ 'RIGHT' if p.win else 'wrong' }} · {{ '%+.2f'|format(p.ret_pct) }}%{% else %}{{ p.status|lower }}{% endif %}</td>
           <td class="{{ 'open' if p.get('book_win') else ('closed' if p.get('book_win') is sameas false else '') }}">{% if p.get('book_ret_pct') is not none %}{{ 'booked' if p.booked else 'not hit' }} · {{ '%+.2f'|format(p.book_ret_pct) }}%{% else %}—{% endif %}</td>
-          <td class="small">{{ p.get('best_pct', '—') }} / {{ p.get('worst_pct', '—') }}%</td></tr>{% endfor %}</table>{% endif %}
-      {% set r8 = hr.get('q80_hold') or {} %}{% set b8 = hr.get('q80_book1') or {} %}{% set r9 = hr.get('q90_hold') or {} %}
-      <div class="small" style="margin-top:4px">Research (rule chosen on 2018-23, checked on untouched 2024-26): strongest 20% of days, hold to 15:15 {{ r8.get('win_2018_23') }}% / {{ r8.get('win_2024_26') }}% (avg {{ r8.get('avg_2024_26') }}%/trade, ~{{ r8.get('per_year') }} picks a year); booked at +1% {{ b8.get('win_2018_23') }}% / {{ b8.get('win_2024_26') }}%. Strongest 10% of days: {{ r9.get('win_2018_23') }}% / {{ r9.get('win_2024_26') }}% (~{{ r9.get('per_year') }} a year).</div>
+          <td class="small">{{ p.get('best_pct', '—') }} / {{ p.get('worst_pct', '—') }}%</td></tr>{% endfor %}</table>
+      {% set ph = pr.get('hold') or {} %}{% set pb = pr.get('book_1.0') or {} %}{% set r8 = hr.get('q80_hold') or {} %}
+      <div class="small" style="margin-top:4px">Research, 2024-26 (rule chosen on 2018-23): held to 15:15 each pick {{ ph.get('pick_win_2024_26') }}%, at least 1 of 3 right {{ ph.get('ge1_of_3_2024_26') }}%;
+        booked at +1% each pick {{ pb.get('pick_win_2024_26') }}%, at least 1 of 3 {{ pb.get('ge1_of_3_2024_26') }}%, at least 2 of 3 {{ pb.get('ge2_of_3_2024_26') }}% (average profit per pick ~0 in 2024-26: small booked wins vs losers held to 15:15).
+        ★ strong days (top pick held): {{ r8.get('win_2018_23') }}% / {{ r8.get('win_2024_26') }}%.</div>
     </div>{% endif %}
     <div class="hz" style="margin-top:8px">
     {% for h in direction.horizons %}{% set L = (dt_.lists or {}).get(h) %}{% if L %}
@@ -45,9 +47,10 @@
   <h2 style="margin-top:12px">Scorecard (paper, strong days)</h2>
   <table><tr><th>Horizon</th><th>Hold to exit</th><th>Booked at +{{ ds.book_target_pct }}%</th><th>DOWN calls</th><th>UP calls</th><th>Order flow agrees</th><th>Order flow against</th><th>Options (paper)</th><th>Watch-only calls</th><th>Research (strong days, top 5)</th></tr>
   {% for h in (direction.lists or direction.horizons) %}{% set s = dsc.get(h) or {} %}{% set r = (dres.get(h) or {}).get('strong_top5') or {} %}
-    <tr><td>{{ '★ high-conviction' if h == 'hc' else ('day' if h == 'day' else h ~ ' min') }}</td>
+    <tr><td>{{ '★ daily pool' if h == 'hc' else ('day' if h == 'day' else h ~ ' min') }}</td>
     {% for k in ('traded', 'book', 'down', 'up', 'of_agree', 'of_against', 'options', 'watch') %}{% set x = s.get(k) or {} %}<td>{{ (x.get('win')|string + '%') if x.get('win') is not none else '—' }} <span class="small">({{ x.get('n') or 0 }}{{ (', %+.2f'|format(x.get('avg_pct')) ~ '%') if x.get('avg_pct') is not none else '' }})</span></td>{% endfor %}
     <td class="small">{% if h == 'hc' %}{% set r8 = (direction.hc_research or {}).get('q80_hold') or {} %}{{ r8.get('win_2018_23') }}% / {{ r8.get('win_2024_26') }}% (2018-23 / 2024-26){% elif r.get('win') is not none %}{{ r.get('win') }}% ({{ r.get('n') }}), {{ r.get('pnl_pct') }}%/trade, last 12m {{ r.get('last12m') }}%{% else %}—{% endif %}</td></tr>{% endfor %}</table>
+  {% set pl = dsc.get('pool') or {} %}<div class="small" style="margin-top:4px">Daily pool, live: {{ pl.get('days') or 0 }} days · at least 1 of the day's picks right {{ pl.get('ge1') if pl.get('ge1') is not none else '—' }}% (booked {{ pl.get('ge1_book') if pl.get('ge1_book') is not none else '—' }}%) · at least 2 right {{ pl.get('ge2') if pl.get('ge2') is not none else '—' }}% (booked {{ pl.get('ge2_book') if pl.get('ge2_book') is not none else '—' }}%)</div>
   <div class="small" style="margin-top:6px">RIGHT = price moved the called way from 09:25 to the exit time (research definition); % results are from the paper entry after 0.06% costs.
     Booked = exit as soon as the stock is +{{ ds.book_target_pct }}% your way, else at the exit time (research, whole day: +0.75% → ~78% win, +0.17%/trade vs hold 61%, +0.47%).
     Option = CALL for UP / PUT for DOWN, nearest expiry ≥3 days, ATM unless its spread is too wide (then 1 strike OTM); bought at the ask, valued at the exit candle less half the spread. Earlier research: option buying on movers often loses to IV crush - judge on paper first.
@@ -59,7 +62,7 @@
     · strong-day bar (quantile) <input name="strong_quantile" size="4" value="{{ ds.strong_quantile }}"> · window <input name="window" size="4" value="{{ ds.window }}">
     · book profit at +<input name="book_target_pct" size="4" value="{{ ds.book_target_pct }}">%
     · option max spread <input name="opt_max_spread_pct" size="4" value="{{ ds.opt_max_spread_pct }}">%
-    · high-conviction bar <input name="hc_quantile" size="4" value="{{ ds.hc_quantile }}"> (0.8 = strongest 20% of days, 0.9 = 10%) · picks <input name="hc_top_n" size="2" value="{{ ds.hc_top_n }}"> · book +<input name="hc_book_pct" size="4" value="{{ ds.hc_book_pct }}">%
+    · daily pool: ★ bar <input name="hc_quantile" size="4" value="{{ ds.hc_quantile }}"> · stocks <input name="hc_top_n" size="2" value="{{ ds.hc_top_n }}"> · book +<input name="hc_book_pct" size="4" value="{{ ds.hc_book_pct }}">%
     · <label style="display:inline"><input type="checkbox" name="options" value="1" {{ 'checked' if ds.options }}> suggest options</label>
     · <label style="display:inline"><input type="checkbox" name="trade_normal_days" value="1" {{ 'checked' if ds.trade_normal_days }}> paper-trade normal days too</label>
     · <label style="display:inline"><input type="checkbox" name="telegram" value="1" {{ 'checked' if ds.telegram }}> Telegram</label>

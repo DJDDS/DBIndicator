@@ -50,7 +50,7 @@ HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
 DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
                     'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0,
-                    'hc_quantile': 0.8, 'hc_top_n': 1, 'hc_book_pct': 1.0}
+                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0}
 
 _lock = threading.Lock()
 _model = None
@@ -97,7 +97,7 @@ def _rewrite_jsonl(name: str, rows: list) -> None:
 
 
 HORIZONS = ('30', '60', '90', '120', 'day')
-LISTS = ('hc',) + HORIZONS          # 'hc' = HIGH-CONVICTION pick: mean of the 5 horizon models, strongest days only, top 1, exit 15:15
+LISTS = ('hc',) + HORIZONS          # 'hc' = DAILY POOL: mean of the 5 horizon models, top 3 every day, exit 15:15 (★ = strong day)
 EXIT_LABEL = {'30': '09:55', '60': '10:25', '90': '10:55', '120': '11:25', 'day': '15:15', 'hc': '15:15'}
 EXIT_BAR = {**HORIZON_BARS, 'hc': K_EXIT}
 
@@ -587,7 +587,7 @@ def run_list(kite, today: dt.date | None = None) -> int:
             log.warning('v133 options: %s', exc)
     lists = {}
     for h, sel in sels.items():
-        trade = sel['strong'] or (s['trade_normal_days'] and h != 'hc'); picks = []
+        trade = True if h == 'hc' else (sel['strong'] or s['trade_normal_days']); picks = []   # the daily pool is paper-traded every day
         for r in sel['list'].itertuples():
             ltp = (q.get(r.symbol) or {}).get('last_price')
             o = of.get(r.symbol); agree = None if not o else bool((o['ofs'] > 0) == (r.side == 'UP'))
@@ -612,9 +612,8 @@ def telegram_text(day: dict) -> str:
     for h in LISTS:
         L = (day.get('lists') or {}).get(h)
         if not L: continue
-        if h == 'hc' and not L['strong']: out.append('\n[HIGH-CONVICTION] no pick today (market view not strong enough)'); continue
-        tag = 'STRONG - paper trades' if L['strong'] else 'normal - watch only'
-        name = 'HIGH-CONVICTION pick' if h == 'hc' else (h if h == 'day' else h + ' min')
+        tag = ('★ STRONG day' if L['strong'] else 'normal day') if h == 'hc' else ('STRONG - paper trades' if L['strong'] else 'normal - watch only')
+        name = f"DAILY POOL of {len(L['picks'])} (book +{L.get('book_pct')}% or 15:15)" if h == 'hc' else (h if h == 'day' else h + ' min')
         out.append(f"\n[{name} -> exit {L['exit_at']}] {tag}, lean {L['lean']}")
         out += [f"{i + 1}. {p['symbol']} {'▲ UP' if p['side'] == 'UP' else '▼ DOWN'} @ {p['entry']}"
                 + ('' if p['of_agree'] is None else (' OF+' if p['of_agree'] else ' OF-'))
@@ -792,6 +791,11 @@ def scorecard(days: list) -> dict:
                   'of_against': sc([p for p in traded + watch if p.get('of_agree') is False]), 'strong_days': sum(1 for L in Ls if L.get('strong')),
                   'book': sc(bk), 'options': sc(ops)}
     out.pop('_extra', None)
+    # daily pool: how often at least 1 / 2 of the day's picks were right (hold and booked)
+    pd_days = [[p for p in d['lists']['hc']['picks'] if isinstance(p.get('win'), bool)] for d in days if (d.get('lists') or {}).get('hc')]
+    pd_days = [x for x in pd_days if x]
+    f = lambda key, k: round(100 * sum(1 for x in pd_days if sum(bool(p.get(key)) for p in x) >= k) / len(pd_days), 1) if pd_days else None
+    out['pool'] = {'days': len(pd_days), 'ge1': f('win', 1), 'ge2': f('win', 2), 'ge1_book': f('book_win', 1), 'ge2_book': f('book_win', 2)}
     return out
 
 
@@ -804,7 +808,7 @@ def status() -> dict:
     return {'started': _status.get('started'), 'steps': _status.get('steps', {}), 'last_error': _status.get('last_error'),
             'today': next((d for d in reversed(days) if d['date'] == today), None), 'recent': list(reversed(days))[:20],
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
-            'hc_research': (m.get('ensemble') or {}).get('research', {}),
+            'hc_research': (m.get('ensemble') or {}).get('research', {}), 'pool_research': (m.get('ensemble') or {}).get('pool', {}),
             'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today)}
 
 

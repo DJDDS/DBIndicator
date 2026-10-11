@@ -2752,6 +2752,32 @@
     "per_year": 23.3,
     "worst_year_2024_26": 73.7
    }
+  },
+  "pool": {
+   "note": "Every day the 3 most confident stocks of the 5-model ensemble, 09:25 entry, exit 15:15 or booked; dev 2018-23 / holdout 2024-26",
+   "hold": {
+    "pick_win_2018_23": 58.9,
+    "pick_win_2024_26": 55.2,
+    "ge1_of_3_2024_26": 84.9,
+    "ge2_of_3_2024_26": 57.4,
+    "avg_2024_26": 0.2
+   },
+   "book_1.0": {
+    "pick_win_2018_23": 74.0,
+    "pick_win_2024_26": 66.3,
+    "ge1_of_3_2024_26": 91.6,
+    "ge2_of_3_2024_26": 71.5,
+    "avg_2018_23": 0.2,
+    "avg_2024_26": 0.0
+   },
+   "book_0.75": {
+    "pick_win_2018_23": 79.4,
+    "pick_win_2024_26": 71.7,
+    "ge1_of_3_2024_26": 94.1,
+    "ge2_of_3_2024_26": 78.1,
+    "avg_2018_23": 0.1,
+    "avg_2024_26": 0.0
+   }
   }
  }
 }
