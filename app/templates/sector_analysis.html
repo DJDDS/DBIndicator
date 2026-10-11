@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sector Analysis · DBIndicator</title>
-<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='7') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='8') }}">
 <script defer src="{{ url_for('static',filename='vendor/echarts-5.6.0.min.js') }}"></script>
-<script defer src="{{ url_for('static',filename='sector_analysis.js', v='7') }}"></script>
+<script defer src="{{ url_for('static',filename='sector_analysis.js', v='8') }}"></script>
 <script defer src="{{ url_for('static',filename='logout.js') }}"></script>
 </head>
 <body>
@@ -25,6 +25,17 @@
   <button id="live" class="live" type="button" title="Click to refresh now">● Live · loading…</button>
   <div id="status" class="status" role="status">Loading…</div>
 </div>
+
+<section class="card movers-card" id="movers-card" aria-label="Leaders and laggards">
+  <div class="card-head">
+    <h2>Leaders &amp; laggards <span class="muted small" id="movers-period"></span></h2>
+    <div class="seg" role="group" aria-label="Group by"><button data-mview="sectors" aria-pressed="true">Sectors</button><button data-mview="industries" aria-pressed="false">Industry groups</button></div>
+    <span class="muted small">Top 2 and bottom 2 stocks of every sector for the period chosen above, each compared on Today · 1W · 1M · 3M (quarter).
+      ★ = in the top 20% of its sector on at least 3 of the 4 windows (steady strength) · ▼▼ = bottom 20% on at least 3 (steady weakness) · "led 4/20" = sessions it was a top-2 of its sector in the last 20 · technicals = trend vs 20/50/200-day averages, 20-day breakout/breakdown, 52-week high/low, stretch from the 20-day average (a description of the chart, not a forecast). Industry groups = NSE's official basic-industry classification.</span>
+  </div>
+  <div id="movers-steady" class="movers-steady"></div>
+  <div id="movers" class="movers"></div>
+</section>
 
 <main class="layout">
   <!-- Sector list -->

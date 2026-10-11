@@ -84,3 +84,86 @@ def test_sector_intraday_and_lite_detail(monkeypatch):
     assert s.sector_intraday('missing') is None
     d=s.detail('nifty-it',20,lite=True)
     assert d['rotation']=={} and d['breadth_series']==[] and d['members'][0]['evidence'] is None
+
+
+def _m(sym, today, w, m, q):
+    return {'symbol':sym,'returns':{'today':today,'1W':w,'1M':m,'3M':q}}
+
+
+def test_movers_top_bottom_two_with_windows_and_ranks():
+    from app import sector_service as s
+    mem=[_m('A',3.0,6,9,20),_m('B',2.0,5,8,15),_m('C',0.5,1,1,1),_m('D',-1.0,-2,-3,-4),_m('E',-2.5,-6,-9,-20),{'symbol':'X','returns':{}}]
+    mv=s.movers(mem)
+    t=mv['today']
+    assert [x['symbol'] for x in t['top']]==['A','B'] and [x['symbol'] for x in t['bottom']]==['E','D'] and t['n']==5
+    a=t['top'][0]
+    assert a['returns']=={'today':3.0,'1W':6,'1M':9,'3M':20} and a['ranks']=={'today':1,'1W':1,'1M':1,'3M':1}
+    assert t['bottom'][0]['ranks']['3M']==5
+    assert [x['symbol'] for x in mv['3M']['top']]==['A','B']
+    few=s.movers([_m('A',1,1,1,1),_m('B',-1,-1,-1,-1),_m('C',0,0,0,0)])['today']
+    assert [x['symbol'] for x in few['top']]==['A'] and [x['symbol'] for x in few['bottom']]==['B']   # small group: 1 leader + 1 laggard
+
+
+def test_movers_log_once_per_day_and_seen_counts(monkeypatch, tmp_path):
+    from app import sector_service as s
+    monkeypatch.setattr(s,'ROOT',tmp_path)
+    mem=[_m('A',3.0,6,9,20),_m('B',2.0,5,8,15),_m('D',-1.0,-2,-3,-4),_m('E',-2.5,-6,-9,-20)]
+    rows=[{'id':'it','movers':s.movers(mem)}]
+    assert s.log_movers(rows,'2026-10-12') is True and s.log_movers(rows,'2026-10-12') is False
+    s.log_movers(rows,'2026-10-13')
+    rows=[{'id':'it','movers':s.movers(mem)}]; s._attach_history(rows)
+    top=rows[0]['movers']['today']['top'][0]; bot=rows[0]['movers']['today']['bottom'][0]
+    assert top['symbol']=='A' and top['seen']=={'top':2,'bottom':0,'of':2} and bot['seen']=={'top':0,'bottom':2,'of':2}
+
+
+def test_overview_carries_movers(monkeypatch, tmp_path):
+    from app import sector_service as s
+    monkeypatch.setattr(s,'ROOT',tmp_path)
+    entry={'id':'nifty-it','name':'NIFTY IT','members':[{'symbol':'INFY','name':'Infosys'},{'symbol':'TCS','name':'TCS'}]}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[entry]})
+    o=s.overview()
+    assert o['movers_compare']==['today','1W','1M','3M'] and 'today' in o['sectors'][0]['movers']
+
+
+def test_tech_read_describes_trend_breakout_and_stretch():
+    from app import sector_service as s
+    up={'price':120.0,'sma':{'20':110,'50':105,'200':90},'levels':{'swing_high':118,'swing_low':100},'below_high52':-1.0,'above_low52':40,'extension_atr':3.1}
+    t=s.tech_read(up)
+    assert t['bias']=='bullish' and t['notes'][0].startswith('uptrend') and any('breaking out' in n for n in t['notes']) and len(t['notes'])==3
+    dn={'price':80.0,'sma':{'20':90,'50':95,'200':100},'levels':{'swing_high':99,'swing_low':82},'below_high52':-30,'above_low52':1.0,'extension_atr':-1}
+    assert s.tech_read(dn)['bias']=='bearish'
+    pb={'price':95.0,'sma':{'20':100,'50':98,'200':90},'levels':{},'below_high52':-12,'above_low52':20,'extension_atr':-1}
+    t=s.tech_read(pb); assert t['bias']=='mixed' and 'pullback' in t['notes'][0]
+    assert s.tech_read({'price':None})=={'bias':None,'notes':[]}
+
+
+def test_industry_groups_use_basic_industry_then_broad_fallback():
+    from app import sector_service as s, sector_industry as ind
+    summ={k:{'symbol':k,'returns':{'today':v,'1W':v,'1M':v,'3M':v}} for k,v in (('HDFCBANK',1.0),('ICICIBANK',2.0),('SBIN',-1.0),('PNB',-3.0),('BANKX',-2.0),('ITC',0.5))}
+    cls={'HDFCBANK':{'basic':'Private Sector Bank','sector':'Banks'},'ICICIBANK':{'basic':'Private Sector Bank','sector':'Banks'},
+         'SBIN':{'basic':'Public Sector Bank','sector':'Banks'},'PNB':{'basic':'Public Sector Bank','sector':'Banks'},'BANKX':{'broad':'Public Sector Bank'},
+         'ITC':{'basic':'Diversified FMCG'}}
+    g={r['name']:r for r in s.industry_groups(summ,cls)}
+    assert set(g)=={'Private Sector Bank','Public Sector Bank'}            # single-stock groups are dropped
+    assert g['Private Sector Bank']['returns']['today']==1.5 and g['Private Sector Bank']['movers']['today']['top'][0]['symbol']=='ICICIBANK'
+    assert g['Public Sector Bank']['n']==3 and g['Public Sector Bank']['returns']['today']==-2.0 and g['Public Sector Bank']['advancing_pct']==0
+    assert ind.parse_quote({'industryInfo':{'macro':'Financial Services','sector':'Financial Services','industry':'Banks','basicIndustry':'Private Sector Bank'}})['basic']=='Private Sector Bank'
+    assert ind.parse_quote({}) is None
+    assert ind.parse_nifty500(b'Company Name,Industry,Symbol,Series,ISIN Code\nHDFC Bank,Financial Services,HDFCBANK,EQ,X\n')=={'HDFCBANK':'Financial Services'}
+
+
+def test_industry_refresh_is_incremental_and_saved(tmp_path):
+    import datetime as dt
+    from app import sector_industry as ind
+    class N:
+        calls=[]
+        def get(self,url,json_ok=False):
+            N.calls.append(url)
+            if url==ind.NIFTY500: return b'Company Name,Industry,Symbol\nA,Banks,AAA\nB,IT,BBB\n'
+            return {'industryInfo':{'basicIndustry':'Group '+url[-3:],'sector':'S'}} if url.endswith('AAA') else None
+    today=dt.date(2026,10,12)
+    cls=ind.refresh(tmp_path,{'AAA','BBB'},N(),today,pause=0)
+    assert cls['AAA']['basic']=='Group AAA' and cls['BBB']=={'broad':'IT'} and ind.group_of(cls['BBB'])==('IT','')
+    assert ind.needs_refresh(tmp_path,{'AAA'},today) is False and ind.needs_refresh(tmp_path,{'AAA'},today+dt.timedelta(days=8)) is True
+    N.calls.clear(); ind.refresh(tmp_path,{'AAA','BBB'},N(),today,pause=0)
+    assert not any(u.endswith('AAA') for u in N.calls)                    # fresh entries are not fetched again

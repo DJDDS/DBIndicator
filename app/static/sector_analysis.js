@@ -6,8 +6,8 @@ const PERIODS = [['today','Today'],['1W','1W'],['1M','1M'],['3M','3M'],['6M','6M
 const PLABEL = Object.fromEntries(PERIODS);
 const RANGES = [['1D',0],['3M',63],['6M',126],['1Y',252],['3Y',756]];
 const VARIANT = /midsmall|25\/50|ex bank|nifty500|reits/i;
-const S = {data:null, period:'1M', sectorId:null, detail:null, seq:0, sview:'list', variants:false,
-           sort:{key:'ret', dir:-1}, filter:'all', open:null, range:'6M', cmode:'price', highlight:null};
+const S = {data:null, period:'today', sectorId:null, detail:null, seq:0, sview:'list', variants:false,
+           sort:{key:'ret', dir:-1}, filter:'all', mview:'sectors', open:null, range:'6M', cmode:'price', highlight:null};
 const charts = new Map();
 
 const ok = n => typeof n === 'number' && Number.isFinite(n);
@@ -77,6 +77,73 @@ function renderSectors() {
     return `<button class="tile" data-sector="${esc(r.id)}" aria-current="${r.id === S.sectorId}" style="background:${bg}"><b>${esc(short(r.name))}</b><span>${pct(v)}</span></button>`;
   }).join('');
   $('sector-list').hidden = S.sview !== 'list'; $('sector-heat').hidden = S.sview !== 'heat';
+  renderMovers();
+}
+
+/* ---------- leaders & laggards (top / bottom 2 per sector, compared on Today, 1W, 1M, 3M) ---------- */
+const CMP = [['today','Today'],['1W','1W'],['1M','1M'],['3M','3M']];
+function steady(x, mv, side) {
+  let k = 0;
+  for (const [q] of CMP) {
+    const r = x.ranks?.[q], n = mv?.[q]?.n;
+    if (!ok(r) || !ok(n) || n < 5) continue;                 // steady marks only mean something in groups of 5+
+    const cut = Math.max(2, Math.ceil(n * 0.2));          // top / bottom 20% of the sector, at least 2 stocks
+    if (side === 'top' ? r <= cut : r > n - cut) k++;
+  }
+  return k >= 3;
+}
+function sectorOf(sym) {
+  const rows = S.data?.sectors || [];
+  return (rows.find(r => !VARIANT.test(r.name) && r.members_list?.some(m => m.symbol === sym)) || rows.find(r => r.members_list?.some(m => m.symbol === sym)))?.id;
+}
+function techHtml(t) {
+  if (!t || !t.notes?.length) return '';
+  const b = t.bias === 'bullish' ? '<i class="tb up">technicals bullish</i>' : t.bias === 'bearish' ? '<i class="tb dn">technicals bearish</i>' : '<i class="tb mx">mixed</i>';
+  return `<span class="mv-tech">${b} ${t.notes.map(esc).join(' · ')}</span>`;
+}
+function moverHtml(x, r, side) {
+  const mv = r.movers, st = steady(x, mv, side);
+  const seen = x.seen && x.seen.of ? (side === 'top' ? (x.seen.top ? `led ${x.seen.top}/${x.seen.of}` : '') : (x.seen.bottom ? `lagged ${x.seen.bottom}/${x.seen.of}` : '')) : '';
+  const cmp = CMP.filter(([q]) => q !== S.period).map(([q, l]) => `<span>${l} ${cpct(x.returns?.[q])}</span>`).join('');
+  const sec = r.id.startsWith('ind-') ? sectorOf(x.symbol) : r.id;
+  return `<button class="mv ${side}${st ? ' steady' : ''}" ${sec ? `data-sector="${esc(sec)}"` : ''} data-stock="${esc(x.symbol)}" title="Open ${esc(x.symbol)}">
+    <b>${st ? (side === 'top' ? '★ ' : '▼▼ ') : ''}${esc(x.symbol)}</b> <span class="mv-main">${cpct(x.returns?.[S.period])}</span>
+    <span class="mv-cmp">${cmp}${seen ? `<span class="seen">${seen}</span>` : ''}</span>${techHtml(x.tech)}</button>`;
+}
+function groupRows() {
+  if (S.mview === 'industries') {
+    return (S.data?.industries || []).filter(r => r.movers?.[S.period]).sort((a, b) => (ret(b) ?? -1e9) - (ret(a) ?? -1e9));
+  }
+  return visibleSectors().filter(r => r.movers?.[S.period]);
+}
+function renderMovers() {
+  const rows = groupRows(), isInd = S.mview === 'industries';
+  document.querySelectorAll('[data-mview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mview === S.mview)));
+  $('movers-period').textContent = '· ' + (PLABEL[S.period] || S.period);
+  $('movers').innerHTML = rows.map(r => {
+    const m = r.movers[S.period];
+    const name = isInd ? `<span class="mname"><b>${esc(r.name)}</b> ${cpct(ret(r))}<small class="muted">${esc(r.parent || '')} · ${r.n} stocks${ok(r.advancing_pct) ? ` · ${Math.round(r.advancing_pct)}% up today` : ''}</small></span>`
+                       : `<button class="mname" data-sector="${esc(r.id)}"><b>${esc(short(r.name))}</b> ${cpct(ret(r))}</button>`;
+    return `<div class="mrow">${name}
+      <div class="mside up">${m.top.map(x => moverHtml(x, r, 'top')).join('') || '<span class="muted">—</span>'}</div>
+      <div class="mside dn">${m.bottom.map(x => moverHtml(x, r, 'bottom')).join('') || '<span class="muted">—</span>'}</div></div>`;
+  }).join('') || `<p class="muted">${isInd ? 'Industry groups appear after the weekly NSE classification refresh (runs outside market hours).' : 'No stock returns yet - they appear once price history has loaded.'}</p>`;
+  // Market-wide strips: strongest / weakest industry groups, and steady leaders / laggards (each stock once).
+  const inds = (S.data?.industries || []).filter(r => ok(ret(r)) && r.n >= 3).sort((a, b) => ret(b) - ret(a));
+  const ichip = (r, side) => `<button class="chip-s ${side}" data-mview="industries" title="${esc(r.parent || '')} · ${r.n} stocks">${esc(r.name)} <small>${pct(ret(r))}</small></button>`;
+  const strong = new Map(), weak = new Map();
+  for (const r of visibleSectors()) for (const [q] of CMP) {
+    const m = r.movers?.[q]; if (!m) continue;
+    m.top.forEach(x => { if (steady(x, r.movers, 'top') && !strong.has(x.symbol)) strong.set(x.symbol, [x, r]); });
+    m.bottom.forEach(x => { if (steady(x, r.movers, 'bottom') && !weak.has(x.symbol)) weak.set(x.symbol, [x, r]); });
+  }
+  const chip = ([x, r], side) => `<button class="chip-s ${side}" data-sector="${esc(r.id)}" data-stock="${esc(x.symbol)}" title="${esc((x.tech?.notes || []).join(' · '))}">${esc(x.symbol)} <small>${esc(short(r.name))}</small></button>`;
+  $('movers-steady').innerHTML =
+    (inds.length ? `<div><span class="pos">Strongest industries:</span> ${inds.slice(0, 5).map(r => ichip(r, 'up')).join('')}</div>
+                    <div><span class="neg">Weakest industries:</span> ${inds.slice(Math.max(5, inds.length - 5)).reverse().map(r => ichip(r, 'dn')).join('') || '<span class="muted">—</span>'}</div>` : '') +
+    ((strong.size || weak.size) ?
+    `<div><span class="pos">★ Steady strength:</span> ${[...strong.values()].map(v => chip(v, 'up')).join('') || '<span class="muted">none</span>'}</div>
+     <div><span class="neg">▼▼ Steady weakness:</span> ${[...weak.values()].map(v => chip(v, 'dn')).join('') || '<span class="muted">none</span>'}</div>` : '');
 }
 
 /* ---------- search ---------- */
@@ -374,6 +441,7 @@ function renderIntraday(c, d, name) {
 document.addEventListener('click', e => {
   const t = e.target.closest('button, th, tr.row'); if (!t) return;
   if (t.dataset.period) { S.period = t.dataset.period; renderPeriods(); renderSectors(); if (S.detail) { renderHead(S.detail.sector); renderStocks(); } return; }
+  if (t.dataset.mview) { S.mview = t.dataset.mview; renderMovers(); return; }
   if (t.dataset.sview) { S.sview = t.dataset.sview; document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); renderSectors(); return; }
   if (t.dataset.filter) { S.filter = t.dataset.filter; renderStocks(); return; }
   if (t.dataset.range) { S.range = t.dataset.range; renderRanges(); renderSectorChart(); if (S.range === '1D') loadIntraday(); return; }

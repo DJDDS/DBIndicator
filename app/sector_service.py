@@ -16,6 +16,7 @@ import pandas as pd
 from . import config, kite_auth, scanner, news, research_runtime
 from . import sector_analytics as a
 from . import sector_data as data
+from . import sector_industry as ind
 
 log=logging.getLogger(__name__)
 ROOT=Path(config.V12_STORAGE_ROOT)/'sector_analysis'
@@ -111,6 +112,107 @@ def _breadth(members,kind,n):
     return {'pct':sum(r['price']>r[kind][str(n)] for r in valid)/len(valid)*100 if valid else None,'covered':len(valid)}
 
 
+COMPARE=('today','1W','1M','3M')      # the windows every leader/laggard is compared on
+MOVERS_N=2
+LOG_DAYS=60                            # sessions kept in movers_log.json
+
+
+def tech_read(m):
+    """Plain-language technical read of one stock from its completed daily bars + live price. Descriptive, not a forecast:
+    trend vs 20/50/200-day averages, 52-week high/low proximity, 20-day breakout/breakdown, stretch from the 20-day average."""
+    px=a.finite(m.get('price')); sma=m.get('sma') or {}; lv=m.get('levels') or {}
+    if px is None: return {'bias':None,'notes':[]}
+    notes=[]; score=0
+    s20,s50,s200=(a.finite(sma.get(k)) for k in ('20','50','200'))
+    if None not in (s20,s50,s200):
+        if px>s20 and px>s50 and px>s200: notes.append('uptrend: above 20/50/200-day averages'); score+=1
+        elif px<s20 and px<s50 and px<s200: notes.append('downtrend: below 20/50/200-day averages'); score-=1
+        elif px>s200 and px<s20: notes.append('pullback inside an uptrend (above 200D, below 20D)')
+        elif px<s200 and px>s20: notes.append('bounce inside a downtrend (below 200D, above 20D)')
+    hi,lo=a.finite(lv.get('swing_high')),a.finite(lv.get('swing_low'))
+    if hi and px>hi: notes.append(f'breaking out above its 20-day high {hi:.2f}'); score+=1
+    elif lo and px<lo: notes.append(f'breaking down below its 20-day low {lo:.2f}'); score-=1
+    bh,al=a.finite(m.get('below_high52')),a.finite(m.get('above_low52'))
+    if bh is not None and bh>=-3: notes.append(f'near 52-week high ({bh:+.1f}%)'); score+=1
+    elif al is not None and al<=3: notes.append(f'near 52-week low ({al:+.1f}% above it)'); score-=1
+    ext=a.finite(m.get('extension_atr'))
+    if ext is not None and ext>=2.5: notes.append(f'stretched {ext:+.1f} ATR above its 20-day average - pullback risk')
+    elif ext is not None and ext<=-2.5: notes.append(f'stretched {ext:+.1f} ATR below its 20-day average - bounce risk')
+    return {'bias':'bullish' if score>=2 else 'bearish' if score<=-2 else 'mixed','notes':notes[:3]}
+
+
+def movers(members, n=MOVERS_N):
+    """Top n and bottom n stocks of one sector for every period, each with its today/1W/1M/3M returns and its rank (1 = best)
+    in each of those windows, so a leader that is also strong over week/month/quarter stands out from a one-day pop."""
+    ranks={}
+    for q in COMPARE:
+        v=sorted((m for m in members if a.finite((m.get('returns') or {}).get(q)) is not None),key=lambda m:-m['returns'][q])
+        ranks[q]={m['symbol']:i+1 for i,m in enumerate(v)}
+    out={}
+    for p in a.PERIODS:
+        v=sorted((m for m in members if a.finite((m.get('returns') or {}).get(p)) is not None),key=lambda m:-m['returns'][p])
+        k=min(n,max(1,len(v)//2))                      # small groups (2-3 stocks): 1 leader + 1 laggard, never a loser listed as a leader
+        top=v[:k]; bottom=[m for m in reversed(v) if m not in top][:k]
+        pick=lambda L:[{'symbol':m['symbol'],'returns':{q:a.finite(m['returns'].get(q)) for q in dict.fromkeys(COMPARE+(p,))},
+                        'ranks':{q:ranks[q].get(m['symbol']) for q in COMPARE},'tech':tech_read(m)} for m in L]
+        out[p]={'top':pick(top),'bottom':pick(bottom),'n':len(v)}
+    return out
+
+
+def _movers_log():
+    return data.load_json(ROOT/'movers_log.json',{}) or {}
+
+
+def log_movers(rows, day):
+    """Once per session (after the close): remember each sector's today top/bottom n, so the page can show how often a stock has led."""
+    log_=_movers_log()
+    if day in log_: return False
+    log_[day]={r['id']:{'top':[x['symbol'] for x in (r.get('movers') or {}).get('today',{}).get('top',[])],
+                       'bottom':[x['symbol'] for x in (r.get('movers') or {}).get('today',{}).get('bottom',[])]} for r in rows if r.get('movers')}
+    for d in sorted(log_)[:-LOG_DAYS]: log_.pop(d)
+    data.save_json(ROOT/'movers_log.json',log_)
+    return True
+
+
+def _attach_history(rows, last=20):
+    """'seen' on every mover: in how many of the last `last` logged sessions it was its sector's top-n / bottom-n."""
+    log_=_movers_log(); days=sorted(log_)[-last:]
+    for r in rows:
+        cnt={}
+        for d in days:
+            s=log_[d].get(r['id']) or {}
+            for side in ('top','bottom'):
+                for sym in s.get(side,[]): cnt[(sym,side)]=cnt.get((sym,side),0)+1
+        for per in (r.get('movers') or {}).values():
+            for side in ('top','bottom'):
+                for x in per[side]: x['seen']={'top':cnt.get((x['symbol'],'top'),0),'bottom':cnt.get((x['symbol'],'bottom'),0),'of':len(days)}
+
+
+def industry_groups(summaries, cls):
+    """One row per NSE industry group (basic industry, else broad industry) with >= 2 stocks: median return per period,
+    share of stocks up, and its top/bottom 2 stocks compared on Today/1W/1M/3M (same shape as a sector row's movers)."""
+    by={}; parents={}
+    for sym,r in summaries.items():
+        g=ind.group_of(cls.get(sym))
+        if g:
+            by.setdefault(g[0],[]).append(r)
+            if g[1]: parents.setdefault(g[0],g[1])
+    out=[]
+    for name,mem in by.items():
+        parent=parents.get(name,'')
+        if len(mem)<ind.MIN_GROUP: continue
+        rets={}
+        for p in a.PERIODS:
+            v=[x['returns'].get(p) for x in mem if a.finite((x.get('returns') or {}).get(p)) is not None]
+            rets[p]=a.finite(pd.Series(v,dtype=float).median()) if v else None
+        today=[x['returns'].get('today') for x in mem if a.finite((x.get('returns') or {}).get('today')) is not None]
+        slug=''.join(c if c.isalnum() else '-' for c in name.lower()).strip('-')
+        out.append({'id':'ind-'+slug,'name':name,'parent':parent,'n':len(mem),'returns':rets,
+                    'advancing_pct':sum(v>0 for v in today)/len(today)*100 if today else None,
+                    'symbols':sorted(x['symbol'] for x in mem),'movers':movers(mem)})
+    return sorted(out,key=lambda r:r['name'])
+
+
 def _sector_row(entry, benchmark, now):
     row=_summary(entry['name'],now)
     row.update({k:copy.deepcopy(entry.get(k)) for k in ('id','name','source','member_source','retrieved_at','membership_error')})
@@ -124,6 +226,7 @@ def _sector_row(entry, benchmark, now):
     row['median_return']=a.finite(pd.Series(valid,dtype=float).median()) if valid else None
     row['vs_nifty']=a.relative_returns(row,benchmark)
     row['vwap']=None
+    row['movers']=movers(members)
     # Light member list so the page can search stocks and show sector membership without a detail call.
     row['members_list']=[{'symbol':m['symbol'],'name':m.get('name') or m['symbol']} for m in entry.get('members',[])]
     return row
@@ -134,7 +237,11 @@ def overview():
     with _lock:
         catalogue=copy.deepcopy(_state['catalogue'])
     benchmark=_summary('NIFTY 50',now)
-    return {'sectors':[_sector_row(e,benchmark,now) for e in catalogue],'benchmark':benchmark,
+    rows=[_sector_row(e,benchmark,now) for e in catalogue]
+    _attach_history(rows)
+    syms=sorted({m['symbol'] for e in catalogue for m in e.get('members',[])})
+    industries=industry_groups({s:_summary(s,now) for s in syms},ind.load(ROOT))
+    return {'sectors':rows,'industries':industries,'benchmark':benchmark,'movers_compare':list(COMPARE),'movers_log_days':len(_movers_log()),
             'status':_status(),'periods':list(a.PERIODS),'as_of':now.isoformat(timespec='seconds'),
             'methodology':{'membership':'Official current constituents; dated cache. Historical breadth uses current membership.',
                 'returns':'Price returns, not total returns. Rolling calendar week/month/year; four completed calendar quarters. Daily SMA/EMA use completed bars.',
@@ -409,7 +516,7 @@ def _load_intraday(kite,now):
 
 
 def _worker():
-    instrument_day=membership_day=hydrate_day=None
+    instrument_day=membership_day=hydrate_day=industry_day=None
     while True:
         now=scanner.now_ist()
         try:
@@ -432,10 +539,25 @@ def _worker():
                 refresh_key=day+(' PM' if now.hour>=16 else ' AM')
                 if not _market_hours(now) and hydrate_day!=refresh_key:
                     if _hydrate(kite,now): hydrate_day=refresh_key
+                if not _market_hours(scanner.now_ist()) and industry_day!=day:
+                    with _lock: syms={m['symbol'] for e in _state['catalogue'] for m in e.get('members',[])}
+                    try:
+                        if syms and ind.needs_refresh(ROOT,syms,now.date()):
+                            from .v130_swing import NSE
+                            ind.refresh(ROOT,syms,NSE(),now.date())
+                        industry_day=day
+                    except Exception:  # noqa: BLE001
+                        log.exception('Industry classification refresh failed')
                 if _quote_window(scanner.now_ist()):
                     _refresh_quotes(kite,scanner.now_ist())
                 _load_intraday(kite,scanner.now_ist())
                 _persist()
+                t=scanner.now_ist()
+                if t.weekday()<5 and dt.time(15,32)<=t.time()<=dt.time(23,0) and (_state.get('quote_at') or '')[:10]==t.date().isoformat():
+                    try:
+                        log_movers(overview()['sectors'],t.date().isoformat())
+                    except Exception:  # noqa: BLE001
+                        log.exception('Sector movers log failed')
             else:
                 with _lock: _state['error']='Kite login required to refresh sector data; last-good cache remains available.'
         except Exception as exc:
