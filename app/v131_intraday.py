@@ -1,11 +1,11 @@
 """V13.1 intraday paper lanes (ADMIN ONLY, spotting/paper - never places orders).
 
-Lane 1  09:45 SHORT detector (bearish). At 09:45 IST every F&O stock gets a frozen LightGBM score from a snapshot of
-        09:15-09:45 trading plus the stock's recent days. The 3 lowest scores are paper-SHORTED at the 09:45 price and
-        covered at the 15:15 price (research: hold to 15:15 beat every target/stop tried). 10 bps round-trip cost.
-        Research, walk-forward: 2019-26 +30 bps/short (58% win), every year 2017-26 positive, 2026 +14 bps.
-        Each short also gets a paper ATM PUT (nearest expiry with 3+ days left), bought at the 09:45 ask and sold at the
-        15:15 bid, skipped when the spread is above 3.5%. Modelled 2019-26 (not real prices): +11% of premium, 55% win.
+Lane 1  09:25 SHORT detector (bearish). At 09:25 IST every F&O stock gets a frozen LightGBM score from a snapshot of
+        09:15-09:25 trading plus the stock's recent days. The 3 lowest scores are paper-SHORTED at the 09:25 price and
+        covered at the 15:15 price (no stop: every target/stop tried did worse). Futures/cash only, 10 bps round-trip cost.
+        Research, walk-forward (12-Oct-2026 retrain): 2019-26 +56 bps/short (61% win), every year 2017-26 positive,
+        2023-26 +37 bps, 2026 +40 bps; random shorts +2 bps. Buying CE on the strongest 09:25 stocks lost in every year.
+        (Until 12-Oct-2026 this lane ran at 09:45 with a paper ATM put; puts lost live and were removed.)
 Lane 2  Gap-down BOUNCE basket (bullish, cash). Only on days the F&O universe opens more than 0.5% lower on average.
         Buy up to 10 stocks that opened below yesterday's LOW by more than one 90-day sigma while their prior close
         was above the 20-day average; entry at the opening (pre-open auction) price, exits recorded at 09:45 and 10:15.
@@ -13,10 +13,10 @@ Lane 2  Gap-down BOUNCE basket (bullish, cash). Only on days the F&O universe op
 Recorder  09:09-09:14 pre-open snapshot of every F&O stock (indicative price, buy/sell quantities) for future research.
 
 Daily cycle (IST, weekdays; every step fail-soft, retried, and idempotent per day):
-  08:00-09:12  prep: F&O list, daily history (150 days) and 20-day first-30-minute volume per stock
+  08:00-09:12  prep: F&O list, daily history (150 days) and 20-day first-10-minute volume per stock
   09:09-09:14  pre-open recorder
   09:16-09:30  gap basket: select + entry at the opening price
-  09:45-09:58  short detector: snapshot -> score -> 3 paper shorts
+  09:25-09:38  short detector: snapshot -> score -> 3 paper shorts
   10:16-11:30  gap basket outcomes (09:45 and 10:15 closes from 5-minute bars)
   15:16-16:30  short outcomes (15:15 close from 5-minute bars, plus best/worst move after entry)
 Storage: <V12 storage root>/v131/  (prep_<date>.json, preopen.jsonl, shorts.jsonl, gaps.jsonl, state.json)
@@ -44,6 +44,9 @@ IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 INDEX_NAMES = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50', 'SENSEX', 'BANKEX'}
 FE = ['gap', 'mv', 'fpc', 'nmv', 'ngap', 'rng_s', 'vrel', 'vwd', 'pos', 'r1', 'r5', 'd20h', 'mkt', 'brd', 'mgap', 'rel', 'nrel', 'atr20']
 K_SHORT, COST_SHORT, COST_GAP = 3, 10.0, 15.0
+SHORT_AT = 565          # minutes after midnight: 09:25 snapshot (window 09:25-09:38)
+SHORT_PUTS = False      # paper ATM put per short: off (puts lost live; the stock edge is too small for option costs)
+LANE = '0925'
 
 _lock = threading.Lock()
 _model = None
@@ -97,7 +100,7 @@ def _rewrite_jsonl(name: str, rows: list) -> None:
 def model() -> TextGBM:
     global _model
     if _model is None:
-        _model = TextGBM(ASSETS / 'short945_model.txt')
+        _model = TextGBM(ASSETS / 'short925_model.txt')
     return _model
 
 
@@ -106,9 +109,10 @@ def constants() -> dict:
 
 
 # ------------------------------------------------------------------------------------------ pure feature maths
-def prep_from_history(daily: pd.DataFrame, first30_vol: pd.Series) -> dict | None:
+def prep_from_history(daily: pd.DataFrame, first30_vol: pd.Series, first10_vol: pd.Series | None = None) -> dict | None:
     """Per-stock values known before the open. daily: completed sessions (index date; open/high/low/close),
-    first30_vol: volume traded 09:15-09:45 on each prior session (index date). Mirrors early_model.py / chan.py."""
+    first30_vol: volume traded 09:15-09:45 on each prior session (index date) -> vs20 (used by the V13.2 09:45 pick);
+    first10_vol: volume traded 09:15-09:25 -> vs20_25 (the 09:25 short snapshot). Mirrors early_model.py / chan.py."""
     d = daily.dropna(subset=['close', 'high', 'low']).sort_index()
     d = d[(d.close > 0) & (d.high > 0) & (d.low > 0)]
     if len(d) < 25: return None
@@ -129,11 +133,14 @@ def prep_from_history(daily: pd.DataFrame, first30_vol: pd.Series) -> dict | Non
     fv = first30_vol.dropna().sort_index()
     fv = fv[fv > 0]
     out['vs20'] = float(np.median(fv.to_numpy()[-20:])) if len(fv) >= 10 else None
+    f1 = (first10_vol if first10_vol is not None else pd.Series(dtype=float)).dropna().sort_index()
+    f1 = f1[f1 > 0]
+    out['vs20_25'] = float(np.median(f1.to_numpy()[-20:])) if len(f1) >= 10 else None
     return out
 
 
 def snapshot_features(prep: dict, quotes: dict) -> pd.DataFrame:
-    """09:45 features for every stock with prep + quote. quotes[sym] = dict(o, c, h, l, v, vwap)."""
+    """09:25 features for every stock with prep + quote. quotes[sym] = dict(o, c, h, l, v, vwap)."""
     rows = []
     for s, q in quotes.items():
         p = prep.get(s)
@@ -143,7 +150,7 @@ def snapshot_features(prep: dict, quotes: dict) -> pd.DataFrame:
         a = p['atr20']
         gap = math.log(o / p['pc']); mv = math.log(c / o)
         rows.append(dict(symbol=s, o=o, c=c, gap=gap, mv=mv, fpc=math.log(c / p['pc']), nmv=mv / a, ngap=gap / a,
-                         rng_s=math.log(h / l) / a, vrel=(v / p['vs20']) if v and p.get('vs20') else np.nan,
+                         rng_s=math.log(h / l) / a, vrel=(v / p['vs20_25']) if v and p.get('vs20_25') else np.nan,
                          vwd=math.log(c / vw) if vw and vw > 0 else np.nan, pos=(c - l) / (h - l) if h > l else np.nan,
                          r1=p.get('r1'), r5=p.get('r5'), d20h=p.get('d20h'), atr20=a))
     X = pd.DataFrame(rows)
@@ -242,12 +249,15 @@ def run_prep(kite, today: dt.date | None = None) -> int:
             if d.empty: continue
             d = d[d.date.dt.date < today].set_index(d.date.dt.date)
             b = _bars(kite, tok, start5, end, '5minute'); time.sleep(0.35)
-            fv = pd.Series(dtype=float)
+            fv = fv25 = pd.Series(dtype=float)
             if not b.empty:
                 t = b.date.dt.hour * 60 + b.date.dt.minute
-                b = b[(t >= 555) & (t <= 580) & (b.date.dt.date < today)]              # bars 09:15 .. 09:40 (close at 09:45)
-                fv = b.groupby(b.date.dt.date).volume.sum()
-            p = prep_from_history(d, fv)
+                past = b.date.dt.date < today
+                b45 = b[(t >= 555) & (t <= 580) & past]                                  # bars 09:15 .. 09:40 (V13.2 09:45 pick uses this)
+                fv = b45.groupby(b45.date.dt.date).volume.sum()
+                b25 = b[(t >= 555) & (t < SHORT_AT) & past]                              # bars 09:15, 09:20 (09:25 short snapshot)
+                fv25 = b25.groupby(b25.date.dt.date).volume.sum()
+            p = prep_from_history(d, fv, fv25)
             if p: p['token'] = tok; out[s] = p; n += 1
         except Exception as exc:  # noqa: BLE001
             if _auth_error(exc):
@@ -349,16 +359,19 @@ def run_shorts(kite, today: dt.date | None = None) -> int:
     picks = pick_shorts(X, set(prep.get('banned') or []))
     put_info = {}
     try:
+        if not SHORT_PUTS: raise LookupError
         chosen = {r.symbol: choose_put(prep['stocks'].get(r.symbol, {}).get('puts') or [], r.c, today) for r in picks.itertuples()}
         keys = ['NFO:' + c['ts'] for c in chosen.values() if c]
         pq = kite.quote(keys) if keys else {}
         for sym, c in chosen.items():
             if not c: put_info[sym] = {'put_status': 'NO_PUT', 'put_reason': 'no put contract'}; continue
             put_info[sym] = {'put': c['ts'], 'put_strike': c['k'], 'put_expiry': c['e'], 'put_lot': c.get('lot'), **put_from_quote(pq.get('NFO:' + c['ts']))}
+    except LookupError:
+        pass
     except Exception as exc:  # noqa: BLE001
         log.warning('v131 put instruction: %s', exc)
     mk = X[['mkt', 'brd', 'mgap']].iloc[0].to_dict() if len(X) else {}
-    day = {'date': str(today), 'at': now_ist(), 'scored': int(len(X)), 'ban_known': prep.get('ban_known'),
+    day = {'date': str(today), 'at': now_ist(), 'lane': LANE, 'scored': int(len(X)), 'ban_known': prep.get('ban_known'),
            'market': {'move_since_open_pct': round(mk.get('mkt', 0) * 100, 2), 'share_up': round(mk.get('brd', 0) * 100, 1), 'gap_pct': round(mk.get('mgap', 0) * 100, 2)},
            'picks': [{'symbol': r.symbol, 'entry': r.c, 'score': round(float(r.score), 1), 'move_since_open_pct': round(r.mv * 100, 2),
                       'vs_market_atr': round(float(r.nrel), 2), 'volume_x_normal': None if pd.isna(r.vrel) else round(float(r.vrel), 2),
@@ -390,7 +403,7 @@ def run_short_outcomes(kite, today: dt.date | None = None) -> int:
             if not tok: continue
             ex, b = _close_at(kite, tok, today, 15 * 60 + 10)                 # bar 15:10-15:15 -> the 15:15 close
             if ex is None: raise RuntimeError(f"15:15 bar not available yet for {p['symbol']}")
-            after = b[(b.t >= 9 * 60 + 45) & (b.t <= 15 * 60 + 10)]
+            after = b[(b.t >= (SHORT_AT if day.get('lane') == LANE else 9 * 60 + 45)) & (b.t <= 15 * 60 + 10)]
             e = p['entry']
             if p.get('put_status') == 'OPEN' and p.get('put'):
                 try:
@@ -461,7 +474,7 @@ def _loop(get_kite):
                     if due('prep', 480, 552, 2): done[key('prep')] = _step('prep', run_prep, kite)
                     if due('preopen', 549, 554): done[key('preopen')] = _step('preopen', run_preopen, kite)
                     if due('gap', 556, 570): done[key('gap')] = _step('gap', run_gap, kite)
-                    if due('short', 585, 598): done[key('short')] = _step('short', run_shorts, kite)
+                    if due('short', SHORT_AT, SHORT_AT + 13): done[key('short')] = _step('short', run_shorts, kite)
                     if due('gap_out', 616, 690, 3): done[key('gap_out')] = _step('gap_out', run_gap_outcomes, kite)
                     if due('short_out', 916, 990, 3): done[key('short_out')] = _step('short_out', run_short_outcomes, kite)
         except Exception:  # noqa: BLE001
@@ -497,6 +510,8 @@ def _score(trades: list) -> dict:
 
 def status() -> dict:
     shorts = _read_jsonl('shorts.jsonl'); gaps = _read_jsonl('gaps.jsonl')
+    old945 = [p | {'date': d['date']} for d in shorts if d.get('lane') != LANE for p in d['picks']]
+    shorts = [d for d in shorts if d.get('lane') == LANE]                  # scorecard = the 09:25 lane only; 09:45 history kept apart
     s_tr = [p | {'date': d['date']} for d in shorts for p in d['picks']]
     g_tr = [p | {'date': d['date']} for d in gaps for p in d['picks']]
     today = str(now_ist().date())
@@ -508,5 +523,6 @@ def status() -> dict:
             'score_short': _score(s_tr), 'score_gap': _score(g_tr), 'constants': constants(),
             'score_short_bear': _score([t for d in shorts if (d.get('view') or {}).get('strong_bear') for t in d['picks']]),
             'score_short_other': _score([t for d in shorts if d.get('view') and not d['view'].get('strong_bear') for t in d['picks']]),
-            'score_put': _score([{'ret_bps': t['put_ret_pct']} for t in s_tr if isinstance(t.get('put_ret_pct'), (int, float))]),
+            'score_put': _score([{'ret_bps': t['put_ret_pct']} for t in old945 if isinstance(t.get('put_ret_pct'), (int, float))]),
+            'score_short_945': _score(old945), 'short_recent_945': list(reversed(old945))[:30],
             'preopen_days': len(_read_jsonl('preopen.jsonl')) if _path('preopen.jsonl').exists() else 0}

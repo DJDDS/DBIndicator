@@ -42,7 +42,8 @@ def test_prep_matches_definitions():
 def _prep_and_quotes(n=60):
     prep, q = {}, {}
     for i in range(n):
-        p = v.prep_from_history(_daily(seed=i), pd.Series([1e5] * 25, index=_daily(seed=i).index[-25:]))
+        fv = pd.Series([1e5] * 25, index=_daily(seed=i).index[-25:])
+        p = v.prep_from_history(_daily(seed=i), fv, fv / 3)
         s = f"S{i:02d}"; prep[s] = p
         o = p["pc"] * (1 + 0.002 * ((i % 7) - 3)); c = o * (1 + 0.003 * ((i % 11) - 5))
         q[s] = dict(o=o, c=c, h=max(o, c) * 1.004, l=min(o, c) * 0.996, v=1.5e5 + i * 1000, vwap=(o + c) / 2)
@@ -56,6 +57,7 @@ def test_snapshot_features_and_pick_shorts_respect_bans():
     r = X.iloc[0]; p = prep[r.symbol]
     assert r.gap == pytest.approx(math.log(q[r.symbol]["o"] / p["pc"]))
     assert r.nrel == pytest.approx((r.mv - X.mv.mean()) / r.atr20)
+    assert r.vrel == pytest.approx(q[r.symbol]["v"] / p["vs20_25"]) and p["vs20"] == pytest.approx(3 * p["vs20_25"])   # 09:25 volume norm, 09:45 kept
     picks = v.pick_shorts(X, set())
     assert len(picks) == 3 and list(picks.score) == sorted(picks.score)
     banned = set(picks.symbol[:1])
@@ -130,12 +132,13 @@ def test_end_to_end_paper_day(store):
     day_rec = v._read_jsonl("shorts.jsonl")[-1]
     assert "S05" not in {p["symbol"] for p in day_rec["picks"]}
     assert v.run_short_outcomes(k, day) == 3
-    for p in v._read_jsonl("shorts.jsonl")[-1]["picks"]:
-        assert p["status"] == "CLOSED" and p["put_status"] == "CLOSED" and p["put"].endswith("PE")
-        assert p["put_ret_pct"] == pytest.approx((2.95 / 3.0 - 1) * 100, abs=0.05)
+    rec = v._read_jsonl("shorts.jsonl")[-1]
+    assert rec["lane"] == "0925"
+    for p in rec["picks"]:
+        assert p["status"] == "CLOSED" and "put" not in p and "put_status" not in p      # 09:25 lane: futures/cash only, no puts
         assert p["ret_bps"] == pytest.approx(-math.log(p["exit"] / p["entry"]) * 1e4 - 10, abs=0.1)
     st = v.status()
-    assert st["score_short"]["n"] == 3 and st["preopen_days"] == 1
+    assert st["score_short"]["n"] == 3 and st["preopen_days"] == 1 and st["score_short_945"]["n"] == 0
 
 
 def test_stale_quotes_refuse_to_pick(store):
@@ -160,8 +163,11 @@ def test_admin_page_renders_intraday_lanes():
                                         "put": "ABC26OCT100PE", "put_strike": 100.0, "put_expiry": "2026-10-27", "put_entry": 2.5, "put_spread_pct": 2.0, "put_lot": 500, "put_status": "CLOSED", "put_ret_pct": 41.0}]},
              "today_gap": {"date": "2026-10-06", "market_gap_pct": -0.21, "active": False, "picks": []}, "short_recent": [], "gap_recent": []}
     html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=intra)
-    assert "BUY ABC26OCT100PE" in html and "+41.0%" in html
-    assert "09:45 short detector" in html and "ABC" in html and "Gap-down bounce basket" in html and "+239 bps" in html
+    assert "BUY ABC26OCT100PE" in html and "+41.0%" in html                       # an old 09:45 record still shows its put
+    assert "09:25 short detector" in html and "ABC" in html and "Gap-down bounce basket" in html and "+239 bps" in html
+    intra["today_short"]["lane"] = "0925"; intra["score_short_945"] = {"n": 12, "win": 50, "avg_bps": -56.0}
+    html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=intra)
+    assert "BUY ABC26OCT100PE" not in html and "old 09:45 lane" in html and "-56 bps" in html
 
 
 def test_v131_routes_are_owner_only(monkeypatch):

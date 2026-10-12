@@ -53,12 +53,12 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 {% if intra and not intra.get('error') %}
   {% set sb = intra.score_short_bear or {} %}{% set so = intra.score_short_other or {} %}{% set s0 = intra.score_short or {} %}
   <div class="card lane" style="border-top-color:#f0616d">
-    <h2>09:45 short detector · 3 paper shorts a day (details on the swing page)</h2>
+    <h2>09:25 short detector · 3 paper shorts a day, cover 15:15 (details on the swing page)</h2>
     <div class="kpis">
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(s0.get('avg_bps')) ~ ' bps') if s0.get('avg_bps') is not none else '—' }}</div><div class="l">all shorts ({{ s0.get('n') or 0 }}, win {{ s0.get('win') if s0.get('win') is not none else '—' }}%)</div></div>
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(sb.get('avg_bps')) ~ ' bps') if sb.get('avg_bps') is not none else '—' }}</div><div class="l">on strong-bearish 09:25 days ({{ sb.get('n') or 0 }})</div></div>
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(so.get('avg_bps')) ~ ' bps') if so.get('avg_bps') is not none else '—' }}</div><div class="l">other days ({{ so.get('n') or 0 }})</div></div></div>
-    <div class="small" style="margin-top:6px">Research 2019-26: every day +16 bps (fading to ~0 in 2025-26); on strong-bearish 09:25 days +36 bps / 62% win, positive every year. Judge live after 60+ shorts.</div>
+    <div class="small" style="margin-top:6px">Research (09:25 model, 12-Oct-2026): 2019-26 +56 bps / 61% win, 2023-26 +37 bps, 2026 +40 bps, every year positive. Futures/cash only, no puts. Judge live after 60+ shorts.</div>
   </div>
 {% endif %}
 </div>

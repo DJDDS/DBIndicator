@@ -21,12 +21,25 @@
  ],
  "k": 3,
  "cost_bps": 10,
- "trained_on": "F&O stock-days 2015-01..2026-09 (Kite 5-min), 09:45 snapshot",
+ "trained_on": "Top-200 liquid stock-days 2015-02..2026-10 (Kite 5-min), 09:25 snapshot, target log return 09:25->15:15 (bps); L2 LightGBM 400 trees",
  "walk_forward": {
-  "2017-18": "+47.5 bps (62%)",
-  "2019-26": "+30.3 bps (58%)",
-  "2023-26": "+20.5 bps (58%)",
-  "2026": "+14.3 bps (56%)"
+  "2017-26": "+54.7 bps (61%)",
+  "2019-26": "+55.9 bps (60%)",
+  "2023-26": "+37.4 bps (60%)",
+  "2026": "+40.3 bps (57%)",
+  "by_year": {
+   "2017": 43.7,
+   "2018": 56.4,
+   "2019": 86.7,
+   "2020": 73.9,
+   "2021": 65.6,
+   "2022": 66.7,
+   "2023": 30.6,
+   "2024": 51.2,
+   "2025": 28.2,
+   "2026": 40.3
+  },
+  "random_shorts": "+1.7 bps"
  },
  "gap_basket": {
   "2019-26 exit 10:15": "+130.7 bps (76%), 86 days",
@@ -38,5 +51,13 @@
   "2019-26 modelled ATM put": "+10.9% of premium (55% win), median +3%, worst 5% -57%",
   "note": "modelled from stock moves with a range-based IV; real-price sample in 2026 only 36 trades",
   "max_spread_pct": 3.5
- }
+ },
+ "walk_forward_945": {
+  "2017-18": "+47.5 bps (62%)",
+  "2019-26": "+30.3 bps (58%)",
+  "2023-26": "+20.5 bps (58%)",
+  "2026": "+14.3 bps (56%)"
+ },
+ "snapshot": "09:25",
+ "ce_momentum_test": "Buying CE/long on the 3 strongest 09:25 stocks: negative in every year 2021-26 at every exit (09:35-15:15) and every target/stop tried"
 }

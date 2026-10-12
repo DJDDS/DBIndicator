@@ -193,7 +193,7 @@ def test_intraday_page_renders_direction_card(store):
     st = v.status(); st["today"] = {"date": "2026-10-06", "at": "2026-10-06 09:26:31", "n_scored": 190, "lists": lists, "missing": {"fii": True, "vix": False}}
     intra = {"score_short": {"n": 12, "win": 50, "avg_bps": -55.0}, "score_short_bear": {}, "score_short_other": {"n": 12, "win": 50, "avg_bps": -55.0}}
     html = env.get_template("intraday_admin.html").render(direction=st, intra=intra)
-    for txt in ("DAILY POOL OF 1", "daily pool", "at least 1 of 3", "Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:45 short detector", "+41.0%"):
+    for txt in ("DAILY POOL OF 1", "daily pool", "at least 1 of 3", "Intraday Desk", "09:25 direction desk", "▼ DOWN", "STRONG day", "ABC26OCT100PE", "booked", "RIGHT", "missing inputs: fii", "09:25 short detector", "+41.0%"):
         assert txt in html, txt
     assert "Intraday Desk" in env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None)
 
