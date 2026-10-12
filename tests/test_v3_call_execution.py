@@ -309,3 +309,17 @@ def test_trade_window_no_chase_guard():
     stale = [{"symbol": "ABC26OCT100CE", "ask": 5.00, "quote_age_s": 60.0}]
     out = latch.decide("ABC", "Bullish", t0 + dt.timedelta(seconds=30), lambda t: pass_result, live_snaps=stale)
     assert out["trade_window"]["entry_price_ok"] is False
+
+
+def test_window_tracking_rejects_unknown_age_negative_age_and_zero_bid():
+    t0 = dt.datetime(2026, 10, 9, 10, 0)
+    latch = v3_call_execution.MinuteDecisionLatch()
+    latch.decide("ABC", "Bullish", t0, lambda _: {
+        "state": "PASS", "pass": True, "selected_contract": "OLDCE", "selected_ask": 10,
+    })
+    for age, bid in [(None, 10), (-1, 10), (1, 0), (60, 10)]:
+        window = latch.active_windows(t0 + dt.timedelta(seconds=90), {"ABC": [
+            {"symbol": "OLDCE", "bid": bid, "ask": 10, "quote_age_s": age},
+        ]})[0]["trade_window"]
+        assert window["running_pnl_pct"] is None
+        assert window["stop_hit"] is False

@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import math
 import os
 import tempfile
 import threading
@@ -351,8 +352,22 @@ class ForensicFlightRecorder:
             try:
                 day = float(mover.get("day_change_pct"))
             except (TypeError, ValueError):
-                continue
-            if abs(day) < 0.75:
+                day = None
+            if day is not None and not math.isfinite(day):
+                day = None
+            has_quant = (mover.get("movement_significant") is not None
+                         or mover.get("movement_p_value") is not None
+                         or mover.get("movement_horizon_seconds") is not None)
+            if has_quant:
+                try:
+                    p = float(mover.get("movement_p_value"))
+                    alpha = float(mover.get("movement_familywise_alpha"))
+                except (TypeError, ValueError):
+                    continue
+                if (mover.get("movement_direction") not in ("Bullish", "Bearish")
+                        or not math.isfinite(p) or not math.isfinite(alpha) or not p <= alpha):
+                    continue
+            elif day is None or not abs(day) >= 0.75:
                 continue
             rows.append((symbol, day, mover))
         return rows
@@ -372,6 +387,7 @@ class ForensicFlightRecorder:
             )
             signature = (
                 stage,
+                forensic.get("direction") or mover.get("movement_direction"),
                 str(reason),
                 forensic.get("event_family"),
                 forensic.get("tactical_state"),
@@ -389,9 +405,14 @@ class ForensicFlightRecorder:
                 "ts": _now_iso(now),
                 "trade_date": now.date().isoformat(),
                 "symbol": symbol,
-                "direction": forensic.get("direction") or ("Bullish" if day > 0 else "Bearish"),
+                "direction": forensic.get("direction") or mover.get("movement_direction") or ("Bullish" if day is not None and day > 0 else "Bearish"),
                 "live_price": mover.get("live_price"),
-                "day_change_pct": round(day, 4),
+                "day_change_pct": round(day, 4) if day is not None else None,
+                "movement_direction": mover.get("movement_direction"),
+                "movement_z": mover.get("movement_z"),
+                "movement_p_value": mover.get("movement_p_value"),
+                "movement_familywise_alpha": mover.get("movement_familywise_alpha"),
+                "movement_horizon_seconds": mover.get("movement_horizon_seconds"),
                 "ret_3m_pct": mover.get("ret_3m_pct"),
                 "ret_5m_pct": mover.get("ret_5m_pct"),
                 "ret_10m_pct": mover.get("ret_10m_pct"),

@@ -689,6 +689,34 @@ def test_whole_universe_forensics_catches_mover_outside_top30_slices():
     assert coverage["pipeline_misses"] == 1
 
 
+def test_captured_mover_leaves_current_miss_list_but_keeps_forensic_history():
+    now = dt.datetime(2026, 10, 9, 10, 0)
+    observer = {"quant_rows": [{"symbol": "ABC", "day_change_pct": 1}]}
+    missed, forensic, _ = v123_focus._missed_movers(
+        {}, observer, set(), set(), {}, {"ABC": {}}, {}, {}, now)
+    assert "ABC" in missed
+    missed, forensic, coverage = v123_focus._missed_movers(
+        {"missed": missed, "forensics": forensic}, observer, {"ABC"}, set(), {},
+        {"ABC": {}}, {}, {}, now + dt.timedelta(seconds=1))
+    assert "ABC" not in missed
+    assert forensic["ABC"]["stage"] == "FOCUS"
+    assert len(forensic["ABC"]["history"]) == 2
+    assert coverage["pipeline_misses"] == 0
+
+
+def test_captured_miss_is_removed_when_significance_disappears_or_row_is_missing():
+    now = dt.datetime(2026, 10, 9, 10, 0)
+    old = {"symbol": "ABC", "day_change_pct": 1, "movement_direction": "Bullish",
+           "movement_p_value": 0.001, "movement_familywise_alpha": 0.01}
+    missed, forensic, _ = v123_focus._missed_movers(
+        {}, {"quant_rows": [old]}, set(), set(), {}, {"ABC": {}}, {}, {}, now)
+    for observer in [{"quant_rows": [dict(old, movement_p_value=0.5)]}, {"quant_rows": []}]:
+        current, historical, _ = v123_focus._missed_movers(
+            {"missed": missed, "forensics": forensic}, observer, {"ABC"}, set(), {}, {}, {}, {}, now)
+        assert "ABC" not in current
+        assert "ABC" in historical
+
+
 def test_tactical_callback_does_not_replace_whole_universe_coverage_with_fallback():
     t0 = dt.datetime(2026, 9, 28, 11, 30)
     observer = {

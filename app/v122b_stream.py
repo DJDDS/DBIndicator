@@ -476,7 +476,8 @@ class TacticalStockStreamService:
         self.sleep_fn(0.38)
 
     def _resolve_universe(self, kite, candidates, now):
-        forward_refs = self._call_v1_forward.active_subscriptions()
+        forward_refs = (self._call_v1_forward.active_subscriptions()
+                        + self._call_v1_latch.active_subscriptions(now))
         requested_cash = [x.get("symbol") for x in candidates] + [x.get("symbol") for x in forward_refs]
         cash_map = scanner.cached_nse_instrument_tokens(requested_cash)
         fut_map = scanner.get_futures_contracts_map(kite)
@@ -1367,6 +1368,11 @@ class TacticalStockStreamService:
                     )
                 except Exception:
                     snapshot = None
+            if snapshot:
+                snapshot["quote_age_s"] = self._tick_age(option_tick, now)
+            cash_age = self._tick_age(cash_tick, now)
+            if cash_age is None or cash_age > self.stale_seconds:
+                spot = None
             self._call_v1_forward.observe_market(
                 now=now,
                 symbol=symbol,
@@ -1534,7 +1540,8 @@ class TacticalStockStreamService:
                 now=now,
                 symbol=symbol,
                 spot=live_price,
-                candidate=call_execution_candidate,
+                candidate=(call_execution_candidate if feed_health.get("fresh") and not underlying_stale
+                           else v3_call_execution.blocked_result("forward entry feed unavailable")),
                 contract_snapshot=selected_call_snapshot,
             )
 
@@ -1863,11 +1870,47 @@ class TacticalStockStreamService:
         counts = {}
         for row in output:
             counts[row["state"]] = counts.get(row["state"], 0) + 1
+        window_snaps = {}
+        window_context = {}
+        for ref in self._call_v1_latch.active_subscriptions(now):
+            symbol = ref["symbol"]
+            cash_tok = next((t for t, m in metadata.items()
+                             if m.get("kind") == "CASH" and m.get("symbol") == symbol), None)
+            cash_tick = ticks.get(cash_tok) or {}
+            cash_age = self._tick_age(cash_tick, now)
+            window_snaps[symbol] = self._option_snapshots(symbol, _f(cash_tick.get("last_price")), now)
+            window_context[symbol] = cash_age
+        call_windows = self._call_v1_latch.active_windows(now, window_snaps)
+        current = {r["symbol"]: r for r in output}
+        for row in call_windows:
+            parent = current.get(row["symbol"])
+            w = row["trade_window"]
+            age = window_context.get(row["symbol"])
+            quote_age = w.get("live_quote_age_s")
+            bid, ask = w.get("live_bid"), w.get("live_ask")
+            quote_ok = bool(bid and ask and ask >= bid and quote_age is not None
+                            and 0 <= quote_age <= v3_call_execution.MAX_QUOTE_AGE_SECONDS
+                            and (ask - bid) / ((ask + bid) / 2) * 100
+                            <= v3_call_execution.MAX_LIVE_SPREAD_PCT)
+            row["candidate_present"] = parent is not None
+            row["entry_allowed"] = bool(
+                parent and parent.get("direction") == row["direction"]
+                and feed_health.get("fresh")
+                and self._session_allows_new_entry(now)
+                and age is not None and 0 <= age <= self.stale_seconds
+                and quote_ok and w.get("entry_price_ok") and not w.get("stop_hit")
+                and w["phase"] == "ENTRY_OPEN")
+            row["tracking_only"] = not row["entry_allowed"]
+            row["controls_trading"] = False
+            row["validation_label"] = v3_call_execution.VALIDATION_LABEL
+            if parent and (parent.get("call_execution_candidate") or {}).get("trade_window"):
+                parent["call_execution_candidate"]["trade_window"]["entry_allowed"] = row["entry_allowed"]
         self._publish({
             "status": "STREAMING" if feed_health.get("fresh") else ("WAITING_CANDIDATES" if not candidates else ("CONNECTING" if feed_health.get("active") else "DISCONNECTED")),
             "feed_health": feed_health,
             "candidate_count": len(output),
             "candidates": output,
+            "call_v1_windows": call_windows,
             "counts": counts,
             "last_tick_at": _iso(self._last_tick_at) if isinstance(self._last_tick_at, dt.datetime) else None,
             "continuation_shadow": {

@@ -822,6 +822,10 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
     """
     missed = dict(state.get("missed") or {})
     forensics = dict(state.get("forensics") or {})
+    # Captured membership is known even if the latest observer row is absent
+    # or its move no longer qualifies. Keep historical forensics separately.
+    for symbol in focus_symbols | continuation_symbols:
+        missed.pop(symbol, None)
 
     private_rows = list((observer or {}).get("quant_rows") or [])
     whole_universe = bool(private_rows)
@@ -937,6 +941,10 @@ def _missed_movers(state, observer, focus_symbols, continuation_symbols, event_b
         forensics[symbol] = entry
         if symbol not in focus_symbols and symbol not in continuation_symbols:
             missed[symbol] = dict(entry)
+        else:
+            # The current miss list must agree with coverage. Stage history is
+            # retained in forensics and the append-only flight recorder.
+            missed.pop(symbol, None)
 
     coverage = {
         "mode": "WHOLE_UNIVERSE" if whole_universe else "TOP_MOVER_FALLBACK",
