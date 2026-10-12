@@ -163,3 +163,25 @@ def test_empty_fo_universe_is_retried_not_saved(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="not posted yet"):
         sw.run_evening(object(), dt.date(2026, 10, 8), nse=object())
     assert not sw.load_state().get("last_plan_date")              # nothing saved -> the 15-minute retries continue
+
+
+def test_missing_ban_file_marks_picks_unchecked_and_entry_skips_banned(tmp_path, monkeypatch):
+    plan = rules.evening_plan(_X([dict(sym="A", ps=9), dict(sym="B", ps=8)]), _mk(), {"open": True}, {"mode": "G"}, ban_next=(), ban_known=False)
+    assert plan["ban_known"] is False and all(p.get("ban_unchecked") for p in plan["picks"])
+    assert rules.evening_plan(_X([dict(sym="A", ps=9)]), _mk(), {"open": True}, {"mode": "G"})["ban_known"] is True
+    from app import v130_swing as sw
+    monkeypatch.setattr(sw, "ROOT", tmp_path)
+    today = dt.date(2026, 10, 13)
+    st = {"positions": [{"id": "x:A", "sym": "A", "status": "PENDING", "entry_day": str(today), "ban_unchecked": True, "instruments": [], "exits": {}},
+                        {"id": "x:B", "sym": "B", "status": "PENDING", "entry_day": str(today), "ban_unchecked": True, "instruments": [], "exits": {}}]}
+    monkeypatch.setattr(sw, "load_state", lambda: st)
+    monkeypatch.setattr(sw, "save_state", lambda s: None)
+    monkeypatch.setattr(sw, "_append", lambda *a, **k: None)
+    monkeypatch.setattr(sw.NSE, "ban_day", lambda self, d: {"A"})
+
+    class K:
+        def quote(self, keys):
+            return {k: {"ohlc": {"open": 100.0}} for k in keys}
+    assert sw.run_entry(K(), today) == 1
+    assert st["positions"][0]["status"] == "SKIPPED" and "ban" in st["positions"][0]["skip_reason"]
+    assert st["positions"][1]["status"] == "OPEN" and st["positions"][1]["ban_unchecked"] is False

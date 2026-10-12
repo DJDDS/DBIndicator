@@ -91,7 +91,7 @@ def news_veto(flags: dict | None, abn_cut: float) -> str | None:
 
 # ---------------------------------------------------------------- evening plan ----
 def evening_plan(X: pd.DataFrame, mk_row: pd.Series, gate: dict, settings: dict, *, open_symbols: Iterable[str] = (), n_open: int = 0,
-                 ban_next: Iterable[str] = (), results: dict | None = None, news: dict | None = None) -> dict:
+                 ban_next: Iterable[str] = (), results: dict | None = None, news: dict | None = None, ban_known: bool = True) -> dict:
     """X: last-day features + 'ps' (model score). gate: {'G', 'cut', 'open'} at the chosen quantile.
     results: sym -> {'ago_days': calendar days since last results (or None), 'in_hold': bool}; news: sym -> news_flags()."""
     s = resolved(settings); results = results or {}; news = news or {}
@@ -137,8 +137,9 @@ def evening_plan(X: pd.DataFrame, mk_row: pd.Series, gate: dict, settings: dict,
         if tag == 'EXPIRY' and is_big and s['call_premium_pct'].get('BIG', 0) > call_pct:
             instr = [i for i in instr if i['type'] != 'CALL'] + [{'type': 'CALL', 'premium_pct': s['call_premium_pct']['BIG'] * size_mult, 'status': 'CHOOSE_AT_10:00', 'required': True}]
         item.update(instruments=instr, exits=price_levels(item['close'], s))
+        if not ban_known: item['ban_unchecked'] = True     # NSE ban file for the entry day was not available: re-checked at the 09:20 entry
         picks.append(item)
-    return {'gate': gate, 'expiry_week': expiry_week, 'tdte': tdte, 'crash_brake': crash, 'size_mult': size_mult, 'k': k,
+    return {'ban_known': bool(ban_known), 'gate': gate, 'expiry_week': expiry_week, 'tdte': tdte, 'crash_brake': crash, 'size_mult': size_mult, 'k': k,
             'picks': picks, 'rejected': rejected, 'mode': s['mode'], 'settings_used': {k_: s[k_] for k_ in ('mode', 'gate_quantile', 'picks_open_gate', 'closed_gate_big_pick', 'expiry_third_pick')}}
 
 

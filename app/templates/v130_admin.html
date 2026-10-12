@@ -93,6 +93,7 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 </div>
 
 <div class="card"><h2>Rejected tonight and why</h2>
+  {% if plan and plan.ban_known is defined and not plan.ban_known %}<div class="empty" style="color:#f0b429;font-style:normal">⚠ NSE F&amp;O ban list for the entry day was not available tonight. Picks are marked unchecked and re-checked against the ban list at the 09:20 entry; a banned pick is skipped.</div>{% endif %}
   {% if plan and plan.rejected %}<table><tr><th>Stock</th><th>Rank</th><th>Tag</th><th>Reasons</th></tr>
   {% for r in plan.rejected %}<tr><td>{{ r.sym }}</td><td>{{ r.rank }}</td><td>{{ r.tag }}</td><td class="reasons">{{ r.reasons|join(' · ') }}</td></tr>{% endfor %}</table>
   {% else %}<div class="empty">Nothing rejected.</div>{% endif %}

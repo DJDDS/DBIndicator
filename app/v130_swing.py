@@ -252,7 +252,7 @@ def build_inputs(kite, nse: NSE, when: dt.date, *, lookback_cal_days: int = 420,
     for d in days[-20:]:
         b = nse.ban_day(d.date()) or set()
         BAN.loc[d, [s for s in b if s in BAN.columns]] = 1
-    ban_next = nse.ban_day(nxt) or set()
+    ban_next = nse.ban_day(nxt)        # None = NSE file not available: picks are marked unchecked, never silently treated as 'no bans'
     bm = nse.board_meetings(when - dt.timedelta(days=120), when + dt.timedelta(days=45))
     bm = pd.DataFrame(bm)
     RES = pd.DataFrame(0.0, index=days, columns=C.columns); res_info = {}
@@ -337,13 +337,13 @@ def run_evening(kite, when: dt.date | None = None, *, nse: NSE | None = None, pr
             ts = pd.to_datetime(it.get('sort_date') or it.get('an_dt'), errors='coerce', dayfirst=False)
             if pd.notna(ts): parsed.append({'ts': ts.to_pydatetime(), 'desc': it.get('desc'), 'text': it.get('attchmntText')})
         news[sym] = rules.news_flags(parsed, dt.datetime.combine(when, dt.time(18, 0)))
-    plan = rules.evening_plan(X, mrow, gate, s, open_symbols=open_syms, n_open=len(open_syms), ban_next=I['ban_next'], results=I['res_info'], news=news)
+    plan = rules.evening_plan(X, mrow, gate, s, open_symbols=open_syms, n_open=len(open_syms), ban_next=I['ban_next'] or (), ban_known=I['ban_next'] is not None, results=I['res_info'], news=news)
     plan.update(date=str(when), entry_day=str(I['next_day']), generated=now_ist(), n_universe=int(len(X)), n_symbols_loaded=I['n_symbols'], universe_carried=bool(I.get('universe_carried')),
                 market={k: (None if pd.isna(mrow.get(k)) else round(float(mrow.get(k)), 4)) for k in core.GATE_VARS + ['m10']},
                 top10=X.sort_values('ps', ascending=False).head(10)[['sym', 'ps', 'r5', 'close']].round(4).to_dict('records'), news=news)
     for p in plan['picks']:
         st['positions'].append({'id': f"{when}:{p['sym']}", 'sym': p['sym'], 'signal_date': str(when), 'entry_day': str(I['next_day']), 'status': 'PENDING',
-                                'tag': p['tag'], 'instruments': p['instruments'], 'exits': p['exits'], 'sig20': p['sig20'], 'vix': plan['market'].get('vix')})
+                                'tag': p['tag'], 'instruments': p['instruments'], 'exits': p['exits'], 'sig20': p['sig20'], 'vix': plan['market'].get('vix'), 'ban_unchecked': bool(p.get('ban_unchecked'))})
     st['last_plan'] = plan; st['last_plan_date'] = str(when); save_state(st); _append('plans.jsonl', plan)
     return plan
 
@@ -353,6 +353,17 @@ def run_entry(kite, today: dt.date | None = None) -> int:
     today = today or now_ist().date(); st = load_state(); s = load_settings(); n = 0
     pend = [p for p in st['positions'] if p['status'] == 'PENDING' and p['entry_day'] == str(today)]
     if not pend: return 0
+    if any(p.get('ban_unchecked') for p in pend):
+        try: ban_today = NSE().ban_day(today)
+        except Exception: ban_today = None  # noqa: BLE001
+        for p in [p for p in pend if p.get('ban_unchecked')]:
+            if ban_today is not None and p['sym'] in ban_today:
+                p['status'] = 'SKIPPED'; p['skip_reason'] = 'in F&O ban on the entry day (ban list was unavailable at the evening plan)'
+                _append('ledger.jsonl', {'kind': 'SKIP', 'ts': now_ist(), 'id': p['id'], 'sym': p['sym'], 'reason': p['skip_reason']})
+            elif ban_today is not None:
+                p['ban_unchecked'] = False
+        pend = [p for p in pend if p['status'] == 'PENDING']
+        if not pend: save_state(st); return 0
     q = kite.quote([f"NSE:{p['sym']}" for p in pend])
     for p in pend:
         o = (q.get(f"NSE:{p['sym']}") or {}).get('ohlc', {}).get('open')
