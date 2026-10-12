@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -49,7 +50,7 @@ DEFAULTS = dict(
     mcx_roll_days=2,           # switch to the next future this many days before expiry
     opt_min_days=4,            # option expiry must be at least this many calendar days away
     max_spread_pct=3.0,        # suggested strike must have a bid/ask spread below this
-    entry_from_hour=22.5,      # IST hour from which the MCX paper ledger records today's entry snapshot
+    entry_minutes_before_close=60,   # MCX paper ledger records today's entry from this many minutes before the MCX close
     live_price_minutes=10,     # refresh the NYMEX intraday price on page load if older than this
 )
 MCX_SYMBOLS = ("NATURALGAS", "NATGASMINI")
@@ -63,6 +64,17 @@ _last_error: dict = {}
 def _p(name: str) -> Path:
     ROOT.mkdir(parents=True, exist_ok=True)
     return ROOT / name
+
+
+def _atomic_text(name: str, text: str) -> None:
+    """Write via a temp file + os.replace so a concurrent reader never sees a half-written file."""
+    f = _p(name); tmp = f.with_name(f.name + f".tmp{threading.get_ident()}")
+    tmp.write_text(text); os.replace(tmp, f)
+
+
+def _atomic_csv(name: str, df: pd.DataFrame) -> None:
+    f = _p(name); tmp = f.with_name(f.name + f".tmp{threading.get_ident()}")
+    df.to_csv(tmp, index=False); os.replace(tmp, f)
 
 
 def load_settings() -> dict:
@@ -92,7 +104,7 @@ def save_settings(new: dict) -> dict:
     cur["oi_weeks"] = min(max(cur["oi_weeks"], 1), 12)
     for k in ("mon_hold", "wed_hold", "fri_hold"):
         cur[k] = min(max(cur[k], 1), 3)
-    _p("settings.json").write_text(json.dumps(cur, indent=1))
+    _atomic_text("settings.json", json.dumps(cur, indent=1))
     return cur
 
 
@@ -130,6 +142,18 @@ def _cot() -> pd.DataFrame:
     return df[["date", "oi"]].drop_duplicates("date", keep="last")
 
 
+def _om_json(url: str, params: dict, timeout: int) -> list:
+    """Open-Meteo returns a list for multi-location requests, or {"error": true, "reason": ...}; surface the reason."""
+    r = requests.get(url, params=params, timeout=timeout, headers=UA)
+    try:
+        js = r.json()
+    except ValueError:
+        raise RuntimeError(f"Open-Meteo HTTP {r.status_code}: {r.text[:120]}")
+    if isinstance(js, dict):
+        raise RuntimeError(f"Open-Meteo: {js.get('reason') or js}"[:200])
+    return js
+
+
 def _city_hdd(js: list, key: str, field: str) -> pd.Series:
     t = pd.to_datetime(js[0][key]["time"])
     num = np.zeros(len(t)); den = np.zeros(len(t))
@@ -140,17 +164,29 @@ def _city_hdd(js: list, key: str, field: str) -> pd.Series:
 
 
 def _hdd() -> tuple[pd.Series, pd.Series]:
+    """Observed gas-weighted HDD (incremental: only the last 60 days once history is cached) + 16-day forecast."""
     lat = ",".join(str(c[0]) for c in CITIES); lon = ",".join(str(c[1]) for c in CITIES)
-    base = dict(latitude=lat, longitude=lon, temperature_unit="fahrenheit", timezone="America/New_York")
-    end = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
-    arc = requests.get("https://archive-api.open-meteo.com/v1/archive", timeout=120,
-                       params={**base, "daily": "temperature_2m_mean", "start_date": "2007-01-01", "end_date": end}).json()
-    fc = requests.get("https://api.open-meteo.com/v1/forecast", timeout=60,
-                      params={**base, "daily": "temperature_2m_mean", "past_days": 14, "forecast_days": 16}).json()
-    obs = _city_hdd(arc, "daily", "temperature_2m_mean")
-    fcs = _city_hdd(fc, "daily", "temperature_2m_mean")
+    base = dict(latitude=lat, longitude=lon, temperature_unit="fahrenheit", timezone="America/New_York", daily="temperature_2m_mean")
     today = pd.Timestamp(datetime.now(timezone.utc).date())
-    observed = obs.combine_first(fcs[fcs.index < today]).dropna()
+    old = _read("hdd_obs.csv")
+    old_s = old.set_index("date").hdd if old is not None and len(old) > 3000 else None
+    start = (today - pd.Timedelta(days=60)) if old_s is not None else pd.Timestamp("2007-01-01")
+    end = today - pd.Timedelta(days=6)
+    parts = []
+    for a in pd.date_range(start, end, freq="5YS").union([start]):     # history in <= 5-year chunks (keeps each request light)
+        b = min(a + pd.DateOffset(years=5) - pd.Timedelta(days=1), end)
+        if a > b:
+            continue
+        js = _om_json("https://archive-api.open-meteo.com/v1/archive",
+                      {**base, "start_date": a.strftime("%Y-%m-%d"), "end_date": b.strftime("%Y-%m-%d")}, 120)
+        parts.append(_city_hdd(js, "daily", "temperature_2m_mean"))
+    fc = _om_json("https://api.open-meteo.com/v1/forecast", {**base, "past_days": 14, "forecast_days": 16}, 60)
+    fcs = _city_hdd(fc, "daily", "temperature_2m_mean")
+    obs = pd.concat(parts) if parts else pd.Series(dtype=float)
+    if old_s is not None:
+        obs = obs.combine_first(old_s)
+    observed = obs.combine_first(fcs[fcs.index < today]).dropna().sort_index()
+    observed = observed[~observed.index.duplicated(keep="first")]
     forecast = fcs[fcs.index >= today].dropna()
     return observed, forecast
 
@@ -169,18 +205,18 @@ def refresh(force: bool = False) -> dict:
                 df = fn()
                 if len(df) < 10:
                     raise ValueError("too few rows")
-                df.to_csv(_p(name), index=False); done.append(name)
+                _atomic_csv(name, df); done.append(name)
             except Exception as exc:  # pragma: no cover - network dependent
                 errors[name] = str(exc)[:200]
         try:
             obs, fc = _hdd()
-            obs.rename("hdd").rename_axis("date").reset_index().to_csv(_p("hdd_obs.csv"), index=False)
-            fc.rename("hdd").rename_axis("date").reset_index().to_csv(_p("hdd_fcst.csv"), index=False)
+            _atomic_csv("hdd_obs.csv", obs.rename("hdd").rename_axis("date").reset_index())
+            _atomic_csv("hdd_fcst.csv", fc.rename("hdd").rename_axis("date").reset_index())
             done += ["hdd_obs.csv", "hdd_fcst.csv"]
         except Exception as exc:  # pragma: no cover - network dependent
             errors["hdd"] = str(exc)[:200]
         meta = {"refreshed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ok": done, "errors": errors}
-        _p("meta.json").write_text(json.dumps(meta, indent=1))
+        _atomic_text("meta.json", json.dumps(meta, indent=1))
         _last_error.clear(); _last_error.update(errors)
         try:
             update_ledger()
@@ -196,10 +232,15 @@ def refresh_price(max_age_minutes: float) -> str | None:
     try:
         if f.exists() and (time.time() - f.stat().st_mtime) < max_age_minutes * 60:
             return None
-        new = _yahoo("NG=F", "3mo")
-        old = pd.read_csv(f, parse_dates=["date"]) if f.exists() else new.iloc[:0]
-        merged = pd.concat([old[old.date < new.date.min()], new]).drop_duplicates("date", keep="last").sort_values("date")
-        merged.to_csv(f, index=False)
+        if not _lock.acquire(timeout=0.5):         # a full refresh is writing the cache right now - use what is there
+            return None
+        try:
+            new = _yahoo("NG=F", "3mo")
+            old = pd.read_csv(f, parse_dates=["date"]) if f.exists() else new.iloc[:0]
+            merged = pd.concat([old[old.date < new.date.min()], new]).drop_duplicates("date", keep="last").sort_values("date")
+            _atomic_csv("ng.csv", merged)
+        finally:
+            _lock.release()
         return None
     except Exception as exc:  # pragma: no cover - network dependent
         return str(exc)[:200]
@@ -239,6 +280,9 @@ def _read(name: str) -> pd.DataFrame | None:
     if not f.exists():
         return None
     df = pd.read_csv(f, parse_dates=["date"])
+    df = df.dropna(subset=["date"]).sort_values("date")
+    if "close" in df.columns:
+        df = df.dropna(subset=["close"])          # never let a truncated last line become "today"
     return df
 
 
@@ -396,7 +440,7 @@ def update_ledger() -> None:
             o = outcome(f, idx[d], 1 if r["side"] == "CALL" else -1, r["hold"])
             if o:
                 r["result"] = o
-    _p("ledger.jsonl").write_text("\n".join(json.dumps(v) for v in sorted(led.values(), key=lambda x: x["date"])) + "\n")
+    _atomic_text("ledger.jsonl", "\n".join(json.dumps(v) for v in sorted(led.values(), key=lambda x: x["date"])) + "\n")
 
 
 def _settled(f: pd.DataFrame, now_utc: datetime | None = None) -> pd.DataFrame:
@@ -460,6 +504,12 @@ def status(kite=None, now_ist: datetime | None = None) -> dict:
                          in_season=f_all.index[-1].month in WINTER, live_bar=len(f_all) > len(f), settled_date=str(d.date()))
     out["today"] = today; out["settled"] = settled; out["signal"] = primary
     out["trading_day_view"] = len(f_all) > len(f)
+    from .commodity_mcx import mcx_session
+    sess = mcx_session(now_ist)
+    win_from = (sess["close"] - timedelta(minutes=int(s["entry_minutes_before_close"]))).strftime("%H:%M")
+    win_to = (sess["close"] - timedelta(minutes=5)).strftime("%H:%M")
+    out["session"] = dict(is_open=sess["is_open"], open_str=sess["open_str"], close_str=sess["close_str"], us_dst=sess["us_dst"],
+                          entry_window=f"{win_from}-{win_to}", weekday=sess["weekday"])
     dow = int(cur.dow)
     nxt = {0: "Wednesday close", 1: "Wednesday close", 2: "Friday close", 3: "Friday close", 4: "Monday close", 5: "Monday close", 6: "Monday close"}
     out["next_check"] = None if primary else nxt.get(dow, "next session")
@@ -512,13 +562,16 @@ def _mcx_ledger() -> list[dict]:
 
 
 def _write_mcx_ledger(rows: list[dict]) -> None:
-    _p("mcx_ledger.jsonl").write_text("\n".join(json.dumps(r) for r in sorted(rows, key=lambda x: x["date"])) + "\n")
+    _atomic_text("mcx_ledger.jsonl", "\n".join(json.dumps(r) for r in sorted(rows, key=lambda x: x["date"])) + "\n")
 
 
 def record_mcx_entry(sig: dict, mcx: dict, s: dict, now_ist: datetime) -> None:
-    """Snapshot today's MCX future + suggested option from entry_from_hour IST until the MCX close (23:55); last view wins."""
-    hour = now_ist.hour + now_ist.minute / 60
-    if not (float(s["entry_from_hour"]) <= hour < 23.92) or now_ist.date() != pd.Timestamp(sig["date"]).date():
+    """Snapshot today's MCX future + suggested option in the last `entry_minutes_before_close` minutes before the MCX close
+    (23:30 IST in US daylight time, 23:55 IST otherwise); last view wins."""
+    from .commodity_mcx import mcx_session
+    sess = mcx_session(now_ist)
+    start = sess["close"] - timedelta(minutes=int(s["entry_minutes_before_close"]))
+    if not (sess["weekday"] and start <= now_ist < sess["close"]) or now_ist.date() != pd.Timestamp(sig["date"]).date():
         return
     sug = (mcx.get("suggested") or {}).get("tradingsymbol")
     opt = next((r for r in mcx.get("chain", []) if r["tradingsymbol"] == sug), None) if sug else None
@@ -544,7 +597,7 @@ def score_mcx_ledger(kite, now_ist: datetime, max_calls: int = 6) -> None:
         if r.get("exit") or calls >= max_calls:
             continue
         exit_d = (pd.Timestamp(r["date"]) + pd.offsets.BDay(int(r["hold"]))).date()
-        if now_ist.date() <= exit_d:          # score from the day after the exit session (MCX closes ~23:55 IST)
+        if now_ist.date() <= exit_d:          # score from the day after the exit session (MCX closes 23:30 / 23:55 IST)
             continue
         side = 1 if r["side"] == "CALL" else -1
         ftok = r["fut"].get("token") or inst.get(r["fut"]["tradingsymbol"])   # stored token survives the monthly roll

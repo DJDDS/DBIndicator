@@ -230,7 +230,7 @@ def test_status_with_kite_records_and_scores_mcx_ledger(store, monkeypatch):
     ng = pd.read_csv(store / "ng.csv", parse_dates=["date"])
     last = ng.date.max()                                   # treat the last bar as today's in-progress bar
     monkeypatch.setattr(cd, "_settled", lambda f: f.iloc[:-1])
-    st = cd.status(kite=FakeKite(today=last.date()), now_ist=_dt.datetime.combine(last.date(), _dt.time(22, 50)))
+    st = cd.status(kite=FakeKite(today=last.date()), now_ist=_dt.datetime.combine(last.date(), _dt.time(23, 0)))   # Feb: MCX closes 23:55, window 22:55-23:50
     assert "error" not in st["mcx"], st["mcx"]
     assert st["signal"] is not None, "synthetic last bar should carry a signal; pick another seed/day"
     if st["signal"]:
@@ -262,3 +262,46 @@ def test_settled_drops_in_progress_bar_including_next_day_evening_session():
     g = pd.DataFrame({"close": [1]}, index=pd.to_datetime(["2026-12-14"]))
     assert len(cd._settled(g, utc("2026-12-14T20:10:00"))) == 1
     assert len(cd._settled(g, utc("2026-12-14T19:50:00"))) == 0
+
+
+def test_truncated_cache_never_becomes_today(store):
+    """A half-written ng.csv (last line cut) must not turn an old date with NaN close into 'today'."""
+    _synthetic(store)
+    lines = (store / "ng.csv").read_text().splitlines()
+    cut = lines[:300] + [lines[300].split(",")[0] + ",3.1,3.2"]           # partial row: date,open,close only
+    (store / "ng.csv").write_text("\n".join(cut) + "\n")
+    df = cd._read("ng.csv")
+    assert df.close.notna().all() and df.date.is_monotonic_increasing
+
+
+def test_atomic_write_leaves_no_partial_file(store):
+    cd._atomic_csv("x.csv", pd.DataFrame({"date": ["2026-01-01"], "close": [1.0]}))
+    assert (store / "x.csv").exists() and not list(store.glob("x.csv.tmp*"))
+
+
+def test_mcx_session_follows_us_daylight_time():
+    from app.commodity_mcx import mcx_session
+    oct_ = mcx_session(_dt.datetime(2026, 10, 12, 23, 40))       # US on daylight time
+    assert oct_["close_str"] == "23:30" and oct_["is_open"] is False and oct_["us_dst"] is True
+    dec = mcx_session(_dt.datetime(2026, 12, 14, 23, 40))         # US on standard time
+    assert dec["close_str"] == "23:55" and dec["is_open"] is True
+    assert mcx_session(_dt.datetime(2026, 10, 12, 8, 59))["is_open"] is False
+    assert mcx_session(_dt.datetime(2026, 10, 10, 12, 0))["is_open"] is False          # Saturday
+
+
+def test_lot_units_and_pnl_per_lot(store):
+    from app import commodity_mcx as m
+    assert m.units_per_lot("NATURALGAS", 1) == 1250 and m.units_per_lot("NATGASMINI", 1) == 250
+    snap = m.snapshot(FakeKite(), {**cd.DEFAULTS}, 1, 1, 0.03, _dt.datetime(2025, 1, 15, 22, 45))
+    atm = next(r for r in snap["chain"] if r["label"] == "ATM")
+    assert atm["premium_per_lot"] == round(atm["mid"] * 1250)
+    assert atm["est_pnl_per_lot"]["t2"] > 0 > atm["est_pnl_per_lot"]["stop"]
+
+
+def test_entry_window_tracks_mcx_close(store, monkeypatch):
+    _synthetic(store)
+    monkeypatch.setattr(cd, "refresh_price", lambda m: None)
+    st = cd.status(kite=None, now_ist=_dt.datetime(2026, 10, 12, 18, 0))
+    assert st["session"]["entry_window"] == "22:30-23:25" and st["session"]["close_str"] == "23:30"
+    st = cd.status(kite=None, now_ist=_dt.datetime(2026, 12, 14, 18, 0))
+    assert st["session"]["entry_window"] == "22:55-23:50"
