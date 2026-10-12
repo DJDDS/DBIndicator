@@ -25,7 +25,7 @@ Daily cycle (IST, weekdays, fail-soft, idempotent per day):
                every stock's inputs + P(up) -> scores_<date>.json.gz
   15:20-16:30  outcome: candles of the listed stocks -> exit at 15:15, returns at +30/60/90/120 min, best/worst
   15:35-16:40  labels: 5-minute candles of EVERY stock -> bars_<date>.json.gz; order-flow leaderboard -> of_lab.json
-Storage: <V12 storage root>/v133/  (aggs.parquet, prep_<date>.json, futs_<date>.json, of_<date>.jsonl[.gz], scores_<date>.json.gz,
+Storage: <V12 storage root>/v133/  (aggs.pkl, prep_<date>.json, futs_<date>.json, of_<date>.jsonl[.gz], scores_<date>.json.gz,
          bars_<date>.json.gz, of_lab.json, days.jsonl, dayview.json, settings.json)
 """
 from __future__ import annotations
@@ -570,12 +570,25 @@ def _kite_5min(kite, token: int, a: dt.datetime, b: dt.datetime, tries: int = 3)
     return df[['date', 'open', 'high', 'low', 'close', 'volume']]
 
 
+AGGS = 'aggs.pkl'      # pandas pickle: no extra library (the server has no pyarrow; parquet failed live on 12-Oct-2026)
+
+
 def _load_aggs() -> pd.DataFrame:
-    p = _path('aggs.parquet')
+    p = _path(AGGS)
     try:
-        return pd.read_parquet(p) if p.exists() else pd.DataFrame()
+        return pd.read_pickle(p) if p.exists() else pd.DataFrame()
     except Exception:  # noqa: BLE001
         log.exception('v133 aggs unreadable'); return pd.DataFrame()
+
+
+def _save_aggs(parts: list, today: dt.date) -> pd.DataFrame:
+    A = pd.concat([x for x in parts if x is not None and not x.empty], ignore_index=True) if parts else pd.DataFrame()
+    if A.empty: return A
+    A['date'] = pd.to_datetime(A.date).dt.date
+    A = A.drop_duplicates(['symbol', 'date'], keep='last')
+    cut = today - dt.timedelta(days=430); A = A[A.date >= cut].sort_values(['symbol', 'date']).reset_index(drop=True)
+    tmp = _path(AGGS + '.tmp'); A.to_pickle(tmp); tmp.replace(_path(AGGS))
+    return A
 
 
 def update_aggs(kite, uni: dict, today: dt.date, backfill_days: int = 380) -> pd.DataFrame:
@@ -599,13 +612,9 @@ def update_aggs(kite, uni: dict, today: dt.date, backfill_days: int = 380) -> pd
             ag = day_aggregates(bars)
             if not ag.empty: ag.insert(0, 'symbol', s); out.append(ag)
             a = b + dt.timedelta(days=1)
-    A = pd.concat(out, ignore_index=True) if out else pd.DataFrame()
-    if not A.empty:
-        A['date'] = pd.to_datetime(A.date).dt.date
-        A = A.drop_duplicates(['symbol', 'date'], keep='last')
-        cut = today - dt.timedelta(days=430); A = A[A.date >= cut].sort_values(['symbol', 'date']).reset_index(drop=True)
-        tmp = _path('aggs.tmp.parquet'); A.to_parquet(tmp); tmp.replace(_path('aggs.parquet'))
-    return A
+        if (i + 1) % 25 == 0:                       # checkpoint: a failure or restart mid-backfill keeps what was downloaded
+            out = [_save_aggs(out, today)]
+    return _save_aggs(out, today)
 
 
 def _participant(nse, d: dt.date) -> dict | None:
@@ -849,6 +858,15 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
     return n
 
 
+def run_warm(kite, today: dt.date | None = None) -> int:
+    """Evening (16:45-21:00): bring the 5-minute history cache up to today, so tomorrow's 07:50 prep only adds one day."""
+    from . import v132_movers as v2
+    today = today or now_ist().date()
+    A = update_aggs(kite, v2._fo_universe(kite), today + dt.timedelta(days=1))
+    if A.empty: raise RuntimeError('no 5-minute history yet')
+    return int(A.symbol.nunique())
+
+
 def run_labels(kite, today: dt.date | None = None) -> int:
     """LAB, after the close: today's 5-minute candles of EVERY F&O stock (the answers for every stock, not only the picks), then pack
     today's poll file and refresh the order-flow leaderboard (of_lab.json)."""
@@ -1012,7 +1030,7 @@ def _loop(get_kite):
     while True:
         try:
             now = now_ist(); d = now.date(); hm = now.hour * 60 + now.minute
-            if d.weekday() < 5 and 470 <= hm <= 1000:
+            if d.weekday() < 5 and 470 <= hm <= 1260:
                 kite = get_kite()
                 if kite is not None:
                     key = lambda k: f'{d}:{k}'
@@ -1023,6 +1041,7 @@ def _loop(get_kite):
                         done[key('list')] = _step('list', run_list, kite)
                     if due('outcome', 920, 990, 5): done[key('outcome')] = _step('outcome', run_outcomes, kite)
                     if due('labels', 935, 1000, 5): done[key('labels')] = _step('labels', run_labels, kite)
+                    if due('warm', 1005, 1260, 15): done[key('warm')] = _step('warm', run_warm, kite)
         except Exception:  # noqa: BLE001
             log.exception('v133 scheduler tick failed')
         _real_sleep(5)
