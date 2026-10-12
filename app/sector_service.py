@@ -32,7 +32,49 @@ _instrument_symbols={}
 _bases={}           # (name, live) -> (key, summary_base): history math done once per day, not every quote cycle
 _overview_cache={'key':None,'at':0.0,'value':None}
 OVERVIEW_TTL=20     # seconds an overview payload is reused while its inputs are unchanged
-_state={'histories':{},'quotes':{},'catalogue':data.load_json(SEED,[]),'running':False,'done':0,'total':0,'error':None,'updated_at':None,'quote_at':None}
+_state={'histories':{},'quotes':{},'catalogue':data.load_json(SEED,[]),'fo':None,'running':False,'done':0,'total':0,'error':None,'updated_at':None,'quote_at':None}
+
+
+# ---- F&O focus (adjustable) ----
+FNO_ONLY=True            # sector members = F&O stocks only (the stocks you can trade); the sector index itself is unchanged
+MIN_FNO_MEMBERS=3        # hide a sector with fewer F&O stocks than this
+DUPLICATE_JACCARD=0.8    # two sectors whose F&O members overlap this much are one sector: keep the larger index
+HIDDEN_SECTORS=()        # sector ids to hide by hand, e.g. ('nifty-media',)
+_view_cache={'key':None,'value':None}
+
+
+def fo_symbols(nfo, nse):
+    """F&O stocks = NSE equities that have NFO stock futures."""
+    names={i['name'] for i in nfo if i.get('instrument_type')=='FUT' and i.get('segment')=='NFO-FUT'}
+    return sorted(i['tradingsymbol'] for i in nse if i.get('segment')=='NSE' and i.get('tradingsymbol') in names)
+
+
+def trim_catalogue(catalogue, fo, *, fno_only=None, min_members=None, jaccard=None, hidden=None):
+    """The sectors shown: members restricted to F&O stocks, sectors with too few F&O stocks dropped, near-duplicate
+    sectors (same F&O stocks, e.g. Financial Services vs Financial Services 25/50) merged into the larger index.
+    Without an F&O list (Kite not yet read) the official catalogue is returned unchanged."""
+    fno_only=FNO_ONLY if fno_only is None else fno_only; min_members=MIN_FNO_MEMBERS if min_members is None else min_members
+    jaccard=DUPLICATE_JACCARD if jaccard is None else jaccard; hidden=set(HIDDEN_SECTORS if hidden is None else hidden)
+    if not fno_only or not fo: return [e for e in catalogue if e['id'] not in hidden]
+    fo=set(fo); kept=[]
+    for e in sorted(catalogue,key=lambda e:-len(e.get('members',[]))):
+        if e['id'] in hidden: continue
+        mem=[m for m in e.get('members',[]) if m['symbol'] in fo]
+        if len(mem)<min_members: continue
+        syms={m['symbol'] for m in mem}
+        if any(len(syms&k['_s'])/len(syms|k['_s'])>=jaccard for k in kept): continue
+        kept.append(dict(e,members=mem,official_members=len(e.get('members',[])),_s=syms))
+    order={e['id']:i for i,e in enumerate(catalogue)}
+    return [{k:v for k,v in e.items() if k!='_s'} for e in sorted(kept,key=lambda e:order[e['id']])]
+
+
+def _view():
+    """Trimmed catalogue (cached until the catalogue or F&O list changes). Callers must not mutate it."""
+    with _lock:
+        cat,fo=_state['catalogue'],_state.get('fo')
+        key=(id(cat),len(cat),tuple(fo) if fo else None)
+        if _view_cache['key']!=key: _view_cache.update(key=key,value=trim_catalogue(cat,fo))
+        return _view_cache['value']
 
 
 def _path(symbol):
@@ -250,6 +292,7 @@ def _sector_row(entry, benchmark, now):
     row['vwap']=None
     row['movers']=movers(members)
     # Light member list so the page can search stocks and show sector membership without a detail call.
+    row['official_members']=entry.get('official_members',len(entry.get('members',[])))
     row['members_list']=[{'symbol':m['symbol'],'name':m.get('name') or m['symbol']} for m in entry.get('members',[])]
     return row
 
@@ -260,7 +303,7 @@ def _overview_key():
         except OSError: return None
     with _lock:
         return (_state.get('quote_at'),_state.get('updated_at'),_state.get('done'),_state.get('running'),_state.get('error'),
-                id(_state['catalogue']),len(_summaries),mt(ROOT/'industry.json'),mt(ROOT/'movers_log.json'))
+                id(_state['catalogue']),tuple(_state.get('fo') or ()),len(_summaries),mt(ROOT/'industry.json'),mt(ROOT/'movers_log.json'))
 
 
 def overview():
@@ -276,8 +319,7 @@ def overview():
 
 def _overview():
     now=scanner.now_ist()
-    with _lock:
-        catalogue=copy.deepcopy(_state['catalogue'])
+    catalogue=copy.deepcopy(_view())
     benchmark=_summary('NIFTY 50',now)
     rows=[_sector_row(e,benchmark,now) for e in catalogue]
     _attach_history(rows)
@@ -285,7 +327,7 @@ def _overview():
     industries=industry_groups({s:_summary(s,now) for s in syms},ind.load(ROOT))
     return {'sectors':rows,'industries':industries,'benchmark':benchmark,'movers_compare':list(COMPARE),'movers_log_days':len(_movers_log()),
             'status':_status(),'periods':list(a.PERIODS),'as_of':now.isoformat(timespec='seconds'),
-            'methodology':{'membership':'Official current constituents; dated cache. Historical breadth uses current membership.',
+            'methodology':{'membership':('F&O focus: members are the F&O stocks of each official index; sectors with fewer than %d F&O stocks or the same F&O stocks as a larger index are hidden. '%MIN_FNO_MEMBERS if FNO_ONLY and _state.get('fo') else '')+'Official current constituents; dated cache. Historical breadth uses current membership.',
                 'returns':'Price returns, not total returns. Rolling calendar week/month/year; four completed calendar quarters. Daily SMA/EMA use completed bars.',
                 'vwap':'5-minute bar typical-price approximation, reset per IST session. Cash indices have no traded-volume VWAP.',
                 'adjustment':'Vendor OHLC; independent corporate-action adjustment unverified. Large discontinuities flagged.',
@@ -319,7 +361,7 @@ def detail(sector_id, window=20, lite=False):
     the breadth history and per-stock news evidence, which together made each sector open take ~3 s."""
     now=scanner.now_ist()
     with _lock:
-        entry=next((copy.deepcopy(e) for e in _state['catalogue'] if e['id']==sector_id),None)
+        entry=next((copy.deepcopy(e) for e in _view() if e['id']==sector_id),None)
     if entry is None: return None
     benchmark=_summary('NIFTY 50',now); sector=_sector_row(entry,benchmark,now)
     members=[]
@@ -365,7 +407,7 @@ def detail(sector_id, window=20, lite=False):
 
 def stock_chart(symbol):
     with _lock:
-        allowed={m['symbol'] for e in _state['catalogue'] for m in e.get('members',[])}
+        allowed={m['symbol'] for e in _view() for m in e.get('members',[])}
         if symbol not in allowed: return None
         # Queue, never fetch on a Flask request thread.
         if len(_requested_intraday)<20: _requested_intraday.add(symbol)
@@ -383,7 +425,7 @@ def sector_intraday(sector_id):
     """Today's 5-minute candles for a sector index and NIFTY 50 (the sector chart's 1D view).
     Queued for the background worker like stock charts; never fetched on the request thread."""
     with _lock:
-        entry=next((e for e in _state['catalogue'] if e['id']==sector_id),None)
+        entry=next((e for e in _view() if e['id']==sector_id),None)
         if entry is None: return None
         out={}
         for name in (entry['name'],'NIFTY 50'):
@@ -574,14 +616,21 @@ def _worker():
                         with _lock: _state['error']='Official membership refresh failed: '+str(exc)[:160]
                     membership_day=day
                 if instrument_day!=day:
-                    with _lock: catalogue=copy.deepcopy(_state['catalogue'])
-                    tokens,quotes=resolve_tokens(kite.instruments('NSE'),catalogue)
+                    nse=kite.instruments('NSE')
+                    try:
+                        fo=fo_symbols(kite.instruments('NFO'),nse)
+                        if fo:
+                            with _lock: _state['fo']=fo
+                    except Exception:  # noqa: BLE001
+                        log.exception('F&O list for the sector page unavailable; keeping the last one')
+                    tokens,quotes=resolve_tokens(nse,_view())
+                    _tokens.clear(); _instrument_symbols.clear()            # only the shown (F&O) names are quoted and hydrated
                     _tokens.update(tokens); _instrument_symbols.update(quotes); instrument_day=day
                 refresh_key=day+(' PM' if now.hour>=16 else ' AM')
                 if not _market_hours(now) and hydrate_day!=refresh_key:
                     if _hydrate(kite,now): hydrate_day=refresh_key
                 if not _market_hours(scanner.now_ist()) and industry_day!=day:
-                    with _lock: syms={m['symbol'] for e in _state['catalogue'] for m in e.get('members',[])}
+                    syms={m['symbol'] for e in _view() for m in e.get('members',[])}
                     try:
                         if syms and ind.needs_refresh(ROOT,syms,now.date()):
                             from .v130_swing import NSE

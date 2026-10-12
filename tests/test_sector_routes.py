@@ -198,3 +198,21 @@ def test_overview_is_cached_until_inputs_change(monkeypatch):
     first=s.overview(); assert s.overview() is first
     s._state['quote_at']='2026-10-06T11:01:05'             # new quote cycle -> fresh payload
     assert s.overview() is not first
+
+
+def test_fo_trim_keeps_fo_members_drops_thin_and_duplicate_sectors():
+    from app import sector_service as s
+    m=lambda *x:[{'symbol':v} for v in x]
+    cat=[{'id':'bank','name':'NIFTY BANK','members':m('HDFCBANK','ICICIBANK','SBIN','AUBANK','IDFCFIRSTB')},
+         {'id':'fin','name':'NIFTY FIN','members':m('HDFCBANK','ICICIBANK','SBIN','BAJFINANCE','SMALLCO1')},
+         {'id':'fin2550','name':'NIFTY FIN 25/50','members':m('HDFCBANK','ICICIBANK','SBIN','BAJFINANCE','SMALLCO2')},
+         {'id':'media','name':'NIFTY MEDIA','members':m('SUNTV','SMALLCO3','SMALLCO4')}]
+    fo=['HDFCBANK','ICICIBANK','SBIN','AUBANK','IDFCFIRSTB','BAJFINANCE','SUNTV']
+    out=s.trim_catalogue(cat,fo,fno_only=True,min_members=3,jaccard=0.8,hidden=())
+    assert [e['id'] for e in out]==['bank','fin']                       # 25/50 = same F&O stocks as fin; media has 1 F&O stock
+    assert [x['symbol'] for x in out[1]['members']]==['HDFCBANK','ICICIBANK','SBIN','BAJFINANCE'] and out[1]['official_members']==5
+    assert len(s.trim_catalogue(cat,None))==4                           # no F&O list yet: official catalogue
+    assert [e['id'] for e in s.trim_catalogue(cat,fo,hidden=('bank',),min_members=3,jaccard=0.8)]==['fin']
+    nfo=[{'name':'SBIN','instrument_type':'FUT','segment':'NFO-FUT'},{'name':'NIFTY','instrument_type':'FUT','segment':'NFO-FUT'}]
+    nse=[{'tradingsymbol':'SBIN','segment':'NSE'},{'tradingsymbol':'TCS','segment':'NSE'},{'tradingsymbol':'NIFTY 50','segment':'INDICES'}]
+    assert s.fo_symbols(nfo,nse)==['SBIN']
