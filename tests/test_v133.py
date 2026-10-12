@@ -317,3 +317,18 @@ def test_list_saves_every_stock_scores(store, monkeypatch):
     test_end_to_end_list_and_outcomes(store, monkeypatch)
     sc = v._read_gz("scores_2026-10-06.json.gz", None)
     assert sc and len(sc["data"]) == 40 and all(f"p_{h}" in sc["columns"] for h in v.HORIZONS)
+
+
+def test_order_flow_recorder_runs_without_prep(store, monkeypatch):
+    from app import v132_movers as v2
+    day = dt.date(2026, 10, 12)
+    monkeypatch.setattr(v2, "_fo_universe", lambda kite: {"AAA": 1, "BBB": 2})
+    v._of_uni.clear(); v._of_buf.clear()
+    class K:
+        def instruments(self, ex):
+            return [{"instrument_type": "FUT", "segment": "NFO-FUT", "name": n, "expiry": dt.date(2026, 10, 27), "tradingsymbol": n + "26OCTFUT"} for n in ("AAA", "BBB")]
+        def quote(self, keys):
+            return {k: _q(100.0, 1000, 600, 400, oi=10) for k in keys}
+    assert v.run_of_poll(K(), day, "fast") == 2
+    p = v._read_of(day)[0]
+    assert set(p["q"]) == {"AAA", "BBB"} and set(p["f"]) == {"AAA", "BBB"} and v._read_json(f"futs_{day}.json", {})["AAA"] == "AAA26OCTFUT"

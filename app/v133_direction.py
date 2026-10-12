@@ -704,14 +704,31 @@ def _quote_full(kite, syms: list) -> dict:
     return out
 
 
+_of_uni: dict = {}
+
+
+def _of_universe(kite, today: dt.date) -> tuple[list, dict]:
+    """Stocks + near-month futures to record. From the morning prep when it exists; otherwise built straight from Kite (F&O
+    universe + NFO instruments), so a failed prep never silences the order-flow recorder (12-Oct-2026)."""
+    prep = _read_json(f'prep_{today}.json', None)
+    if prep and prep.get('hist'):
+        futs = _read_json(f'futs_{today}.json', None)
+        if futs: return sorted(prep['hist']), futs
+    if str(today) not in _of_uni:
+        from . import v132_movers as v2
+        uni = v2._fo_universe(kite)
+        futs = _read_json(f'futs_{today}.json', None) or futures_map(kite.instruments('NFO'), set(uni), today)
+        _write_json(f'futs_{today}.json', futs)
+        _of_uni[str(today)] = (sorted(prep['hist']) if prep and prep.get('hist') else sorted(uni), futs)
+    return _of_uni[str(today)]
+
+
 def run_of_poll(kite, today: dt.date | None = None, phase: str = 'fast') -> int:
     """One order-flow LAB poll: full quote (book totals, top-5 depth qty + order counts, VWAP, last trade qty) of every F&O stock AND its
     near-month future (OI, futures book) in one Kite call; appended as one line to of_<date>.jsonl (a restart never loses earlier polls).
     phase: 'pre' 09:08-09:14 (pre-open book), 'fast' 09:15-09:39 every 10 s, 'slow' 09:40-15:15 every 5 min."""
     today = today or now_ist().date()
-    prep = _read_json(f'prep_{today}.json', None)
-    if not prep: raise RuntimeError('prep not ready')
-    syms = sorted(prep['hist']); futs = _read_json(f'futs_{today}.json', {}) or {}
+    syms, futs = _of_universe(kite, today)
     keys = ['NSE:' + s for s in syms] + ['NFO:' + futs[s] for s in syms if futs.get(s)]
     raw = {}
     for i in range(0, len(keys), 490):
@@ -1057,7 +1074,7 @@ def _of_loop(get_kite):
             ph = next((p for p, (a, b) in (('pre', OF_PRE), ('fast', OF_FAST), ('slow', OF_SLOW)) if a <= hm < b), None)
             if now.weekday() < 5 and ph and time.time() - last[ph] >= every[ph]:
                 kite = get_kite()
-                if kite is not None and _path(f'prep_{now.date()}.json').exists():
+                if kite is not None:
                     last[ph] = time.time(); _step(f'of_poll_{ph}', run_of_poll, kite, None, ph)
         except Exception:  # noqa: BLE001
             log.exception('v133 order-flow tick failed')
