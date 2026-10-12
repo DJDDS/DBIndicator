@@ -1492,6 +1492,13 @@ def api_v130_run_evening():
 
 
 # ---------------------------------------------------------------- NG Commodity Desk (ADMIN ONLY, spotting / paper) ----
+def _commodity_kite():
+    try:
+        return kite_auth.get_kite_client()
+    except Exception:  # fail-soft: page renders the NYMEX view without MCX
+        return None
+
+
 @app.route("/admin/commodity")
 @require_roles(OWNER)
 def admin_commodity():
@@ -1499,7 +1506,7 @@ def admin_commodity():
     from . import commodity_desk
     try:
         commodity_desk.maybe_refresh_async()
-        st = commodity_desk.status()
+        st = commodity_desk.status(kite=_commodity_kite())
     except Exception as exc:  # fail-soft: the page must still render
         log.exception("commodity desk status failed")
         st = {"error": str(exc)[:200], "settings": commodity_desk.load_settings(), "meta": {}, "robustness": commodity_desk.ROBUSTNESS}
@@ -1510,7 +1517,7 @@ def admin_commodity():
 @require_roles(OWNER)
 def api_commodity_status():
     from . import commodity_desk
-    return Response(json.dumps(commodity_desk.status(), default=str), mimetype="application/json")
+    return Response(json.dumps(commodity_desk.status(kite=_commodity_kite()), default=str), mimetype="application/json")
 
 
 @app.route("/api/commodity/refresh", methods=["POST"])

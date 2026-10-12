@@ -34,6 +34,10 @@ label.cb{display:flex;gap:6px;align-items:center}
 button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px;font-weight:600;cursor:pointer}
 button.ghost{background:var(--chip);color:var(--text)}
 ul.notes{margin:0;padding-left:18px}ul.notes li{margin:3px 0}
+.hero{border-color:#33415a}.mcxbar{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-top:12px;padding:10px;background:var(--panel2);border-radius:8px}
+.mcxbar .big{font-size:22px;font-weight:750}h3.sub{font-size:13px;margin:16px 0 8px;color:var(--muted);font-weight:600}
+.sugg{background:#16325c;color:#cfe0ff;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px}.sugg.none{background:#3a2a17;color:#f3d29a}
+tr.pick td{background:#16253d}
 </style>
 </head>
 <body>
@@ -54,35 +58,77 @@ ul.notes{margin:0;padding-left:18px}ul.notes li{margin:3px 0}
 {% if st.error %}
 <div class="card"><div class="bad">{{ st.error }}</div></div>
 {% else %}
-{% set i = st.inputs %}
+{% set i = st.inputs %}{% set sg = st.signal %}{% set mx_ = st.mcx or {} %}
+<div class="card hero">
+  <h2>{% if sg and sg.provisional %}Today · {{ sg.weekday }} {{ sg.date }} · enter near the MCX close{% elif sg %}Signal at settled close · {{ sg.weekday }} {{ sg.date }}{% else %}{{ i.weekday }} {{ i.date }}{% endif %} <span class="small" style="text-transform:none;letter-spacing:0">· {{ st.now_ist }} IST</span></h2>
+  {% if not i.in_season %}<div class="warn small" style="margin-bottom:8px">Outside Oct–Feb: the playbook was researched on winter only.</div>{% endif %}
+  {% if sg %}
+    <div class="sig"><div class="side {{ sg.side }}">{{ 'BUY ' ~ ('CE' if sg.side == 'CALL' else 'PE') }}</div>
+      <div><b>{{ sg.leg }}</b> · {{ sg.side }}<div class="small">hold {{ sg.hold }} session{{ 's' if sg.hold > 1 }} · exit at the MCX close · σ<sub>h</sub> {{ sg.sigma_h_pct }}%
+      {% if sg.provisional %}· <span class="warn">provisional: final after the NYMEX settle (~00:00–01:00 IST){% if sg.leg.startswith('WED') %} — Wednesday leg depends on today's price{% endif %}</span>{% endif %}</div></div></div>
+  {% else %}
+    <div class="sig"><div class="side none">NO TRADE</div><div class="small">Next check: {{ st.next_check }}</div></div>
+  {% endif %}
+
+  {% if mx_.error %}
+    <div class="small bad" style="margin-top:10px">{{ mx_.error }}</div>
+    {% if sg and sg.approx_inr %}<div class="lv">
+      <div><div class="l">≈ ₹ entry (NYMEX × USDINR)</div><div class="v">{{ sg.approx_inr.entry }}</div></div>
+      <div><div class="l">≈ ₹ T1</div><div class="v">{{ sg.approx_inr.t1 }}</div></div>
+      <div><div class="l">≈ ₹ T2</div><div class="v">{{ sg.approx_inr.t2 }}</div></div>
+      <div><div class="l">≈ ₹ stop</div><div class="v">{{ sg.approx_inr.stop }}</div></div></div>{% endif %}
+  {% else %}{% set fu = mx_.future %}
+    <div class="mcxbar"><span><b>MCX {{ fu.tradingsymbol }}</b></span><span class="big">₹{{ fu.ltp }}</span>
+      {% if fu.change_pct is not none %}<span class="{{ 'good' if fu.change_pct >= 0 else 'bad' }}">{{ '%+.2f'|format(fu.change_pct) }}%</span>{% endif %}
+      <span class="small">bid {{ fu.bid or '—' }} / ask {{ fu.ask or '—' }} · OI {{ fu.oi or '—' }} · lot {{ fu.lot_size }} · fut expiry {{ fu.expiry }}</span></div>
+    {% if sg and mx_.levels %}{% set L = mx_.levels %}
+    <div class="lv">
+      <div><div class="l">MCX entry ₹</div><div class="v">{{ L.entry }}</div></div>
+      <div><div class="l">Target 1 ₹ ({{ st.settings.t1 }}σ<sub>h</sub>)</div><div class="v good">{{ L.t1 }}</div></div>
+      <div><div class="l">Target 2 ₹ ({{ st.settings.t2 }}σ<sub>h</sub>)</div><div class="v good">{{ L.t2 }}</div></div>
+      <div><div class="l">Stop ₹ ({{ st.settings.stop }}σ<sub>h</sub>)</div><div class="v bad">{{ L.stop }}</div></div>
+    </div>
+    <div class="small" style="margin-top:6px">Levels are on the MCX future: ±₹{{ L.t1_rupees }} to T1, ₹{{ L.stop_rupees }} to the stop (σ<sub>h</sub> {{ mx_.sigma_h_pct }}% from NYMEX daily volatility).</div>
+    {% endif %}
+
+    {% if mx_.chain %}
+    <h3 class="sub">{% if sg %}{{ 'Call (CE)' if sg.side == 'CALL' else 'Put (PE)' }} options · expiry {{ mx_.option_expiry }} ({{ mx_.option_days }} days){% else %}ATM options · expiry {{ mx_.option_expiry }} ({{ mx_.option_days }} days){% endif %}</h3>
+    {% if mx_.suggested %}<div class="sugg {{ 'none' if not mx_.suggested.label }}">{% if mx_.suggested.label %}Suggested: <b>{{ mx_.suggested.tradingsymbol }}</b> ({{ mx_.suggested.label }}) — {{ mx_.suggested.reason }}{% else %}{{ mx_.suggested.reason }}{% endif %}</div>{% endif %}
+    <div class="tbl"><table>
+      <tr><th>Strike</th><th></th><th class="num">Bid</th><th class="num">Ask</th><th class="num">Mid</th><th class="num">Spread</th><th class="num">OI</th><th class="num">IV</th><th class="num">Δ</th><th class="num">₹/lot</th>
+      {% if sg %}<th class="num">@T1</th><th class="num">@T2</th><th class="num">@Stop</th><th class="num">R:R</th>{% endif %}</tr>
+      {% for r in mx_.chain %}<tr class="{{ 'pick' if mx_.suggested and r.tradingsymbol == mx_.suggested.tradingsymbol }}">
+        <td><b>{{ r.strike|int if r.strike == r.strike|int else r.strike }}</b> {{ r.type }}</td><td class="small">{{ r.label }}</td>
+        <td class="num">{{ r.bid or '—' }}</td><td class="num">{{ r.ask or '—' }}</td><td class="num"><b>{{ r.mid or '—' }}</b></td>
+        <td class="num {{ 'bad' if r.spread_pct and r.spread_pct > st.settings.max_spread_pct }}">{{ (r.spread_pct ~ '%') if r.spread_pct is not none else '—' }}</td>
+        <td class="num">{{ r.oi or '—' }}</td><td class="num">{{ (r.iv_pct ~ '%') if r.iv_pct else '—' }}</td><td class="num">{{ r.delta if r.delta is not none else '—' }}</td>
+        <td class="num">{{ '{:,.0f}'.format(r.premium_per_lot) if r.premium_per_lot else '—' }}</td>
+        {% if sg %}{% if r.est %}<td class="num good">{{ r.est.t1 }} <span class="small">({{ '%+.0f'|format(r.est_pct.t1) }}%)</span></td>
+        <td class="num good">{{ r.est.t2 }} <span class="small">({{ '%+.0f'|format(r.est_pct.t2) }}%)</span></td>
+        <td class="num bad">{{ r.est.stop }} <span class="small">({{ '%+.0f'|format(r.est_pct.stop) }}%)</span></td>
+        <td class="num">{{ r.reward_risk if r.reward_risk is not none else '—' }}</td>{% else %}<td colspan="4" class="small">no IV (no two-sided quote)</td>{% endif %}{% endif %}
+      </tr>{% endfor %}
+    </table></div>
+    <div class="small" style="margin-top:6px">@T1/@T2/@Stop = estimated option price if the MCX future reaches that level by the exit session (Black-76, today's IV, time decay for the hold). Bid/ask are live Kite quotes; your fill decides the real number. Final strike choice is yours.</div>
+    {% elif mx_.options_error %}<div class="small warn" style="margin-top:8px">{{ mx_.options_error }}</div>{% endif %}
+  {% endif %}
+</div>
+
 <div class="grid2">
   <div class="card">
-    <h2>Signal at last settled close · {{ i.weekday }} {{ i.date }}</h2>
-    {% if not i.in_season %}<div class="warn small" style="margin-bottom:8px">Outside Oct–Feb: the playbook was researched on winter only.</div>{% endif %}
-    {% if st.signal %}{% set s = st.signal %}
-      <div class="sig"><div class="side {{ s.side }}">{{ s.side }}</div>
-        <div><b>{{ s.leg }}</b><div class="small">hold {{ s.hold }} session{{ 's' if s.hold > 1 }} · strike ATM or 1 ITM · σ<sub>h</sub> {{ s.sigma_h_pct }}%</div></div></div>
-      <div class="lv">
-        <div><div class="l">Entry (NYMEX $)</div><div class="v">{{ i.close }}</div></div>
-        <div><div class="l">Target 1 (0.5σ<sub>h</sub>)</div><div class="v">{{ s.t1 }}</div></div>
-        <div><div class="l">Target 2 (1σ<sub>h</sub>)</div><div class="v">{{ s.t2 }}</div></div>
-        <div><div class="l">Stop</div><div class="v">{{ s.stop }}</div></div>
-      </div>
-      {% if s.mcx %}<div class="lv">
-        <div><div class="l">≈ MCX ₹ entry</div><div class="v">{{ s.mcx.entry }}</div></div>
-        <div><div class="l">≈ ₹ T1</div><div class="v">{{ s.mcx.t1 }}</div></div>
-        <div><div class="l">≈ ₹ T2</div><div class="v">{{ s.mcx.t2 }}</div></div>
-        <div><div class="l">≈ ₹ stop</div><div class="v">{{ s.mcx.stop }}</div></div>
-      </div><div class="small" style="margin-top:6px">₹ = NYMEX × USDINR ({{ i.usdinr }}). Check against the live MCX NATURALGAS future; use the same % distances.</div>{% endif %}
-    {% else %}
-      <div class="sig"><div class="side none">NO TRADE</div><div class="small">Next check: {{ st.next_check }}</div></div>
-    {% endif %}
-    {% if i.partial_bar_hidden %}<div class="small warn" style="margin-top:8px">Today's NYMEX bar is still trading; signal uses the last settled close.</div>{% endif %}
+    <h2>NYMEX reference (what the backtest uses)</h2>
+    {% set ref = st.signal %}
+    <div class="kpis">
+      <div class="kpi"><div class="v">{{ i.close }}</div><div class="l">NG=F {{ 'live' if i.live_bar else 'settled' }} ($) · ≈ ₹{{ i.mcx_equiv or '—' }}</div></div>
+      {% if ref %}<div class="kpi"><div class="v">{{ ref.nymex.t1 }} / {{ ref.nymex.t2 }}</div><div class="l">T1 / T2 ($)</div></div>
+      <div class="kpi"><div class="v">{{ ref.nymex.stop }}</div><div class="l">stop ($)</div></div>{% endif %}
+    </div>
+    {% if st.settled and st.today and st.settled.date != st.today.date %}<div class="small" style="margin-top:8px">Last settled close ({{ st.settled.weekday }} {{ st.settled.date }}): {{ st.settled.side }} · {{ st.settled.leg }}</div>{% endif %}
+    {% if st.live_price_error %}<div class="small warn" style="margin-top:6px">Live NYMEX price refresh failed: {{ st.live_price_error }}</div>{% endif %}
   </div>
   <div class="card">
     <h2>Inputs</h2>
     <div class="kpis">
-      <div class="kpi"><div class="v">{{ i.close }}</div><div class="l">NG close ($) · ≈ ₹{{ i.mcx_equiv or '—' }}</div></div>
       <div class="kpi"><div class="v">{{ i.sigma_d_pct }}%</div><div class="l">daily σ (20 sessions)</div></div>
       <div class="kpi"><div class="v {{ 'good' if (i.oi_chg or 0) < 0 else 'bad' }}">{{ '%+.2f'|format(i.oi_chg * 100) ~ '%' if i.oi_chg is not none else '—' }}</div><div class="l">CFTC open interest, {{ st.settings.oi_weeks }}-week change</div></div>
       <div class="kpi"><div class="v">{{ '%+.2f'|format(i.r3s) if i.r3s is not none else '—' }}</div><div class="l">3-day move (σ units)</div></div>
@@ -135,7 +181,22 @@ ul.notes{margin:0;padding-left:18px}ul.notes li{margin:3px 0}
 </div>
 
 <div class="card">
-  <h2>Paper ledger · forward test {% if st.ledger_summary.n %}· {{ st.ledger_summary.n }} closed: direction {{ st.ledger_summary.dir_hit }}%, +1σ first {{ (st.ledger_summary.first_touch ~ '%') if st.ledger_summary.first_touch is not none else '— (no σ level hit yet)' }}{% endif %}</h2>
+  <h2>MCX paper ledger · real MCX future + suggested option {% set ms = st.mcx_ledger_summary %}{% if ms.n %}· {{ ms.n }} closed: future direction {{ ms.fut_dir_hit }}%{% if ms.opt_win is not none %}, option up {{ ms.opt_win }}% (avg {{ '%+.1f'|format(ms.opt_avg_pct) }}%){% endif %}{% endif %}</h2>
+  {% if st.mcx_ledger %}
+  <div class="tbl"><table><tr><th>Date</th><th>Leg</th><th>Side</th><th>Future</th><th class="num">Entry ₹</th><th>Option</th><th class="num">Entry mid</th><th>Exit</th><th class="num">Fut move</th><th class="num">Option</th></tr>
+  {% for r in st.mcx_ledger %}<tr><td>{{ r.date }} <span class="small">{{ r.snapshot_ist }}</span></td><td>{{ r.leg }}</td><td class="{{ r.side }}"><b>{{ r.side }}</b></td>
+    <td class="small">{{ r.fut.tradingsymbol }}</td><td class="num">{{ r.fut.entry }}</td>
+    <td class="small">{{ r.option.tradingsymbol if r.option else '—' }}</td><td class="num">{{ r.option.entry_mid if r.option else '—' }}</td>
+    {% if r.exit %}<td class="small">{{ r.exit.date }}</td><td class="num {{ 'good' if r.exit.fut_pct > 0 else 'bad' }}">{{ '%+.2f'|format(r.exit.fut_pct) }}%</td>
+    <td class="num {{ 'good' if (r.exit.option_pct or 0) > 0 else 'bad' }}">{{ ('%+.1f'|format(r.exit.option_pct) ~ '%') if r.exit.option_pct is not none else '—' }}</td>
+    {% else %}<td class="small" colspan="3">open</td>{% endif %}</tr>{% endfor %}
+  </table></div>
+  <div class="small" style="margin-top:6px">Recorded when this page is open from {{ '%02d:%02d'|format(st.settings.entry_from_hour|int, ((st.settings.entry_from_hour % 1) * 60)|round|int) }} IST until the MCX close on a signal day (last view wins). Scored the day after the exit session from Kite day closes.</div>
+  {% else %}<div class="small">Nothing yet. Open this page between {{ '%02d:%02d'|format(st.settings.entry_from_hour|int, ((st.settings.entry_from_hour % 1) * 60)|round|int) }} IST and the MCX close on a signal day to record the MCX entry.</div>{% endif %}
+</div>
+
+<div class="card">
+  <h2>NYMEX paper ledger · forward test {% if st.ledger_summary.n %}· {{ st.ledger_summary.n }} closed: direction {{ st.ledger_summary.dir_hit }}%, +1σ first {{ (st.ledger_summary.first_touch ~ '%') if st.ledger_summary.first_touch is not none else '— (no σ level hit yet)' }}{% endif %}</h2>
   {% if st.ledger %}
   <div class="tbl"><table><tr><th>Date</th><th>Leg</th><th>Side</th><th class="num">Hold</th><th class="num">Entry</th><th class="num">T1</th><th class="num">T2</th><th class="num">Stop</th><th>Result</th></tr>
   {% for r in st.ledger %}<tr><td>{{ r.date }}</td><td>{{ r.leg }}</td><td class="{{ r.side }}"><b>{{ r.side }}</b></td><td class="num">{{ r.hold }}</td><td class="num">{{ r.entry }}</td><td class="num">{{ r.t1 }}</td><td class="num">{{ r.t2 }}</td><td class="num">{{ r.stop }}</td>
@@ -159,6 +220,12 @@ ul.notes{margin:0;padding-left:18px}ul.notes li{margin:3px 0}
     <label>Target 2 (× σh)<input name="t2" type="number" step="0.1" value="{{ s.t2 }}"></label>
     <label>Stop (× σh)<input name="stop" type="number" step="0.1" value="{{ s.stop }}"></label>
     <label>Auto-refresh after (hours)<input name="refresh_hours" type="number" step="0.5" value="{{ s.refresh_hours }}"></label>
+    <label>MCX contract<select name="mcx_symbol">{% for o in ['NATURALGAS', 'NATGASMINI'] %}<option {{ 'selected' if s.mcx_symbol == o }}>{{ o }}</option>{% endfor %}</select></label>
+    <label>Roll future (days before expiry)<input name="mcx_roll_days" type="number" min="0" max="10" value="{{ s.mcx_roll_days }}"></label>
+    <label>Min days to option expiry<input name="opt_min_days" type="number" min="0" max="30" value="{{ s.opt_min_days }}"></label>
+    <label>Max option spread (%)<input name="max_spread_pct" type="number" step="0.5" value="{{ s.max_spread_pct }}"></label>
+    <label>MCX ledger from (IST hour)<input name="entry_from_hour" type="number" step="0.25" value="{{ s.entry_from_hour }}"></label>
+    <label>Live NYMEX price refresh (min)<input name="live_price_minutes" type="number" step="1" value="{{ s.live_price_minutes }}"></label>
     <label class="cb"><input type="checkbox" name="leg_mon" {{ 'checked' if s.leg_mon }}> Monday leg</label>
     <label class="cb"><input type="checkbox" name="leg_wed" {{ 'checked' if s.leg_wed }}> Wednesday leg</label>
     <label class="cb"><input type="checkbox" name="leg_fri" {{ 'checked' if s.leg_fri }}> Friday leg</label>
