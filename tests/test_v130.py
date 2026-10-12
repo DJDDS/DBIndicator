@@ -32,9 +32,10 @@ def _mk(**kw):
 
 def test_gate_open_takes_top_two_and_applies_quiet_filter():
     X = _X([dict(sym="A", ps=9), dict(sym="B", ps=8, r5=0.01), dict(sym="C", ps=7)])
-    plan = rules.evening_plan(X, _mk(), {"open": True}, {"mode": "G"})
+    plan = rules.evening_plan(X, _mk(), {"open": True}, {"mode": "G", "fill_to_rank": 0})
     assert [p["sym"] for p in plan["picks"]] == ["A"]
     assert plan["rejected"][0]["sym"] == "B" and "quiet" in plan["rejected"][0]["reasons"][0]
+    assert [p["sym"] for p in rules.evening_plan(X, _mk(), {"open": True}, {"mode": "G"})["picks"]] == ["A", "C"]   # default fills rank 3
 
 
 def test_closed_gate_only_takes_big_top_pick():
@@ -185,3 +186,22 @@ def test_missing_ban_file_marks_picks_unchecked_and_entry_skips_banned(tmp_path,
     assert sw.run_entry(K(), today) == 1
     assert st["positions"][0]["status"] == "SKIPPED" and "ban" in st["positions"][0]["skip_reason"]
     assert st["positions"][1]["status"] == "OPEN" and st["positions"][1]["ban_unchecked"] is False
+
+
+def test_fill_to_rank_replaces_vetoed_top_picks_only_when_set():
+    X = _X([dict(sym="A", ps=9), dict(sym="B", ps=8), dict(sym="C", ps=7), dict(sym="D", ps=6)])
+    off = rules.evening_plan(X, _mk(), {"open": True}, {"mode": "G", "fill_to_rank": 0}, ban_next={"A"})
+    assert [p["sym"] for p in off["picks"]] == ["B"]
+    on = rules.evening_plan(X, _mk(), {"open": True}, {"mode": "G", "fill_to_rank": 3}, ban_next={"A"})
+    assert [p["sym"] for p in on["picks"]] == ["B", "C"] and on["picks"][1]["rank"] == 3
+    assert [p["sym"] for p in rules.evening_plan(X, _mk(), {"open": True}, {"mode": "G", "fill_to_rank": 3})["picks"]] == ["A", "B"]
+
+
+def test_seven_day_high_exit_window_setting():
+    from app.v130_swing import evaluate_exit
+    s0 = rules.resolved({"h7_window": "since_entry"}); s1 = rules.resolved({"h7_window": "with_pre_entry"})
+    prior = [110, 108, 106, 104, 102, 100]            # bought after a dip
+    path_c, path_h = [99, 100, 101, 103], [100, 101, 102, 104]
+    assert evaluate_exit(100, path_c, path_h, s0, prior=prior)[:2] == ("SEVEN_DAY_HIGH_CLOSE", 100)     # first up-close
+    assert evaluate_exit(100, path_c, path_h, s1, prior=prior)[0] is None                                # still below the pre-dip closes
+    assert evaluate_exit(100, [99, 104.5], [100, 105], s1, prior=[104, 103, 102, 101, 100, 99])[:2] == ("SEVEN_DAY_HIGH_CLOSE", 104.5)

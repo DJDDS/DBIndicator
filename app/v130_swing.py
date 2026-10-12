@@ -401,13 +401,17 @@ def run_options(kite, today: dt.date | None = None) -> int:
     save_state(st); return n
 
 
-def evaluate_exit(entry: float, closes: list, highs: list, s: dict) -> tuple[str | None, float | None, int]:
-    """Research exit A on the price path since entry (index 0 = entry day). Returns (reason, exit_price, sessions_held)."""
+def evaluate_exit(entry: float, closes: list, highs: list, s: dict, prior: list | None = None) -> tuple[str | None, float | None, int]:
+    """Research exit A on the price path since entry (index 0 = entry day). Returns (reason, exit_price, sessions_held).
+    prior = closes of the sessions before the entry day (oldest first); used when s['h7_window'] == 'with_pre_entry'."""
+    pre = [x for x in (prior or []) if x is not None][-6:] if s.get('h7_window') == 'with_pre_entry' else []
+    path = pre + list(closes); off = len(pre)
     for k, (c, h) in enumerate(zip(closes, highs)):
         if h is not None and h >= entry * (1 + s['target']): return 'TARGET', round(entry * (1 + s['target']), 2), k + 1
         if c is None: continue
         if c <= entry * (1 - s['stop_close']): return 'STOP_CLOSE', c, k + 1
-        if k >= 1 and c >= max(x for x in closes[max(0, k - 6):k + 1] if x is not None): return 'SEVEN_DAY_HIGH_CLOSE', c, k + 1
+        i = off + k
+        if k >= 1 and c >= max(x for x in path[max(0, i - 6):i + 1] if x is not None): return 'SEVEN_DAY_HIGH_CLOSE', c, k + 1
         if k + 1 >= s['max_days']: return 'TIME', c, k + 1
     return None, None, len(closes)
 
@@ -417,9 +421,12 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
     inst = {r['tradingsymbol']: r['instrument_token'] for r in kite.instruments('NSE')}
     for p in st['positions']:
         if p['status'] != 'OPEN' or p['sym'] not in inst: continue
-        d = _kite_daily(kite, inst[p['sym']], dt.date.fromisoformat(p['entry_day']), today)
+        ent = dt.date.fromisoformat(p['entry_day'])
+        d = _kite_daily(kite, inst[p['sym']], ent - dt.timedelta(days=16), today)
         if not len(d): continue
-        reason, px, held = evaluate_exit(p['entry_price'], d.close.tolist(), d.high.tolist(), s)
+        pre = d[d.index < pd.Timestamp(ent)]; d = d[d.index >= pd.Timestamp(ent)]
+        if not len(d): continue
+        reason, px, held = evaluate_exit(p['entry_price'], d.close.tolist(), d.high.tolist(), s, prior=pre.close.tolist())
         p['last_close'] = float(d.close.iloc[-1]); p['sessions_held'] = int(held)
         p['mark_pct'] = round(p['last_close'] / p['entry_price'] - 1, 4)
         for ins in p['instruments']:

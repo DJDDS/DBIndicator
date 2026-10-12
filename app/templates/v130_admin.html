@@ -303,6 +303,8 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
     <label>Max open positions<input name="max_open" value="{{ status.settings.max_open }}"></label>
     <label>Call max spread %<input name="call_max_spread_pct" value="{{ status.settings.call_max_spread_pct }}"></label>
     <label>Bad-news veto<select name="news_veto"><option value="true" {{ 'selected' if status.settings.news_veto }}>on</option><option value="false" {{ 'selected' if not status.settings.news_veto }}>off</option></select></label>
+    <label>Fill vetoed picks down to rank<input name="fill_to_rank" value="{{ status.settings.fill_to_rank }}" title="0 or 2 = top picks only. 3 = replay 2019-26 best (rank-3 fills +2.3%/trade, 82% win)"></label>
+    <label>7-day-high early exit counts<select name="h7_window"><option value="since_entry" {{ 'selected' if status.settings.h7_window != 'with_pre_entry' }}>closes since entry (original)</option><option value="with_pre_entry" {{ 'selected' if status.settings.h7_window == 'with_pre_entry' }}>last 7 sessions incl. before entry (replay: better)</option></select></label>
     <label>&nbsp;<button type="submit">Save settings</button></label>
   </form>
 </div>

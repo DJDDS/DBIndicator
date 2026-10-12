@@ -1432,6 +1432,8 @@ def api_v130_settings():
     for k, v in raw.items():
         if k in ("mode", "normal_instrument"):
             clean[k] = str(v).upper()
+        elif k == "h7_window":
+            if str(v) in ("since_entry", "with_pre_entry"): clean[k] = str(v)
         elif k == "news_veto":
             clean[k] = str(v).lower() in ("1", "true", "on", "yes")
         else:
