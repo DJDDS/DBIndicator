@@ -332,8 +332,13 @@ def dashboard_summary():
     for name,label in DASH_INDICES:
         sm=_summary(name,now)
         if sm.get('price') is None: continue
+        bars=[(str(b.get('date'))[:10],a.finite(b.get('close'))) for b in _history(name)[-66:]]
+        hist=[[d,round(c,2)] for d,c in bars if c is not None]
+        today=now.date().isoformat()
+        if hist and hist[-1][0]<today and a.finite(sm.get('price')) is not None and now.weekday()<5 and now.time()>=dt.time(9,15):
+            hist.append([today,r2(sm.get('price'))])           # today's live point on the line
         idx.append({'name':name,'label':label,'price':r2(sm.get('price')),'r':{q:r2((sm.get('returns') or {}).get(q)) for q in COMPARE},
-                    'd':_day_ohlc(name,now),'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None)})
+                    'd':_day_ohlc(name,now),'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []
