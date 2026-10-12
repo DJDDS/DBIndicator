@@ -994,7 +994,7 @@ button, a, summary, input, select { touch-action: manipulation; }
     <strong style="color:#c9d3dc">Hidden (failed live/forward checks, 1 Oct 2026):</strong>
     Skew desk &amp; recorder (116-day OOS: +1 bps/day) · Tactical Option Console (379 episodes, 0.0%, median 44 s) ·
     Opportunity radar / decision console (2,500 picks, no edge) · Event early detection (all families negative after cost) ·
-    Continuation watch (32% vs 33% break-even). Recorders keep collecting. <a href="/?show_retired=1">Show retired panels</a>
+    Continuation watch (32% vs 33% break-even). All recorder panels (option edge, index volatility, Trial 25, skew, Math, CALL V1) are hidden by request. Recorders keep collecting. <a href="/?show_retired=1">Show retired panels</a>
   </div>
   {% endif %}
   <section id="skew-opportunity-desk"{% if not show_retired %} hidden data-retired="1"{% endif %} class="skew-opportunity" aria-label="Production research skew opportunity desk">
@@ -1050,8 +1050,8 @@ button, a, summary, input, select { touch-action: manipulation; }
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Directional Spots"><span>Directional spots</span><strong id="v123-kpi-building">0</strong><small>locked regime · pre-entry only</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
-      <div class="focus-kpi"><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
-      <div class="focus-kpi"><span>CALL V1 recorder</span><strong id="v123-kpi-callrec">WAIT</strong><small id="v123-kpi-callrec-sub">live bid/ask forward validation</small></div>
+      <div class="focus-kpi"{% if not show_retired %} hidden data-retired="1"{% endif %}><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
+      <div class="focus-kpi"{% if not show_retired %} hidden data-retired="1"{% endif %}><span>CALL V1 recorder</span><strong id="v123-kpi-callrec">WAIT</strong><small id="v123-kpi-callrec-sub">live bid/ask forward validation</small></div>
     </div>
 
     <div class="focus-workspace">
@@ -1142,7 +1142,7 @@ button, a, summary, input, select { touch-action: manipulation; }
   {% set v12o = v12_option_recorder|default({}) %}
   {% set v12e = v12_earnings|default({}) %}
   {% set v12t25 = v12_trial25_status|default('LOCKED — FORWARD FEASIBILITY REQUIRED') %}
-  <section id="v12-option-recorder" class="card v12-card" aria-label="V12 option edge recorder">
+  <section id="v12-option-recorder"{% if not show_retired %} hidden data-retired="1"{% endif %} class="card v12-card" aria-label="V12 option edge recorder">
     <div class="v12-head">
       <div><div class="v12-kicker">V12 · TOMORROW'S VALIDATED EDGE</div>
       <h2>Forward Option Edge Recorder <span class="sub">09:30 · 13:00 · 15:10 PRE-CAS · 15:37 POST-CAS IST</span></h2></div>
@@ -1203,7 +1203,7 @@ button, a, summary, input, select { touch-action: manipulation; }
 
   {% set t25 = trial25_shadow|default({}) %}
   {% set t25stale = t25.get('stale_audit') or {} %}
-  <section id="trial25-stage-d" class="card v12-card" aria-label="Trial 25 earnings volatility Stage D shadow recorder">
+  <section id="trial25-stage-d"{% if not show_retired %} hidden data-retired="1"{% endif %} class="card v12-card" aria-label="Trial 25 earnings volatility Stage D shadow recorder">
     <div class="v12-head">
       <div><div class="v12-kicker">TRIAL 25 · EARNINGS VOLATILITY · STAGE D</div>
       <h2>Shadow Event Recorder <span class="sub">defined-risk iron butterfly · 15:10 entry · 09:30 post-event exit · no efficacy peeking</span></h2></div>
@@ -1237,7 +1237,7 @@ button, a, summary, input, select { touch-action: manipulation; }
   {% set v121i = v121_index_vol|default({}) %}
   {% set v121b = v121_backup|default({}) %}
   {% set v121d = v121_development|default({}) %}
-  <section id="v121-index-recorder" class="card v12-card" aria-label="V12.1 index volatility recorder and feasibility lab">
+  <section id="v121-index-recorder"{% if not show_retired %} hidden data-retired="1"{% endif %} class="card v12-card" aria-label="V12.1 index volatility recorder and feasibility lab">
     <div class="v12-head">
       <div><div class="v12-kicker">V12.1 · NIFTY INDEX VOLATILITY · DEVELOPMENT ONLY · NOT VALIDATED</div>
       <h2>Index Volatility Recorder &amp; Feasibility Lab <span class="sub">nearest weekly NIFTY expiry · WebSocket FULL mode · 5s top-of-book · 60s full depth</span></h2></div>
@@ -1390,7 +1390,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       {% endif %}
       {% set ev = event_early_evidence or {} %}
       {% set evstage = ev.get('by_stage', {}) %}
-      <div class="event-evidence">
+      <div class="event-evidence"{% if not show_retired %} hidden data-retired="1"{% endif %}>
         <span class="sub"><strong>Live evidence recorder:</strong> {{ ev.get('events', 0) }} first-stage events captured. Synthetic audit evidence is not treated as proof; this recorder measures what actually happens 5m/15m/30m/60m after PRESSURE SHIFT, READY and BREAK ACCEPTED.</span>
         {% if ev.get('events', 0) %}
         <div class="sl-tags" style="margin-top:8px;">
@@ -2661,6 +2661,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       if (lastScan) lastScan.textContent = 'Success ' + (state.last_scan || 'waiting for first scan...');
       if (lastAttempt) lastAttempt.textContent = 'Attempt ' + (state.last_scan_attempt || '—');
       if (scanStatus) scanStatus.textContent = 'Scanner ' + (state.scan_status || 'WAITING');
+      if (window.__dbiPulse) window.__dbiPulse(state);
       renderScanFailures(state.scan_failures, state.valid_scanned, state.total_scanned);
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);

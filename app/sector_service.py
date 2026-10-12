@@ -323,7 +323,7 @@ EXTRA_INDICES=('INDIA VIX',)       # quoted with the sectors for the dashboard i
 DASH_INDICES=(('NIFTY 50','NIFTY 50'),('NIFTY BANK','BANK NIFTY'),('NIFTY FINANCIAL SERVICES','FIN NIFTY'),('INDIA VIX','INDIA VIX'),('NIFTY IT','NIFTY IT'))
 
 
-def dashboard_summary():
+def dashboard_summary(lite=False):
     """Light payload for the main dashboard: index cards, sector performance and a per-stock price map (watchlist),
     all derived from the cached sector overview (no extra Kite calls)."""
     ov=overview(); now=scanner.now_ist()
@@ -339,6 +339,8 @@ def dashboard_summary():
             hist.append([today,r2(sm.get('price'))])           # today's live point on the line
         idx.append({'name':name,'label':label,'price':r2(sm.get('price')),'r':{q:r2((sm.get('returns') or {}).get(q)) for q in COMPARE},
                     'd':_day_ohlc(name,now),'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
+    if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
+        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx}
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []

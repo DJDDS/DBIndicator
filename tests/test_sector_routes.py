@@ -246,6 +246,9 @@ def test_dashboard_summary_and_route(client, monkeypatch):
     assert 'INDIA VIX' in s.EXTRA_INDICES
     assert client.get('/api/sector-analysis/dashboard').status_code==401
     r=client.get('/api/sector-analysis/dashboard',headers=auth()); assert r.status_code==200 and 'INFY' in r.get_json()['stocks']
+    lite=client.get('/api/sector-analysis/dashboard?lite=1',headers=auth()).get_json()          # scanner dashboard: index strip only
+    assert 'stocks' not in lite and 'sectors' not in lite and 'indices' in lite
+    assert all('hist' in i for i in lite['indices'])
 
 
 def test_close_quote_stays_valid_right_after_the_close():

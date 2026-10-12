@@ -1,3 +1,6 @@
+import copy
+import threading
+import time
 import datetime as dt
 import logging
 import json
@@ -11,6 +14,41 @@ from .background import get_state, start_background_scanner
 from .config import settings
 from .insights import generate_insights, insights_enabled
 from .oi_view import select_oi_screener_rows, oi_history_readiness, serialize_oi_screener_row, live_market_state, live_opportunity_radar, swing_research_console, overlay_tactical_radar, event_driven_early_radar
+
+
+# ---- dashboard speed: the two dashboard endpoints (polled together every few seconds) ask for the same heavy
+# summaries of the same scan rows. Share one result for a few seconds instead of computing it twice per cycle. ----
+_MEMO_TTL = 3.0
+_memo_store = {}
+_memo_lock = threading.Lock()
+
+
+def _memoized(fn):
+    def wrapper(first, *args, **kw):
+        try:
+            key = (fn.__name__, id(first), len(first) if hasattr(first, "__len__") else 0, repr(args), repr(sorted(kw.items())))
+        except Exception:  # noqa: BLE001
+            return fn(first, *args, **kw)
+        now = time.monotonic()
+        with _memo_lock:
+            hit = _memo_store.get(key)
+            if hit and now - hit[0] < _MEMO_TTL:
+                return copy.deepcopy(hit[2])
+        value = fn(first, *args, **kw)
+        with _memo_lock:
+            for k in [k for k, v in _memo_store.items() if now - v[0] >= _MEMO_TTL]:
+                del _memo_store[k]
+            _memo_store[key] = (now, first, copy.deepcopy(value))      # `first` is kept so its id cannot be reused while cached
+        return value
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
+live_market_state = _memoized(live_market_state)
+live_opportunity_radar = _memoized(live_opportunity_radar)
+swing_research_console = _memoized(swing_research_console)
+overlay_tactical_radar = _memoized(overlay_tactical_radar)
+event_driven_early_radar = _memoized(event_driven_early_radar)
 from .security import (
     AUDITOR, MEMBER, OWNER, current_role, install_security_headers,
     issue_kite_callback_token, kite_callback_cookie_secure,
@@ -860,7 +898,7 @@ def api_sector_analysis():
 @require_roles(OWNER, MEMBER)
 def api_sector_dashboard():
     sector_service.ensure_started()
-    return jsonify(sector_service.dashboard_summary())
+    return jsonify(sector_service.dashboard_summary(lite=request.args.get('lite') == '1'))
 
 
 @app.route("/api/sector-analysis/stock/<symbol>")
