@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import run  # noqa: F401  - register every route (as production does) before any test makes a request
 from app import commodity_desk as cd
 from app import security, web
 
@@ -22,6 +23,8 @@ def client(monkeypatch, store):
     monkeypatch.setenv("DBI_MEMBER_PASSWORD", "test-member-ng-password")
     monkeypatch.setattr(web, "_scanner_started", True)
     monkeypatch.setattr(cd, "maybe_refresh_async", lambda: None)   # never touch the network in tests
+    monkeypatch.setattr(cd, "refresh_price", lambda m: None)
+    monkeypatch.setattr(web.kite_auth, "get_kite_client", lambda: None)
     security._AUTH_FAILURES.clear()
     return web.app.test_client()
 
@@ -140,3 +143,122 @@ def test_refresh_endpoint_is_non_blocking(client, monkeypatch):
     monkeypatch.setattr(cd, "refresh_async", lambda: calls.append(1) or True)
     r = client.post("/api/commodity/refresh", headers=OWNER, json={})
     assert r.status_code == 200 and r.json["status"] == "STARTED" and calls == [1]
+
+
+# ------------------------------------------------------------------ MCX layer (fake Kite)
+import datetime as _dt
+
+
+class FakeKite:
+    def __init__(self, F=310.0, today=_dt.date(2025, 1, 15)):
+        self.F = F; self.today = today
+        sh = today - _dt.date(2025, 1, 15)                 # shift every expiry so "today" is always 2025-01-15-like
+        e1, e2 = _dt.date(2025, 1, 24) + sh, _dt.date(2025, 2, 24) + sh
+        self.rows = [{"tradingsymbol": "NATURALGAS25JANFUT", "instrument_token": 1, "name": "NATURALGAS", "instrument_type": "FUT",
+                      "strike": 0, "expiry": _dt.date(2025, 1, 27) + sh, "lot_size": 1250},
+                     {"tradingsymbol": "NATURALGAS25FEBFUT", "instrument_token": 2, "name": "NATURALGAS", "instrument_type": "FUT",
+                      "strike": 0, "expiry": _dt.date(2025, 2, 25) + sh, "lot_size": 1250}]
+        tok = 10
+        for e in (e1, e2):
+            for k in range(280, 345, 5):
+                for t in ("CE", "PE"):
+                    tok += 1
+                    self.rows.append({"tradingsymbol": f"NATURALGAS{e:%y%b}{k}{t}".upper(), "instrument_token": tok, "name": "NATURALGAS",
+                                      "instrument_type": t, "strike": float(k), "expiry": e, "lot_size": 1250})
+        self.rows.append({"tradingsymbol": "CRUDEOIL25JANFUT", "instrument_token": 99, "name": "CRUDEOIL", "instrument_type": "FUT",
+                          "strike": 0, "expiry": _dt.date(2025, 1, 20), "lot_size": 100})
+
+    def instruments(self, exch):
+        assert exch == "MCX"
+        return self.rows
+
+    def quote(self, syms):
+        from app.commodity_mcx import b76
+        out = {}
+        for s in syms:
+            sym = s.split(":")[1]
+            r = next(x for x in self.rows if x["tradingsymbol"] == sym)
+            if r["instrument_type"] == "FUT":
+                px = self.F
+            else:
+                T = max((r["expiry"] - self.today).days, 1) / 365
+                px = round(b76(self.F, r["strike"], T, 0.6, r["instrument_type"] == "CE"), 2)
+            out[s] = {"last_price": px, "oi": 1000, "volume": 10, "ohlc": {"close": self.F * 0.99},
+                      "depth": {"buy": [{"price": round(px * 0.99, 2)}], "sell": [{"price": round(px * 1.01, 2)}]}}
+        return out
+
+    def historical_data(self, token, a, b, interval):
+        return [{"date": _dt.datetime.combine(a, _dt.time()), "close": 300.0 if token < 10 else 9.0}]
+
+
+def test_mcx_snapshot_picks_contracts_levels_and_option(store):
+    from app import commodity_mcx as m
+    s = {**cd.DEFAULTS}
+    now = _dt.datetime(2025, 1, 15, 22, 45)
+    snap = m.snapshot(FakeKite(), s, -1, 2, 0.03, now)
+    assert snap["future"]["tradingsymbol"] == "NATURALGAS25JANFUT"           # 12 days to expiry > roll_days
+    assert snap["option_expiry"] == "2025-01-24"
+    L = snap["levels"]; assert L["entry"] == 310.0 and L["t1"] < 310 < L["stop"]  # PUT: targets below, stop above
+    assert all(r["type"] == "PE" for r in snap["chain"]) and len(snap["chain"]) == 5
+    atm = next(r for r in snap["chain"] if r["label"] == "ATM"); assert atm["strike"] == 310.0
+    itm1 = next(r for r in snap["chain"] if r["label"] == "ITM1"); assert itm1["strike"] == 315.0   # higher strike is ITM for a put
+    assert 50 < atm["iv_pct"] < 70 and atm["delta"] < 0
+    assert atm["est"]["t1"] > atm["mid"] > atm["est"]["stop"]                 # put gains if the future falls to T1
+    assert snap["suggested"]["label"] == "ATM"
+
+
+def test_mcx_roll_and_expiry_rules():
+    from app import commodity_mcx as m
+    k = FakeKite()
+    rows = [{"tradingsymbol": r["tradingsymbol"], "name": r["name"], "type": r["instrument_type"], "strike": r["strike"],
+             "expiry": str(r["expiry"]), "lot_size": r["lot_size"]} for r in k.rows]
+    assert m.pick_future(rows, "NATURALGAS", _dt.date(2025, 1, 26), 2)["tradingsymbol"] == "NATURALGAS25FEBFUT"   # 1 day left -> roll
+    assert str(m.pick_option_expiry(rows, "NATURALGAS", _dt.date(2025, 1, 22), 4)) == "2025-02-24"               # 2 days left -> next
+
+
+def test_suggest_steps_to_itm_when_atm_spread_is_wide():
+    from app import commodity_mcx as m
+    chain = [{"label": "ATM", "tradingsymbol": "A", "mid": 10, "spread_pct": 8.0},
+             {"label": "ITM1", "tradingsymbol": "B", "mid": 14, "spread_pct": 2.0}]
+    assert m.suggest(chain, 3.0)["label"] == "ITM1"
+    assert m.suggest([{"label": "ATM", "tradingsymbol": "A", "mid": 10, "spread_pct": 9}], 3.0)["label"] is None
+
+
+def test_status_with_kite_records_and_scores_mcx_ledger(store, monkeypatch):
+    _synthetic(store)
+    monkeypatch.setattr(cd, "refresh_price", lambda m: None)
+    ng = pd.read_csv(store / "ng.csv", parse_dates=["date"])
+    last = ng.date.max()                                   # treat the last bar as today's in-progress bar
+    monkeypatch.setattr(cd, "_settled", lambda f: f.iloc[:-1])
+    st = cd.status(kite=FakeKite(today=last.date()), now_ist=_dt.datetime.combine(last.date(), _dt.time(22, 50)))
+    assert "error" not in st["mcx"], st["mcx"]
+    assert st["signal"] is not None, "synthetic last bar should carry a signal; pick another seed/day"
+    if st["signal"]:
+        assert st["signal"]["provisional"] is True and st["mcx"]["levels"]["entry"] == 310.0
+        assert cd._mcx_ledger()[-1]["date"] == str(last.date())
+        later = _dt.datetime.combine((last + pd.offsets.BDay(4)).date(), _dt.time(10, 0))
+        cd.score_mcx_ledger(FakeKite(today=last.date()), later)
+        assert "exit" in cd._mcx_ledger()[-1]
+
+
+def test_page_without_kite_shows_login_hint(client, store):
+    _synthetic(store)
+    r = client.get("/admin/commodity", headers=OWNER)
+    assert r.status_code == 200 and b"Kite login required" in r.data
+
+
+def test_settled_drops_in_progress_bar_including_next_day_evening_session():
+    from datetime import datetime, timezone
+    idx = pd.to_datetime(["2026-10-08", "2026-10-09", "2026-10-12"])          # Thu, Fri, Mon
+    f = pd.DataFrame({"close": [1, 2, 3]}, index=idx)
+    utc = lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    # Sunday 19:30 NY (Mon 05:00 IST): Monday's bar has just opened -> not settled
+    assert cd._settled(f, utc("2026-10-11T23:30:00")).index[-1] == pd.Timestamp("2026-10-09")
+    # Monday 11:00 NY: still trading
+    assert cd._settled(f, utc("2026-10-12T15:00:00")).index[-1] == pd.Timestamp("2026-10-09")
+    # Monday 15:30 NY: settled
+    assert cd._settled(f, utc("2026-10-12T19:30:00")).index[-1] == pd.Timestamp("2026-10-12")
+    # winter (EST): 15:10 NY = 20:10 UTC -> settled; 14:50 NY -> not
+    g = pd.DataFrame({"close": [1]}, index=pd.to_datetime(["2026-12-14"]))
+    assert len(cd._settled(g, utc("2026-12-14T20:10:00"))) == 1
+    assert len(cd._settled(g, utc("2026-12-14T19:50:00"))) == 0

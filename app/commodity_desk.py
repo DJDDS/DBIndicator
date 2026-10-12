@@ -44,7 +44,15 @@ DEFAULTS = dict(
     leg_mon=True, leg_wed=True, leg_fri=True,
     t1=0.5, t2=1.0, stop=1.0,   # in units of sigma_h = close * sigma_d * sqrt(hold)
     refresh_hours=6.0,
+    # MCX layer
+    mcx_symbol="NATURALGAS",   # or NATGASMINI
+    mcx_roll_days=2,           # switch to the next future this many days before expiry
+    opt_min_days=4,            # option expiry must be at least this many calendar days away
+    max_spread_pct=3.0,        # suggested strike must have a bid/ask spread below this
+    entry_from_hour=22.5,      # IST hour from which the MCX paper ledger records today's entry snapshot
+    live_price_minutes=10,     # refresh the NYMEX intraday price on page load if older than this
 )
+MCX_SYMBOLS = ("NATURALGAS", "NATGASMINI")
 
 _lock = threading.Lock()
 _refresh_thread: threading.Thread | None = None
@@ -72,7 +80,13 @@ def save_settings(new: dict) -> dict:
             continue
         d = DEFAULTS[k]
         try:
-            cur[k] = bool(v) if isinstance(d, bool) else int(v) if isinstance(d, int) else float(v)
+            if isinstance(d, str):
+                v = str(v).strip().upper()
+                if k == "mcx_symbol" and v not in MCX_SYMBOLS:
+                    continue
+                cur[k] = v
+            else:
+                cur[k] = bool(v) if isinstance(d, bool) else int(v) if isinstance(d, int) else float(v)
         except (TypeError, ValueError):
             continue
     cur["oi_weeks"] = min(max(cur["oi_weeks"], 1), 12)
@@ -173,6 +187,22 @@ def refresh(force: bool = False) -> dict:
         except Exception as exc:  # pragma: no cover
             log.warning("commodity_desk ledger update failed: %s", exc)
         return meta
+
+
+def refresh_price(max_age_minutes: float) -> str | None:
+    """Merge the last ~3 months of NG=F daily bars (incl. today's in-progress bar) into the cache if it is stale.
+    Small, fast request so the page can show a provisional signal for today. Returns an error string or None."""
+    f = _p("ng.csv")
+    try:
+        if f.exists() and (time.time() - f.stat().st_mtime) < max_age_minutes * 60:
+            return None
+        new = _yahoo("NG=F", "3mo")
+        old = pd.read_csv(f, parse_dates=["date"]) if f.exists() else new.iloc[:0]
+        merged = pd.concat([old[old.date < new.date.min()], new]).drop_duplicates("date", keep="last").sort_values("date")
+        merged.to_csv(f, index=False)
+        return None
+    except Exception as exc:  # pragma: no cover - network dependent
+        return str(exc)[:200]
 
 
 def _meta() -> dict:
@@ -369,47 +399,83 @@ def update_ledger() -> None:
     _p("ledger.jsonl").write_text("\n".join(json.dumps(v) for v in sorted(led.values(), key=lambda x: x["date"])) + "\n")
 
 
-def _settled(f: pd.DataFrame) -> pd.DataFrame:
-    """Drop today's in-progress bar until NYMEX has settled (~14:30 ET; we wait to 15:00 ET)."""
+def _settled(f: pd.DataFrame, now_utc: datetime | None = None) -> pd.DataFrame:
+    """Drop the in-progress NYMEX bar. A session's bar (dated by its trade date) opens at 18:00 New York time the evening
+    before and settles ~14:30 NY; we treat it as settled from 15:00 NY. Uses the real New York clock (DST-aware)."""
     if f.empty:
         return f
-    et = datetime.now(timezone.utc) - timedelta(hours=4 if 3 <= datetime.now(timezone.utc).month <= 10 else 5)
-    if f.index[-1].date() >= et.date() and et.hour < 15:
+    from zoneinfo import ZoneInfo
+    ny = (now_utc or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    last = f.index[-1].date()
+    if last > ny.date() or (last == ny.date() and ny.hour < 15):
         return f.iloc[:-1]
     return f
 
 
 # ----------------------------------------------------------------------------- status for the page
-def status() -> dict:
-    s = load_settings(); meta = _meta()
+def _now_ist() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=5, minutes=30)
+
+
+def _signal_block(row, s: dict, usdinr: float | None, provisional: bool) -> dict | None:
+    side, leg, hold = leg_signal(row, s)
+    if not side:
+        return None
+    c, sig_d = float(row.close), float(row.sig)
+    sh = c * sig_d * np.sqrt(hold)
+    lv = lambda k: round(float(c + side * k * sh), 4)
+    return dict(side="CALL" if side > 0 else "PUT", side_n=side, leg=leg, hold=hold, date=str(row.name.date()), weekday=row.name.day_name(),
+                provisional=provisional, nymex=dict(entry=round(c, 4), t1=lv(s["t1"]), t2=lv(s["t2"]), stop=lv(-s["stop"])),
+                sigma_h_pct=round(float(sig_d * np.sqrt(hold) * 100), 2),
+                approx_inr=None if usdinr is None else {k: round(v * usdinr, 1) for k, v in
+                                                        dict(entry=c, t1=lv(s["t1"]), t2=lv(s["t2"]), stop=lv(-s["stop"])).items()})
+
+
+def status(kite=None, now_ist: datetime | None = None) -> dict:
+    s = load_settings(); now_ist = now_ist or _now_ist()
+    live_err = refresh_price(float(s["live_price_minutes"])) if float(s["live_price_minutes"]) > 0 else None
+    meta = _meta()
     ng, cot, hd, fc, fx = _read("ng.csv"), _read("cot.csv"), _read("hdd_obs.csv"), _read("hdd_fcst.csv"), _read("usdinr.csv")
     out = dict(engine="NG Winter weekly playbook (paper, spotting only - no orders)", storage=str(ROOT), settings=s,
-               meta=meta, robustness=ROBUSTNESS, refreshing=bool(_refresh_thread and _refresh_thread.is_alive()))
+               meta=meta, robustness=ROBUSTNESS, refreshing=bool(_refresh_thread and _refresh_thread.is_alive()),
+               live_price_error=live_err, now_ist=now_ist.strftime("%a %d %b %H:%M"))
     if ng is None or cot is None or hd is None:
         out["error"] = "No cached data yet - press Refresh data."
         return out
     f_all = features(ng, cot, hd.set_index("date").hdd, s)
     f = _settled(f_all)
     last = f.iloc[-1]; d = f.index[-1]
-    side, leg, hold = leg_signal(last, s)
     usdinr = float(fx.close.iloc[-1]) if fx is not None and len(fx) else None
-    sig_d = float(last.sig)
-    out["inputs"] = dict(date=str(d.date()), weekday=d.day_name(), close=round(float(last.close), 4), sigma_d_pct=round(sig_d * 100, 2),
-                         r3s=None if pd.isna(last.r3s) else round(float(last.r3s), 2),
-                         oi_chg=None if pd.isna(last.oi_chg) else round(float(last.oi_chg), 4),
-                         cold_z=None if pd.isna(last.cold_z) else round(float(last.cold_z), 2),
+    # Today's provisional signal: the NYMEX bar still trading (MCX closes before the NYMEX settle, so this is what gets traded)
+    today = _signal_block(f_all.iloc[-1], s, usdinr, True) if len(f_all) > len(f) else None
+    settled = _signal_block(last, s, usdinr, False)
+    primary = today if len(f_all) > len(f) else settled
+    cur = f_all.iloc[-1]; sig_d = float(cur.sig)
+    out["inputs"] = dict(date=str(f_all.index[-1].date()), weekday=f_all.index[-1].day_name(), close=round(float(cur.close), 4),
+                         sigma_d_pct=round(sig_d * 100, 2), r3s=None if pd.isna(cur.r3s) else round(float(cur.r3s), 2),
+                         oi_chg=None if pd.isna(cur.oi_chg) else round(float(cur.oi_chg), 4),
+                         cold_z=None if pd.isna(cur.cold_z) else round(float(cur.cold_z), 2),
                          usdinr=None if usdinr is None else round(usdinr, 2),
-                         mcx_equiv=None if usdinr is None else round(float(last.close) * usdinr, 1),
-                         in_season=d.month in WINTER, partial_bar_hidden=len(f_all) > len(f))
-    if side:
-        sh = float(last.close) * sig_d * np.sqrt(hold)
-        lv = lambda k: round(float(last.close + side * k * sh), 4)
-        out["signal"] = dict(side="CALL" if side > 0 else "PUT", leg=leg, hold=hold, t1=lv(s["t1"]), t2=lv(s["t2"]), stop=lv(-s["stop"]),
-                             sigma_h=round(float(sh), 4), sigma_h_pct=round(float(sig_d * np.sqrt(hold) * 100), 2),
-                             mcx=None if usdinr is None else {k: round(v * usdinr, 1) for k, v in
-                                                              dict(entry=float(last.close), t1=lv(s["t1"]), t2=lv(s["t2"]), stop=lv(-s["stop"])).items()})
-    nxt = {0: "Monday close (if no signal) -> next: Wednesday close", 1: "Wednesday close", 2: "Friday close", 3: "Friday close", 4: "Monday close"}
-    out["next_check"] = nxt[int(last.dow)] if not side else None
+                         mcx_equiv=None if usdinr is None else round(float(cur.close) * usdinr, 1),
+                         in_season=f_all.index[-1].month in WINTER, live_bar=len(f_all) > len(f), settled_date=str(d.date()))
+    out["today"] = today; out["settled"] = settled; out["signal"] = primary
+    out["trading_day_view"] = len(f_all) > len(f)
+    dow = int(cur.dow)
+    nxt = {0: "Wednesday close", 1: "Wednesday close", 2: "Friday close", 3: "Friday close", 4: "Monday close", 5: "Monday close", 6: "Monday close"}
+    out["next_check"] = None if primary else nxt.get(dow, "next session")
+    # ---- MCX live layer (preferred view)
+    if kite is None:
+        out["mcx"] = {"error": "Kite login required - log in on the dashboard to see MCX prices and the option chain."}
+    else:
+        try:
+            from . import commodity_mcx
+            out["mcx"] = commodity_mcx.snapshot(kite, s, primary["side_n"] if primary else None, primary["hold"] if primary else None, sig_d, now_ist)
+            if primary and primary.get("provisional") and "error" not in out["mcx"]:
+                record_mcx_entry(primary, out["mcx"], s, now_ist)
+            score_mcx_ledger(kite, now_ist)
+        except Exception as exc:  # fail-soft: the NYMEX view must still render
+            log.warning("commodity_desk mcx snapshot failed: %s", exc)
+            out["mcx"] = {"error": f"MCX data unavailable: {str(exc)[:160]}"}
     if fc is not None and len(fc):
         _, norm = hdd_anomaly_z(hd.set_index("date").hdd)
         fcs = fc.set_index("date").hdd
@@ -427,4 +493,71 @@ def status() -> dict:
                                  first_touch=round(sum(r["result"]["first_touch"] == 1 for r in done) /
                                                    sum(r["result"]["first_touch"] != 0 for r in done) * 100, 1)
                                  if any(r["result"]["first_touch"] != 0 for r in done) else None)
+    ml = _mcx_ledger()[-40:][::-1]
+    out["mcx_ledger"] = ml
+    sc = [r for r in ml if r.get("exit")]
+    opt = [r["exit"]["option_pct"] for r in sc if r["exit"].get("option_pct") is not None]
+    out["mcx_ledger_summary"] = dict(n=len(sc), fut_dir_hit=round(float(np.mean([r["exit"]["fut_dir_ok"] for r in sc]) * 100), 1) if sc else None,
+                                     opt_win=round(float(np.mean([p > 0 for p in opt]) * 100), 1) if opt else None,
+                                     opt_avg_pct=round(float(np.mean(opt)), 1) if opt else None)
     return out
+
+
+# ----------------------------------------------------------------------------- MCX paper ledger (real MCX prices)
+def _mcx_ledger() -> list[dict]:
+    f = _p("mcx_ledger.jsonl")
+    if not f.exists():
+        return []
+    return [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+
+
+def _write_mcx_ledger(rows: list[dict]) -> None:
+    _p("mcx_ledger.jsonl").write_text("\n".join(json.dumps(r) for r in sorted(rows, key=lambda x: x["date"])) + "\n")
+
+
+def record_mcx_entry(sig: dict, mcx: dict, s: dict, now_ist: datetime) -> None:
+    """Snapshot today's MCX future + suggested option from entry_from_hour IST until the MCX close (23:55); last view wins."""
+    hour = now_ist.hour + now_ist.minute / 60
+    if not (float(s["entry_from_hour"]) <= hour < 23.92) or now_ist.date() != pd.Timestamp(sig["date"]).date():
+        return
+    sug = (mcx.get("suggested") or {}).get("tradingsymbol")
+    opt = next((r for r in mcx.get("chain", []) if r["tradingsymbol"] == sug), None) if sug else None
+    rows = {r["date"]: r for r in _mcx_ledger()}
+    rows[sig["date"]] = dict(date=sig["date"], leg=sig["leg"], side=sig["side"], hold=sig["hold"], snapshot_ist=now_ist.strftime("%H:%M"),
+                             fut=dict(tradingsymbol=mcx["future"]["tradingsymbol"], token=mcx["future"].get("instrument_token"), entry=mcx["future"]["ltp"]),
+                             levels=mcx.get("levels"),
+                             option=None if not opt else dict(tradingsymbol=opt["tradingsymbol"], token=opt.get("instrument_token"),
+                                                              label=opt["label"], strike=opt["strike"], entry_mid=opt["mid"],
+                                                              lot_size=opt.get("lot_size"), iv_pct=opt.get("iv_pct")))
+    _write_mcx_ledger(list(rows.values()))
+
+
+def score_mcx_ledger(kite, now_ist: datetime, max_calls: int = 6) -> None:
+    """After the exit session has closed on MCX, fetch day closes of the future and option and store % moves."""
+    rows = _mcx_ledger(); changed = False; calls = 0
+    try:
+        from . import commodity_mcx
+        inst = {r["tradingsymbol"]: r.get("instrument_token") for r in commodity_mcx.instruments(kite, now_ist.date())}
+    except Exception:
+        return
+    for r in rows:
+        if r.get("exit") or calls >= max_calls:
+            continue
+        exit_d = (pd.Timestamp(r["date"]) + pd.offsets.BDay(int(r["hold"]))).date()
+        if now_ist.date() <= exit_d:          # score from the day after the exit session (MCX closes ~23:55 IST)
+            continue
+        side = 1 if r["side"] == "CALL" else -1
+        ftok = r["fut"].get("token") or inst.get(r["fut"]["tradingsymbol"])   # stored token survives the monthly roll
+        fc = commodity_mcx.day_close(kite, ftok, exit_d) if ftok else None; calls += 1
+        oc = None
+        if r.get("option") and r["option"].get("token"):
+            oc = commodity_mcx.day_close(kite, r["option"]["token"], exit_d); calls += 1
+        if fc is None:
+            continue
+        fut_pct = (fc / r["fut"]["entry"] - 1) * 100 * side
+        r["exit"] = dict(date=str(exit_d), fut_close=fc, fut_pct=round(fut_pct, 2), fut_dir_ok=bool(fut_pct > 0),
+                         option_close=oc, option_pct=round((oc / r["option"]["entry_mid"] - 1) * 100, 1)
+                         if oc is not None and r.get("option") and r["option"].get("entry_mid") else None)
+        changed = True
+    if changed:
+        _write_mcx_ledger(rows)
