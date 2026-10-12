@@ -399,12 +399,15 @@ def update_ledger() -> None:
     _p("ledger.jsonl").write_text("\n".join(json.dumps(v) for v in sorted(led.values(), key=lambda x: x["date"])) + "\n")
 
 
-def _settled(f: pd.DataFrame) -> pd.DataFrame:
-    """Drop today's in-progress bar until NYMEX has settled (~14:30 ET; we wait to 15:00 ET)."""
+def _settled(f: pd.DataFrame, now_utc: datetime | None = None) -> pd.DataFrame:
+    """Drop the in-progress NYMEX bar. A session's bar (dated by its trade date) opens at 18:00 New York time the evening
+    before and settles ~14:30 NY; we treat it as settled from 15:00 NY. Uses the real New York clock (DST-aware)."""
     if f.empty:
         return f
-    et = datetime.now(timezone.utc) - timedelta(hours=4 if 3 <= datetime.now(timezone.utc).month <= 10 else 5)
-    if f.index[-1].date() >= et.date() and et.hour < 15:
+    from zoneinfo import ZoneInfo
+    ny = (now_utc or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    last = f.index[-1].date()
+    if last > ny.date() or (last == ny.date() and ny.hour < 15):
         return f.iloc[:-1]
     return f
 
@@ -521,7 +524,7 @@ def record_mcx_entry(sig: dict, mcx: dict, s: dict, now_ist: datetime) -> None:
     opt = next((r for r in mcx.get("chain", []) if r["tradingsymbol"] == sug), None) if sug else None
     rows = {r["date"]: r for r in _mcx_ledger()}
     rows[sig["date"]] = dict(date=sig["date"], leg=sig["leg"], side=sig["side"], hold=sig["hold"], snapshot_ist=now_ist.strftime("%H:%M"),
-                             fut=dict(tradingsymbol=mcx["future"]["tradingsymbol"], entry=mcx["future"]["ltp"]),
+                             fut=dict(tradingsymbol=mcx["future"]["tradingsymbol"], token=mcx["future"].get("instrument_token"), entry=mcx["future"]["ltp"]),
                              levels=mcx.get("levels"),
                              option=None if not opt else dict(tradingsymbol=opt["tradingsymbol"], token=opt.get("instrument_token"),
                                                               label=opt["label"], strike=opt["strike"], entry_mid=opt["mid"],
@@ -544,7 +547,7 @@ def score_mcx_ledger(kite, now_ist: datetime, max_calls: int = 6) -> None:
         if now_ist.date() <= exit_d:          # score from the day after the exit session (MCX closes ~23:55 IST)
             continue
         side = 1 if r["side"] == "CALL" else -1
-        ftok = inst.get(r["fut"]["tradingsymbol"])
+        ftok = r["fut"].get("token") or inst.get(r["fut"]["tradingsymbol"])   # stored token survives the monthly roll
         fc = commodity_mcx.day_close(kite, ftok, exit_d) if ftok else None; calls += 1
         oc = None
         if r.get("option") and r["option"].get("token"):

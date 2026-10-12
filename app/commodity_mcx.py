@@ -143,7 +143,8 @@ def snapshot(kite, settings: dict, side: int | None, hold: int | None, sigma_d: 
     if not F:
         return {"error": f"No price for {fut['tradingsymbol']} (market closed or no quote yet)"}
     fb, fa = _bidask(fq)
-    out = {"symbol": name, "future": {"tradingsymbol": fut["tradingsymbol"], "expiry": fut["expiry"], "ltp": F, "bid": fb, "ask": fa,
+    out = {"symbol": name, "future": {"tradingsymbol": fut["tradingsymbol"], "instrument_token": fut.get("instrument_token"),
+                                      "expiry": fut["expiry"], "ltp": F, "bid": fb, "ask": fa,
                                       "oi": fq.get("oi"), "lot_size": fut.get("lot_size"), "change_pct": None,
                                       "close": (fq.get("ohlc") or {}).get("close")}}
     if out["future"]["close"]:

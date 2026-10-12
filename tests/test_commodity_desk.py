@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import run  # noqa: F401  - register every route (as production does) before any test makes a request
 from app import commodity_desk as cd
 from app import security, web
 
@@ -244,3 +245,20 @@ def test_page_without_kite_shows_login_hint(client, store):
     _synthetic(store)
     r = client.get("/admin/commodity", headers=OWNER)
     assert r.status_code == 200 and b"Kite login required" in r.data
+
+
+def test_settled_drops_in_progress_bar_including_next_day_evening_session():
+    from datetime import datetime, timezone
+    idx = pd.to_datetime(["2026-10-08", "2026-10-09", "2026-10-12"])          # Thu, Fri, Mon
+    f = pd.DataFrame({"close": [1, 2, 3]}, index=idx)
+    utc = lambda s: datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+    # Sunday 19:30 NY (Mon 05:00 IST): Monday's bar has just opened -> not settled
+    assert cd._settled(f, utc("2026-10-11T23:30:00")).index[-1] == pd.Timestamp("2026-10-09")
+    # Monday 11:00 NY: still trading
+    assert cd._settled(f, utc("2026-10-12T15:00:00")).index[-1] == pd.Timestamp("2026-10-09")
+    # Monday 15:30 NY: settled
+    assert cd._settled(f, utc("2026-10-12T19:30:00")).index[-1] == pd.Timestamp("2026-10-12")
+    # winter (EST): 15:10 NY = 20:10 UTC -> settled; 14:50 NY -> not
+    g = pd.DataFrame({"close": [1]}, index=pd.to_datetime(["2026-12-14"]))
+    assert len(cd._settled(g, utc("2026-12-14T20:10:00"))) == 1
+    assert len(cd._settled(g, utc("2026-12-14T19:50:00"))) == 0
