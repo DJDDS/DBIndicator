@@ -932,6 +932,8 @@ button, a, summary, input, select { touch-action: manipulation; }
     {%- endif -%}
   {% endmacro %}
 
+  {% include "_market_overview.html" %}
+
   {% if not logged_in %}
   <div class="card">
     <p>You're not logged in to Kite for today yet. This is the one manual step each morning

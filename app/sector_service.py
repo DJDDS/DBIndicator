@@ -319,6 +319,31 @@ def _mini(m, now):
             'bias':t.get('bias'),'note':(t.get('notes') or [None])[0]}
 
 
+EXTRA_INDICES=('INDIA VIX',)       # quoted with the sectors for the dashboard index cards
+DASH_INDICES=(('NIFTY 50','NIFTY 50'),('NIFTY BANK','BANK NIFTY'),('NIFTY FINANCIAL SERVICES','FIN NIFTY'),('INDIA VIX','INDIA VIX'),('NIFTY IT','NIFTY IT'))
+
+
+def dashboard_summary():
+    """Light payload for the main dashboard: index cards, sector performance and a per-stock price map (watchlist),
+    all derived from the cached sector overview (no extra Kite calls)."""
+    ov=overview(); now=scanner.now_ist()
+    r2=lambda v: round(v,2) if a.finite(v) is not None else None
+    idx=[]
+    for name,label in DASH_INDICES:
+        sm=_summary(name,now)
+        if sm.get('price') is None: continue
+        idx.append({'name':name,'label':label,'price':r2(sm.get('price')),'r':{q:r2((sm.get('returns') or {}).get(q)) for q in COMPARE},
+                    'd':_day_ohlc(name,now),'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None)})
+    sectors=[]; stocks={}
+    for x in ov['sectors']:
+        mm=x.get('members_mini') or []
+        sectors.append({'id':x['id'],'name':x['name'],'r':{q:r2((x.get('returns') or {}).get(q)) for q in COMPARE},'n':len(mm),
+                        'up':sum(1 for m in mm if (m['r'].get('today') or 0)>0),'dn':sum(1 for m in mm if (m['r'].get('today') or 0)<0)})
+        for m in mm:
+            stocks.setdefault(m['s'],dict(m,sector=x['id'],sector_name=x['name']))
+    return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sectors':sectors,'stocks':stocks}
+
+
 def _overview_key():
     def mt(p):
         try: return os.stat(p).st_mtime_ns
@@ -487,7 +512,7 @@ def resolve_tokens(instruments, catalogue):
     aliases={'NIFTY FINANCIAL SERVICES':'NIFTY FIN SERVICE','NIFTY PRIVATE BANK':'NIFTY PVT BANK',
              'NIFTY CONSUMER DURABLES':'NIFTY CONSR DURBL','NIFTY HEALTHCARE':'NIFTY HEALTHCARE',
              'NIFTY OIL AND GAS':'NIFTY OIL AND GAS','NIFTY FINANCIAL SERVICES 25/50':'NIFTY FINSRV25 50'}
-    names={'NIFTY 50'}|{e['name'] for e in catalogue}|{m['symbol'] for e in catalogue for m in e.get('members',[])}
+    names={'NIFTY 50'}|set(EXTRA_INDICES)|{e['name'] for e in catalogue}|{m['symbol'] for e in catalogue for m in e.get('members',[])}
     tokens,quotes={},{}
     for name in names:
         resolved=by_normal.get(_normal(name)) or by_normal.get(_normal(aliases.get(name.upper(),'')))

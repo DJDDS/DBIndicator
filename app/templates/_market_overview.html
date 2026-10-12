@@ -1,0 +1,145 @@
+<section class="mo" id="market-overview" aria-label="Market overview">
+<style>
+  .mo{margin-bottom:14px}
+  .mo-idx{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px}
+  .mo-card{position:relative;background:linear-gradient(160deg,var(--panel2),var(--panel));border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--text);text-decoration:none;display:block;transition:border-color .15s,transform .15s}
+  a.mo-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .mo-card .l{font-size:10.5px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;font-weight:700}
+  .mo-card .v{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:4px}
+  .mo-card .v b{font-size:19px;font-family:var(--mono);font-weight:650}
+  .mo-pill{font-size:11.5px;font-weight:700;padding:2px 7px;border-radius:6px;font-family:var(--mono);white-space:nowrap}
+  .mo-pill.up{color:var(--green);background:var(--green-bg)}.mo-pill.dn{color:var(--red);background:var(--red-bg)}.mo-pill.na{color:var(--muted);background:var(--panel2)}
+  .mo-range{margin-top:9px;font-size:10px;color:var(--dim);display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;font-family:var(--mono)}
+  .mo-range .bar{position:relative;height:4px;border-radius:3px;background:linear-gradient(90deg,var(--red-bg),var(--green-bg))}
+  .mo-range .bar i{position:absolute;top:-3px;width:3px;height:10px;border-radius:2px;background:var(--text);transform:translateX(-50%)}
+  .mo-wk{display:flex;gap:8px;margin-top:6px;font-size:10.5px;color:var(--muted);font-family:var(--mono)}
+  .mo-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:12px}
+  .mo-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;min-width:0}
+  .mo-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  .mo-head h2{margin:0;font-size:12.5px;text-transform:uppercase;letter-spacing:.05em}
+  .mo-head .sp{flex:1}
+  .mo-tabs{display:flex;gap:3px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:2px}
+  .mo-tabs button{background:none;border:0;color:var(--muted);font:inherit;font-size:11.5px;padding:4px 9px;border-radius:6px;cursor:pointer}
+  .mo-tabs button[aria-pressed=true]{background:var(--accent-bg);color:var(--text)}
+  .mo-row{display:grid;grid-template-columns:minmax(0,1fr) 70px 90px 16px;gap:10px;align-items:center;padding:7px 6px;border-radius:7px;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(36,43,56,.6)}
+  .mo-row:hover{background:var(--panel2)}
+  .mo-row .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  .mo-row .n small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
+  .mo-row .r{text-align:right;font-family:var(--mono);font-weight:700}
+  .mo-row .up{color:var(--green)}.mo-row .dn{color:var(--red)}
+  .mo-br{height:5px;border-radius:3px;background:var(--red-bg);overflow:hidden}.mo-br i{display:block;height:100%;background:var(--green)}
+  .mo-row .go{color:var(--dim)}
+  .mo-more{background:none;border:0;color:var(--accent);font:inherit;font-size:11.5px;cursor:pointer;padding:6px 6px 0}
+  .mo-add{display:flex;gap:6px;position:relative}
+  .mo-add input{background:var(--panel2);border:1px solid var(--border);border-radius:7px;color:var(--text);font:inherit;padding:6px 9px;width:170px;text-transform:uppercase}
+  .mo-add button,.mo-x{background:var(--accent);border:0;border-radius:7px;color:#fff;font:inherit;font-weight:600;padding:6px 11px;cursor:pointer}
+  .mo-wl{width:100%;border-collapse:collapse;font-size:12px}
+  .mo-wl th{color:var(--muted);font-weight:600;text-align:right;padding:5px 6px;border-bottom:1px solid var(--border);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+  .mo-wl th:first-child,.mo-wl td:first-child{text-align:left}
+  .mo-wl td{padding:7px 6px;text-align:right;border-bottom:1px solid rgba(36,43,56,.6);font-family:var(--mono)}
+  .mo-wl td:first-child{font-family:var(--sans)}
+  .mo-wl td a{color:var(--text);font-weight:700;text-decoration:none}.mo-wl td a:hover{color:var(--accent)}
+  .mo-wl small{display:block;color:var(--muted);font-size:10.5px;font-family:var(--sans);font-weight:400}
+  .mo-wl .up{color:var(--green)}.mo-wl .dn{color:var(--red)}
+  .mo-x{background:none;color:var(--dim);padding:2px 6px;font-size:14px}.mo-x:hover{color:var(--red)}
+  .mo-empty{color:var(--muted);text-align:center;padding:26px 10px;font-size:12px}
+  .mo-foot{font-size:10.5px;color:var(--dim);margin-top:6px}
+  .mo-wl-wrap{overflow-x:auto}
+  @media (max-width:900px){.mo-grid{grid-template-columns:1fr}.mo-idx{grid-template-columns:repeat(2,minmax(0,1fr))}.mo-add input{width:120px}}
+</style>
+  <div class="mo-idx" id="mo-idx"><div class="mo-card"><span class="l">Markets</span><div class="v"><b>—</b></div><div class="mo-foot">Loading index prices…</div></div></div>
+  <div class="mo-grid">
+    <div class="mo-panel">
+      <div class="mo-head"><h2>Sector performance</h2><span class="sp"></span>
+        <div class="mo-tabs" role="group" aria-label="Order"><button type="button" data-mo-side="up" aria-pressed="true">Top gainers</button><button type="button" data-mo-side="dn" aria-pressed="false">Top losers</button></div>
+        <div class="mo-tabs" role="group" aria-label="Period" id="mo-periods"></div>
+      </div>
+      <div id="mo-sectors"><div class="mo-empty">Loading sectors…</div></div>
+      <button type="button" class="mo-more" id="mo-more" hidden>Show all sectors</button>
+    </div>
+    <div class="mo-panel">
+      <div class="mo-head"><h2>My watchlist</h2><span class="sp"></span>
+        <form class="mo-add" id="mo-add" autocomplete="off"><input id="mo-sym" list="mo-syms" placeholder="Add F&amp;O stock" aria-label="Stock symbol to add"><datalist id="mo-syms"></datalist><button type="submit">+ Add</button></form>
+      </div>
+      <div class="mo-wl-wrap"><table class="mo-wl"><thead><tr><th>Stock</th><th>LTP</th><th>Today</th><th>1W</th><th>1M</th><th title="Today's low - high, marker = last price">Day range</th><th></th></tr></thead><tbody id="mo-wl"></tbody></table></div>
+      <div class="mo-empty" id="mo-wl-empty">Your watchlist is empty. Add F&amp;O stocks above to track them here (saved in this browser).</div>
+    </div>
+  </div>
+  <div class="mo-foot" id="mo-foot"></div>
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const ok = n => typeof n === 'number' && isFinite(n);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  const fmt = (n, d = 2) => ok(n) ? n.toLocaleString('en-IN', {minimumFractionDigits: d, maximumFractionDigits: d}) : '—';
+  const pct = n => ok(n) ? (n > 0 ? '+' : '') + fmt(n) + '%' : '—';
+  const cls = n => ok(n) ? (n > 0 ? 'up' : n < 0 ? 'dn' : 'na') : 'na';
+  const P = [['today', 'Today'], ['1W', '1W'], ['1M', '1M'], ['3M', '3M']];
+  const KEY = 'dbi.watchlist.v1';
+  const st = {d: null, side: 'up', period: 'today', all: false, wl: load()};
+  function load() { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 60) : []; } catch (e) { return []; } }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(st.wl)); } catch (e) { /* private mode: list lives for this visit */ } }
+  function range(d, p) {
+    if (!d || !ok(d.l) || !ok(d.h) || d.h <= d.l || !ok(p)) return '<span>—</span>';
+    const x = Math.max(0, Math.min(100, (p - d.l) / (d.h - d.l) * 100));
+    return `<div class="mo-range" title="Open ${fmt(d.o)} · High ${fmt(d.h)} · Low ${fmt(d.l)} · Prev close ${fmt(d.pc)}"><span>${fmt(d.l)}</span><span class="bar"><i style="left:${x}%"></i></span><span>${fmt(d.h)}</span></div>`;
+  }
+  function renderIdx() {
+    const L = st.d.indices || [];
+    if (!L.length) { $('mo-idx').innerHTML = '<div class="mo-card"><span class="l">Markets</span><div class="mo-foot">Index prices appear once the sector cache has loaded (Kite login needed).</div></div>'; return; }
+    $('mo-idx').innerHTML = L.map(x => {
+      const r = x.r || {}, inner = `<span class="l">${esc(x.label)}</span><div class="v"><b>${fmt(x.price)}</b><span class="mo-pill ${cls(r.today)}">${pct(r.today)}</span></div>${range(x.d, x.price)}
+        <div class="mo-wk">${P.slice(1).map(([k, l]) => `<span>${l} <span style="color:var(--${cls(r[k]) === 'up' ? 'green' : cls(r[k]) === 'dn' ? 'red' : 'muted'})">${pct(r[k])}</span></span>`).join('')}</div>`;
+      return x.id ? `<a class="mo-card" href="/sector-analysis#${encodeURIComponent(x.id)}" title="Open ${esc(x.label)} on the sector page">${inner}</a>` : `<div class="mo-card">${inner}</div>`;
+    }).join('');
+  }
+  function renderSectors() {
+    $('mo-periods').innerHTML = P.map(([k, l]) => `<button type="button" data-mo-period="${k}" aria-pressed="${k === st.period}">${l}</button>`).join('');
+    document.querySelectorAll('[data-mo-side]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.moSide === st.side)));
+    const rows = (st.d.sectors || []).filter(s => ok(s.r?.[st.period])).sort((a, b) => st.side === 'up' ? b.r[st.period] - a.r[st.period] : a.r[st.period] - b.r[st.period]);
+    const shown = st.all ? rows : rows.slice(0, 6);
+    $('mo-sectors').innerHTML = shown.map(s => {
+      const v = s.r[st.period], w = s.up + s.dn ? Math.round(100 * s.up / (s.up + s.dn)) : 50;
+      return `<a class="mo-row" href="/sector-analysis#${encodeURIComponent(s.id)}" title="${esc(s.name)} · open the sector page">
+        <span class="n">${esc(s.name.replace(/^nifty\s*/i, ''))}<small>${s.n} F&amp;O stocks · ${s.up}↑ ${s.dn}↓ today</small></span>
+        <span class="r ${cls(v)}">${pct(v)}</span><span class="mo-br" title="${s.up} up / ${s.dn} down today"><i style="width:${w}%"></i></span><span class="go">›</span></a>`;
+    }).join('') || '<div class="mo-empty">No sector data yet.</div>';
+    $('mo-more').hidden = rows.length <= 6; $('mo-more').textContent = st.all ? 'Show top 6' : `Show all ${rows.length} sectors`;
+  }
+  function renderWl() {
+    const S = st.d?.stocks || {};
+    $('mo-syms').innerHTML = Object.keys(S).sort().map(s => `<option value="${esc(s)}">`).join('');
+    $('mo-wl-empty').hidden = st.wl.length > 0;
+    $('mo-wl').innerHTML = st.wl.map(sym => {
+      const m = S[sym];
+      if (!m) return `<tr><td><b>${esc(sym)}</b><small>not in the F&amp;O sector list</small></td><td colspan="5">—</td><td><button class="mo-x" data-mo-del="${esc(sym)}" title="Remove">×</button></td></tr>`;
+      const r = m.r || {};
+      return `<tr><td><a href="/chart/${encodeURIComponent(sym)}" title="Open chart">${esc(sym)}</a><small><a href="/sector-analysis#${encodeURIComponent(m.sector)}" style="font-weight:400;color:var(--muted)">${esc(m.sector_name.replace(/^nifty\s*/i, ''))}</a></small></td>
+        <td>${fmt(m.p)}</td><td class="${cls(r.today)}">${pct(r.today)}</td><td class="${cls(r['1W'])}">${pct(r['1W'])}</td><td class="${cls(r['1M'])}">${pct(r['1M'])}</td>
+        <td style="min-width:150px">${range(m.d, m.p)}</td><td><button class="mo-x" data-mo-del="${esc(sym)}" title="Remove ${esc(sym)}">×</button></td></tr>`;
+    }).join('');
+  }
+  function render() { if (!st.d) return; renderIdx(); renderSectors(); renderWl();
+    const q = st.d.status?.quote_at; $('mo-foot').textContent = 'Prices from the sector cache · live quotes ' + (q ? q.replace('T', ' ').slice(11, 16) + ' IST' : 'not received yet') + ' · refreshes every minute in market hours'; }
+  async function refresh() {
+    try { const r = await fetch('/api/sector-analysis/dashboard', {cache: 'no-store'}); if (!r.ok) throw new Error(r.status); st.d = await r.json(); render(); }
+    catch (e) { $('mo-foot').textContent = 'Market overview unavailable right now (' + e.message + ').'; }
+  }
+  document.getElementById('market-overview').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.moSide) { st.side = b.dataset.moSide; renderSectors(); }
+    else if (b.dataset.moPeriod) { st.period = b.dataset.moPeriod; renderSectors(); }
+    else if (b.dataset.moDel) { st.wl = st.wl.filter(x => x !== b.dataset.moDel); save(); renderWl(); }
+    else if (b.id === 'mo-more') { st.all = !st.all; renderSectors(); }
+  });
+  $('mo-add').addEventListener('submit', e => {
+    e.preventDefault(); const v = $('mo-sym').value.trim().toUpperCase(); if (!v) return;
+    if (!st.wl.includes(v)) { st.wl.unshift(v); save(); }
+    $('mo-sym').value = ''; renderWl();
+  });
+  function live() { const t = new Date(new Date().toLocaleString('en-US', {timeZone: 'Asia/Kolkata'})), m = t.getHours() * 60 + t.getMinutes(); return t.getDay() > 0 && t.getDay() < 6 && m >= 545 && m <= 945; }
+  setInterval(() => { if (!document.hidden && live()) refresh(); }, 60000);
+  refresh();
+})();
+</script>
+</section>

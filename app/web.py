@@ -856,6 +856,13 @@ def api_sector_analysis():
     return jsonify(sector_service.overview())
 
 
+@app.route("/api/sector-analysis/dashboard")
+@require_roles(OWNER, MEMBER)
+def api_sector_dashboard():
+    sector_service.ensure_started()
+    return jsonify(sector_service.dashboard_summary())
+
+
 @app.route("/api/sector-analysis/stock/<symbol>")
 @require_roles(OWNER, MEMBER)
 def api_sector_stock(symbol):

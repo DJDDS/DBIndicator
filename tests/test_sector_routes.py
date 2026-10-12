@@ -229,3 +229,20 @@ def test_overview_members_mini_for_pulse_donut(monkeypatch):
     mm=s.overview()['sectors'][0]['members_mini']
     assert mm[0]['s']=='INFY' and set(mm[0]['r'])=={'today','1W','1M','3M'} and mm[0]['d']=={'o':100,'h':102,'l':99,'pc':100.5}
     assert s._day_ohlc('INFY',now+dt.timedelta(hours=2))=={}          # stale quote: no made-up OHLC
+
+
+def test_dashboard_summary_and_route(client, monkeypatch):
+    import datetime as dt
+    from app import sector_service as s
+    now=dt.datetime(2026,10,6,11,0,0)
+    entry={'id':'nifty-it','name':'NIFTY IT','members':[{'symbol':'INFY','name':'Infosys'}]}
+    q={'data':{'last_price':101.0,'ohlc':{'open':100,'high':102,'low':99,'close':100.5}},'timestamp':now.isoformat()}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[entry],'quotes':{'INFY':q}})
+    monkeypatch.setattr(s,'_overview_cache',{'key':None,'at':0.0,'value':None})
+    monkeypatch.setattr(s.scanner,'now_ist',lambda: now)
+    monkeypatch.setattr(s,'ensure_started',lambda: None)
+    d=s.dashboard_summary()
+    assert d['sectors'][0]['id']=='nifty-it' and d['stocks']['INFY']['sector']=='nifty-it' and d['stocks']['INFY']['d']['h']==102
+    assert 'INDIA VIX' in s.EXTRA_INDICES
+    assert client.get('/api/sector-analysis/dashboard').status_code==401
+    r=client.get('/api/sector-analysis/dashboard',headers=auth()); assert r.status_code==200 and 'INFY' in r.get_json()['stocks']
