@@ -42,7 +42,7 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
   <h1>Intraday Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">PAPER - no orders are placed</span>
   {% set dt_ = direction.today if direction and not direction.get('error') else None %}
   <span class="tag">{{ dt_.date if dt_ else 'no list yet today' }}</span>
-  <nav style="margin-left:auto"><a href="/admin/v130">Swing desk</a><a href="/">Dashboard</a></nav>
+  <nav style="margin-left:auto"><a href="/admin/v130">Swing desk</a><a href="/admin/commodity">NG desk</a><a href="/">Dashboard</a></nav>
 </header>
 <div class="wrap">
 {% if not direction or direction.get('error') %}

@@ -1489,3 +1489,66 @@ def api_v130_run_evening():
         return jsonify({"status": "WAITING_LOGIN"}), 409
     plan = v130_swing.run_evening(kite)
     return Response(json.dumps(plan, default=str), mimetype="application/json")
+
+
+# ---------------------------------------------------------------- NG Commodity Desk (ADMIN ONLY, spotting / paper) ----
+@app.route("/admin/commodity")
+@require_roles(OWNER)
+def admin_commodity():
+    """MCX NG winter weekly playbook: Mon/Wed/Fri signals, live-recomputed backtest, paper ledger. No orders."""
+    from . import commodity_desk
+    try:
+        commodity_desk.maybe_refresh_async()
+        st = commodity_desk.status()
+    except Exception as exc:  # fail-soft: the page must still render
+        log.exception("commodity desk status failed")
+        st = {"error": str(exc)[:200], "settings": commodity_desk.load_settings(), "meta": {}, "robustness": commodity_desk.ROBUSTNESS}
+    return render_template("commodity_admin.html", st=st)
+
+
+@app.route("/api/commodity/status")
+@require_roles(OWNER)
+def api_commodity_status():
+    from . import commodity_desk
+    return Response(json.dumps(commodity_desk.status(), default=str), mimetype="application/json")
+
+
+@app.route("/api/commodity/refresh", methods=["POST"])
+@require_roles(OWNER)
+def api_commodity_refresh():
+    from . import commodity_desk
+    started = commodity_desk.refresh_async()   # background: a full download can exceed the gunicorn worker timeout
+    if request.form or not request.is_json:
+        return redirect("/admin/commodity")
+    return jsonify({"status": "STARTED" if started else "ALREADY_RUNNING"})
+
+
+@app.route("/api/commodity/settings", methods=["POST"])
+@require_roles(OWNER)
+def api_commodity_settings():
+    from . import commodity_desk
+    src = request.get_json(silent=True) or request.form
+    new = {}
+    for k, d in commodity_desk.DEFAULTS.items():
+        if isinstance(d, bool):
+            if k in src:
+                new[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
+            elif src.get("_cb"):
+                new[k] = False          # HTML form: an unticked checkbox is simply absent
+        elif src.get(k) not in (None, ""):
+            new[k] = src.get(k)
+    s = commodity_desk.save_settings(new)
+    try:
+        commodity_desk.update_ledger()
+    except Exception:  # fail-soft
+        pass
+    if request.form or not request.is_json:
+        return redirect("/admin/commodity#settings")
+    return jsonify(s)
+
+
+@app.route("/api/commodity/ledger/export")
+@require_roles(OWNER)
+def api_commodity_ledger_export():
+    from . import commodity_desk
+    return _v12_export(str(commodity_desk._p("ledger.jsonl")), "ng_desk_ledger.jsonl", "application/x-ndjson")
