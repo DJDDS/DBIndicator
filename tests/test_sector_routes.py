@@ -216,3 +216,16 @@ def test_fo_trim_keeps_fo_members_drops_thin_and_duplicate_sectors():
     nfo=[{'name':'SBIN','instrument_type':'FUT','segment':'NFO-FUT'},{'name':'NIFTY','instrument_type':'FUT','segment':'NFO-FUT'}]
     nse=[{'tradingsymbol':'SBIN','segment':'NSE'},{'tradingsymbol':'TCS','segment':'NSE'},{'tradingsymbol':'NIFTY 50','segment':'INDICES'}]
     assert s.fo_symbols(nfo,nse)==['SBIN']
+
+
+def test_overview_members_mini_for_pulse_donut(monkeypatch):
+    import datetime as dt
+    from app import sector_service as s
+    now=dt.datetime(2026,10,6,11,0,0)
+    entry={'id':'nifty-it','name':'NIFTY IT','members':[{'symbol':'INFY','name':'Infosys'}]}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[entry],'quotes':{'INFY':{'data':{'last_price':101.0,'ohlc':{'open':100,'high':102,'low':99,'close':100.5}},'timestamp':now.isoformat()}}})
+    monkeypatch.setattr(s,'_overview_cache',{'key':None,'at':0.0,'value':None})
+    monkeypatch.setattr(s.scanner,'now_ist',lambda: now)
+    mm=s.overview()['sectors'][0]['members_mini']
+    assert mm[0]['s']=='INFY' and set(mm[0]['r'])=={'today','1W','1M','3M'} and mm[0]['d']=={'o':100,'h':102,'l':99,'pc':100.5}
+    assert s._day_ohlc('INFY',now+dt.timedelta(hours=2))=={}          # stale quote: no made-up OHLC

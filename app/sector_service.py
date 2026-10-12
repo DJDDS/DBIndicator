@@ -294,7 +294,29 @@ def _sector_row(entry, benchmark, now):
     # Light member list so the page can search stocks and show sector membership without a detail call.
     row['official_members']=entry.get('official_members',len(entry.get('members',[])))
     row['members_list']=[{'symbol':m['symbol'],'name':m.get('name') or m['symbol']} for m in entry.get('members',[])]
+    row['members_mini']=[_mini(m,now) for m in members]
     return row
+
+
+def _day_ohlc(symbol, now):
+    """Today's open/high/low and previous close from the latest fresh quote (None when the quote is stale)."""
+    with _lock:
+        stored=_state['quotes'].get(symbol)
+        q=copy.deepcopy((stored or {}).get('data') or {})
+        stamp=(stored or {}).get('timestamp')
+    if not q or not _fresh_timestamp(stamp,now,final_quote=True): return {}
+    o=q.get('ohlc') or {}
+    r=lambda v: round(v,2) if a.finite(v) is not None else None
+    return {'o':r(o.get('open')),'h':r(o.get('high')),'l':r(o.get('low')),'pc':r(o.get('close'))}
+
+
+def _mini(m, now):
+    """Compact per-stock row for the sector pulse donut: price, Today/1W/1M/3M, today's OHLC, technical bias."""
+    rt=m.get('returns') or {}
+    r=lambda v: round(v,2) if a.finite(v) is not None else None
+    t=tech_read(m)
+    return {'s':m['symbol'],'p':r(m.get('price')),'r':{q:r(rt.get(q)) for q in COMPARE},'d':_day_ohlc(m['symbol'],now),
+            'bias':t.get('bias'),'note':(t.get('notes') or [None])[0]}
 
 
 def _overview_key():

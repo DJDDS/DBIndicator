@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sector Analysis · DBIndicator</title>
-<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='9') }}">
+<link rel="stylesheet" href="{{ url_for('static',filename='sector_analysis.css', v='10') }}">
 <script defer src="{{ url_for('static',filename='vendor/echarts-5.6.0.min.js') }}"></script>
-<script defer src="{{ url_for('static',filename='sector_analysis.js', v='9') }}"></script>
+<script defer src="{{ url_for('static',filename='sector_analysis.js', v='10') }}"></script>
 <script defer src="{{ url_for('static',filename='logout.js') }}"></script>
 </head>
 <body>
@@ -25,6 +25,28 @@
   <button id="live" class="live" type="button" title="Click to refresh now">● Live · loading…</button>
   <div id="status" class="status" role="status">Loading…</div>
 </div>
+
+<section class="card pulse" id="pulse" aria-label="Sector pulse">
+  <div class="ticker" id="ticker" aria-label="Indices"></div>
+  <div class="pulse-grid">
+    <div class="pulse-list">
+      <div class="card-head">
+        <h2>Market sectors <span class="muted small" id="pulse-period"></span></h2>
+        <div class="seg" role="group" aria-label="Order"><button data-porder="desc" aria-pressed="true">Gainers first</button><button data-porder="asc" aria-pressed="false">Losers first</button></div>
+      </div>
+      <div id="pulse-sectors" class="pulse-sectors" role="listbox" aria-label="Sectors"></div>
+    </div>
+    <div class="pulse-donut">
+      <div class="card-head">
+        <div><h2 id="pulse-title">Sector</h2><div class="pulse-chips" id="pulse-chips"></div></div>
+        <input id="pulse-find" class="pulse-find" type="search" placeholder="Find stock in sector…" autocomplete="off" aria-label="Find a stock in this sector">
+      </div>
+      <div id="pulse-chart" class="pulse-chart" role="img" aria-label="Stocks of the selected sector sized by their move"></div>
+      <p class="muted small pulse-note">Each slice is one F&amp;O stock: size = how far it moved in the chosen period, green up / red down (darker = bigger move). Hover for today's open/high/low, prev close and 1W/1M/3M; click to open its chart below. ← → keys switch sector.</p>
+    </div>
+    <div class="pulse-side" id="pulse-side"></div>
+  </div>
+</section>
 
 <section class="card movers-card" id="movers-card" aria-label="Leaders and laggards">
   <div class="card-head">

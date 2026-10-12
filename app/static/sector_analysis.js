@@ -77,7 +77,98 @@ function renderSectors() {
     return `<button class="tile" data-sector="${esc(r.id)}" aria-current="${r.id === S.sectorId}" style="background:${bg}"><b>${esc(short(r.name))}</b><span>${pct(v)}</span></button>`;
   }).join('');
   $('sector-list').hidden = S.sview !== 'list'; $('sector-heat').hidden = S.sview !== 'heat';
-  renderMovers();
+  renderMovers(); renderPulse();
+}
+
+/* ---------- sector pulse: index ticker, sector list, stock donut, pullers / draggers ---------- */
+S.porder = 'desc'; S.pfind = '';
+const median = a => { const v = a.filter(ok).sort((x, y) => x - y); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+const mret = (m, p = S.period) => m?.r?.[p];
+function pulseSectors() {
+  const rows = visibleSectors().slice();
+  return S.porder === 'asc' ? rows.reverse() : rows;
+}
+function renderTicker() {
+  const b = S.data?.benchmark, rows = (S.data?.sectors || []).filter(r => S.variants || !VARIANT.test(r.name));
+  const tk = (id, name, price, r) => `<button class="tk" ${id ? `data-sector="${esc(id)}" aria-current="${id === S.sectorId}"` : 'disabled'} title="${esc(name)} · today">
+    <span class="tn">${esc(name)}</span><span class="tv"><b>${fmt(price)}</b><span class="${cls(r)}">${pct(r)}</span></span></button>`;
+  const ordered = rows.slice().sort((x, y) => Math.abs(ret(y, 'today') ?? 0) - Math.abs(ret(x, 'today') ?? 0));
+  $('ticker').innerHTML = (b ? tk(null, 'NIFTY 50', b.price, ret(b, 'today')) : '') + ordered.map(r => tk(r.id, short(r.name), r.price, ret(r, 'today'))).join('');
+}
+function renderPulse() {
+  if (!S.data) return;
+  renderTicker();
+  $('pulse-period').textContent = '· ' + (PLABEL[S.period] || S.period);
+  document.querySelectorAll('[data-porder]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.porder === S.porder)));
+  const rows = pulseSectors();
+  $('pulse-sectors').innerHTML = rows.map(r => {
+    const v = ret(r), mm = r.members_mini || [], up = mm.filter(m => mret(m) > 0).length, dn = mm.filter(m => mret(m) < 0).length;
+    const w = up + dn ? Math.round(100 * up / (up + dn)) : 50;
+    return `<button class="ps" role="option" data-sector="${esc(r.id)}" aria-selected="${r.id === S.sectorId}" title="${esc(r.name)} · ${up} up / ${dn} down (F&O stocks, ${PLABEL[S.period]})">
+      <span class="pn">${esc(short(r.name))}</span><span class="pr ${cls(v)}">${pct(v)}</span><span class="pc">${mm.length || r.members_list?.length || 0}</span>
+      <span class="pb"><i style="width:${w}%"></i></span></button>`;
+  }).join('') || '<p class="muted">No sector data yet.</p>';
+  const box = $('pulse-sectors'), sel = box.querySelector('[aria-selected=true]');     // keep the selected row visible inside the list only
+  if (sel && (sel.offsetTop < box.scrollTop || sel.offsetTop + sel.offsetHeight > box.scrollTop + box.clientHeight)) box.scrollTop = sel.offsetTop - box.clientHeight / 2;
+  renderPulseDonut(); renderPulseSide();
+}
+function pulseRow() { return (S.data?.sectors || []).find(r => r.id === S.sectorId); }
+function tipHtml(m) {
+  const d = m.d || {}, v = mret(m), wk = CMP.map(([k, l]) => `<span>${l} ${cpct(m.r?.[k])}</span>`).join('');
+  const bias = m.bias ? `<b class="tb ${m.bias === 'bullish' ? 'up' : m.bias === 'bearish' ? 'dn' : 'mx'}">${esc(m.bias)}</b> ` : '';
+  return `<div class="ptip"><div class="h"><span>${esc(m.s)}</span>${cpct(v)}</div>
+    <div class="g"><span>LTP</span><b>${fmt(m.p)}</b><span>Open</span><b>${fmt(d.o)}</b><span>High</span><b>${fmt(d.h)}</b><span>Low</span><b>${fmt(d.l)}</b><span>Prev close</span><b>${fmt(d.pc)}</b></div>
+    <div class="w">${wk}</div>${m.bias || m.note ? `<div class="t">${bias}${esc(m.note || '')}</div>` : ''}</div>`;
+}
+function sliceColor(v, max) {
+  if (!ok(v) || v === 0) return '#5b6b80';
+  const a = Math.min(1, Math.abs(v) / (max || 1));
+  return v > 0 ? `hsl(152,${45 + 25 * a}%,${58 - 22 * a}%)` : `hsl(352,${55 + 25 * a}%,${66 - 20 * a}%)`;
+}
+function renderPulseDonut() {
+  const r = pulseRow(), c = chart('pulse-chart'); if (!c) return;
+  if (!r) { c.clear(); return; }
+  const mm = (r.members_mini || []).filter(m => ok(mret(m))).sort((a, b) => mret(b) - mret(a));
+  const vals = mm.map(m => mret(m)), up = vals.filter(v => v > 0).length, dn = vals.filter(v => v < 0).length, med = median(vals);
+  const max = Math.max(...vals.map(Math.abs), 0.01);
+  $('pulse-title').textContent = r.name;
+  $('pulse-chips').innerHTML = `<span class="pchip ${cls(ret(r))}">Index ${pct(ret(r))}</span><span class="pchip ${cls(med)}">F&amp;O median ${pct(med)}</span>
+    <span class="pchip">${up}↑ ${dn}↓ of ${mm.length}</span>${ok(r.vs_nifty?.[S.period]) ? `<span class="pchip ${cls(r.vs_nifty[S.period])}">vs NIFTY ${pct(r.vs_nifty[S.period])} pts</span>` : ''}`;
+  const floor = max * 0.06, find = S.pfind;
+  const data = mm.map(m => ({name: m.s, value: Math.max(Math.abs(mret(m)), floor), m,
+    itemStyle: {color: sliceColor(mret(m), max), borderColor: '#111a27', borderWidth: 2, opacity: find && !m.s.includes(find) ? 0.25 : 1}}));
+  if (!data.length) { chartMessage(c, 'No live prices for this sector yet'); return; }
+  const narrow = $('pulse-chart').clientWidth < 560;      // phones: no outside labels (tap a slice for its card)
+  c.setOption({
+    animationDurationUpdate: 450,
+    tooltip: {trigger: 'item', backgroundColor: '#0e1622', borderColor: '#2d4258', padding: 10, extraCssText: 'box-shadow:0 10px 30px rgba(0,0,0,.5);border-radius:10px', formatter: p => tipHtml(p.data.m)},
+    graphic: [{type: 'text', left: 'center', top: '43%', style: {text: pct(med), fill: ok(med) ? (med >= 0 ? '#2fcf8f' : '#f2667a') : '#8d9cb0', font: '700 26px system-ui', textAlign: 'center'}},
+              {type: 'text', left: 'center', top: '52%', style: {text: `median · ${up}↑ ${dn}↓`, fill: '#8d9cb0', font: '12px system-ui', textAlign: 'center'}}],
+    series: [{type: 'pie', radius: narrow ? ['52%', '86%'] : ['50%', '74%'], center: ['50%', '50%'], avoidLabelOverlap: true, minAngle: 2, padAngle: 0.6,
+      label: {show: !narrow, color: '#c9d5e3', fontSize: 11, formatter: p => `{s|${p.name}}\n{v|${pct(mret(p.data.m))}}`,
+              rich: {s: {fontWeight: 700, fontSize: 11, color: '#e6edf6'}, v: {fontSize: 10, color: '#8d9cb0'}}},
+      labelLine: {length: 10, length2: 8, lineStyle: {color: '#3a5068'}},
+      labelLayout: {hideOverlap: true},
+      emphasis: {scale: true, scaleSize: 9, label: {fontSize: 13}, itemStyle: {shadowBlur: 18, shadowColor: 'rgba(0,0,0,.6)'}},
+      data}]
+  }, true);
+  c.off('click'); c.on('click', p => { if (p.data?.m) selectSector(S.sectorId, p.data.m.s, true); });
+  if (find) { const hit = data.findIndex(d => d.name.includes(find)); if (hit >= 0) { c.dispatchAction({type: 'highlight', seriesIndex: 0, dataIndex: hit}); c.dispatchAction({type: 'showTip', seriesIndex: 0, dataIndex: hit}); } }
+}
+function renderPulseSide() {
+  const r = pulseRow(); if (!r) { $('pulse-side').innerHTML = ''; return; }
+  const mm = (r.members_mini || []).filter(m => ok(mret(m))).sort((a, b) => mret(b) - mret(a));
+  const max = Math.max(...mm.map(m => Math.abs(mret(m))), 0.01);
+  const mv = m => `<button class="pmove" data-sector="${esc(r.id)}" data-stock="${esc(m.s)}" title="Open ${esc(m.s)}"><b class="ps-sym">${esc(m.s)}</b>${cpct(mret(m))}
+    <span class="bar"><i style="width:${Math.round(100 * Math.abs(mret(m)) / max)}%;background:${mret(m) >= 0 ? 'var(--green)' : 'var(--red)'}"></i></span>
+    <small>${CMP.filter(([k]) => k !== S.period).map(([k, l]) => `${l} ${pct(m.r?.[k])}`).join(' · ')}</small></button>`;
+  const ups = mm.filter(m => mret(m) > 0).slice(0, 3), dns = mm.filter(m => mret(m) < 0).slice(-3).reverse();
+  const br = n => { const v = r.breadth?.[n]?.pct; return `<div class="pbreadth"><span>> ${n}D</span><span class="bar"><i style="width:${ok(v) ? Math.round(v) : 0}%"></i></span><b>${ok(v) ? Math.round(v) + '%' : '—'}</b></div>`; };
+  const t = {bullish: 0, bearish: 0, mixed: 0}; (r.members_mini || []).forEach(m => { if (m.bias in t) t[m.bias]++; });
+  $('pulse-side').innerHTML = `<div class="pside"><h3>Pulling up · ${PLABEL[S.period]}</h3>${ups.map(mv).join('') || '<p class="muted small">No gainers.</p>'}</div>
+    <div class="pside"><h3>Dragging down · ${PLABEL[S.period]}</h3>${dns.map(mv).join('') || '<p class="muted small">No losers.</p>'}</div>
+    <div class="pside"><h3>Breadth · F&amp;O stocks above</h3>${['20', '50', '200'].map(br).join('')}
+      <div class="ptally" title="Technical read of each stock's chart: trend vs averages, breakouts, 52-week levels"><span class="pos">${t.bullish} bullish</span><span class="neg">${t.bearish} bearish</span><span>${t.mixed} mixed</span></div></div>`;
 }
 
 /* ---------- leaders & laggards (top / bottom 2 per sector, compared on Today, 1W, 1M, 3M) ---------- */
@@ -441,6 +532,7 @@ function renderIntraday(c, d, name) {
 document.addEventListener('click', e => {
   const t = e.target.closest('button, th, tr.row'); if (!t) return;
   if (t.dataset.period) { S.period = t.dataset.period; renderPeriods(); renderSectors(); if (S.detail) { renderHead(S.detail.sector); renderStocks(); } return; }
+  if (t.dataset.porder) { S.porder = t.dataset.porder; renderPulse(); return; }
   if (t.dataset.mview) { S.mview = t.dataset.mview; renderMovers(); return; }
   if (t.dataset.sview) { S.sview = t.dataset.sview; document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); renderSectors(); return; }
   if (t.dataset.filter) { S.filter = t.dataset.filter; renderStocks(); return; }
@@ -452,6 +544,14 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('tr.row')) toggleStock(e.target.dataset.sym); if (e.key === 'Escape') $('search-results').hidden = true; });
 $('search').addEventListener('input', e => runSearch(e.target.value));
+$('pulse-find').addEventListener('input', e => { S.pfind = e.target.value.trim().toUpperCase(); renderPulseDonut(); });
+document.addEventListener('keydown', e => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) || e.target.closest('input, textarea, select, table')) return;
+  if (!e.target.closest('#pulse') && e.target !== document.body) return;
+  const rows = pulseSectors(), i = rows.findIndex(r => r.id === S.sectorId); if (!rows.length) return;
+  const n = rows[(i + (e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length];
+  e.preventDefault(); selectSector(n.id);
+});
 $('search').addEventListener('focus', e => runSearch(e.target.value));
 document.addEventListener('click', e => { if (!e.target.closest('.search')) $('search-results').hidden = true; }, true);
 $('show-variants').addEventListener('change', e => { S.variants = e.target.checked; renderSectors(); });
