@@ -81,7 +81,12 @@ def _append(name: str, obj) -> None:
 
 
 def load_settings() -> dict:
-    return rules.resolved(_read_json('settings.json', {}))
+    cur = _read_json('settings.json', {})
+    if cur and int(cur.get('settings_v') or 0) < 2:
+        # v2 (12-Oct-2026): the early-exit window default moved to 'with_pre_entry' after the 2019-26 replay; a value saved by the
+        # old form (which always posted 'since_entry') must not pin the old rule. Later choices are kept.
+        cur.pop('h7_window', None); cur['settings_v'] = 2; _write_json('settings.json', cur)
+    return rules.resolved(cur)
 
 
 def save_settings(new: dict) -> dict:
@@ -89,6 +94,7 @@ def save_settings(new: dict) -> dict:
     allowed = set(rules.DEFAULT_SETTINGS)
     for k, v in (new or {}).items():
         if k in allowed: cur[k] = v
+    cur['settings_v'] = 2
     _write_json('settings.json', cur); _append('ledger.jsonl', {'kind': 'SETTINGS_CHANGED', 'ts': now_ist(), 'changes': {k: v for k, v in (new or {}).items() if k in allowed}})
     return rules.resolved(cur)
 

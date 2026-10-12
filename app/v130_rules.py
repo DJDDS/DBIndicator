@@ -21,8 +21,9 @@ DEFAULT_SETTINGS = {
     'expiry_third_pick': None,       # None -> from mode
     'max_open': 10,
     'fill_to_rank': 3,               # when a top pick is vetoed, try ranks down to N (gate open only); 0/2 = top picks only. Replay 2019-26: rank-3 fills +2.3%/trade, 82% win
-    'h7_window': 'since_entry',      # early exit 'first close at a 7-day closing high': since_entry = only closes since entry (original live rule);
-                                     # with_pre_entry = the last 7 sessions incl. the days before entry (replay 2019-26: 82% vs 73% win, +2.1% vs +1.4%)
+    'h7_window': 'with_pre_entry',   # early exit 'first close at a 7-day closing high': with_pre_entry = the last 7 sessions incl. the days before entry
+                                     # (replay 2019-26: 82% vs 73% win, +2.1% vs +1.4%, better every year); since_entry = only closes since entry (original)
+    'settings_v': 2,
     'quiet_r5': 0.0378,
     'res_after_days': 7, 'res_hold_tdays': 15,
     'news_veto': True, 'news_abn': 3.0,

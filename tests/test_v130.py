@@ -202,6 +202,17 @@ def test_seven_day_high_exit_window_setting():
     s0 = rules.resolved({"h7_window": "since_entry"}); s1 = rules.resolved({"h7_window": "with_pre_entry"})
     prior = [110, 108, 106, 104, 102, 100]            # bought after a dip
     path_c, path_h = [99, 100, 101, 103], [100, 101, 102, 104]
+    assert rules.resolved({})["h7_window"] == "with_pre_entry"
     assert evaluate_exit(100, path_c, path_h, s0, prior=prior)[:2] == ("SEVEN_DAY_HIGH_CLOSE", 100)     # first up-close
     assert evaluate_exit(100, path_c, path_h, s1, prior=prior)[0] is None                                # still below the pre-dip closes
     assert evaluate_exit(100, [99, 104.5], [100, 105], s1, prior=[104, 103, 102, 101, 100, 99])[:2] == ("SEVEN_DAY_HIGH_CLOSE", 104.5)
+
+
+def test_old_saved_settings_do_not_pin_the_old_exit_rule(tmp_path, monkeypatch):
+    from app import v130_swing as sw
+    monkeypatch.setattr(sw, "ROOT", tmp_path)
+    sw._write_json("settings.json", {"h7_window": "since_entry", "max_open": 8})
+    s = sw.load_settings()
+    assert s["h7_window"] == "with_pre_entry" and s["max_open"] == 8
+    sw.save_settings({"h7_window": "since_entry"})
+    assert sw.load_settings()["h7_window"] == "since_entry"        # a choice made after v2 is respected

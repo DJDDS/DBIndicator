@@ -1,0 +1,30 @@
+/home/claude/work/v130rep/calls.py:7: DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated, and will raise an error in the future. This includes implicit conversion of bare integers (e.g. `+ 1`). Please use a specific unit instead.
+  win = pd.concat([pd.DataFrame({'sym': r.sym, 'date': pd.date_range(r.date, r.date + pd.Timedelta(days=30))}) for r in T.itertuples()]).drop_duplicates()
+chain rows kept 106224
+picks 690 with a priced call 333
+
+== ATM call return on premium by tag
+          n   avg   med   win
+tag                          
+BIG      56   8.9  19.9  0.55
+EXPIRY   71 -15.1 -23.9  0.32
+NORMAL  109 -13.7 -20.8  0.30
+y       2019  2020  2021  2022  2023  2024  2025  2026
+tag                                                   
+BIG     12.6  13.8  -6.6   4.9  48.5   8.0   NaN -50.9
+EXPIRY -25.4   2.1 -25.4 -16.8  26.0 -12.7 -27.9 -18.8
+NORMAL  -4.7 -34.3 -19.6 -23.1 -20.8 -20.4  -3.2 -13.3
+why {'TIME': 0.46, 'TARGET': 0.29, 'STOP': 0.25}
+
+== OTM1 call return on premium by tag
+          n   avg   med   win
+tag                          
+BIG      60  16.4  48.5  0.63
+EXPIRY   78   7.5  48.5  0.55
+NORMAL  101   6.3   1.5  0.50
+y       2019  2020  2021  2022  2023  2024  2025  2026
+tag                                                   
+BIG     16.1  22.5  -5.3  10.1  48.5  25.3   NaN  -0.4
+EXPIRY  29.3  19.8  -0.5  -4.2  13.9   9.7 -19.2  15.2
+NORMAL   1.2 -30.3 -19.5 -16.8  38.7   1.2  25.1   6.5
+why {'TARGET': 0.51, 'TIME': 0.35, 'STOP': 0.14}
