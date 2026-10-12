@@ -246,3 +246,13 @@ def test_dashboard_summary_and_route(client, monkeypatch):
     assert 'INDIA VIX' in s.EXTRA_INDICES
     assert client.get('/api/sector-analysis/dashboard').status_code==401
     r=client.get('/api/sector-analysis/dashboard',headers=auth()); assert r.status_code==200 and 'INFY' in r.get_json()['stocks']
+
+
+def test_close_quote_stays_valid_right_after_the_close():
+    import datetime as dt
+    from app import sector_service as s
+    day = dt.datetime(2026, 10, 12)
+    stamp = '2026-10-12 15:43:00'
+    assert s._fresh_timestamp(stamp, day.replace(hour=15, minute=55), final_quote=True)      # was blank until 16:00
+    assert not s._fresh_timestamp(stamp, day.replace(hour=15, minute=55))                    # live (non-final) rule unchanged
+    assert not s._fresh_timestamp('2026-10-12 15:20:00', day.replace(hour=15, minute=55), final_quote=True)   # pre-close quote is not a final one

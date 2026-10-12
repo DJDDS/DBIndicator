@@ -152,7 +152,7 @@ def _fresh_timestamp(stamp, now, *, final_quote=False, max_age=180):
         t=pd.Timestamp(stamp)
         if t.tzinfo: t=t.tz_convert('Asia/Kolkata').tz_localize(None)
         if t.date()!=now.date(): return False
-        if final_quote and now.time()>=dt.time(16,0) and t.time()>=dt.time(15,30): return True
+        if final_quote and now.time()>=dt.time(15,31) and t.time()>=dt.time(15,30): return True   # the close-of-day quote stays valid right after 15:30 (was 16:00, which blanked 'Today' for half an hour)
         return -30 <= (now-t.to_pydatetime()).total_seconds() <= max_age
     except (ValueError, TypeError): return False
 
@@ -652,6 +652,8 @@ def _worker():
         try:
             kite=kite_auth.get_kite_client()
             if kite:
+                with _lock:
+                    if (_state.get('error') or '').startswith('Kite login required'): _state['error']=None      # token is here now; drop the stale banner
                 day=now.date().isoformat()
                 if membership_day!=day and not _market_hours(now):
                     with _lock: previous=copy.deepcopy(_state['catalogue'])
