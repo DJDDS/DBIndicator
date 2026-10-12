@@ -470,8 +470,8 @@ async function load() {
   } catch (e) { $('status').textContent = 'Could not load sectors: ' + e.message; $('status').classList.add('warn'); }
 }
 renderPeriods(); renderRanges(); load();
-/* ---------- live refresh every 180 s, market hours only ---------- */
-const LIVE_MS = 180000;
+/* ---------- live refresh every 60 s (server quotes refresh ~every 65 s), market hours only ---------- */
+const LIVE_MS = 60000;
 let lastLive = Date.now(), refreshing = false;
 function istNow() {
   const parts = new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false}).formatToParts(new Date());

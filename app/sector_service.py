@@ -9,6 +9,7 @@ import copy
 import datetime as dt
 import hashlib
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -28,6 +29,9 @@ _intraday={}
 _summaries={}
 _tokens={}
 _instrument_symbols={}
+_bases={}           # (name, live) -> (key, summary_base): history math done once per day, not every quote cycle
+_overview_cache={'key':None,'at':0.0,'value':None}
+OVERVIEW_TTL=20     # seconds an overview payload is reused while its inputs are unchanged
 _state={'histories':{},'quotes':{},'catalogue':data.load_json(SEED,[]),'running':False,'done':0,'total':0,'error':None,'updated_at':None,'quote_at':None}
 
 
@@ -39,6 +43,24 @@ def _history(symbol):
     with _lock:
         seeded=_state.get('histories',{}).get(symbol)
     return seeded if seeded is not None else data.load_json(_path(symbol),{}).get('candles',[])
+
+
+def _history_stamp(symbol):
+    with _lock:
+        seeded=_state.get('histories',{}).get(symbol)
+    if seeded is not None: return ('seed',id(seeded),len(seeded))
+    try: return os.stat(_path(symbol)).st_mtime_ns
+    except OSError: return None
+
+
+def _base(symbol, now, live):
+    """summary_base for `symbol`, recomputed only when its history file changes or the session/day boundary moves."""
+    key=(now.date(),now.hour>=16,_history_stamp(symbol))
+    with _lock: hit=_bases.get((symbol,live))
+    if hit and hit[0]==key: return hit[1]
+    b=a.summary_base(_history(symbol),now,live)
+    with _lock: _bases[(symbol,live)]=(key,b)
+    return b
 
 
 def _chart_bars(name, now):
@@ -97,10 +119,10 @@ def _summary(symbol, now):
     with _lock:
         r=copy.deepcopy(_summaries.get(symbol))
     if r is None:
-        r=a.summarize([],now)
+        r=a.finish_summary(_base(symbol,now,False))
     elif r.get('quote_fresh') and not _fresh_timestamp(r.get('quote_timestamp'),now,final_quote=True):
         metadata={k:r.get(k) for k in ('quote_timestamp','quote_retrieved_at')}
-        r=r.get('_historical') or a.summarize(_history(symbol),now)
+        r=r.get('_historical') or a.finish_summary(_base(symbol,now,False))
         r.update(metadata,quote_fresh=False)
     r.pop('_historical',None)
     r['symbol']=symbol
@@ -232,7 +254,27 @@ def _sector_row(entry, benchmark, now):
     return row
 
 
+def _overview_key():
+    def mt(p):
+        try: return os.stat(p).st_mtime_ns
+        except OSError: return None
+    with _lock:
+        return (_state.get('quote_at'),_state.get('updated_at'),_state.get('done'),_state.get('running'),_state.get('error'),
+                id(_state['catalogue']),len(_summaries),mt(ROOT/'industry.json'),mt(ROOT/'movers_log.json'))
+
+
 def overview():
+    """Cached for OVERVIEW_TTL s while nothing it depends on changed: the page polls, the data changes once per quote cycle."""
+    key=_overview_key(); t=time.time()
+    with _lock:
+        c=_overview_cache
+        if c['value'] is not None and c['key']==key and t-c['at']<OVERVIEW_TTL: return c['value']
+    v=_overview()
+    with _lock: _overview_cache.update(key=key,at=t,value=v)
+    return v
+
+
+def _overview():
     now=scanner.now_ist()
     with _lock:
         catalogue=copy.deepcopy(_state['catalogue'])
@@ -415,9 +457,8 @@ def _recalculate(name,now):
     q=stored.get('data',{})
     stamp=stored.get('timestamp')
     acceptable=_fresh_timestamp(stamp,now,final_quote=True)
-    bars=_history(name)
-    historical=a.summarize(bars,now)
-    r=a.summarize(bars,now,q) if acceptable else copy.deepcopy(historical)
+    historical=a.finish_summary(_base(name,now,False))
+    r=a.finish_summary(_base(name,now,bool(q.get('last_price'))),q) if acceptable else copy.deepcopy(historical)
     r.update(quote_timestamp=stamp,quote_fresh=acceptable,quote_retrieved_at=stored.get('retrieved_at'),_historical=historical)
     with _lock: _summaries[name]=r
 
@@ -555,7 +596,7 @@ def _worker():
                 t=scanner.now_ist()
                 if t.weekday()<5 and dt.time(15,32)<=t.time()<=dt.time(23,0) and (_state.get('quote_at') or '')[:10]==t.date().isoformat():
                     try:
-                        log_movers(overview()['sectors'],t.date().isoformat())
+                        log_movers(_overview()['sectors'],t.date().isoformat())
                     except Exception:  # noqa: BLE001
                         log.exception('Sector movers log failed')
             else:

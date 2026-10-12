@@ -167,3 +167,34 @@ def test_industry_refresh_is_incremental_and_saved(tmp_path):
     assert ind.needs_refresh(tmp_path,{'AAA'},today) is False and ind.needs_refresh(tmp_path,{'AAA'},today+dt.timedelta(days=8)) is True
     N.calls.clear(); ind.refresh(tmp_path,{'AAA','BBB'},N(),today,pause=0)
     assert not any(u.endswith('AAA') for u in N.calls)                    # fresh entries are not fetched again
+
+
+def test_quote_cycle_reuses_history_math_and_matches_full_summary(monkeypatch):
+    import datetime as dt
+    from app import sector_service as s, sector_analytics as a
+    now=dt.datetime(2026,10,6,11,0,0)
+    hist=[{'date':f'2026-{m:02d}-{d:02d} 00:00:00+05:30','open':100+d,'high':102+d,'low':99+d,'close':101+d+m,'volume':1}
+          for m in range(1,10) for d in range(1,28)]
+    monkeypatch.setitem(s._state['histories'],'TCS',hist)
+    quote={'last_price':140.0,'ohlc':{'close':137.0}}
+    monkeypatch.setitem(s._state['quotes'],'TCS',{'data':quote,'timestamp':now.isoformat()})
+    monkeypatch.setattr(s,'_bases',{})
+    calls=[]; real=a.summary_base
+    monkeypatch.setattr(a,'summary_base',lambda *x,**k:(calls.append(1),real(*x,**k))[1])
+    s._recalculate('TCS',now); s._recalculate('TCS',now+dt.timedelta(seconds=60))
+    assert len(calls)==2                                   # one history base + one live base, reused by the 2nd quote cycle
+    r=s._summaries['TCS']; r={k:v for k,v in r.items() if k not in ('_historical','quote_timestamp','quote_fresh','quote_retrieved_at')}
+    assert r==a.summarize(hist,now,quote) and r['price']==140.0
+    monkeypatch.setitem(s._state['histories'],'TCS',hist+[{'date':'2026-10-05 00:00:00+05:30','open':150,'high':151,'low':149,'close':150,'volume':1}])
+    s._recalculate('TCS',now)
+    assert len(calls)==5                                   # (+1 from the summarize() check) new history -> both bases recomputed
+
+
+def test_overview_is_cached_until_inputs_change(monkeypatch):
+    from app import sector_service as s
+    entry={'id':'nifty-it','name':'NIFTY IT','members':[{'symbol':'INFY','name':'Infosys Ltd.'}]}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[entry],'quote_at':'2026-10-06T11:00:00'})
+    monkeypatch.setattr(s,'_overview_cache',{'key':None,'at':0.0,'value':None})
+    first=s.overview(); assert s.overview() is first
+    s._state['quote_at']='2026-10-06T11:01:05'             # new quote cycle -> fresh payload
+    assert s.overview() is not first

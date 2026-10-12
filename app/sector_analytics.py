@@ -33,7 +33,9 @@ def frame(candles):
     return df[~df.index.duplicated(keep='last')].dropna(subset=['close'])
 
 
-def summarize(candles, now, quote=None):
+def summary_base(candles, now, live=False):
+    """Everything in a summary that depends only on completed daily history (not on the live price).
+    `live` = a quote with a last price will be applied (anchors the rolling windows on today). Pure; cacheable per day."""
     now = pd.Timestamp(now)
     if now.tzinfo:
         now = now.tz_convert('Asia/Kolkata').tz_localize(None)
@@ -42,10 +44,6 @@ def summarize(candles, now, quote=None):
     cutoff = now.normalize() if now.hour >= 16 else now.normalize() - pd.Timedelta(days=1)
     df = df[df.index.normalize() <= cutoff]
     close = df.close
-    historical_price = finite(close.iloc[-1]) if len(close) else None
-    quote = quote or {}
-    price = finite(quote.get('last_price')) or historical_price
-    returns = dict.fromkeys(PERIODS)
     sma = {str(n): finite(close.rolling(n).mean().iloc[-1]) if len(close) >= n else None for n in MA_PERIODS}
     ema = {str(n): finite(close.ewm(span=n, adjust=False, min_periods=n).mean().iloc[-1]) if len(close) >= n else None for n in MA_PERIODS}
 
@@ -53,24 +51,20 @@ def summarize(candles, now, quote=None):
         values = close[close.index.normalize() <= pd.Timestamp(boundary).normalize()]
         return finite(values.iloc[-1]) if len(values) and (pd.Timestamp(boundary).normalize()-values.index[-1].normalize()).days <= 10 else None
 
-    returns['today'] = change(quote.get('last_price'), (quote.get('ohlc') or {}).get('close'))
-    anchor = now.normalize() if quote.get('last_price') else (df.index[-1].normalize() if len(df) else now.normalize())
+    anchor = now.normalize() if live else (df.index[-1].normalize() if len(df) else now.normalize())
+    bases = {}
     for p, offset in [('1W', pd.DateOffset(weeks=1)), ('1M', pd.DateOffset(months=1)), ('3M', pd.DateOffset(months=3)), ('6M', pd.DateOffset(months=6)), ('52W', pd.DateOffset(weeks=52))]:
-        returns[p] = change(price, at(anchor - offset))
+        bases[p] = at(anchor - offset)
     current_q = now.to_period('Q')
-    returns['QTD'] = change(price, at(current_q.start_time - pd.Timedelta(days=1)))
-    labels = {}
+    bases['QTD'] = at(current_q.start_time - pd.Timedelta(days=1))
+    labels, quarters = {}, {}
     for i in range(1, 5):
         q = current_q - i
         labels[f'Q{i}'] = f'{q.year} Q{q.quarter}'
-        returns[f'Q{i}'] = change(at(q.end_time), at(q.start_time - pd.Timedelta(days=1)))
+        quarters[f'Q{i}'] = change(at(q.end_time), at(q.start_time - pd.Timedelta(days=1)))
     year = df[df.index >= anchor - pd.Timedelta(weeks=52)]
-    hi = finite(year.high.max()) if len(year) else None
-    lo = finite(year.low.min()) if len(year) else None
     prev = close.shift(1)
     tr = pd.concat([df.high - df.low, (df.high - prev).abs(), (df.low - prev).abs()], axis=1).max(axis=1)
-    atr = finite(tr.rolling(14).mean().iloc[-1]) if len(df) >= 14 else None
-    discontinuity = bool((close.pct_change().abs().tail(260) > .30).any())
     recent = df.tail(20)
     previous = df.tail(6).head(5) if len(df) and df.index[-1].date() == now.date() else df.tail(5)
     levels = {'previous_high': finite(previous.high.iloc[-1]) if len(previous) else None,
@@ -79,7 +73,25 @@ def summarize(candles, now, quote=None):
               'week_low': finite(previous.low.min()) if len(previous) else None,
               'swing_high': finite(recent.high.max()) if len(recent) else None,
               'swing_low': finite(recent.low.min()) if len(recent) else None}
-    return {'price': price, 'returns': returns, 'returns_asof': anchor.date().isoformat(), 'quarter_labels': labels, 'sma': sma, 'ema': ema,
+    return {'historical_price': finite(close.iloc[-1]) if len(close) else None, 'sma': sma, 'ema': ema, 'bases': bases,
+            'quarters': quarters, 'labels': labels, 'anchor': anchor.date().isoformat(),
+            'hi': finite(year.high.max()) if len(year) else None, 'lo': finite(year.low.min()) if len(year) else None,
+            'atr': finite(tr.rolling(14).mean().iloc[-1]) if len(df) >= 14 else None,
+            'discontinuity': bool((close.pct_change().abs().tail(260) > .30).any()), 'levels': levels,
+            'history_date': df.index[-1].date().isoformat() if len(df) else None, 'bars': len(df)}
+
+
+def finish_summary(base, quote=None):
+    """Apply a live quote (or none) to a summary_base: plain arithmetic, no pandas. Returns fresh dicts (base is not mutated)."""
+    quote = quote or {}
+    price = finite(quote.get('last_price')) or base['historical_price']
+    sma, ema, hi, lo, atr = dict(base['sma']), dict(base['ema']), base['hi'], base['lo'], base['atr']
+    returns = dict.fromkeys(PERIODS)
+    returns['today'] = change(quote.get('last_price'), (quote.get('ohlc') or {}).get('close'))
+    for p, b in base['bases'].items():
+        returns[p] = change(price, b)
+    returns.update(base['quarters'])
+    return {'price': price, 'returns': returns, 'returns_asof': base['anchor'], 'quarter_labels': dict(base['labels']), 'sma': sma, 'ema': ema,
             'sma_distance': {k: change(price, v) for k, v in sma.items()},
             'ema_distance': {k: change(price, v) for k, v in ema.items()},
             'above_sma': sum(price > v for v in sma.values() if price is not None and v is not None),
@@ -88,9 +100,13 @@ def summarize(candles, now, quote=None):
             'extension_atr': (price - sma['20']) / atr if price is not None and sma['20'] is not None and atr else None,
             'high52': hi, 'low52': lo, 'below_high52': change(price, hi), 'above_low52': change(price, lo),
             'position52': (price-lo)/(hi-lo)*100 if price is not None and hi is not None and lo is not None and hi > lo else None,
-            'levels': levels, 'volume_ratio': None,
-            'history_date': df.index[-1].date().isoformat() if len(df) else None, 'bars': len(df),
-            'quality': {'adjustment': 'Kite vendor OHLC; independent split/bonus adjustment not verified', 'discontinuity': discontinuity}}
+            'levels': dict(base['levels']), 'volume_ratio': None,
+            'history_date': base['history_date'], 'bars': base['bars'],
+            'quality': {'adjustment': 'Kite vendor OHLC; independent split/bonus adjustment not verified', 'discontinuity': base['discontinuity']}}
+
+
+def summarize(candles, now, quote=None):
+    return finish_summary(summary_base(candles, now, bool((quote or {}).get('last_price'))), quote)
 
 
 def relative_returns(row, benchmark):
