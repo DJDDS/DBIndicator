@@ -13,11 +13,29 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from . import commodity_desk as cd
 
-IST_CLOSE_HOUR = 23.5          # options/futures treated as expiring at 23:30 IST on expiry date
+# Kite lists MCX energy contracts with lot_size 1 (price is per mmBtu); one lot is this many mmBtu.
+LOT_UNITS = {"NATURALGAS": 1250, "NATGASMINI": 250}
+
+
+def units_per_lot(name: str, lot_size) -> int:
+    return int(lot_size) if lot_size and int(lot_size) > 1 else LOT_UNITS.get(name, 1)
+
+
+def mcx_session(now_ist: datetime) -> dict:
+    """MCX energy session: 09:00 IST to 23:30 IST while the US is on daylight time, 23:55 IST when the US is on
+    standard time (early Nov to mid Mar). Exchange holidays are not modelled."""
+    from zoneinfo import ZoneInfo
+    d = now_ist.date()
+    us_dst = bool(datetime(d.year, d.month, d.day, 12, tzinfo=ZoneInfo("America/New_York")).dst())
+    opn = datetime.combine(d, time(9, 0))
+    close = datetime.combine(d, time(23, 30) if us_dst else time(23, 55))
+    is_open = d.weekday() < 5 and opn <= now_ist < close
+    return {"open": opn, "close": close, "open_str": "09:00", "close_str": close.strftime("%H:%M"),
+            "us_dst": us_dst, "is_open": is_open, "weekday": d.weekday() < 5}
 
 
 # ----------------------------------------------------------------------------- Black-76 (r = 0)
@@ -57,7 +75,7 @@ def implied_vol(price: float, F: float, K: float, T: float, call: bool) -> float
 
 
 def years_to(expiry: date, now: datetime) -> float:
-    exp_dt = datetime.combine(expiry, datetime.min.time()) + timedelta(hours=IST_CLOSE_HOUR)
+    exp_dt = mcx_session(datetime.combine(expiry, time(12, 0)))["close"]     # contracts stop trading at the session close
     return max((exp_dt - now).total_seconds(), 0) / (365 * 86400)
 
 
@@ -143,9 +161,11 @@ def snapshot(kite, settings: dict, side: int | None, hold: int | None, sigma_d: 
     if not F:
         return {"error": f"No price for {fut['tradingsymbol']} (market closed or no quote yet)"}
     fb, fa = _bidask(fq)
-    out = {"symbol": name, "future": {"tradingsymbol": fut["tradingsymbol"], "instrument_token": fut.get("instrument_token"),
+    out = {"symbol": name, "session": {k: v for k, v in mcx_session(now).items() if k not in ("open", "close")},
+           "future": {"tradingsymbol": fut["tradingsymbol"], "instrument_token": fut.get("instrument_token"),
                                       "expiry": fut["expiry"], "ltp": F, "bid": fb, "ask": fa,
-                                      "oi": fq.get("oi"), "lot_size": fut.get("lot_size"), "change_pct": None,
+                                      "oi": fq.get("oi"), "lot_size": fut.get("lot_size"),
+                                      "units_per_lot": units_per_lot(name, fut.get("lot_size")), "change_pct": None,
                                       "close": (fq.get("ohlc") or {}).get("close")}}
     if out["future"]["close"]:
         out["future"]["change_pct"] = round((F / out["future"]["close"] - 1) * 100, 2)
@@ -180,13 +200,15 @@ def snapshot(kite, settings: dict, side: int | None, hold: int | None, sigma_d: 
                "strike": K, "ltp": ltp, "bid": bid, "ask": ask, "mid": round(mid, 2) if mid else None,
                "spread_pct": round((ask - bid) / mid * 100, 2) if bid and ask and mid else None,
                "oi": q.get("oi"), "volume": q.get("volume"), "lot_size": r.get("lot_size"),
+               "units_per_lot": units_per_lot(name, r.get("lot_size")),
                "iv_pct": round(iv * 100, 1) if iv else None,
                "delta": round(b76_delta(F, K, T, iv, call), 2) if iv else None,
-               "premium_per_lot": round(mid * (r.get("lot_size") or 1), 0) if mid else None}
+               "premium_per_lot": round(mid * units_per_lot(name, r.get("lot_size")), 0) if mid else None}
         if side and iv and mid:
             est = {k: b76(out["levels"][k], K, T_after, iv, call) for k in ("t1", "t2", "stop")}
             row["est"] = {k: round(v, 2) for k, v in est.items()}
             row["est_pct"] = {k: round((v / mid - 1) * 100, 1) for k, v in est.items()}
+            row["est_pnl_per_lot"] = {k: round((v - mid) * row["units_per_lot"], 0) for k, v in est.items()}
             row["reward_risk"] = round((est["t1"] - mid) / (mid - est["stop"]), 2) if mid > est["stop"] else None
         chain.append(row)
     out["chain"] = chain
