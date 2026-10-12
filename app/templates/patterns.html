@@ -106,6 +106,11 @@
   .fwd-head span { color: var(--muted); font-size: 12.5px; }
   .fwd-head a { margin-left: auto; font-size: 12.5px; }
   .chip.BULL { background: rgba(46,204,113,.12); color: var(--green); }
+  .tier { display:inline-block; padding:2px 7px; border-radius:6px; font-size:10.5px; font-weight:800; letter-spacing:.03em; margin-right:5px; }
+  .tier.A { background:rgba(46,204,113,.16); color:var(--green); }
+  .tier.WATCH { background:rgba(245,166,35,.16); color:var(--amber); }
+  .tier.NONE { background:rgba(140,150,170,.14); color:var(--muted); }
+  .edge-sub { font-size:11px; color:var(--muted); white-space:nowrap; }
   .chip.BEAR { background: rgba(239,68,68,.12); color: var(--red); }
   .chip.tf { background: var(--card2); color: var(--text); }
   .chip.tf.primary { box-shadow: inset 0 0 0 1px rgba(46,204,113,.5); }
@@ -180,7 +185,8 @@
   <details class="guide">
     <summary>Core swing structures - why these six are kept</summary>
     <div class="guide-body">
-      <p><b>Daily is the only pattern engine.</b> Weekly is context only. The scanner keeps six fast-swing structures: VCP/Tight Base, Rectangle/Flat Base, Flag/Pennant, Ascending/Descending Triangle, Double Top/Bottom, and Three Rising Valleys/Falling Peaks.</p>
+      <p><b>Daily is the only pattern engine.</b> Weekly is context only. The scanner keeps seven fast-swing structures: VCP/Tight Base, Rectangle/Flat Base, Flag/Pennant, Ascending/Descending Triangle, Double Top/Bottom, Three Rising Valleys/Falling Peaks and Cup &amp; Handle (promoted 12-Oct-2026).</p>
+      <p><b>Tested edge (12-Oct-2026 replay of this engine, 2021-26, 220 most-traded stocks, ~17,700 activations):</b> each pattern's swing success (+1 ATR before -0.75 ATR by D5) minus the same rule on every stock entering the same day in the same direction. <b>EDGE</b> = at least +5 pts and positive in all but at most one year: Descending Triangle +8.4, Tight Base Breakdown +7.3, Inverted Cup &amp; Handle +6.6, Three Falling Peaks +5.6. <b>WATCH</b> = +3 to +5 pts. <b>NO EDGE</b> patterns are still recorded but hidden by default. All patterns together: +3.1 pts. The Quality score did not rank winners (for bullish setups the top-scored quarter was the worst), so the list is sorted by tested edge. Edges are ~0.4% over 5 days: futures/cash swing, thin for option buying.</p>
       <p><b>Pattern timeframe is Daily.</b> Weekly is context only. Daily pivots are now checked at <b>k=3/5/8</b> and the best structural fit is retained. <b>Global research basis</b> describes outside research support; <b>NSE evidence</b> is built only from our own next-session-open D1-D5 outcomes. Height/ATR, breakout volume, volatility regime, breakout thrust and candlestick names are captured as research features; they do not add live score points until our own D1-D5 evidence validates them.</p>
       <table class="matrix" id="matrix"></table>
     </div>
@@ -191,6 +197,7 @@
     <select id="f-dir"><option value="">All directions</option><option value="BULL">Bullish</option><option value="BEAR">Bearish</option></select>
     <select id="f-status"><option value="">Active states</option><option value="BREAKOUT">Breakout</option><option value="RETEST_HOLD">Retest hold</option><option value="FORMING">Forming</option><option value="EXTENDED">Extended</option><option value="FAILED">Failed</option></select>
     <select id="f-family"><option value="">All core patterns</option></select>
+    <select id="f-tier" title="Tier from the 2021-26 replay: pattern swing success minus the same-day market"><option value="AW">Tested edge + watch</option><option value="A">Tested edge only (A)</option><option value="">All patterns (incl. no edge)</option></select>
     <select id="f-grade"><option value="">Any quality</option><option value="A">A only</option><option value="B">B or better</option></select>
     <span class="spacer"></span>
     <span class="count" id="count"></span>
@@ -201,7 +208,7 @@
       <div class="table-scroll">
         <table class="res">
           <thead><tr>
-            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th><th data-k="timeframe">TF</th><th data-k="formation_sessions">Formed</th>
+            <th data-k="symbol">Symbol</th><th data-k="pattern">Pattern</th><th data-k="tier_rank" title="2021-26 replay: swing success minus the same-day market (percentage points)">Tested edge</th><th data-k="timeframe">TF</th><th data-k="formation_sessions">Formed</th>
             <th data-k="direction">Dir</th><th data-k="status">State</th><th data-k="score">Quality</th><th title="Our own D1-D5 NSE sample">NSE Evidence</th>
             <th data-k="ltp" class="num">LTP</th><th data-k="trigger" class="num">Trigger</th><th data-k="dist_atr" class="num">Dist</th>
             <th data-k="stop" class="num">Invalidation</th><th data-k="target" class="num">Pattern target</th><th data-k="rr" class="num">R:R</th>
@@ -251,7 +258,7 @@
       <table class="res"><thead><tr>
         <th>Pattern</th><th>Dir</th><th class="num">Events</th><th class="num">Resolved</th>
         <th class="num">D1 MFE</th><th class="num">D2 MFE</th><th class="num">D3 MFE</th><th class="num">D4 MFE</th><th class="num">D5 MFE</th>
-        <th class="num">Fast ≤D2</th><th class="num">Swing ≤D5</th><th class="num">D5 Ret</th><th class="num">D5 MAE</th>
+        <th class="num">Fast ≤D2</th><th class="num">Swing ≤D5</th><th class="num" title="Same rule on every scanned stock entering the same days, same direction">Market same days</th><th class="num" title="Swing minus market, percentage points">Live edge</th><th title="2021-26 replay">Tested</th><th class="num">D5 Ret</th><th class="num">D5 MAE</th>
       </tr></thead><tbody id="fwd-rows"></tbody></table>
       <div class="empty" id="fwd-empty">No D1-D5 activations yet. Entry is the next trading session open after a confirmed Daily breakout.</div>
     </div>
@@ -259,7 +266,7 @@
 </div>
 
 <script>
-const state = { rows: [], sortKey: 'score', sortDir: -1, sel: null, matrix: [], polling: null };
+const state = { rows: [], sortKey: 'tier_rank', sortDir: 1, sel: null, matrix: [], polling: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -293,6 +300,7 @@ function renderForward(f) {
     ((f.shadow_events || 0) ? ' · research shadow ' + f.shadow_events + ' (' + (f.shadow_resolved || 0) + ' resolved)' : '') +
     (f.fast_success_pct !== null && f.fast_success_pct !== undefined ? ' · fast ' + fmt(f.fast_success_pct, 1) + '%' : '') +
     (f.success_pct !== null && f.success_pct !== undefined ? ' · swing ' + fmt(f.success_pct, 1) + '%' : '') +
+    (f.base_pct !== null && f.base_pct !== undefined ? ' vs market ' + fmt(f.base_pct, 1) + '% (edge ' + (f.edge_pp >= 0 ? '+' : '') + fmt(f.edge_pp, 1) + ' pts)' : '') +
     ' · ' + (f.rule || '') + ' · trust pattern rows after ~100 resolved';
   $('fwd-empty').hidden = rows.length > 0;
   $('fwd-rows').innerHTML = rows.map((r) => {
@@ -303,6 +311,9 @@ function renderForward(f) {
       '<td class="num">' + r.events + '</td><td class="num">' + r.resolved + '</td>' +
       [1,2,3,4,5].map((d) => '<td class="num">' + fmt(r['median_mfe_d' + d]) + '</td>').join('') +
       '<td class="num">' + fast + '</td><td class="num">' + swing + '</td>' +
+      '<td class="num">' + (r.base_pct === null || r.base_pct === undefined ? '—' : fmt(r.base_pct, 1) + '%') + '</td>' +
+      '<td class="num ' + (r.edge_pp > 0 ? 'green' : r.edge_pp < 0 ? 'red' : '') + '">' + (r.edge_pp === null || r.edge_pp === undefined ? '—' : (r.edge_pp >= 0 ? '+' : '') + fmt(r.edge_pp, 1)) + '</td>' +
+      '<td>' + edgeCell(r.tested) + '</td>' +
       '<td class="num">' + (r.median_ret_d5 === null ? '—' : fmt(r.median_ret_d5) + '%') + '</td>' +
       '<td class="num">' + fmt(r.median_mae_d5) + '</td></tr>';
   }).join('');
@@ -327,12 +338,20 @@ function renderFamilies() {
 
 function filtered() {
   const q = $('q').value.trim().toUpperCase();
-  const dir = $('f-dir').value, st = $('f-status').value, fam = $('f-family').value, g = $('f-grade').value;
+  const dir = $('f-dir').value, st = $('f-status').value, fam = $('f-family').value, g = $('f-grade').value, tr = $('f-tier').value;
   return state.rows.filter((r) => (!q || r.symbol.includes(q)) &&
     (!dir || r.direction === dir) &&
     (st ? r.status === st : r.status !== 'FAILED') &&
     (!fam || r.family === fam) &&
+    (!tr || (tr === 'A' ? r.tier === 'A' : r.tier !== 'NONE')) &&
     (!g || (g === 'A' ? r.grade === 'A' : r.grade !== 'C')));
+}
+
+function edgeCell(t) {
+  if (!t) return '<span class="tier NONE">UNTESTED</span>';
+  const label = t.tier === 'A' ? 'EDGE' : t.tier === 'WATCH' ? 'WATCH' : 'NO EDGE';
+  return '<span class="tier ' + t.tier + '" title="' + esc(t.swing + '% swing vs ' + t.base + '% same-day market, n=' + t.n + ', 5-day excess return ' + t.ex_ret5 + '%') + '">' + label + '</span>' +
+    '<span class="edge-sub">' + (t.edge_pp >= 0 ? '+' : '') + fmt(t.edge_pp, 1) + ' pts · ' + esc(t.years) + ' yrs</span>';
 }
 
 function nseEvidenceCell(r) {
@@ -379,6 +398,7 @@ function render() {
     return '<tr data-id="' + esc(r.id) + '" class="' + (state.sel === r.id ? 'sel' : '') + '">' +
       '<td class="sym">' + esc(r.symbol) + '</td>' +
       '<td class="pat">' + esc(r.pattern) + '</td>' +
+      '<td>' + edgeCell(r.tested) + '</td>' +
       '<td><span class="chip tf primary">' + esc(r.pattern_timeframe || r.tf_label || 'Daily') + '</span></td>' +
       '<td class="num">' + (r.formation_sessions || (r.bars + 1)) + ' sessions</td>' +
       '<td><span class="chip ' + r.direction + '">' + (r.direction === 'BULL' ? '▲ Bull' : '▼ Bear') + '</span></td>' +
@@ -610,7 +630,7 @@ $('scan-btn').onclick = async () => {
   if (!r.ok) { alert(d.error || 'Scan could not start'); $('scan-btn').disabled = false; return; }
   renderProgress(d.progress || { running: true });
 };
-['q', 'f-dir', 'f-status', 'f-family', 'f-grade'].forEach((id) => $(id).addEventListener('input', render));
+['q', 'f-dir', 'f-status', 'f-family', 'f-grade', 'f-tier'].forEach((id) => $(id).addEventListener('input', render));
 document.querySelectorAll('table.res th').forEach((th) => th.onclick = () => {
   const k = th.dataset.k;
   if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = (k === 'score' || k === 'rr' || k === 'vol_ratio') ? -1 : 1; }

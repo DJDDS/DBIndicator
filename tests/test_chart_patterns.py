@@ -42,7 +42,7 @@ INV_HS = [(0, 130), (30, 110), (45, 100), (60, 110), (80, 92), (100, 110),
 
 def test_large_slow_structures_are_not_in_fast_swing_production():
     assert "head_shoulders" not in cp.PATTERN_MATRIX
-    assert "cup_handle" not in cp.PATTERN_MATRIX
+    assert "cup_handle" in cp.PATTERN_MATRIX              # promoted 12-Oct-2026 (Inverted Cup & Handle tested edge)
     assert "triple" not in cp.PATTERN_MATRIX
     assert "wedge" not in cp.PATTERN_MATRIX
 
@@ -104,9 +104,9 @@ def test_public_rows_strips_chart_payload_and_adds_nse_evidence():
 def test_matrix_for_ui_is_the_crisp_fast_swing_universe():
     rows = cp.matrix_for_ui()
     fams = {m["family"] for m in rows}
-    assert fams == {"vcp", "rectangle", "flag", "triangle", "double", "three_valleys"}
+    assert fams == {"vcp", "rectangle", "flag", "triangle", "double", "three_valleys", "cup_handle"}
     assert cp.TIMEFRAMES == ["day"]
-    assert all(m["research_basis"] in {"DIRECT", "MECHANISM", "LIMITED"} for m in rows)
+    assert all(m["research_basis"] in {"DIRECT", "MECHANISM", "LIMITED", "RESEARCH"} for m in rows)
     assert all("evidence_bull" not in m and "evidence_bear" not in m for m in rows)
 
 
@@ -212,12 +212,36 @@ def test_daily_multiscale_pivots_and_structure_features_are_exposed():
     assert h["research_only"] is False
 
 
-def test_cup_handle_and_wedge_are_shadow_not_production():
-    assert set(cp.RESEARCH_SHADOW_MATRIX) == {"cup_handle", "wedge"}
-    assert "cup_handle" not in cp.PATTERN_MATRIX
-    assert "wedge" not in cp.PATTERN_MATRIX
-    assert cp.RESEARCH_BASIS["cup_handle"]["label"] == "RESEARCH"
-    assert cp.RESEARCH_BASIS["wedge"]["label"] == "RESEARCH"
+def test_cup_handle_promoted_wedge_stays_shadow_and_tiers_follow_tested_edge():
+    assert set(cp.RESEARCH_SHADOW_MATRIX) == {"wedge"}
+    assert "cup_handle" in cp.PATTERN_MATRIX and "wedge" not in cp.PATTERN_MATRIX
+    a = {k for k, v in cp.TESTED_EDGE.items() if v["tier"] == "A"}
+    assert a == {"Descending Triangle", "Tight Base Breakdown", "Inverted Cup & Handle", "Three Falling Peaks"}
+    for k, v in cp.TESTED_EDGE.items():                    # tier rule is mechanical, not hand-picked
+        pos, ny = map(int, v["years"].split("/"))
+        want = "A" if v["edge_pp"] >= 5 and pos >= ny - 1 else ("WATCH" if v["edge_pp"] >= 3 else "NONE")
+        assert v["tier"] == want, k
+    rows = cp.public_rows({"results": [{"pattern": "Bear Flag", "direction": "BEAR"}, {"pattern": "Descending Triangle", "direction": "BEAR"}]}, ledger={})
+    assert [r["tier"] for r in rows] == ["NONE", "A"] and rows[1]["tested_edge"] == 8.4
+
+
+def test_market_baseline_and_live_edge(tmp_path):
+    import datetime as _dt
+    n = 60
+    t = np.array([int(_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc).timestamp()) + 86400 * i for i in range(n)])
+    up = np.linspace(100, 160, n)                             # steady uptrend: bull swing wins, bear loses
+    fr = cp.Frame(t, up, up + 1.5, up - 0.3, up + 1.2, np.ones(n), np.full(n, 1.0))
+    out = cp.market_outcomes(fr, last=10)
+    assert len(out) == 20 and all(w for _, d, w, _ in out if d == "BULL") and not any(w for _, d, w, _ in out if d == "BEAR")
+    base = cp.merge_baseline({}, out)
+    assert cp.merge_baseline(base, out) == base               # re-scanning the same days never double counts
+    day = out[0][0]
+    ev = {"pattern": "Descending Triangle", "direction": "BEAR", "entry_time": int(t[n - 15]), "outcome": "SUCCESS"}
+    ev["entry_time"] = int(next(x for x in t if cp._day_key(x) == day))
+    summ = cp.forward_summary({"k": ev}, baseline=base)
+    row = summ["rows"][0]
+    assert row["base_pct"] == 0.0 and row["edge_pp"] == 100.0 and row["tested"]["tier"] == "A"
+    cp.save_baseline(base, str(tmp_path / "b.json")); assert cp.load_baseline(str(tmp_path / "b.json")) == base
 
 
 def test_forward_ledger_snapshots_structure_features():

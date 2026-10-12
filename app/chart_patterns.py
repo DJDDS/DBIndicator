@@ -76,16 +76,46 @@ PATTERN_MATRIX = {
     "rectangle": {"day": "primary"},
     "flag": {"day": "primary"},
     "triangle": {"day": "primary"},
+    # Promoted 12-Oct-2026: Inverted Cup & Handle beat the same-day market in every year 2021-26 (see TESTED_EDGE).
+    "cup_handle": {"day": "primary"},
 }
 
-# Evidence from the 26-Sep-2026 research note warrants collecting these two
-# families, but not promoting them into the live production shortlist until our
-# own D1-D5 NSE ledger has enough resolved events. They are recorded as shadow
-# activations only and never appear in the live setup table.
+# Wedges stay shadow: Falling Wedge has no edge over the same-day market, Rising Wedge only +2.8 pts.
 RESEARCH_SHADOW_MATRIX = {
-    "cup_handle": {"day": "shadow"},
     "wedge": {"day": "shadow"},
 }
+
+# Tested edge per pattern (12-Oct-2026 replay of this exact engine, 2021-01..2026-09, 220 most-traded NSE stocks,
+# ~17,700 activations). swing = +1 ATR before -0.75 ATR by D5 from the next-session open; base = the same rule for
+# every stock entering the same day in the same direction; edge_pp = swing - base (percentage points); years = years
+# 2021-26 with a positive edge; ex_ret5 = mean D5 return minus the same-day market's (in %).
+# Tier: A = edge >= 5 pts and positive in all but at most one year; WATCH = edge >= 3 pts; NONE = no reliable edge.
+TESTED_EDGE = {
+    "Descending Triangle": {"tier": "A", "edge_pp": 8.4, "swing": 51.1, "base": 42.4, "years": "6/6", "n": 809, "ex_ret5": 0.46},
+    "Tight Base Breakdown": {"tier": "A", "edge_pp": 7.3, "swing": 49.7, "base": 42.3, "years": "5/6", "n": 394, "ex_ret5": 0.41},
+    "Inverted Cup & Handle": {"tier": "A", "edge_pp": 6.6, "swing": 50.3, "base": 43.4, "years": "6/6", "n": 864, "ex_ret5": 0.35},
+    "Three Falling Peaks": {"tier": "A", "edge_pp": 5.6, "swing": 46.5, "base": 40.9, "years": "5/6", "n": 782, "ex_ret5": 0.42},
+    "Double Top": {"tier": "WATCH", "edge_pp": 4.3, "swing": 44.5, "base": 40.2, "years": "5/6", "n": 346, "ex_ret5": 0.38},
+    "Rectangle Breakout": {"tier": "WATCH", "edge_pp": 4.0, "swing": 43.7, "base": 39.6, "years": "4/6", "n": 442, "ex_ret5": 0.42},
+    "Ascending Triangle": {"tier": "WATCH", "edge_pp": 3.8, "swing": 43.1, "base": 39.3, "years": "4/6", "n": 835, "ex_ret5": 0.65},
+    "Rectangle Breakdown": {"tier": "WATCH", "edge_pp": 3.1, "swing": 45.3, "base": 42.3, "years": "5/6", "n": 402, "ex_ret5": 0.16},
+    "Rising Wedge": {"tier": "NONE", "edge_pp": 2.8, "swing": 42.0, "base": 39.3, "years": "6/6", "n": 3213, "ex_ret5": 0.06},
+    "Bull Flag": {"tier": "NONE", "edge_pp": 2.5, "swing": 41.5, "base": 39.1, "years": "6/6", "n": 1445, "ex_ret5": 0.58},
+    "Double Bottom": {"tier": "NONE", "edge_pp": 2.1, "swing": 42.7, "base": 40.6, "years": "4/6", "n": 466, "ex_ret5": 0.76},
+    "Three Rising Valleys": {"tier": "NONE", "edge_pp": 1.9, "swing": 42.5, "base": 40.6, "years": "4/6", "n": 692, "ex_ret5": 0.5},
+    "VCP / Tight Base Breakout": {"tier": "NONE", "edge_pp": 1.9, "swing": 40.8, "base": 38.9, "years": "4/6", "n": 662, "ex_ret5": 0.81},
+    "Bear Pennant": {"tier": "NONE", "edge_pp": 1.3, "swing": 40.2, "base": 38.5, "years": "4/6", "n": 597, "ex_ret5": 0.0},
+    "Cup & Handle": {"tier": "NONE", "edge_pp": 1.1, "swing": 40.8, "base": 39.7, "years": "4/6", "n": 1072, "ex_ret5": 0.66},
+    "Bull Pennant": {"tier": "NONE", "edge_pp": 0.3, "swing": 38.7, "base": 38.3, "years": "3/6", "n": 641, "ex_ret5": 0.65},
+    "Falling Wedge": {"tier": "NONE", "edge_pp": 0.2, "swing": 39.9, "base": 39.7, "years": "4/6", "n": 2817, "ex_ret5": 0.48},
+    "Bear Flag": {"tier": "NONE", "edge_pp": -0.2, "swing": 38.0, "base": 38.2, "years": "3/6", "n": 1246, "ex_ret5": -0.02},
+}
+TIER_RANK = {"A": 0, "WATCH": 1, "NONE": 2, None: 3}
+
+
+def tested_edge(pattern):
+    """Tested edge row for a pattern name, or None when it was not part of the replay."""
+    return TESTED_EDGE.get(pattern)
 
 # Global research basis. These are provenance labels, NOT grades, win rates or score inputs.
 # DIRECT = published work tests the named structure or a very close rule.
@@ -119,7 +149,7 @@ RESEARCH_BASIS = {
     },
     "cup_handle": {
         "label": "RESEARCH",
-        "note": "26-Sep-2026 NSE walk-forward study: strongest incremental bullish family versus shuffled null; shadow-only pending our D1-D5 validation.",
+        "note": "Promoted 12-Oct-2026: our 2021-26 replay shows Inverted Cup & Handle (bear) beating the same-day market by 6.6 pts, every year; the bullish Cup & Handle has no edge (+1.1 pts).",
     },
     "wedge": {
         "label": "RESEARCH",
@@ -138,7 +168,7 @@ HORIZON = {
     "vcp": "1-5 trading days",
     "double": "1-5 trading days",
     "three_valleys": "1-5 trading days",
-    "cup_handle": "1-5 trading days (research shadow)",
+    "cup_handle": "1-5 trading days",
     "wedge": "1-5 trading days (research shadow)",
 }
 
@@ -148,6 +178,7 @@ MATRIX_NOTES = {
     "flag": "Real impulse first, then controlled pullback. No pole = no flag.",
     "triangle": "Directional pressure only: ascending / descending. Symmetrical triangles are excluded from production.",
     "double": "Confirmed only after neckline close. A W/M shape alone is not an activated setup.",
+    "cup_handle": "Rounded base + shallow handle, breakout through the rim. Bearish (inverted) version has a tested edge; bullish one does not.",
     "three_valleys": "Progressive swing structure: higher lows / lower highs, then boundary break.",
 }
 
@@ -178,6 +209,8 @@ def _default_results_file():
 RESULTS_FILE = _default_results_file()
 FORWARD_FILE = os.getenv("PATTERN_FORWARD_FILE") or os.path.join(
     os.path.dirname(RESULTS_FILE) or ".", "pattern_forward_d1d5_ledger.json")
+BASELINE_FILE = os.getenv("PATTERN_BASELINE_FILE") or os.path.join(
+    os.path.dirname(RESULTS_FILE) or ".", "pattern_market_baseline.json")
 FORWARD_MAX_EVENTS = 5000
 
 
@@ -1299,9 +1332,88 @@ def update_forward(ledger, symbol, frames):
                 log.exception("D1-D5 forward evaluation failed for %s", ev.get("key"))
 
 
-def forward_summary(ledger=None):
+# ---------------------------------------------------------------------------
+# Same-day market baseline: the D5 swing rule applied to EVERY scanned stock entering on each day, both directions.
+# A pattern's live edge = its swing% minus the baseline of the days its events entered (separates skill from drift).
+# ---------------------------------------------------------------------------
+BASELINE_DAYS = 400
+
+
+def _day_key(epoch):
+    return dt.datetime.fromtimestamp(int(epoch), dt.timezone(dt.timedelta(hours=5, minutes=30))).date().isoformat()
+
+
+def market_outcomes(fr: Frame, last=40):
+    """[(entry_day, direction, win, ret_d5)] for each of the last `last` resolved entry days of one stock (same rule as evaluate_event)."""
+    out = []
+    if fr is None or fr.n < 30:
+        return out
+    for idx in range(max(1, fr.n - PRIMARY_DAYS - last + 1), fr.n - PRIMARY_DAYS + 1):
+        entry, atr = float(fr.o[idx]), float(fr.atr[idx - 1])
+        if entry <= 0 or atr <= 0 or not np.isfinite(atr):
+            continue
+        for bull in (True, False):
+            win = False
+            for i in range(idx, idx + PRIMARY_DAYS):
+                fav = (fr.h[i] - entry) if bull else (entry - fr.l[i])
+                adv = (entry - fr.l[i]) if bull else (fr.h[i] - entry)
+                if adv >= ADVERSE_ATR * atr:
+                    break
+                if fav >= SUCCESS_ATR * atr:
+                    win = True
+                    break
+            ret = (fr.c[idx + PRIMARY_DAYS - 1] - entry) / entry * 100 * (1 if bull else -1)
+            out.append((_day_key(fr.t[idx]), "BULL" if bull else "BEAR", win, float(ret)))
+    return out
+
+
+def merge_baseline(base, outcomes):
+    """Fold per-stock outcomes into {day: {dir: [wins, n, ret_sum]}} (recomputed days replace, never double count)."""
+    fresh = {}
+    for day, d, win, ret in outcomes:
+        c = fresh.setdefault(day, {}).setdefault(d, [0, 0, 0.0])
+        c[0] += int(win); c[1] += 1; c[2] += ret
+    base = dict(base or {})
+    base.update(fresh)
+    for k in sorted(base)[:-BASELINE_DAYS]:
+        base.pop(k)
+    return base
+
+
+def load_baseline(path=None):
+    try:
+        with open(path or BASELINE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_baseline(base, path=None):
+    path = path or BASELINE_FILE
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(base, fh, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def _event_base(ev, base):
+    """(baseline win rate, baseline mean D5 return) of the day/direction this event entered, or (None, None)."""
+    if not ev.get("entry_time"):
+        return None, None
+    c = (base.get(_day_key(ev["entry_time"])) or {}).get(ev.get("direction"))
+    if not c or not c[1]:
+        return None, None
+    return c[0] / c[1], c[2] / c[1]
+
+
+def forward_summary(ledger=None, baseline=None):
     """Pattern x direction summary on the common D1-D5 Daily clock."""
     ledger = load_forward() if ledger is None else ledger
+    baseline = load_baseline() if baseline is None else baseline
     groups = {}
     for ev in ledger.values():
         groups.setdefault((ev["pattern"], ev["direction"]), []).append(ev)
@@ -1318,7 +1430,7 @@ def forward_summary(ledger=None):
         fast_wins = sum(1 for e in fast_done if e["fast_outcome"] == "SUCCESS")
         row = {
             "pattern": pattern, "direction": direction, "tf_label": "Daily",
-            "research_only": any(bool(e.get("research_only")) for e in evs),
+            "research_only": all(bool(e.get("research_only")) for e in evs),
             "events": len(evs), "resolved": len(done),
             "success_pct": round(100 * wins / len(done), 1) if done else None,
             "fast_success_pct": round(100 * fast_wins / len(fast_done), 1) if fast_done else None,
@@ -1327,9 +1439,15 @@ def forward_summary(ledger=None):
         }
         for d in range(1, PRIMARY_DAYS + 1):
             row[f"median_mfe_d{d}"] = median(f"mfe_d{d}", evs)
+        paired = [(e["outcome"] == "SUCCESS",) + _event_base(e, baseline) for e in done]
+        paired = [x for x in paired if x[1] is not None]
+        row["base_n"] = len(paired)
+        row["base_pct"] = round(100 * sum(x[1] for x in paired) / len(paired), 1) if paired else None
+        row["edge_pp"] = round(100 * sum(int(x[0]) - x[1] for x in paired) / len(paired), 1) if paired else None
+        row["tested"] = tested_edge(pattern)
         rows.append(row)
 
-    rows.sort(key=lambda r: (-r["resolved"], -r["events"], r["pattern"]))
+    rows.sort(key=lambda r: (TIER_RANK.get((r.get("tested") or {}).get("tier")), -r["resolved"], -r["events"], r["pattern"]))
     production_events = [e for e in ledger.values() if not e.get("research_only")]
     shadow_events = [e for e in ledger.values() if e.get("research_only")]
     total = [e for e in production_events if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
@@ -1337,7 +1455,11 @@ def forward_summary(ledger=None):
     shadow_done = [e for e in shadow_events if e.get("outcome") in ("SUCCESS", "FAIL", "TIMEOUT")]
     wins = sum(1 for e in total if e["outcome"] == "SUCCESS")
     fast_wins = sum(1 for e in fast_total if e["fast_outcome"] == "SUCCESS")
+    allp = [(e["outcome"] == "SUCCESS",) + _event_base(e, baseline) for e in total]
+    allp = [x for x in allp if x[1] is not None]
     return {
+        "base_pct": round(100 * sum(x[1] for x in allp) / len(allp), 1) if allp else None,
+        "edge_pp": round(100 * sum(int(x[0]) - x[1] for x in allp) / len(allp), 1) if allp else None,
         "rows": rows, "events": len(production_events), "resolved": len(total),
         "shadow_events": len(shadow_events), "shadow_resolved": len(shadow_done),
         "success_pct": round(100 * wins / len(total), 1) if total else None,
@@ -1393,6 +1515,7 @@ def run_scan(kite, trigger="manual"):
     t0 = time.time()
     results, errors = [], 0
     ledger = load_forward()
+    outcomes = []
     try:
         symbols = list(scanner.get_fno_stock_list(kite))
         inst = scanner._load_instrument_map(kite)
@@ -1419,17 +1542,24 @@ def run_scan(kite, trigger="manual"):
                 record_breakouts(ledger, hits, now.isoformat(timespec="seconds"))
                 record_breakouts(ledger, shadow_hits, now.isoformat(timespec="seconds"))
                 update_forward(ledger, sym, frames)
+                if sym not in INDEX_SYMBOLS:
+                    outcomes.extend(market_outcomes(frames.get("day")))
             except Exception:  # noqa: BLE001
                 errors += 1
                 log.exception("pattern scan failed for %s", sym)
             with _state_lock:
                 _state["done"] += 1
         status_rank = {"RETEST_HOLD": 0, "BREAKOUT": 1, "FORMING": 2, "EXTENDED": 3, "FAILED": 4}
-        results.sort(key=lambda r: (status_rank.get(r["status"], 9), -r["score"]))
+        results.sort(key=lambda r: (TIER_RANK.get((tested_edge(r.get("pattern")) or {}).get("tier")), status_rank.get(r["status"], 9), -r["score"]))
         try:
             save_forward(ledger)
         except OSError:
             log.exception("could not save pattern forward ledger")
+        try:
+            if outcomes:
+                save_baseline(merge_baseline(load_baseline(), outcomes))
+        except OSError:
+            log.exception("could not save pattern market baseline")
         _save_results({
             "results": results, "scanned_at": scanner.now_ist().isoformat(timespec="seconds"),
             "symbols": len(universe), "errors": errors, "duration_s": round(time.time() - t0, 1),
@@ -1542,9 +1672,14 @@ def public_rows(payload, ledger=None):
     rows = []
     for r in payload.get("results", []):
         row = {k: v for k, v in r.items() if k not in heavy}
-        row["nse_evidence"] = nse.get((r.get("pattern"), r.get("direction"))) or nse_evidence_for(
-            r.get("pattern"), r.get("direction"), ledger
-        )
+        row["nse_evidence"] = nse.get((r.get("pattern"), r.get("direction"))) or {
+            "stage": "BUILDING", "events": 0, "resolved": 0, "fast_success_pct": None, "swing_success_pct": None,
+            "median_ret_d5": None, "median_mae_d5": None}
+        te = tested_edge(r.get("pattern"))
+        row["tested"] = te
+        row["tier"] = (te or {}).get("tier") or "NONE"
+        row["tier_rank"] = TIER_RANK.get(row["tier"], 3)
+        row["tested_edge"] = (te or {}).get("edge_pp")
         rows.append(row)
     return rows
 
