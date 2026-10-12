@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NG Commodity Desk · Admin</title>
+<style>
+:root{--bg:#0f1216;--panel:#171b21;--panel2:#1d222a;--line:#2a313b;--text:#e6e9ee;--muted:#8b95a3;--good:#3fb950;--bad:#f0616d;--warn:#d6a33a;--chip:#232a33;--acc:#8fb3ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+header h1{font-size:17px;margin:0;font-weight:650}.tag{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--chip);color:var(--muted)}
+nav a{color:var(--acc);margin-right:12px;font-size:13px;text-decoration:none}
+.wrap{padding:16px 18px;display:grid;gap:14px;max-width:1280px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.kpi{background:var(--panel2);border-radius:8px;padding:10px}.kpi .v{font-size:19px;font-weight:650}.kpi .l{font-size:12px;color:var(--muted)}
+.sig{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.side{font-size:30px;font-weight:800;letter-spacing:.02em}
+.CALL{color:var(--good)}.PUT{color:var(--bad)}.none{color:var(--muted)}
+.lv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}.lv div{background:#141920;border-radius:6px;padding:8px}
+.lv .l{font-size:11px;color:var(--muted)}.lv .v{font-weight:650}@media(max-width:600px){.lv{grid-template-columns:repeat(2,1fr)}}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--muted);font-weight:500}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.small{font-size:12px;color:var(--muted)}.warn{color:var(--warn)}.bad{color:var(--bad)}.good{color:var(--good)}
+.sched{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}@media(max-width:700px){.sched{grid-template-columns:1fr}}
+.sched div{background:var(--panel2);border-radius:8px;padding:10px}.sched b{display:block;margin-bottom:4px}
+.bars{display:grid;gap:3px;align-items:end;height:110px;margin-top:8px}
+.col{position:relative;height:100%;display:flex;align-items:flex-end}.bar{width:100%;background:#26303c;border-radius:3px 3px 0 0}.col i{position:absolute;left:0;right:0;border-top:2px dashed var(--warn)}
+.bar.cold{background:#3a6fd8}.bar.warm{background:#5b4b33}.blab{display:grid;gap:3px;overflow:hidden;font-size:10px;color:var(--muted);text-align:center}
+form.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;align-items:end}
+label{font-size:12px;color:var(--muted);display:grid;gap:3px}input,select{background:#0f1318;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px}
+label.cb{display:flex;gap:6px;align-items:center}
+button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px;font-weight:600;cursor:pointer}
+button.ghost{background:var(--chip);color:var(--text)}
+ul.notes{margin:0;padding-left:18px}ul.notes li{margin:3px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>NG Commodity Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">PAPER · spotting only, no orders</span><span class="tag">Oct–Feb winter playbook</span>
+  <nav style="margin-left:auto"><a href="/admin/v130">Swing desk</a><a href="/admin/intraday">Intraday desk</a><a href="/">Dashboard</a></nav>
+</header>
+<div class="wrap">
+{% set m = st.meta or {} %}
+<div class="card">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span class="small">Data refreshed: <b>{{ m.refreshed_at or 'never' }}</b> UTC{% if st.refreshing %} · <span class="warn">refreshing in background…</span>{% endif %}</span>
+    {% if m.errors %}<span class="small bad">Source errors: {% for k, v in m.errors.items() %}{{ k }} ({{ v }}) {% endfor %}</span>{% endif %}
+    <form method="post" action="/api/commodity/refresh" style="margin-left:auto"><button class="ghost" type="submit">Refresh data now</button></form>
+  </div>
+</div>
+
+{% if st.error %}
+<div class="card"><div class="bad">{{ st.error }}</div></div>
+{% else %}
+{% set i = st.inputs %}
+<div class="grid2">
+  <div class="card">
+    <h2>Signal at last settled close · {{ i.weekday }} {{ i.date }}</h2>
+    {% if not i.in_season %}<div class="warn small" style="margin-bottom:8px">Outside Oct–Feb: the playbook was researched on winter only.</div>{% endif %}
+    {% if st.signal %}{% set s = st.signal %}
+      <div class="sig"><div class="side {{ s.side }}">{{ s.side }}</div>
+        <div><b>{{ s.leg }}</b><div class="small">hold {{ s.hold }} session{{ 's' if s.hold > 1 }} · strike ATM or 1 ITM · σ<sub>h</sub> {{ s.sigma_h_pct }}%</div></div></div>
+      <div class="lv">
+        <div><div class="l">Entry (NYMEX $)</div><div class="v">{{ i.close }}</div></div>
+        <div><div class="l">Target 1 (0.5σ<sub>h</sub>)</div><div class="v">{{ s.t1 }}</div></div>
+        <div><div class="l">Target 2 (1σ<sub>h</sub>)</div><div class="v">{{ s.t2 }}</div></div>
+        <div><div class="l">Stop</div><div class="v">{{ s.stop }}</div></div>
+      </div>
+      {% if s.mcx %}<div class="lv">
+        <div><div class="l">≈ MCX ₹ entry</div><div class="v">{{ s.mcx.entry }}</div></div>
+        <div><div class="l">≈ ₹ T1</div><div class="v">{{ s.mcx.t1 }}</div></div>
+        <div><div class="l">≈ ₹ T2</div><div class="v">{{ s.mcx.t2 }}</div></div>
+        <div><div class="l">≈ ₹ stop</div><div class="v">{{ s.mcx.stop }}</div></div>
+      </div><div class="small" style="margin-top:6px">₹ = NYMEX × USDINR ({{ i.usdinr }}). Check against the live MCX NATURALGAS future; use the same % distances.</div>{% endif %}
+    {% else %}
+      <div class="sig"><div class="side none">NO TRADE</div><div class="small">Next check: {{ st.next_check }}</div></div>
+    {% endif %}
+    {% if i.partial_bar_hidden %}<div class="small warn" style="margin-top:8px">Today's NYMEX bar is still trading; signal uses the last settled close.</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Inputs</h2>
+    <div class="kpis">
+      <div class="kpi"><div class="v">{{ i.close }}</div><div class="l">NG close ($) · ≈ ₹{{ i.mcx_equiv or '—' }}</div></div>
+      <div class="kpi"><div class="v">{{ i.sigma_d_pct }}%</div><div class="l">daily σ (20 sessions)</div></div>
+      <div class="kpi"><div class="v {{ 'good' if (i.oi_chg or 0) < 0 else 'bad' }}">{{ '%+.2f'|format(i.oi_chg * 100) ~ '%' if i.oi_chg is not none else '—' }}</div><div class="l">CFTC open interest, {{ st.settings.oi_weeks }}-week change</div></div>
+      <div class="kpi"><div class="v">{{ '%+.2f'|format(i.r3s) if i.r3s is not none else '—' }}</div><div class="l">3-day move (σ units)</div></div>
+      <div class="kpi"><div class="v">{{ '%+.2f'|format(i.cold_z) if i.cold_z is not none else '—' }}</div><div class="l">last 7 days cold vs normal (z)</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Weekly playbook (signal at the close)</h2>
+  <div class="sched">
+    <div><b>Monday</b>CFTC open interest falling → <span class="CALL">CALL</span>, rising → <span class="PUT">PUT</span>. Exit after {{ st.settings.mon_hold }} session.</div>
+    <div><b>Wednesday</b><span class="PUT">PUT</span> into Thursday's EIA storage report if NG fell over 3 days or last week was colder than normal. Exit after {{ st.settings.wed_hold }} sessions.</div>
+    <div><b>Friday</b>Open interest falling → <span class="PUT">PUT</span>, rising → <span class="CALL">CALL</span>, held over the weekend. Exit after {{ st.settings.fri_hold }} session.</div>
+  </div>
+</div>
+
+{% if st.forecast %}{% set fc = st.forecast %}
+<div class="card">
+  <h2>US gas-weighted HDD forecast · next {{ fc.days }} days</h2>
+  <div class="small">Forecast {{ fc.hdd_sum }} vs normal {{ fc.normal_sum }} → <b class="{{ 'CALL' if fc.anomaly > 0 else 'PUT' }}">{{ '%+.1f'|format(fc.anomaly) }} HDD</b> ({{ 'colder' if fc.anomaly > 0 else 'warmer' }} than normal). Context only — forecast revisions did not test as predictive on their own.</div>
+  {% set mx = [fc.rows|map(attribute='hdd')|max, (fc.rows|selectattr('normal')|map(attribute='normal')|list or [1])|max, 1]|max %}
+  <div class="bars" style="grid-template-columns:repeat({{ fc.rows|length }},minmax(0,1fr))">{% for r in fc.rows %}<div class="col" title="{{ r.date }}: {{ r.hdd }} HDD (normal {{ r.normal }})"><div class="bar {{ 'cold' if r.normal is not none and r.hdd > r.normal else 'warm' }}" style="height:{{ (r.hdd / mx * 100)|round(1) }}%"></div>{% if r.normal is not none %}<i style="bottom:{{ (r.normal / mx * 100)|round(1) }}%"></i>{% endif %}</div>{% endfor %}</div>
+  <div class="blab" style="grid-template-columns:repeat({{ fc.rows|length }},minmax(0,1fr))">{% for r in fc.rows %}<span>{{ r.date[8:] }}</span>{% endfor %}</div>
+</div>
+{% endif %}
+
+{% set bt = st.backtest %}
+<div class="grid2">
+  <div class="card">
+    <h2>Backtest · recomputed from cached data ({{ bt.n }} trades)</h2>
+    <div class="tbl"><table><tr><th>Period</th><th class="num">Trades</th><th class="num">/week</th><th class="num">+1σ first</th><th class="num">Direction</th><th class="num">Reach 0.5σ</th></tr>
+    {% for p in bt.periods %}<tr><td>{{ p.period }}</td><td class="num">{{ p.n }}</td><td class="num">{{ p.per_active_week }}</td><td class="num">{{ (p.first_touch ~ "%") if p.first_touch is not none else "—" }}</td><td class="num"><b>{{ p.dir_hit }}%</b></td><td class="num">{{ p.reach_half }}%</td></tr>{% endfor %}
+    </table></div>
+    <div class="tbl" style="margin-top:10px"><table><tr><th>Leg</th><th class="num">Trades</th><th class="num">+1σ first</th><th class="num">Direction</th><th class="num">Reach 0.5σ</th></tr>
+    {% for p in bt.legs %}<tr><td>{{ p.leg }}</td><td class="num">{{ p.n }}</td><td class="num">{{ (p.first_touch ~ "%") if p.first_touch is not none else "—" }}</td><td class="num">{{ p.dir_hit }}%</td><td class="num">{{ p.reach_half }}%</td></tr>{% endfor %}
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>By winter</h2>
+    <div class="tbl"><table><tr><th>Winter</th><th class="num">Trades</th><th class="num">+1σ first</th><th class="num">Direction</th></tr>
+    {% for w in bt.winters %}<tr><td>{{ w.winter }}</td><td class="num">{{ w.n }}</td><td class="num">{{ (w.first_touch ~ "%") if w.first_touch is not none else "—" }}</td><td class="num {{ 'good' if w.dir_hit > 50 else 'bad' }}">{{ w.dir_hit }}%</td></tr>{% endfor %}
+    </table></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Robustness (offline research)</h2>
+  <ul class="notes small">{% for k, v in st.robustness.items() %}<li><b>{{ k }}:</b> {{ v }}</li>{% endfor %}</ul>
+</div>
+
+<div class="card">
+  <h2>Paper ledger · forward test {% if st.ledger_summary.n %}· {{ st.ledger_summary.n }} closed: direction {{ st.ledger_summary.dir_hit }}%, +1σ first {{ (st.ledger_summary.first_touch ~ '%') if st.ledger_summary.first_touch is not none else '— (no σ level hit yet)' }}{% endif %}</h2>
+  {% if st.ledger %}
+  <div class="tbl"><table><tr><th>Date</th><th>Leg</th><th>Side</th><th class="num">Hold</th><th class="num">Entry</th><th class="num">T1</th><th class="num">T2</th><th class="num">Stop</th><th>Result</th></tr>
+  {% for r in st.ledger %}<tr><td>{{ r.date }}</td><td>{{ r.leg }}</td><td class="{{ r.side }}"><b>{{ r.side }}</b></td><td class="num">{{ r.hold }}</td><td class="num">{{ r.entry }}</td><td class="num">{{ r.t1 }}</td><td class="num">{{ r.t2 }}</td><td class="num">{{ r.stop }}</td>
+    <td>{% if r.result %}{% set o = r.result %}<span class="{{ 'good' if o.dir_ok else 'bad' }}">{{ '%+.2f'|format(o.move_pct) }}%</span> · {{ '+1σ first' if o.first_touch == 1 else ('−1σ first' if o.first_touch == -1 else 'neither σ') }}{% else %}<span class="small">open</span>{% endif %}</td></tr>{% endfor %}
+  </table></div>
+  <div class="small" style="margin-top:6px"><a href="/api/commodity/ledger/export" style="color:var(--acc)">Download ledger (JSONL)</a></div>
+  {% else %}<div class="small">No signals logged yet.</div>{% endif %}
+</div>
+{% endif %}
+
+<div class="card" id="settings">
+  <h2>Settings</h2>
+  {% set s = st.settings %}
+  <form class="settings" method="post" action="/api/commodity/settings"><input type="hidden" name="_cb" value="1">
+    <label>Open-interest lookback (weeks)<input name="oi_weeks" type="number" min="1" max="12" value="{{ s.oi_weeks }}"></label>
+    <label>Wed cold threshold (z)<input name="cold_z" type="number" step="0.1" value="{{ s.cold_z }}"></label>
+    <label>Mon hold (sessions)<input name="mon_hold" type="number" min="1" max="3" value="{{ s.mon_hold }}"></label>
+    <label>Wed hold (sessions)<input name="wed_hold" type="number" min="1" max="3" value="{{ s.wed_hold }}"></label>
+    <label>Fri hold (sessions)<input name="fri_hold" type="number" min="1" max="3" value="{{ s.fri_hold }}"></label>
+    <label>Target 1 (× σh)<input name="t1" type="number" step="0.1" value="{{ s.t1 }}"></label>
+    <label>Target 2 (× σh)<input name="t2" type="number" step="0.1" value="{{ s.t2 }}"></label>
+    <label>Stop (× σh)<input name="stop" type="number" step="0.1" value="{{ s.stop }}"></label>
+    <label>Auto-refresh after (hours)<input name="refresh_hours" type="number" step="0.5" value="{{ s.refresh_hours }}"></label>
+    <label class="cb"><input type="checkbox" name="leg_mon" {{ 'checked' if s.leg_mon }}> Monday leg</label>
+    <label class="cb"><input type="checkbox" name="leg_wed" {{ 'checked' if s.leg_wed }}> Wednesday leg</label>
+    <label class="cb"><input type="checkbox" name="leg_fri" {{ 'checked' if s.leg_fri }}> Friday leg</label>
+    <button type="submit">Save</button>
+  </form>
+  <div class="small" style="margin-top:8px">Changing a setting re-runs the backtest on the same data. Research defaults: 4 weeks, z&gt;0, holds 1/2/1, targets 0.5/1.0σ, stop 1.0σ.</div>
+</div>
+</div>
+</body>
+</html>
