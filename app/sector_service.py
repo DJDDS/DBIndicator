@@ -320,7 +320,71 @@ def _mini(m, now):
 
 
 EXTRA_INDICES=('INDIA VIX',)       # quoted with the sectors for the dashboard index cards
-DASH_INDICES=(('NIFTY 50','NIFTY 50'),('NIFTY BANK','BANK NIFTY'),('NIFTY FINANCIAL SERVICES','FIN NIFTY'),('INDIA VIX','INDIA VIX'),('NIFTY IT','NIFTY IT'))
+DASH_INDICES=(('NIFTY 50','NIFTY 50'),('SENSEX','SENSEX'),('NIFTY BANK','BANK NIFTY'),('GIFT NIFTY','GIFT NIFTY'),('INDIA VIX','INDIA VIX'))
+GIFT_URL='https://www.nseindia.com/api/NextApi/apiClient?functionName=getGiftNifty'
+_gift={'at':0.0,'value':None,'busy':False,'warned':0.0}
+_gift_nse=None
+
+
+def _num(v):
+    try:
+        if isinstance(v,str): v=v.replace(',','').replace('%','').strip()
+        f=float(v); return f if f==f and abs(f)!=float('inf') else None
+    except (TypeError,ValueError): return None
+
+
+def parse_gift(payload):
+    """Best-effort read of NSE's GIFT Nifty JSON: the first dict (at any depth) that has a last price. Returns {price,chg,pct,at} or None."""
+    keys_p=('LASTPRICE','lastPrice','lastprice','last','ltp','LTP'); keys_c=('DAYCHANGE','dayChange','change','netChange','CHANGE'); keys_pc=('PERCHANGE','perChange','pChange','pchange','percentChange')
+    def pick(d,keys):
+        for k in keys:
+            if k in d and _num(d[k]) is not None: return _num(d[k])
+    def walk(o,depth=0):
+        if depth>6: return None
+        if isinstance(o,dict):
+            p=pick(o,keys_p)
+            if p is not None: return {'price':p,'chg':pick(o,keys_c),'pct':pick(o,keys_pc)}
+            for v in o.values():
+                r=walk(v,depth+1)
+                if r: return r
+        elif isinstance(o,list):
+            for v in o[:20]:
+                r=walk(v,depth+1)
+                if r: return r
+        return None
+    r=walk(payload)
+    if not r or not r['price'] or r['price']<1000: return None            # GIFT Nifty trades around 20,000+; anything tiny is a different field
+    if r['chg'] is None and r['pct'] is not None: r['chg']=round(r['price']-r['price']/(1+r['pct']/100),2)
+    if r['pct'] is None and r['chg'] is not None and r['price']!=r['chg']: r['pct']=round(100*r['chg']/(r['price']-r['chg']),2)
+    return r
+
+
+def _gift_fetch():
+    global _gift_nse
+    try:
+        from .v130_swing import NSE
+        if _gift_nse is None: _gift_nse=NSE()
+        js=_gift_nse.get(GIFT_URL,json_ok=True,tries=2)
+        v=parse_gift(js) if js else None
+        with _lock:
+            _gift.update(at=time.time(),busy=False)
+            if v: _gift['value']=dict(v,at=scanner.now_ist().isoformat(timespec='seconds'))
+            elif time.time()-_gift['warned']>1800:
+                _gift['warned']=time.time(); log.warning('GIFT Nifty feed returned nothing usable (NSE endpoint may have changed)')
+    except Exception:  # noqa: BLE001
+        with _lock: _gift.update(at=time.time(),busy=False)
+        log.warning('GIFT Nifty fetch failed',exc_info=True)
+
+
+def gift_nifty():
+    """Latest GIFT Nifty from NSE's site, refreshed in the background at most every 30 s. None when the feed is unavailable (the card is then simply hidden)."""
+    with _lock:
+        stale=time.time()-_gift['at']>30 and not _gift['busy']
+        if stale: _gift['busy']=True
+        v=copy.deepcopy(_gift['value'])
+    if stale: threading.Thread(target=_gift_fetch,daemon=True,name='gift-nifty').start()
+    if v and time.time()-_gift['at']>900 and _gift['at']: return None                 # a quarter-hour old reading is not shown as live
+    return v
 
 
 def dashboard_summary(lite=False):
@@ -330,6 +394,10 @@ def dashboard_summary(lite=False):
     r2=lambda v: round(v,2) if a.finite(v) is not None else None
     idx=[]
     for name,label in DASH_INDICES:
+        if name=='GIFT NIFTY':
+            g=gift_nifty()
+            if g: idx.append({'name':name,'label':label,'price':r2(g['price']),'r':{'today':r2(g.get('pct'))},'chg':r2(g.get('chg')),'d':{},'id':None,'hist':[],'live':True})
+            continue
         sm=_summary(name,now)
         if sm.get('price') is None: continue
         bars=[(str(b.get('date'))[:10],a.finite(b.get('close'))) for b in _history(name)[-66:]]
@@ -337,8 +405,11 @@ def dashboard_summary(lite=False):
         today=now.date().isoformat()
         if hist and hist[-1][0]<today and a.finite(sm.get('price')) is not None and now.weekday()<5 and now.time()>=dt.time(9,15):
             hist.append([today,r2(sm.get('price'))])           # today's live point on the line
+        dd=_day_ohlc(name,now); px=a.finite(sm.get('price')); rt=a.finite((sm.get('returns') or {}).get('today'))
+        pc=dd.get('pc') or (px/(1+rt/100) if px is not None and rt is not None and rt>-99 else None)          # previous close: the quote's own, else implied by today's %
         idx.append({'name':name,'label':label,'price':r2(sm.get('price')),'r':{q:r2((sm.get('returns') or {}).get(q)) for q in COMPARE},
-                    'd':_day_ohlc(name,now),'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
+                    'chg':r2(px-pc) if px is not None and pc else None,
+                    'd':dd,'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
     if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
         return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx}
     sectors=[]; stocks={}
@@ -680,6 +751,12 @@ def _worker():
                     except Exception:  # noqa: BLE001
                         log.exception('F&O list for the sector page unavailable; keeping the last one')
                     tokens,quotes=resolve_tokens(nse,_view())
+                    try:                                                  # SENSEX is a BSE index: not in the NSE dump
+                        for row in kite.instruments('BSE'):
+                            if row.get('tradingsymbol')=='SENSEX' and row.get('segment','INDICES')=='INDICES':
+                                tokens['SENSEX']=row['instrument_token']; quotes['SENSEX']='BSE:SENSEX'; break
+                    except Exception:  # noqa: BLE001
+                        log.exception('SENSEX token lookup failed; the dashboard shows the other indices')
                     _tokens.clear(); _instrument_symbols.clear()            # only the shown (F&O) names are quoted and hydrated
                     _tokens.update(tokens); _instrument_symbols.update(quotes); instrument_day=day
                 refresh_key=day+(' PM' if now.hour>=16 else ' AM')

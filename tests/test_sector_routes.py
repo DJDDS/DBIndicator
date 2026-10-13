@@ -259,3 +259,26 @@ def test_close_quote_stays_valid_right_after_the_close():
     assert s._fresh_timestamp(stamp, day.replace(hour=15, minute=55), final_quote=True)      # was blank until 16:00
     assert not s._fresh_timestamp(stamp, day.replace(hour=15, minute=55))                    # live (non-final) rule unchanged
     assert not s._fresh_timestamp('2026-10-12 15:20:00', day.replace(hour=15, minute=55), final_quote=True)   # pre-close quote is not a final one
+
+
+def test_dashboard_indices_points_and_gift_parser(monkeypatch):
+    import datetime as dt
+    from app import sector_service as s
+    names=[n for n,_ in s.DASH_INDICES]
+    assert names==['NIFTY 50','SENSEX','NIFTY BANK','GIFT NIFTY','INDIA VIX'] and 'NIFTY IT' not in names and 'NIFTY FINANCIAL SERVICES' not in names
+    # NSE shapes: flat, nested under data, strings with commas
+    assert s.parse_gift({'data':{'GiftNifty':{'LASTPRICE':'25,061.50','DAYCHANGE':'-42.5','PERCHANGE':'-0.17'}}})=={'price':25061.5,'chg':-42.5,'pct':-0.17}
+    g=s.parse_gift({'lastPrice':25000,'pChange':0.4}); assert g['chg']==round(25000-25000/1.004,2)
+    assert s.parse_gift({'data':{'LASTPRICE':12.3}}) is None and s.parse_gift({}) is None and s.parse_gift(None) is None
+    # points = price - previous close (the quote's own), shown for an index that has a fresh quote
+    now=dt.datetime(2026,10,6,11,0,0)
+    q={'data':{'last_price':25100.0,'ohlc':{'open':25000,'high':25150,'low':24980,'close':25000.0}},'timestamp':now.isoformat()}
+    monkeypatch.setattr(s,'_state',{**s._state,'catalogue':[],'quotes':{'NIFTY 50':q}})
+    monkeypatch.setattr(s,'_overview_cache',{'key':None,'at':0.0,'value':None})
+    monkeypatch.setattr(s.scanner,'now_ist',lambda: now)
+    monkeypatch.setattr(s,'_summary',lambda name,n: {'price':25100.0,'returns':{'today':0.4,'1W':1.0,'1M':2.0,'3M':3.0}})
+    monkeypatch.setattr(s,'_history',lambda name: [])
+    monkeypatch.setattr(s,'gift_nifty',lambda: {'price':25060.0,'chg':60.0,'pct':0.24})
+    d=s.dashboard_summary(lite=True)
+    by={i['name']:i for i in d['indices']}
+    assert by['NIFTY 50']['chg']==100.0 and by['GIFT NIFTY']['chg']==60.0 and by['GIFT NIFTY']['live'] and by['SENSEX']['label']=='SENSEX'
