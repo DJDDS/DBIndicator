@@ -53,7 +53,31 @@ tr.pick td{background:#16253d}
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <span class="small">Data refreshed: <b>{{ m.refreshed_at or 'never' }}</b> UTC{% if st.refreshing %} · <span class="warn">refreshing in background…</span>{% endif %}</span>
     {% if m.errors %}<span class="small bad">Source errors: {% for k, v in m.errors.items() %}{{ k }} ({{ v }}) {% endfor %}</span>{% endif %}
-    <form method="post" action="/api/commodity/refresh" style="margin-left:auto"><button class="ghost" type="submit">Refresh data now</button></form>
+    <span class="small" id="rf-state" style="margin-left:auto"></span>
+    <button class="ghost" type="button" id="rf-btn">Refresh data now</button>
+    <script>
+    (function () {
+      var btn = document.getElementById('rf-btn'), out = document.getElementById('rf-state'), timer = null;
+      function ist(iso) { try { return new Date(iso).toLocaleTimeString('en-GB', {timeZone: 'Asia/Kolkata'}) + ' IST'; } catch (e) { return iso || ''; } }
+      function show(s) {
+        if (s.running) { out.innerHTML = '<span class="warn">refreshing since ' + ist(s.started) + '…</span>'; btn.disabled = true; return true; }
+        btn.disabled = false;
+        out.innerHTML = s.finished ? 'last refresh ' + ist(s.finished) + ' · ' + (s.result === 'ok' ? '<span class="ok">ok</span>' : '<span class="bad">' + (s.result || '') + '</span>') : '';
+        return false;
+      }
+      function poll() {
+        fetch('/api/commodity/refresh-state', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (s) {
+          if (show(s)) { timer = setTimeout(poll, 3000); } else if (timer) { timer = null; location.reload(); }
+        }).catch(function () { timer = setTimeout(poll, 5000); });
+      }
+      btn.onclick = function () {
+        btn.disabled = true; out.textContent = 'starting…';
+        fetch('/api/commodity/refresh', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})
+          .then(function () { timer = setTimeout(poll, 1500); }).catch(function () { out.textContent = 'could not start - reload the page'; btn.disabled = false; });
+      };
+      fetch('/api/commodity/refresh-state', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (s) { if (show(s)) timer = setTimeout(poll, 3000); }).catch(function () {});
+    })();
+    </script>
   </div>
 </div>
 

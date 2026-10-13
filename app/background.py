@@ -2422,6 +2422,12 @@ def start_background_scanner():
         v133_direction.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V13.3 direction desk failed to start")
+    # MCX NG desk data refresh (weather / COT / prices) on its own schedule, independent of page views. Fail-soft.
+    try:
+        from . import commodity_desk
+        commodity_desk.start_once()
+    except Exception:
+        log.exception("NG desk scheduler failed to start")
     # Setup A v1.1 dip-buy scanner (NSE end-of-day files only, no Kite needed). Fail-soft.
     try:
         from . import v11_setup_a

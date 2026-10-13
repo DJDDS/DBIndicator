@@ -199,7 +199,28 @@ def _hdd() -> tuple[pd.Series, pd.Series]:
     return observed, forecast
 
 
+_RS = {"running": False, "started": None, "finished": None, "result": None}
+_SCHED = {"started": False}
+
+
 def refresh(force: bool = False) -> dict:
+    """Download all sources and cache them (state is tracked so the page can show running / result)."""
+    _RS.update(running=True, started=datetime.now(timezone.utc).isoformat(timespec="seconds"), result=None)
+    try:
+        m = _refresh_impl(force); errs = m.get("errors") or {}
+        _RS.update(result="ok" if not errs else "partial: " + ", ".join(errs))
+        return m
+    except Exception as exc:  # noqa: BLE001
+        _RS.update(result="failed: " + str(exc)[:120]); raise
+    finally:
+        _RS.update(running=False, finished=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+
+def refresh_state() -> dict:
+    return dict(_RS, running=bool(_RS["running"] or (_refresh_thread and _refresh_thread.is_alive())))
+
+
+def _refresh_impl(force: bool = False) -> dict:
     """Download all sources and cache them. Each source is independent and fail-soft."""
     with _lock:
         errors, done = {}, []
@@ -660,3 +681,19 @@ def cached_status(kite_fn=None, ttl: float = 20.0) -> dict | None:
 
 def invalidate_status() -> None:
     _SC['at'] = 0.0
+
+
+def start_once() -> None:
+    """Background scheduler: the cloud has no page views at night, so the refresh must not depend on someone opening the page."""
+    if _SCHED["started"]: return
+    _SCHED["started"] = True
+
+    def loop():
+        time.sleep(30)
+        while True:
+            try:
+                maybe_refresh_async()
+            except Exception:  # noqa: BLE001
+                log.exception("commodity_desk scheduler tick failed")
+            time.sleep(60)
+    threading.Thread(target=loop, name="commodity-desk-scheduler", daemon=True).start()

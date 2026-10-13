@@ -1563,6 +1563,13 @@ def api_commodity_status():
     return Response(json.dumps(commodity_desk.cached_status(_commodity_kite) or {"loading": True}, default=str), mimetype="application/json")
 
 
+@app.route("/api/commodity/refresh-state")
+@require_roles(OWNER)
+def api_commodity_refresh_state():
+    from . import commodity_desk
+    return jsonify(commodity_desk.refresh_state())
+
+
 @app.route("/api/commodity/refresh", methods=["POST"])
 @require_roles(OWNER)
 def api_commodity_refresh():

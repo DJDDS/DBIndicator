@@ -362,3 +362,38 @@ def test_failed_source_triggers_early_refresh(monkeypatch):
     started.clear()
     monkeypatch.setattr(cd, '_meta', lambda: {'refreshed_at': old, 'errors': {}})
     cd.maybe_refresh_async(); assert not started
+
+
+def test_refresh_tracks_state_and_partial_failures(monkeypatch):
+    from app import commodity_desk as cd
+    monkeypatch.setattr(cd, '_refresh_impl', lambda force=False: {'errors': {'hdd': 'HTTP 502'}, 'ok': ['ng.csv']})
+    cd.refresh()
+    s = cd.refresh_state()
+    assert s['result'] == 'partial: hdd' and s['running'] is False and s['finished']
+    monkeypatch.setattr(cd, '_refresh_impl', lambda force=False: {'errors': {}, 'ok': []})
+    cd.refresh(); assert cd.refresh_state()['result'] == 'ok'
+
+    def boom(force=False): raise RuntimeError('network down')
+    monkeypatch.setattr(cd, '_refresh_impl', boom)
+    import pytest
+    with pytest.raises(RuntimeError): cd.refresh()
+    assert cd.refresh_state()['result'].startswith('failed') and cd.refresh_state()['running'] is False
+
+
+def test_scheduler_starts_once_without_a_page_view(monkeypatch):
+    from app import commodity_desk as cd
+    started = []
+
+    class T:
+        def __init__(self, target=None, name=None, daemon=None): started.append(name)
+        def start(self): pass
+    monkeypatch.setattr(cd.threading, 'Thread', T); monkeypatch.setitem(cd._SCHED, 'started', False)
+    cd.start_once(); cd.start_once()
+    assert started == ['commodity-desk-scheduler']
+
+
+def test_refresh_state_route_and_button(client, store):
+    _synthetic(store)
+    r = client.get('/api/commodity/refresh-state', headers=OWNER)
+    assert r.status_code == 200 and 'running' in r.get_json()
+    assert b'rf-btn' in _get_page(client).data
