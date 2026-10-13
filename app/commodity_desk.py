@@ -254,7 +254,7 @@ def _refresh_impl(force: bool = False) -> dict:
         try:
             ng_, cot_, hd_ = _read("ng.csv"), _read("cot.csv"), _read("hdd_obs.csv")
             if ng_ is not None and cot_ is not None and hd_ is not None:
-                st_ = load_settings(); log_year_round(_settled(features(ng_, cot_, hd_.set_index("date").hdd, st_)), st_)
+                st_ = load_settings(); log_year_round(_settled(features(ng_, cot_, hd_.set_index("date").hdd, st_)), st_, (ng_, cot_, hd_.set_index("date").hdd))
         except Exception as exc:  # pragma: no cover
             log.warning("commodity_desk year-round study failed: %s", exc)
         return meta
@@ -463,7 +463,7 @@ def year_round(f: pd.DataFrame, s: dict) -> dict:
         for leg, sd_, hold in cands:
             o = outcome(f, i, sd_, hold)
             if o:
-                rows.append(dict(date=d, season=int(row.season), winter=win, leg=leg, first_touch=o["first_touch"], dir_ok=o["dir_ok"]))
+                rows.append(dict(date=d, season=int(row.season), winter=win, leg=leg, first_touch=o["first_touch"], dir_ok=o["dir_ok"], side=sd_, rsign=sd_ if o["dir_ok"] else -sd_))
     T = pd.DataFrame(rows)
     if T.empty:
         return {"n": 0, "legs": []}
@@ -472,24 +472,54 @@ def year_round(f: pd.DataFrame, s: dict) -> dict:
         dec = (t.first_touch != 0).sum()
         return dict(n=int(len(t)), dir_hit=round(float(t.dir_ok.mean() * 100), 1) if len(t) else None,
                     first_touch=round(float((t.first_touch == 1).sum() / dec * 100), 1) if dec else None)
+    rng = np.random.default_rng(11)
+
+    def shuffle_p(g, n=500):
+        """Share of 500 random re-assignments of the CALL/PUT sides (same days, same realised moves) that do at least as well."""
+        if len(g) < 20:
+            return None
+        rs, sd = g.rsign.values, g.side.values; obs = float((rs == sd).mean())
+        return round(float(np.mean([(rs == rng.permutation(sd)).mean() >= obs for _ in range(n)])), 3)
     out = []
     for leg, g in T.groupby("leg"):
-        out.append(dict(leg=leg, all=agg(g), winter=agg(g[g.winter]), other=agg(g[~g.winter]),
+        out.append(dict(leg=leg, p_all=shuffle_p(g), p_held_out=shuffle_p(g[g.season >= 2020]), all=agg(g), winter=agg(g[g.winter]), other=agg(g[~g.winter]),
                         sel=agg(g[g.season <= 2019]), held_out=agg(g[g.season >= 2020]),
                         held_out_other=agg(g[(g.season >= 2020) & ~g.winter]),
                         years_above_50=int((g.groupby("season").dir_ok.mean() > .5).sum()), years=int(g.season.nunique())))
     return {"n": int(len(T)), "legs": out, "asof": str(f.index[-1].date())}
 
 
-def log_year_round(f: pd.DataFrame, s: dict) -> None:
+def sensitivity(ng: pd.DataFrame, cot: pd.DataFrame, hdd: pd.Series, s: dict) -> list[dict]:
+    """Nudge one setting at a time; a real edge keeps roughly the same held-out (2020+) direction hit, all months, for the MON/WED/FRI legs."""
+    variants = [("base", {})] + [(f"oi_weeks={w}", {"oi_weeks": w}) for w in (3, 5, 6)] + \
+               [(f"cold_z={c}", {"cold_z": c}) for c in (-0.5, 0.5, 1.0)] + [(f"holds={h}", {"mon_hold": h, "wed_hold": h, "fri_hold": h}) for h in (1, 2, 3)]
+    res = []
+    for nm, ch in variants:
+        sv = {**s, **ch}
+        f = _settled(features(ng, cot, hdd, sv)); idx = {d: i for i, d in enumerate(f.index)}; hits = {}
+        for d, row in f[f.season >= 2020].iterrows():
+            side, leg, hold = leg_signal(row, sv, all_year=True)
+            if side:
+                o = outcome(f, idx[d], side, hold)
+                if o:
+                    hits.setdefault(leg, []).append(o["dir_ok"])
+        res.append(dict(variant=nm, **{k: (len(v), round(100 * float(np.mean(v)), 1)) for k, v in hits.items()}))
+    return res
+
+
+def log_year_round(f: pd.DataFrame, s: dict, raw=None) -> None:
     try:
+        if raw is not None:
+            sens = sensitivity(*raw, s); _atomic_text("sensitivity.json", json.dumps(sens, indent=1))
+            for r_ in sens:
+                log.info("YEAR_ROUND_SENS %s", r_)
         r = year_round(f, s)
         _atomic_text("year_round.json", json.dumps(r, indent=1))
         for L in r["legs"]:
             if L["leg"].startswith("grid") and not (L["sel"]["dir_hit"] and L["sel"]["dir_hit"] >= 53):
                 continue
-            log.info("YEAR_ROUND %s | all %s | winter %s | other %s | sel2010-19 %s | held-out2020+ %s | held-out other months %s | yrs>50 %s/%s",
-                     L["leg"], L["all"], L["winter"], L["other"], L["sel"], L["held_out"], L["held_out_other"], L["years_above_50"], L["years"])
+            log.info("YEAR_ROUND %s | p(chance) all %s held-out %s | all %s | winter %s | other %s | sel2010-19 %s | held-out2020+ %s | held-out other months %s | yrs>50 %s/%s",
+                     L["leg"], L["p_all"], L["p_held_out"], L["all"], L["winter"], L["other"], L["sel"], L["held_out"], L["held_out_other"], L["years_above_50"], L["years"])
     except Exception as exc:  # pragma: no cover
         log.warning("year_round failed: %s", exc)
 

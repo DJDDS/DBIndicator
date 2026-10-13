@@ -409,5 +409,6 @@ def test_year_round_study_runs_and_covers_non_winter(store):
     assert "MON open-interest" in legs and "WED into-EIA put" in legs and any(k.startswith("grid TUE") for k in legs)
     assert legs["MON open-interest"]["other"]["n"] > 0                      # non-winter months are included
     assert cd.leg_signal(f.iloc[-1], s)[0] in (0, 1, -1)
-    cd.log_year_round(f, s)
-    assert (cd.ROOT / "year_round.json").exists()
+    assert all("p_all" in L for L in r["legs"])
+    cd.log_year_round(f, s, (ng, cot, hdd))
+    assert (cd.ROOT / "year_round.json").exists() and (cd.ROOT / "sensitivity.json").exists()
