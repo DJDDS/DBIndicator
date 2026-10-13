@@ -67,6 +67,12 @@ def _last_due(now: dt.datetime, due: dt.time) -> dt.datetime:
     return cand
 
 
+def _opening_grace(now: dt.datetime, last_write: dt.datetime) -> bool:
+    """First 12 minutes after the 09:15 open: a stream that has not written yet today is starting up, not stale."""
+    open_at = dt.datetime.combine(now.date(), dt.time(9, 15), tzinfo=IST)
+    return now.weekday() < 5 and open_at <= now < open_at + dt.timedelta(minutes=12) and last_write < open_at
+
+
 def _market_open(now: dt.datetime) -> bool:
     return now.weekday() < 5 and dt.time(9, 15) <= now.time() <= dt.time(15, 30)
 
@@ -145,7 +151,8 @@ def _evaluate(spec: dict, root: Path, iv_root: Path | None, now: dt.datetime) ->
     elif kind == 'live':
         if _market_open(now):
             age = (now - last_write).total_seconds() / 60
-            status = 'OK' if age <= 10 else 'STALE'; note = f"last write {age:.0f} min ago" if age >= 1 else 'writing now'
+            if _opening_grace(now, last_write): status = 'DUE'; note = f"market just opened; waiting for today's first write (last write {last_write:%a %d-%b %H:%M})"
+            else: status = 'OK' if age <= 10 else 'STALE'; note = f"last write {age:.0f} min ago" if age >= 1 else 'writing now'
         else: status = 'IDLE'; note = f"market closed; last write {last_write:%a %d-%b %H:%M} IST"
     else:
         status = 'OK'; note = f"last event {last_write:%a %d-%b %H:%M} IST"
@@ -220,7 +227,9 @@ def orderflow(storage_root: str, now: dt.datetime | None = None) -> dict:
     m = {'name': 'V12.4 minute order-flow recorder (focus-list stocks, 5-level book)', 'file': p.name, 'size_kb': round(st.st_size / 1024, 1) if st else 0, 'last_write': None, 'lines': None, 'status': 'NO DATA YET', 'note': ''}
     if st:
         lw = dt.datetime.fromtimestamp(st.st_mtime, IST); m['last_write'] = lw.isoformat(timespec='seconds'); m['lines'] = _count_lines(p)
-        if _market_open(now):
+        if _market_open(now) and _opening_grace(now, lw):
+            m['status'] = 'DUE'; m['note'] = f"market just opened; waiting for today's first minute rows (last write {lw:%a %d-%b %H:%M})"
+        elif _market_open(now):
             age = (now - lw).total_seconds() / 60
             m['status'] = 'OK' if age <= 10 else 'STALE'; m['note'] = f"last minute row {age:.0f} min ago" + ('' if age <= 10 else ' - the tactical stream may be down or the focus list empty')
         else: m['status'] = 'IDLE'; m['note'] = f"market closed; last write {lw:%a %d-%b %H:%M} IST"

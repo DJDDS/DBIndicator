@@ -92,3 +92,14 @@ def test_orderflow_progress_and_expected_polls(tmp_path):
     assert of['lab']['target'] == 40 and of['lab']['status'] in ('OK', 'MISSED', 'BEHIND', 'NOT RUNNING')
     sat = m.orderflow(str(tmp_path), dt.datetime(2026, 10, 17, 11, 0, tzinfo=IST))
     assert sat['lab']['status'] == 'IDLE'
+
+
+def test_stream_is_not_stale_in_the_first_minutes_after_the_open(tmp_path):
+    _touch(tmp_path / 'v124_orderflow_minutes.jsonl', dt.datetime(2026, 10, 12, 15, 29, tzinfo=IST))
+    _touch(tmp_path / 'v123_market_checkpoint.json', dt.datetime(2026, 10, 12, 15, 29, tzinfo=IST))
+    early = dt.datetime(2026, 10, 13, 9, 18, tzinfo=IST)
+    assert m.orderflow(str(tmp_path), early)['minute']['status'] == 'DUE'
+    assert _row(m.report(str(tmp_path), None, early), 'Universe live stream checkpoint')['status'] == 'DUE'
+    late = dt.datetime(2026, 10, 13, 9, 40, tzinfo=IST)                       # still nothing written 25 min after the open -> a real problem
+    assert m.orderflow(str(tmp_path), late)['minute']['status'] == 'STALE'
+    assert _row(m.report(str(tmp_path), None, late), 'Universe live stream checkpoint')['status'] == 'STALE'
