@@ -312,9 +312,18 @@ def test_dashboard_gift_sanity_guard_and_sector_movers(monkeypatch):
     assert 'sector_movers' in out
 
 
-def test_dashboard_lite_carries_day_line_and_desk(monkeypatch):
+def test_dashboard_lite_carries_day_line_and_breadth():
     from app import sector_service as ss
-    monkeypatch.setattr(ss, '_desk', lambda: {'lean': 'DOWN', 'strong': True, 'view': 0.4, 'picks': []})
     out = ss.dashboard_summary(lite=True)
-    assert out['desk']['lean'] == 'DOWN'
+    assert 'breadth' in out and 'desk' not in out
     assert all('day' in x for x in out['indices'])
+
+
+def test_breadth_counts_unique_stocks_and_needs_enough_of_them():
+    from app import sector_service as ss
+    mk = lambda i, v: {'s': 'S%d' % i, 'r': {'today': v}}
+    few = {'sectors': [{'members_mini': [mk(i, 1) for i in range(10)]}]}
+    assert ss._breadth(few, []) is None
+    ov = {'sectors': [{'members_mini': [mk(i, 1.5 if i < 40 else -0.5) for i in range(60)]}, {'members_mini': [mk(0, 9)]}]}
+    b = ss._breadth(ov, [{'name': 'NIFTY 50', 'r': {'today': 0.9}}])
+    assert (b['n'], b['up'], b['dn'], b['up1']) == (60, 40, 20, 40) and b['gap'] is not None

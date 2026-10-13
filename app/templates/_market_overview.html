@@ -87,11 +87,11 @@
 
   function renderSec() {
     const m = (st.idx && st.idx.sector_movers) || {lead: [], lag: []}, el = $('mo-sec'); if (!st.idx) { el.hidden = true; return; }
-    const dk = st.idx.desk, tg = `<button type="button" class="mo-tg" data-span="${st.span === '1D' ? '3M' : '1D'}" title="Switch the index lines between today (5-min) and the last 3 months">Lines: ${st.span === '1D' ? 'Today' : '3M'} ⇄</button>`;
-    const desk = dk && dk.lean ? `<b>Desk</b><span class="${dk.lean === 'UP' ? 'up' : dk.lean === 'DOWN' ? 'dn' : ''}">lean ${esc(dk.lean)} · ${dk.strong ? '★ STRONG day' : 'normal day'}</span>${(dk.picks || []).map(p => `<span class="${p.side === 'LONG' || p.side === 'UP' ? 'up' : 'dn'}">${esc(p.symbol)}</span>`).join(' ')}` : '';
-    const chip = x => `<a href="/sector-analysis#${encodeURIComponent(x.id)}">${esc(x.name)} <span class="${cls(x.pct)}">${pct(x.pct)}</span></a>`;
-    const q = st.idx.status && st.idx.status.quote_at;
-    el.innerHTML = `${desk}<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd">${q ? 'quotes ' + q.replace('T', ' ').slice(11, 19) + ' IST' : ''}</span>${tg}`; el.hidden = false;
+    const tg = `<button type="button" class="mo-tg" data-span="${st.span === '1D' ? '3M' : '1D'}" title="Switch the index lines between today (5-min) and the last 3 months">Lines: ${st.span === '1D' ? 'Today' : '3M'} ⇄</button>`;
+    const bd = st.idx.breadth, adv = bd ? Math.round(100 * bd.up / Math.max(1, bd.up + bd.dn)) : null;
+    const read = !bd ? '' : (adv >= 65 ? 'broad strength' : adv <= 35 ? 'broad weakness' : bd.gap != null && bd.gap > 0.4 ? 'index ahead of the average stock (narrow)' : bd.gap != null && bd.gap < -0.4 ? 'average stock ahead of the index' : 'mixed');
+    const br = bd ? `<b>Breadth</b><span><span class="up">${bd.up}▲</span> / <span class="dn">${bd.dn}▼</span> (${adv}% up) · avg <span class="${cls(bd.avg)}">${pct(bd.avg)}</span> · ≥+1% ${bd.up1} · ≤−1% ${bd.dn1} · <i style="font-style:normal;color:var(--muted)">${read}</i></span>` : '';
+    el.innerHTML = `${br}<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd">${q ? 'quotes ' + q.replace('T', ' ').slice(11, 19) + ' IST' : ''}</span>${tg}`; el.hidden = false;
     const b = el.querySelector('.mo-tg'); if (b) b.onclick = () => { st.span = b.dataset.span; try { localStorage.setItem('mo-span', st.span); } catch (e) {} renderIdx(); renderSec(); };
   }
 

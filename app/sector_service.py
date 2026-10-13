@@ -401,12 +401,20 @@ def gift_nifty():
     return v
 
 
-def _desk():
-    try:
-        from . import v133_direction
-        return v133_direction.desk_summary()
-    except Exception:  # noqa: BLE001
-        return None
+def _breadth(ov,idx):
+    """How broad today's move is, from the cached sector overview's per-stock % (no extra calls). None until enough stocks have a price."""
+    seen={}
+    for x in ov.get('sectors') or []:
+        for m in x.get('members_mini') or []:
+            v=a.finite((m.get('r') or {}).get('today'))
+            if v is not None: seen.setdefault(m['s'],v)
+    n=len(seen)
+    if n<50: return None
+    vals=list(seen.values()); up=sum(1 for v in vals if v>0); dn=sum(1 for v in vals if v<0)
+    nf=next((x for x in idx if x['name']=='NIFTY 50'),None); nfp=(nf or {}).get('r',{}).get('today')
+    avg=sum(vals)/n
+    return {'n':n,'up':up,'dn':dn,'avg':round(avg,2),'up1':sum(1 for v in vals if v>=1),'dn1':sum(1 for v in vals if v<=-1),
+            'nifty':nfp,'gap':round(nfp-avg,2) if nfp is not None else None}
 
 
 def dashboard_summary(lite=False):
@@ -441,7 +449,7 @@ def dashboard_summary(lite=False):
     ranked=sorted([r for r in ranked if r[2] is not None],key=lambda r:-r[2])
     movers={'lead':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[:3]],'lag':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[::-1][:3]]} if len(ranked)>=6 else None
     if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
-        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag'),'desk':_desk()}
+        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag'),'breadth':_breadth(ov,idx)}
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []
