@@ -379,7 +379,10 @@ def _gift_fetch():
             diag.append('apiClient returned %s'%(type(js).__name__ if js is not None else 'nothing'))
         with _lock:
             _gift.update(at=time.time(),busy=False,diag='; '.join(diag))
-            if v: _gift['value']=dict(v,at=scanner.now_ist().isoformat(timespec='seconds'))
+            if v:
+                old=_gift.get('value') or {}
+                moved=time.time() if old.get('price')!=v.get('price') or not old else old.get('moved',time.time())
+                _gift['value']=dict(v,at=scanner.now_ist().isoformat(timespec='seconds'),moved=moved)
             elif time.time()-_gift['warned']>1800:
                 _gift['warned']=time.time(); log.warning('GIFT Nifty feed returned nothing usable: %s',_gift.get('diag'))
     except Exception:  # noqa: BLE001
@@ -417,7 +420,7 @@ def dashboard_summary(lite=False):
             g=gift_nifty(); nf=next((x for x in idx if x['name']=='NIFTY 50'),None)
             if g and not (nf and nf.get('price') and abs(g['price']/nf['price']-1)<=0.04):      # GIFT trades within ~1% of Nifty; anything else is the wrong field (or cannot be checked)
                 _gift['diag']='rejected %s: not within 4%% of NIFTY 50 (%s)'%(g['price'],nf.get('price') if nf else 'no NIFTY price'); g=None
-            if g: idx.append({'name':name,'label':label,'price':r2(g['price']),'r':{'today':r2(g.get('pct'))},'chg':r2(g.get('chg')),'d':{},'id':None,'hist':[],'live':True,
+            if g: idx.append({'name':name,'label':label,'price':r2(g['price']),'r':{'today':r2(g.get('pct'))},'chg':r2(g.get('chg')),'d':{},'id':None,'hist':[],'live':time.time()-g.get('moved',time.time())<600,'asof':str(g.get('at') or '')[11:16],
                               'prem':r2(g['price']-nf['price']) if nf and nf.get('price') else None})
             continue
         sm=_summary(name,now)
