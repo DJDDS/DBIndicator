@@ -323,7 +323,7 @@ def test_breadth_counts_unique_stocks_and_needs_enough_of_them():
     from app import sector_service as ss
     mk = lambda i, v: {'s': 'S%d' % i, 'r': {'today': v}}
     few = {'sectors': [{'members_mini': [mk(i, 1) for i in range(10)]}]}
-    assert ss._breadth(few, []) is None
+    assert ss._dash_breadth(few, []) is None
     ov = {'sectors': [{'members_mini': [mk(i, 1.5 if i < 40 else -0.5) for i in range(60)]}, {'members_mini': [mk(0, 9)]}]}
-    b = ss._breadth(ov, [{'name': 'NIFTY 50', 'r': {'today': 0.9}}])
+    b = ss._dash_breadth(ov, [{'name': 'NIFTY 50', 'r': {'today': 0.9}}])
     assert (b['n'], b['up'], b['dn'], b['up1']) == (60, 40, 20, 40) and b['gap'] is not None

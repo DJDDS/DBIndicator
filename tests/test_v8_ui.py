@@ -20,7 +20,7 @@ def test_dashboard_polls_v8_json_and_rerenders_without_page_reload():
     assert "fetch('/api/v8-dashboard'" in text
     assert 'function pollV8Dashboard()' in text
     assert 'function renderV8Leaders(' in text
-    assert 'setInterval(pollV8Dashboard' in text
+    assert 'if (!document.hidden) pollV8Dashboard()' in text
     assert 'window.location.reload' not in text[text.index('function pollV8Dashboard()'):]
 
 
