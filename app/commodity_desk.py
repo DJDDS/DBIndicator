@@ -251,6 +251,12 @@ def _refresh_impl(force: bool = False) -> dict:
             update_ledger()
         except Exception as exc:  # pragma: no cover
             log.warning("commodity_desk ledger update failed: %s", exc)
+        try:
+            ng_, cot_, hd_ = _read("ng.csv"), _read("cot.csv"), _read("hdd_obs.csv")
+            if ng_ is not None and cot_ is not None and hd_ is not None:
+                st_ = load_settings(); log_year_round(_settled(features(ng_, cot_, hd_.set_index("date").hdd, st_)), st_)
+        except Exception as exc:  # pragma: no cover
+            log.warning("commodity_desk year-round study failed: %s", exc)
         return meta
 
 
@@ -366,9 +372,9 @@ def features(ng: pd.DataFrame, cot: pd.DataFrame, hdd: pd.Series, s: dict) -> pd
     return f
 
 
-def leg_signal(row, s: dict) -> tuple[int, str | None, int | None]:
-    """Return (side, leg, hold) for one bar; side +1 CALL, -1 PUT, 0 none."""
-    if pd.Timestamp(row.name).month not in WINTER:
+def leg_signal(row, s: dict, all_year: bool = False) -> tuple[int, str | None, int | None]:
+    """Return (side, leg, hold) for one bar; side +1 CALL, -1 PUT, 0 none. all_year=True ignores the winter-only gate (research)."""
+    if not all_year and pd.Timestamp(row.name).month not in WINTER:
         return 0, None, None
     oi, dow = row.oi_chg, int(row.dow)
     if dow == 0 and s["leg_mon"] and pd.notna(oi) and oi != 0:
@@ -432,6 +438,60 @@ def backtest(f: pd.DataFrame, s: dict) -> dict:
     legs = [dict(leg=k, **agg(g)) for k, g in T.groupby("leg")]
     winters = [dict(winter=f"{k}-{(k + 1) % 100:02d}", **agg(g)) for k, g in T.groupby("season")]
     return {"periods": periods, "legs": legs, "winters": winters, "n": int(len(T))}
+
+
+def year_round(f: pd.DataFrame, s: dict) -> dict:
+    """Research: the same playbook legs over the WHOLE year (winter vs the other months), plus an exploratory grid of
+    every weekday x signal x direction. Direction hit = close of the hold window beyond entry in the signalled direction;
+    first-touch = +1 sigma reached before -1 sigma. Selection 2010-19, held out 2020+."""
+    idx = {d: i for i, d in enumerate(f.index)}
+    rows = []
+    for d, row in f[f.season >= 2010].iterrows():
+        i = idx[d]; win = d.month in WINTER
+        cands = []
+        side, leg, hold = leg_signal(row, s, all_year=True)
+        if side:
+            cands.append((leg, side, hold))
+        oi, dow = row.oi_chg, int(row.dow)
+        for nm, val in (("oi", oi if pd.notna(oi) and oi != 0 else None), ("r3s", row.r3s if pd.notna(row.r3s) else None),
+                        ("cold", (row.cold_z - s["cold_z"]) if pd.notna(row.cold_z) else None)):
+            if val is None or val == 0:
+                continue
+            for dirn in (1, -1):
+                cands.append((f"grid {['MON','TUE','WED','THU','FRI'][dow]} {nm}{'+' if val > 0 else '-'}->{'CALL' if dirn * (1 if val > 0 else -1) > 0 else 'PUT'}",
+                              dirn * (1 if val > 0 else -1), 1))
+        for leg, sd_, hold in cands:
+            o = outcome(f, i, sd_, hold)
+            if o:
+                rows.append(dict(date=d, season=int(row.season), winter=win, leg=leg, first_touch=o["first_touch"], dir_ok=o["dir_ok"]))
+    T = pd.DataFrame(rows)
+    if T.empty:
+        return {"n": 0, "legs": []}
+
+    def agg(t):
+        dec = (t.first_touch != 0).sum()
+        return dict(n=int(len(t)), dir_hit=round(float(t.dir_ok.mean() * 100), 1) if len(t) else None,
+                    first_touch=round(float((t.first_touch == 1).sum() / dec * 100), 1) if dec else None)
+    out = []
+    for leg, g in T.groupby("leg"):
+        out.append(dict(leg=leg, all=agg(g), winter=agg(g[g.winter]), other=agg(g[~g.winter]),
+                        sel=agg(g[g.season <= 2019]), held_out=agg(g[g.season >= 2020]),
+                        held_out_other=agg(g[(g.season >= 2020) & ~g.winter]),
+                        years_above_50=int((g.groupby("season").dir_ok.mean() > .5).sum()), years=int(g.season.nunique())))
+    return {"n": int(len(T)), "legs": out, "asof": str(f.index[-1].date())}
+
+
+def log_year_round(f: pd.DataFrame, s: dict) -> None:
+    try:
+        r = year_round(f, s)
+        _atomic_text("year_round.json", json.dumps(r, indent=1))
+        for L in r["legs"]:
+            if L["leg"].startswith("grid") and not (L["sel"]["dir_hit"] and L["sel"]["dir_hit"] >= 53):
+                continue
+            log.info("YEAR_ROUND %s | all %s | winter %s | other %s | sel2010-19 %s | held-out2020+ %s | held-out other months %s | yrs>50 %s/%s",
+                     L["leg"], L["all"], L["winter"], L["other"], L["sel"], L["held_out"], L["held_out_other"], L["years_above_50"], L["years"])
+    except Exception as exc:  # pragma: no cover
+        log.warning("year_round failed: %s", exc)
 
 
 ROBUSTNESS = {  # offline research, Oct 2026 (NYMEX NG 2010-26); shown on the page for context

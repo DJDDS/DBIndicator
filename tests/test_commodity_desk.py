@@ -397,3 +397,17 @@ def test_refresh_state_route_and_button(client, store):
     r = client.get('/api/commodity/refresh-state', headers=OWNER)
     assert r.status_code == 200 and 'running' in r.get_json()
     assert b'rf-btn' in _get_page(client).data
+
+
+def test_year_round_study_runs_and_covers_non_winter(store):
+    _synthetic(store)
+    ng = pd.read_csv(store / "ng.csv", parse_dates=["date"]); cot = pd.read_csv(store / "cot.csv", parse_dates=["date"])
+    hdd = pd.read_csv(store / "hdd_obs.csv", parse_dates=["date"]).set_index("date").hdd
+    s = dict(cd.DEFAULTS); f = cd._settled(cd.features(ng, cot, hdd, s))
+    r = cd.year_round(f, s)
+    legs = {L["leg"]: L for L in r["legs"]}
+    assert "MON open-interest" in legs and "WED into-EIA put" in legs and any(k.startswith("grid TUE") for k in legs)
+    assert legs["MON open-interest"]["other"]["n"] > 0                      # non-winter months are included
+    assert cd.leg_signal(f.iloc[-1], s)[0] in (0, 1, -1)
+    cd.log_year_round(f, s)
+    assert (cd.ROOT / "year_round.json").exists()
