@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{% if st.error and "Loading" in st.error %}<meta http-equiv="refresh" content="4">{% endif %}
 <title>NG Commodity Desk · Admin</title>
 <style>
 :root{--bg:#0f1216;--panel:#171b21;--panel2:#1d222a;--line:#2a313b;--text:#e6e9ee;--muted:#8b95a3;--good:#3fb950;--bad:#f0616d;--warn:#d6a33a;--chip:#232a33;--acc:#8fb3ff}

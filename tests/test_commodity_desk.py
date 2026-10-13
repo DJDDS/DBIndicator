@@ -67,14 +67,27 @@ def test_routes_require_owner(client):
 
 
 def test_page_renders_without_data(client):
-    r = client.get("/admin/commodity", headers=OWNER)
+    r = _get_page(client)
     assert r.status_code == 200
     assert b"ADMIN ONLY" in r.data and b"Refresh data" in r.data
 
 
+def _get_page(client):
+    """The page serves a cached background-computed status: first call starts it, wait for it, then read the page."""
+    import time
+    cd._SC.update(st=None, at=0.0, busy=False)
+    client.get("/admin/commodity", headers=OWNER)
+    for _ in range(200):
+        if cd._SC["st"] is not None or cd._SC["err"]: break
+        time.sleep(0.05)
+    cd.invalidate_status()
+    return client.get("/admin/commodity", headers=OWNER)
+
+
+
 def test_page_renders_with_data(client, store):
     _synthetic(store)
-    r = client.get("/admin/commodity", headers=OWNER)
+    r = _get_page(client)
     assert r.status_code == 200
     assert b"Backtest" in r.data and b"Weekly playbook" in r.data
     st = client.get("/api/commodity/status", headers=OWNER).json
@@ -243,7 +256,7 @@ def test_status_with_kite_records_and_scores_mcx_ledger(store, monkeypatch):
 
 def test_page_without_kite_shows_login_hint(client, store):
     _synthetic(store)
-    r = client.get("/admin/commodity", headers=OWNER)
+    r = _get_page(client)
     assert r.status_code == 200 and b"Kite login required" in r.data
 
 
@@ -305,3 +318,19 @@ def test_entry_window_tracks_mcx_close(store, monkeypatch):
     assert st["session"]["entry_window"] == "22:30-23:25" and st["session"]["close_str"] == "23:30"
     st = cd.status(kite=None, now_ist=_dt.datetime(2026, 12, 14, 18, 0))
     assert st["session"]["entry_window"] == "22:55-23:50"
+
+
+def test_status_is_cached_and_never_blocks_a_request(monkeypatch):
+    import threading, time
+    from app import commodity_desk as cd
+    gate = threading.Event()
+    monkeypatch.setattr(cd, 'status', lambda kite=None, now_ist=None: (gate.wait(5), {'engine': 'x'})[1])
+    cd._SC.update(st=None, at=0.0, busy=False)
+    t0 = time.time(); a = cd.cached_status(lambda: None); b = cd.cached_status(lambda: None)
+    assert time.time() - t0 < 0.5 and a is None and b is None            # slow job runs in the background, one at a time
+    gate.set()
+    for _ in range(100):
+        if cd._SC['st'] is not None: break
+        time.sleep(0.05)
+    assert cd.cached_status(lambda: None)['engine'] == 'x'
+    cd.invalidate_status(); assert cd._SC['at'] == 0.0

@@ -1516,7 +1516,9 @@ def admin_commodity():
     from . import commodity_desk
     try:
         commodity_desk.maybe_refresh_async()
-        st = commodity_desk.status(kite=_commodity_kite())
+        st = commodity_desk.cached_status(_commodity_kite)
+        if st is None:      # first view after a restart: the background job is still computing
+            st = {"error": "Loading live data (first load after a restart takes a few seconds) - reload this page shortly.", "settings": commodity_desk.load_settings(), "meta": {}, "robustness": commodity_desk.ROBUSTNESS}
     except Exception as exc:  # fail-soft: the page must still render
         log.exception("commodity desk status failed")
         st = {"error": str(exc)[:200], "settings": commodity_desk.load_settings(), "meta": {}, "robustness": commodity_desk.ROBUSTNESS}
@@ -1527,13 +1529,14 @@ def admin_commodity():
 @require_roles(OWNER)
 def api_commodity_status():
     from . import commodity_desk
-    return Response(json.dumps(commodity_desk.status(kite=_commodity_kite()), default=str), mimetype="application/json")
+    return Response(json.dumps(commodity_desk.cached_status(_commodity_kite) or {"loading": True}, default=str), mimetype="application/json")
 
 
 @app.route("/api/commodity/refresh", methods=["POST"])
 @require_roles(OWNER)
 def api_commodity_refresh():
     from . import commodity_desk
+    commodity_desk.invalidate_status()
     started = commodity_desk.refresh_async()   # background: a full download can exceed the gunicorn worker timeout
     if request.form or not request.is_json:
         return redirect("/admin/commodity")
@@ -1554,7 +1557,7 @@ def api_commodity_settings():
                 new[k] = False          # HTML form: an unticked checkbox is simply absent
         elif src.get(k) not in (None, ""):
             new[k] = src.get(k)
-    s = commodity_desk.save_settings(new)
+    s = commodity_desk.save_settings(new); commodity_desk.invalidate_status()
     try:
         commodity_desk.update_ledger()
     except Exception:  # fail-soft

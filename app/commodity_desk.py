@@ -614,3 +614,38 @@ def score_mcx_ledger(kite, now_ist: datetime, max_calls: int = 6) -> None:
         changed = True
     if changed:
         _write_mcx_ledger(rows)
+
+
+# --- cached, single-flight status for the web routes ------------------------------------------------------------
+# status() fetches a Yahoo price and the MCX chain from Kite; running that inside a page request made /admin/commodity take 1-8 s
+# and let slow upstream calls tie up web workers. One background thread now refreshes it; the routes only read the last result.
+_SC: dict = {'st': None, 'at': 0.0, 'busy': False, 'took': None, 'err': None}
+_SLOCK = threading.Lock()
+
+
+def _status_job(kite_fn) -> None:
+    t0 = time.time()
+    try:
+        st = status(kite=kite_fn() if kite_fn else None)
+        _SC.update(st=st, at=time.time(), took=round(time.time() - t0, 1), err=None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning('commodity_desk status failed: %s', exc)
+        _SC.update(err=str(exc)[:200], at=time.time(), took=round(time.time() - t0, 1))
+    finally:
+        _SC['busy'] = False
+
+
+def cached_status(kite_fn=None, ttl: float = 20.0) -> dict | None:
+    """Last computed status (None until the first background run finishes). Starts a refresh when older than ttl seconds."""
+    with _SLOCK:
+        if time.time() - _SC['at'] > ttl and not _SC['busy']:
+            _SC['busy'] = True
+            threading.Thread(target=_status_job, args=(kite_fn,), name='commodity-status', daemon=True).start()
+    st = _SC['st']
+    if st is None: return None
+    out = dict(st); out['status_age_s'] = round(time.time() - _SC['at'], 0); out['status_took_s'] = _SC['took']
+    return out
+
+
+def invalidate_status() -> None:
+    _SC['at'] = 0.0
