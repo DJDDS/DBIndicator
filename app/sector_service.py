@@ -322,6 +322,7 @@ def _mini(m, now):
 EXTRA_INDICES=('INDIA VIX',)       # quoted with the sectors for the dashboard index cards
 DASH_INDICES=(('NIFTY 50','NIFTY 50'),('SENSEX','SENSEX'),('NIFTY BANK','BANK NIFTY'),('GIFT NIFTY','GIFT NIFTY'),('INDIA VIX','INDIA VIX'))
 GIFT_URL='https://www.nseindia.com/api/NextApi/apiClient?functionName=getGiftNifty'
+GIFT_STATUS_URL='https://www.nseindia.com/api/marketStatus'     # its 'giftnifty' object carries LASTPRICE / DAYCHANGE / PERCHANGE / TIMESTMP
 _gift={'at':0.0,'value':None,'busy':False,'warned':0.0}
 _gift_nse=None
 
@@ -364,15 +365,24 @@ def _gift_fetch():
     try:
         from .v130_swing import NSE
         if _gift_nse is None: _gift_nse=NSE()
-        js=_gift_nse.get(GIFT_URL,json_ok=True,tries=2)
-        v=parse_gift(js) if js else None
+        v=None; diag=[]
+        js=_gift_nse.get(GIFT_STATUS_URL,json_ok=True,tries=2)
+        if isinstance(js,dict):
+            g=js.get('giftnifty') or js.get('giftNifty') or js.get('GIFTNIFTY')
+            v=parse_gift(g) if g else None
+            diag.append('marketStatus keys=%s gift=%s'%(sorted(js)[:12],(sorted(g)[:12] if isinstance(g,dict) else type(g).__name__)))
+        else: diag.append('marketStatus returned %s'%type(js).__name__)
+        if not v:
+            js=_gift_nse.get(GIFT_URL,json_ok=True,tries=2)
+            v=parse_gift(js) if js else None
+            diag.append('apiClient returned %s'%(type(js).__name__ if js is not None else 'nothing'))
         with _lock:
-            _gift.update(at=time.time(),busy=False)
+            _gift.update(at=time.time(),busy=False,diag='; '.join(diag))
             if v: _gift['value']=dict(v,at=scanner.now_ist().isoformat(timespec='seconds'))
             elif time.time()-_gift['warned']>1800:
-                _gift['warned']=time.time(); log.warning('GIFT Nifty feed returned nothing usable (NSE endpoint may have changed)')
+                _gift['warned']=time.time(); log.warning('GIFT Nifty feed returned nothing usable: %s',_gift.get('diag'))
     except Exception:  # noqa: BLE001
-        with _lock: _gift.update(at=time.time(),busy=False)
+        with _lock: _gift.update(at=time.time(),busy=False,diag='fetch error')
         log.warning('GIFT Nifty fetch failed',exc_info=True)
 
 
@@ -411,7 +421,7 @@ def dashboard_summary(lite=False):
                     'chg':r2(px-pc) if px is not None and pc else None,
                     'd':dd,'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
     if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
-        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx}
+        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'gift_diag':_gift.get('diag')}
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []
@@ -419,7 +429,7 @@ def dashboard_summary(lite=False):
                         'up':sum(1 for m in mm if (m['r'].get('today') or 0)>0),'dn':sum(1 for m in mm if (m['r'].get('today') or 0)<0)})
         for m in mm:
             stocks.setdefault(m['s'],dict(m,sector=x['id'],sector_name=x['name']))
-    return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sectors':sectors,'stocks':stocks}
+    return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sectors':sectors,'stocks':stocks,'gift_diag':_gift.get('diag')}
 
 
 def _overview_key():

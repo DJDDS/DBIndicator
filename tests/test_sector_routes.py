@@ -282,3 +282,23 @@ def test_dashboard_indices_points_and_gift_parser(monkeypatch):
     d=s.dashboard_summary(lite=True)
     by={i['name']:i for i in d['indices']}
     assert by['NIFTY 50']['chg']==100.0 and by['GIFT NIFTY']['chg']==60.0 and by['GIFT NIFTY']['live'] and by['SENSEX']['label']=='SENSEX'
+
+
+def test_gift_nifty_from_market_status_object_and_fetch_order(monkeypatch):
+    from app import sector_service as ss
+    g = {'INSTRUMENTTYPE': 'FUTIDX', 'SYMBOL': 'NIFTY', 'LASTPRICE': 25012.5, 'DAYCHANGE': -48.5, 'PERCHANGE': -0.19, 'TIMESTMP': '13-Oct-2026 11:10'}
+    v = ss.parse_gift(g)
+    assert v['price'] == 25012.5 and v['chg'] == -48.5 and v['pct'] == -0.19
+
+    class FakeNSE:
+        urls = []
+        def get(self, url, json_ok=False, tries=3):
+            FakeNSE.urls.append(url)
+            return {'marketState': [{'last': 24000}], 'giftnifty': g} if url == ss.GIFT_STATUS_URL else None
+    import threading
+    for th in threading.enumerate():
+        if th.name == 'gift-nifty': th.join(timeout=20)      # a background fetch started by an earlier test must not race this one
+    monkeypatch.setattr(ss, '_gift_nse', FakeNSE())
+    monkeypatch.setattr(ss, '_gift', {'at': 0.0, 'value': None, 'busy': True, 'warned': 0.0})
+    ss._gift_fetch()
+    assert ss._gift['value']['price'] == 25012.5 and FakeNSE.urls == [ss.GIFT_STATUS_URL]
