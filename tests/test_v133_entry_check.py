@@ -34,3 +34,18 @@ def test_settings_are_adjustable_and_sanitised(tmp_path, monkeypatch):
     s = v.load_settings(); assert s['ec_min_score'] == 3 and s['ec_rsi'] == [46.6, 71.3]
     monkeypatch.setattr(v, '_read_json', lambda n, d=None: {'ec_rsi': [80, 40], 'ec_min_score': 9, 'ec_stoch': 'bad'} if n == 'settings.json' else d)
     s = v.load_settings(); assert s['ec_rsi'] == [40.0, 80.0] and s['ec_min_score'] == 4 and s['ec_stoch'] == [0.385, 0.943]
+
+
+def test_paper_hold_plus_stop_result():
+    import datetime as dt
+    idx = pd.date_range('2026-10-13 09:15', periods=75, freq='5min')
+    base = 100.0
+    def bars(highs):
+        return pd.DataFrame({'date': idx, 'open': base, 'high': highs, 'low': base - 0.2, 'close': base})
+    h_ok = [base + 0.1] * 75; h_stop = [base + 0.1] * 10 + [base + 1.6] + [base + 0.1] * 64
+    ok = v.outcome_from_bars(bars(h_ok), entry=base, p925=base, side='DOWN', k_exit=74, stop_pct=1.0)
+    st = v.outcome_from_bars(bars(h_stop), entry=base, p925=base, side='DOWN', k_exit=74, stop_pct=1.0)
+    assert ok['stopped'] is False and ok['stop_ret_pct'] == ok['ret_pct']
+    assert st['stopped'] is True and st['stop_ret_pct'] < -1.0 and st['stop_win'] is False
+    assert 'stopped' not in v.outcome_from_bars(bars(h_ok), entry=base, p925=base, side='DOWN', k_exit=74)
+    assert v.load_settings()['stop_k'] == 1.0

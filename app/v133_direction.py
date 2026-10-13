@@ -55,7 +55,7 @@ HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
 DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
                     'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0,
-                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3}
+                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3, 'stop_k': 1.0}
 
 _lock = threading.Lock()
 _model = None
@@ -170,6 +170,7 @@ def load_settings() -> dict:
     s['opt_max_spread_pct'] = float(min(20.0, max(0.5, float(s['opt_max_spread_pct']))))
     s['hc_quantile'] = float(min(0.97, max(0.5, float(s['hc_quantile'])))); s['hc_top_n'] = int(max(1, min(5, int(s['hc_top_n']))))
     s['hc_book_pct'] = float(min(5.0, max(0.1, float(s['hc_book_pct']))))
+    s['stop_k'] = float(min(5.0, max(0.0, float(s['stop_k']))))
     s['entry_check'] = bool(s['entry_check']); s['ec_min_score'] = int(max(1, min(4, int(s['ec_min_score']))))
     for k in ('ec_rsi', 'ec_stoch', 'ec_bbz', 'ec_ema50'):
         try: lo, hi = (float(x) for x in s[k]); s[k] = [min(lo, hi), max(lo, hi)]
@@ -857,7 +858,7 @@ def run_list(kite, today: dt.date | None = None) -> int:
             ltp = (q.get(r.symbol) or {}).get('last_price')
             o = of.get(r.symbol); agree = None if not o else bool((o['ofs'] > 0) == (r.side == 'UP'))
             picks.append({'symbol': r.symbol, 'side': r.side, 'p_up': round(float(r.p_up), 4), 'conf': round(float(r.conf), 4), 'open': r.o,
-                          'p925': r.p925, 'entry': ltp or r.p925, 'gap_pct': round(r.gap * 100, 2), 'exc20_pct': round(r.exc20 * 100, 2),
+                          'p925': r.p925, 'entry': ltp or r.p925, 'gap_pct': round(r.gap * 100, 2), 'exc20_pct': round(r.exc20 * 100, 2), 'rng20_pct': round(r.rng20 * 100, 2),
                           'of': o, 'of_agree': agree, 'status': 'OPEN' if trade else 'WATCH',
                           'entry_check': entry_check((prep['hist'] or {}).get(r.symbol), r.p925, r.side, s) if h == 'hc' else None,
                           'option': dict(opts[(r.symbol, r.side)]) if (r.symbol, r.side) in opts else None})
@@ -903,7 +904,8 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                 if p['symbol'] not in bars_cache:
                     bars_cache[p['symbol']] = _kite_5min(kite, tok, dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30)))
                     time.sleep(0.34)
-                res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], EXIT_BAR[h], book_pct=L.get('book_pct') or day.get('settings', {}).get('book_target_pct'))
+                res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], EXIT_BAR[h], book_pct=L.get('book_pct') or day.get('settings', {}).get('book_target_pct'),
+                                           stop_pct=(p.get('rng20_pct') or 0) * float((day.get('settings') or {}).get('stop_k', 0) or 0) if h == 'hc' else None)
                 if res: p.update(res); n += 1
                 op = p.get('option') or {}
                 if op.get('status') == 'OPEN' and op.get('token'):
@@ -996,7 +998,7 @@ def export_lab_zip() -> Path:
     return p
 
 
-def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_exit: int = K_EXIT, book_pct: float | None = None) -> dict | None:
+def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_exit: int = K_EXIT, book_pct: float | None = None, stop_pct: float | None = None) -> dict | None:
     """Exit at the close of candle k_exit (research: 09:55 / 10:25 / 10:55 / 11:25 / 15:15); win is judged from the 09:25 price
     exactly as in research, ret_pct is the paper result from the actual entry price after 0.06% costs."""
     if b is None or b.empty: return None
@@ -1021,6 +1023,16 @@ def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_e
         out['book_pct'] = book_pct; out['booked'] = booked
         out['book_ret_pct'] = round((T - COST) * 100, 3) if booked else out['ret_pct']
         out['book_win'] = bool(out['book_ret_pct'] > 0)
+    if stop_pct and stop_pct > 0:
+        # paper-only 'hold + stop': hold to the exit, but leave early if the stock goes against the entry by stop_pct (research 2017-26, DOWN picks:
+        # hold with a stop of ~1x the 20-day average daily range -> +28.6 bps/pick, Sharpe 2.6, vs +8.1 / 1.2 for booking at +1%)
+        S = stop_pct / 100.0; stopped = False
+        for hh, ll in zip(win_bars.high.to_numpy(float), win_bars.low.to_numpy(float)):
+            adv = (1 - ll / entry) if sg > 0 else (hh / entry - 1)
+            if np.isfinite(adv) and adv >= S: stopped = True; break
+        out['stop_pct'] = round(stop_pct, 3); out['stopped'] = stopped
+        out['stop_ret_pct'] = round((-S - COST) * 100, 3) if stopped else out['ret_pct']
+        out['stop_win'] = bool(out['stop_ret_pct'] > 0)
     out['status'] = 'CLOSED'
     return out
 
