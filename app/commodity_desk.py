@@ -512,13 +512,13 @@ def log_year_round(f: pd.DataFrame, s: dict, raw=None) -> None:
         if raw is not None:
             sens = sensitivity(*raw, s); _atomic_text("sensitivity.json", json.dumps(sens, indent=1))
             for r_ in sens:
-                log.info("YEAR_ROUND_SENS %s", r_)
+                log.warning("YEAR_ROUND_SENS %s", r_)
         r = year_round(f, s)
         _atomic_text("year_round.json", json.dumps(r, indent=1))
         for L in r["legs"]:
             if L["leg"].startswith("grid") and not (L["sel"]["dir_hit"] and L["sel"]["dir_hit"] >= 53):
                 continue
-            log.info("YEAR_ROUND %s | p(chance) all %s held-out %s | all %s | winter %s | other %s | sel2010-19 %s | held-out2020+ %s | held-out other months %s | yrs>50 %s/%s",
+            log.warning("YEAR_ROUND %s | p(chance) all %s held-out %s | all %s | winter %s | other %s | sel2010-19 %s | held-out2020+ %s | held-out other months %s | yrs>50 %s/%s",
                      L["leg"], L["p_all"], L["p_held_out"], L["all"], L["winter"], L["other"], L["sel"], L["held_out"], L["held_out_other"], L["years_above_50"], L["years"])
     except Exception as exc:  # pragma: no cover
         log.warning("year_round failed: %s", exc)
