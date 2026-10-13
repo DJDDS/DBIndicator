@@ -2682,7 +2682,8 @@ button, a, summary, input, select { touch-action: manipulation; }
   }
 
   pollDashboardState();
-  setInterval(pollDashboardState, DASHBOARD_REFRESH_MS);
+  setInterval(function () { if (!document.hidden) pollDashboardState(); }, DASHBOARD_REFRESH_MS);   // a background tab does not poll
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) pollDashboardState(); });
 
   // V9.1 Goal-Focused models: independent JSON polling keeps the decision console live
   // without reloading the page or disturbing the watchlist and research radar.
@@ -2914,7 +2915,8 @@ button, a, summary, input, select { touch-action: manipulation; }
   })();
 
   pollV8Dashboard();
-  setInterval(pollV8Dashboard, DASHBOARD_REFRESH_MS);
+  setInterval(function () { if (!document.hidden) pollV8Dashboard(); }, DASHBOARD_REFRESH_MS);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) pollV8Dashboard(); });
 
 
   (function bindFocusKpiNavigation() {

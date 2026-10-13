@@ -1,4 +1,5 @@
 import copy
+import os
 import threading
 import time
 import datetime as dt
@@ -83,6 +84,34 @@ def _gzip_response(response):
         pass
     return response
 _scanner_started = False
+_RC: dict = {}
+_RC_LOCK = threading.Lock()
+
+
+def _response_cache(key: str):
+    """Short-lived cache for the two dashboard polling endpoints (each open tab polls them every 8 s and each call rebuilds a large payload,
+    400-1100 ms of CPU). Concurrent callers wait for one build; seconds come from DBI_RESPONSE_CACHE_SECONDS (default 4, 0 disables).
+    Sits below require_roles, so access control is unchanged."""
+    def deco(fn):
+        import functools
+
+        @functools.wraps(fn)
+        def wrapper(*a, **k):
+            try: ttl = float(os.environ.get("DBI_RESPONSE_CACHE_SECONDS", "4"))
+            except ValueError: ttl = 4.0
+            if ttl <= 0: return fn(*a, **k)
+            ent = _RC.get(key)
+            if ent and time.time() - ent[0] < ttl: return Response(ent[1], mimetype="application/json")
+            with _RC_LOCK:
+                ent = _RC.get(key)
+                if ent and time.time() - ent[0] < ttl: return Response(ent[1], mimetype="application/json")
+                resp = fn(*a, **k)
+                if getattr(resp, "status_code", 200) == 200 and getattr(resp, "mimetype", "") == "application/json":
+                    _RC[key] = (time.time(), resp.get_data())
+                return resp
+        return wrapper
+    return deco
+
 _STARTED_AT = scanner.now_ist().isoformat(timespec="seconds")
 
 
@@ -248,6 +277,7 @@ def dashboard():
 
 @app.route("/api/dashboard-state")
 @require_roles(OWNER, MEMBER)
+@_response_cache("dashboard-state")
 def api_dashboard_state():
     state = get_state()
     rows = state.get("results") or []
@@ -326,6 +356,7 @@ def api_dashboard_state():
 
 @app.route("/api/v8-dashboard")
 @require_roles(OWNER, MEMBER)
+@_response_cache("v8-dashboard")
 def api_v8_dashboard():
     state = get_state()
     payload = v9_playbooks.dashboard_payload(state)

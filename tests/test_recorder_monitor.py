@@ -122,3 +122,19 @@ def test_cached_report_does_not_block_a_slow_scan(tmp_path, monkeypatch):
         if m._CACHE['rep'] is not None: break
         time.sleep(0.05)
     assert m.cached_report(str(tmp_path))['loading'] is False
+
+
+def test_dashboard_response_cache_is_short_and_toggleable(monkeypatch):
+    import base64
+    from app import web
+    monkeypatch.setenv("DBI_OWNER_PASSWORD", "t")
+    h = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
+    c = web.app.test_client(); calls = []
+    real = web.get_state
+    monkeypatch.setattr(web, "get_state", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    web._RC.clear(); monkeypatch.setenv("DBI_RESPONSE_CACHE_SECONDS", "30")
+    r1 = c.get("/api/v8-dashboard", headers=h); r2 = c.get("/api/v8-dashboard", headers=h)
+    assert r1.status_code == r2.status_code == 200 and len(calls) == 1 and r1.data == r2.data      # second call served from cache
+    assert c.get("/api/v8-dashboard").status_code in (401, 403)                                     # role check still runs first
+    monkeypatch.setenv("DBI_RESPONSE_CACHE_SECONDS", "0"); c.get("/api/v8-dashboard", headers=h)
+    assert len(calls) == 2

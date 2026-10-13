@@ -17,3 +17,12 @@ except ModuleNotFoundError:  # pragma: no cover - environment-specific shim
 
     mod.KiteConnect = KiteConnect
     sys.modules["kiteconnect"] = mod
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_response_cache(monkeypatch):
+    """Tests change state between calls; the dashboard endpoints' short response cache must not hide that."""
+    monkeypatch.setenv("DBI_RESPONSE_CACHE_SECONDS", "0")
