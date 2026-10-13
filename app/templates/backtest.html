@@ -105,8 +105,8 @@
       out.push('<b>'+esc(k)+'</b>: '+(v.started?'started '+esc(v.started):'not started')+(bad.length?' · <span style="color:#c00000">failed steps: '+esc(bad.join(', '))+'</span>':'')+(v.last_error?' · last error: '+esc(String(v.last_error).slice(0,140)):' · no errors')); });
     document.getElementById('rm-sched').innerHTML='<b>Schedulers</b> (since last restart)<br>'+out.join('<br>');
   }
-  function load(){ fetch('/api/recorders',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.json();}).then(render).catch(function(){ document.getElementById('rm-sum').textContent=' · could not load'; }); }
-  document.getElementById('rm-refresh').addEventListener('click',load); load(); setInterval(load,30000);
+  function load(){ fetch('/api/recorders',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ if(d.loading){ document.getElementById('rm-sum').textContent=' · loading (first scan of the data volume)...'; setTimeout(load,4000); return; } render(d); }).catch(function(){ document.getElementById('rm-sum').textContent=' · could not load'; }); }
+  document.getElementById('rm-refresh').addEventListener('click',load); load(); setInterval(function(){ if(!document.hidden) load(); },60000);
 })();
 </script>
 <div id="v122b-current-research" class="card" style="display:block!important;border-color:#0f7b61;">

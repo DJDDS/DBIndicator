@@ -1421,7 +1421,7 @@ def api_v11_export(kind):
 def api_recorders():
     """Read-only recorder monitor for the Backtest page: last write, record count and scheduler health per recorder."""
     from . import recorder_monitor
-    return Response(json.dumps(recorder_monitor.report(config.V12_STORAGE_ROOT, config.V121_INDEX_VOL_ROOT), default=str), mimetype="application/json")
+    return Response(json.dumps(recorder_monitor.cached_report(config.V12_STORAGE_ROOT, config.V121_INDEX_VOL_ROOT), default=str), mimetype="application/json")
 
 
 @app.route("/api/v130/status")

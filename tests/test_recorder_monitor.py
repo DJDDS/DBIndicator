@@ -75,8 +75,15 @@ def test_route_and_page(tmp_path, monkeypatch):
     monkeypatch.setattr(web.config, 'V12_STORAGE_ROOT', str(tmp_path))
     c = web.app.test_client()
     h = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
-    r = c.get('/api/recorders', headers=h)
-    assert r.status_code == 200 and json.loads(r.data)['summary']['total'] == 16
+    import time
+    m._CACHE.update(rep=None, at=0.0, busy=False)
+    r = c.get('/api/recorders', headers=h)                 # never blocks: first call may say 'loading'
+    assert r.status_code == 200
+    for _ in range(100):
+        d = json.loads(c.get('/api/recorders', headers=h).data)
+        if not d.get('loading'): break
+        time.sleep(0.05)
+    assert d['summary']['total'] == 16 and d['loading'] is False
     page = c.get('/backtest', headers=h)
     assert page.status_code == 200 and b'recorder-monitor' in page.data and b'/api/recorders' in page.data
     assert c.get('/api/recorders').status_code in (401, 403)
@@ -103,3 +110,17 @@ def test_stream_is_not_stale_in_the_first_minutes_after_the_open(tmp_path):
     late = dt.datetime(2026, 10, 13, 9, 40, tzinfo=IST)                       # still nothing written 25 min after the open -> a real problem
     assert m.orderflow(str(tmp_path), late)['minute']['status'] == 'STALE'
     assert _row(m.report(str(tmp_path), None, late), 'Universe live stream checkpoint')['status'] == 'STALE'
+
+
+def test_cached_report_does_not_block_a_slow_scan(tmp_path, monkeypatch):
+    import threading, time
+    gate = threading.Event()
+    monkeypatch.setattr(m, 'report', lambda *a, **k: (gate.wait(5), {'as_of': 'x', 'rows': [], 'summary': {}})[1])
+    m._CACHE.update(rep=None, at=0.0, busy=False)
+    t0 = time.time(); a = m.cached_report(str(tmp_path)); b = m.cached_report(str(tmp_path))
+    assert time.time() - t0 < 0.5 and a['loading'] and b['loading']                  # slow scan runs in the background, one at a time
+    gate.set()
+    for _ in range(100):
+        if m._CACHE['rep'] is not None: break
+        time.sleep(0.05)
+    assert m.cached_report(str(tmp_path))['loading'] is False

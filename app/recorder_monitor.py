@@ -17,7 +17,7 @@ import threading
 from pathlib import Path
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
-LINE_COUNT_MAX_BYTES = 25_000_000
+LINE_COUNT_MAX_BYTES = 3_000_000   # counting lines of big files on the data volume is slow; only small files get a record count
 
 
 def _alive_names() -> set[str]:
@@ -244,3 +244,41 @@ def report(storage_root: str, index_vol_root: str | None = None, now: dt.datetim
     count = lambda *names: sum(1 for r in rows if r['status'] in names)
     return {'as_of': now.isoformat(timespec='seconds'), 'storage': str(root), 'rows': rows, 'schedulers': scheduler_steps(), 'orderflow': orderflow(storage_root, now),
             'summary': {'total': len(rows), 'ok': count('OK', 'IDLE'), 'waiting': count('DUE', 'WAITING', 'NO DATA YET'), 'problems': count('MISSED', 'STALE', 'NOT RUNNING')}}
+
+
+# --- cached, single-flight access for the web route ---------------------------------------------------------
+# The report touches many files on the data volume. It must never run inside a web request, or slow calls pile up and
+# starve the worker threads (the whole app crawled when it ran every 30 s per open tab). One background thread
+# refreshes it; the route only returns the last result at once.
+import threading as _th
+import time as _time
+
+_CACHE: dict = {'rep': None, 'at': 0.0, 'busy': False, 'took': None, 'err': None}
+_CLOCK = _th.Lock()
+CACHE_TTL = 60.0
+
+
+def _refresh(storage_root: str, index_vol_root: str | None) -> None:
+    t0 = _time.time()
+    try:
+        rep = report(storage_root, index_vol_root)
+        _CACHE.update(rep=rep, at=_time.time(), took=round(_time.time() - t0, 1), err=None)
+    except Exception as exc:  # noqa: BLE001
+        _CACHE.update(err=str(exc), at=_time.time(), took=round(_time.time() - t0, 1))
+    finally:
+        _CACHE['busy'] = False
+
+
+def cached_report(storage_root: str, index_vol_root: str | None = None) -> dict:
+    """Return the last report immediately; start a background refresh when it is older than CACHE_TTL."""
+    with _CLOCK:
+        stale = _time.time() - _CACHE['at'] > CACHE_TTL
+        if stale and not _CACHE['busy']:
+            _CACHE['busy'] = True
+            _th.Thread(target=_refresh, args=(storage_root, index_vol_root), name='recorder-monitor', daemon=True).start()
+    rep = _CACHE['rep']
+    if rep is None:
+        return {'as_of': None, 'rows': [], 'schedulers': {}, 'orderflow': {}, 'loading': True, 'error': _CACHE['err'],
+                'summary': {'total': 0, 'ok': 0, 'waiting': 0, 'problems': 0}}
+    out = dict(rep); out['loading'] = False; out['refreshing'] = _CACHE['busy']; out['took_s'] = _CACHE['took']; out['error'] = _CACHE['err']
+    return out
