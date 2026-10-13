@@ -85,7 +85,7 @@ def oi_history_readiness(results, *, min_tier=None):
 
 
 _OI_NUMERIC_FIELDS = (
-    "close", "price_chg_today_pct", "oi_day_chg_pct",
+    "close", "price_chg_today_pct", "day_chg_pct", "oi_day_chg_pct",
     "oi_chg_15m_pct", "oi_chg_30m_pct", "oi_chg_60m_pct",
     "oi_acceleration", "vol_multiple", "oi_z", "param_tier",
 )

@@ -150,21 +150,22 @@
         <tr>
           <th data-col="0" data-type="text" class="sym-col">Symbol</th>
           <th data-col="1" data-type="num">Price</th>
-          <th data-col="2" data-type="num">Price Chg %</th>
-          <th data-col="3" data-type="num" data-default-dir="desc">OI Value</th>
-          <th data-col="4" data-type="num" data-default-dir="desc">Day OI Chg % <span title="vs yesterday's closing OI">(vs prev close)</span></th>
-          <th data-col="5" data-type="num" data-default-dir="desc">15m Chg %</th>
-          <th data-col="6" data-type="num" data-default-dir="desc">30m Chg %</th>
-          <th data-col="7" data-type="num" data-default-dir="desc">60m Chg %</th>
-          <th data-col="8" data-type="num" data-default-dir="desc">Acceleration (pp)</th>
-          <th data-col="9" data-type="text">Acceleration</th>
-          <th data-col="10" data-type="text">OI Structure</th>
-          <th data-col="11" data-type="num">Vol Multiple</th>
-          <th data-col="12" data-type="text">Signal</th>
+          <th data-col="2" data-type="num" data-default-dir="desc">Day Chg % <span title="vs yesterday's close - the real up/down for the day">(vs prev close)</span></th>
+          <th data-col="3" data-type="num"><span title="Price move since the scanner's first reading today. The OI Structure badge is based on this move, not on the day change.">Since-open Chg %</span></th>
+          <th data-col="4" data-type="num" data-default-dir="desc">OI Value</th>
+          <th data-col="5" data-type="num" data-default-dir="desc">Day OI Chg % <span title="vs yesterday's closing OI">(vs prev close)</span></th>
+          <th data-col="6" data-type="num" data-default-dir="desc">15m Chg %</th>
+          <th data-col="7" data-type="num" data-default-dir="desc">30m Chg %</th>
+          <th data-col="8" data-type="num" data-default-dir="desc">60m Chg %</th>
+          <th data-col="9" data-type="num" data-default-dir="desc">Acceleration (pp)</th>
+          <th data-col="10" data-type="text">Acceleration</th>
+          <th data-col="11" data-type="text">OI Structure</th>
+          <th data-col="12" data-type="num">Vol Multiple</th>
+          <th data-col="13" data-type="text">Signal</th>
         </tr>
       </thead>
       <tbody id="oi-tbody">
-        <tr><td colspan="13" class="empty-note">Loading...</td></tr>
+        <tr><td colspan="14" class="empty-note">Loading...</td></tr>
       </tbody>
     </table>
     </div>
@@ -241,6 +242,7 @@
     return '' +
       '<td class="sym-col" data-sort="' + r.symbol + '"><a class="sym-link" href="/chart/' + r.symbol + '">' + r.symbol + '</a></td>' +
       '<td data-sort="' + (r.close != null ? r.close : '') + '">' + fmtNum(r.close) + '</td>' +
+      '<td data-sort="' + (r.day_chg_pct != null ? r.day_chg_pct : '') + '" class="' + (r.day_chg_pct > 0 ? 'green-text' : r.day_chg_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.day_chg_pct) + '</td>' +
       '<td data-sort="' + (priceChg != null ? priceChg : '') + '" class="' + (priceChg > 0 ? 'green-text' : priceChg < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(priceChg) + '</td>' +
       '<td data-sort="' + ((r.oi_total != null ? r.oi_total : r.oi) != null ? (r.oi_total != null ? r.oi_total : r.oi) : '') + '">' + fmtNum(r.oi_total != null ? r.oi_total : r.oi) + '</td>' +
       '<td data-sort="' + (r.oi_day_chg_pct != null ? r.oi_day_chg_pct : '') + '" class="' + (r.oi_day_chg_pct > 0 ? 'green-text' : r.oi_day_chg_pct < 0 ? 'red-text' : 'muted-text') + '">' + fmtPct(r.oi_day_chg_pct) + '</td>' +
@@ -258,7 +260,7 @@
     var tbody = document.getElementById('oi-tbody');
     var rows = results.filter(function (r) { return !r.error; });
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="13" class="empty-note">No current NSE stock-F&O symbols have a valid live OI quote yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="14" class="empty-note">No current NSE stock-F&O symbols have a valid live OI quote yet.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(function (r) {

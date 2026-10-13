@@ -1416,9 +1416,25 @@ def compute_signal(df: pd.DataFrame, timeframe: str, now=None) -> dict:
         except Exception:
             prior_high_20d = prior_low_20d = prior_high_50d = prior_low_50d = None
 
+    # Day change vs the PREVIOUS SESSION's last close (what a trader reads as "up/down today"). `prev_close` above is only the
+    # previous candle of the chosen timeframe, and the OI screener's price move is measured from the scanner's first reading of the day.
+    prev_day_close = day_chg_pct = None
+    if isinstance(df.index, pd.DatetimeIndex):
+        try:
+            sess = df.index.normalize()
+            prior = close[sess < sess[i]]
+            if len(prior):
+                prev_day_close = float(prior.iloc[-1])
+                if prev_day_close > 0 and np.isfinite(prev_day_close):
+                    day_chg_pct = round((float(close.iloc[i]) / prev_day_close - 1.0) * 100.0, 2)
+        except Exception:
+            prev_day_close = day_chg_pct = None
+
     return {
         "open": round(open_val, 2) if open_val is not None else None,
         "prev_close": round(prev_close_val, 2) if prev_close_val is not None else None,
+        "prev_day_close": round(prev_day_close, 2) if prev_day_close is not None else None,
+        "day_chg_pct": day_chg_pct,
         "prior_high_20d": round(prior_high_20d, 2) if prior_high_20d is not None else None,
         "prior_low_20d": round(prior_low_20d, 2) if prior_low_20d is not None else None,
         "prior_high_50d": round(prior_high_50d, 2) if prior_high_50d is not None else None,
