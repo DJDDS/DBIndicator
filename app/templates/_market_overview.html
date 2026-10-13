@@ -19,6 +19,7 @@
   .mo-card .v b.fu{animation:moUp 1.4s ease-out}.mo-card .v b.fd{animation:moDn 1.4s ease-out}
   .mo-sec{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:11.5px;margin:0 0 10px;padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:10px}
   .mo-sec b{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.mo-sec a{color:var(--text);text-decoration:none;font-family:var(--mono)}.mo-sec a:hover{color:var(--accent)}
+  .mo-tg{margin-left:8px;background:none;border:1px solid var(--border);color:var(--muted);border-radius:6px;font-size:10.5px;padding:1px 7px;cursor:pointer}.mo-tg:hover{color:var(--accent)}
   .mo-sec .up{color:var(--green)}.mo-sec .dn{color:var(--red)}.mo-sec .upd{margin-left:auto;color:var(--dim);font-size:10.5px}
   .mo-wk{display:flex;gap:9px;font-size:10.5px;color:var(--muted);font-family:var(--mono)}
   .mo-wk .up{color:var(--green)}.mo-wk .dn{color:var(--red)}
@@ -56,7 +57,7 @@
   const pct = n => ok(n) ? (n > 0 ? '+' : '') + fmt(n) + '%' : '—';
   const cls = n => ok(n) ? (n > 0 ? 'up' : n < 0 ? 'dn' : 'na') : 'na';
   const C = () => { const s = getComputedStyle(document.documentElement), g = k => s.getPropertyValue(k).trim(); return {g: g('--green') || '#16c784', r: g('--red') || '#ea3943', a: g('--accent') || '#3b82f6', t: g('--text') || '#dfe4ee', m: g('--muted') || '#7c8698', b: g('--border') || '#242b38', amber: '#f0b429', p2: g('--panel2') || '#151b26'}; };
-  const st = {idx: null, state: null, win: 66, charts: {}, sig: {}};
+  const st = {idx: null, state: null, win: 66, span: (function(){try{return localStorage.getItem('mo-span')||'3M'}catch(e){return '3M'}})(), charts: {}, sig: {}};
 
   // ---- index strip: no chart library needed (inline SVG sparkline) ----
   function spark(h, up) {
@@ -78,17 +79,20 @@
       const r = x.r || {}, up = ((r['3M'] ?? r.today ?? 0) >= 0) !== (x.label === 'INDIA VIX');   // a rising VIX is the red case
       const fl = ok(x.price) && ok(st.prev[x.label]) && x.price !== st.prev[x.label] ? (x.price > st.prev[x.label] ? ' fu' : ' fd') : ''; st.prev[x.label] = x.price;
       const inner = `<span class="l">${esc(x.label)}</span><div class="v"><b class="${fl.trim()}">${fmt(x.price)}</b><span class="mo-pill ${cls(r.today)}">${pct(r.today)}</span></div>
-        <div class="mo-pts ${cls(x.chg)}">${ok(x.chg) ? (x.chg > 0 ? '▲ +' : x.chg < 0 ? '▼ ' : '') + fmt(x.chg) + ' pts' : '—'}${x.live ? ' <i>live</i>' : ''}${ok(x.prem) ? ' <i>' + (x.prem > 0 ? '+' : '') + fmt(x.prem, 0) + ' prem</i>' : ''}</div>${rng(x)}${spark((x.hist || []).slice(-45), up)}
+        <div class="mo-pts ${cls(x.chg)}">${ok(x.chg) ? (x.chg > 0 ? '▲ +' : x.chg < 0 ? '▼ ' : '') + fmt(x.chg) + ' pts' : '—'}${x.live ? ' <i>live</i>' : ''}${ok(x.prem) ? ' <i>' + (x.prem > 0 ? '+' : '') + fmt(x.prem, 0) + ' prem</i>' : ''}</div>${rng(x)}${st.span === '1D' && (x.day || []).length > 2 ? spark(x.day, ok(x.chg) ? x.chg >= 0 !== (x.label === 'INDIA VIX') : up) : spark((x.hist || []).slice(-45), up)}
         ${['1W', '1M', '3M'].some(k => ok(r[k])) ? `<div class="mo-wk">${[['1W', '1W'], ['1M', '1M'], ['3M', '3M']].map(([k, l]) => `<span>${l} <span class="${cls(r[k])}">${pct(r[k])}</span></span>`).join('')}</div>` : ''}`;
       return x.id ? `<a class="mo-card" href="/sector-analysis#${encodeURIComponent(x.id)}" title="Open ${esc(x.label)} on the Sector Analysis page">${inner}</a>` : `<div class="mo-card">${inner}</div>`;
     }).join('');
   }
 
   function renderSec() {
-    const m = st.idx && st.idx.sector_movers, el = $('mo-sec'); if (!m) { el.hidden = true; return; }
+    const m = (st.idx && st.idx.sector_movers) || {lead: [], lag: []}, el = $('mo-sec'); if (!st.idx) { el.hidden = true; return; }
+    const dk = st.idx.desk, tg = `<button type="button" class="mo-tg" data-span="${st.span === '1D' ? '3M' : '1D'}" title="Switch the index lines between today (5-min) and the last 3 months">Lines: ${st.span === '1D' ? 'Today' : '3M'} ⇄</button>`;
+    const desk = dk && dk.lean ? `<b>Desk</b><span class="${dk.lean === 'UP' ? 'up' : dk.lean === 'DOWN' ? 'dn' : ''}">lean ${esc(dk.lean)} · ${dk.strong ? '★ STRONG day' : 'normal day'}</span>${(dk.picks || []).map(p => `<span class="${p.side === 'LONG' || p.side === 'UP' ? 'up' : 'dn'}">${esc(p.symbol)}</span>`).join(' ')}` : '';
     const chip = x => `<a href="/sector-analysis#${encodeURIComponent(x.id)}">${esc(x.name)} <span class="${cls(x.pct)}">${pct(x.pct)}</span></a>`;
     const q = st.idx.status && st.idx.status.quote_at;
-    el.innerHTML = `<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd">${q ? 'quotes ' + q.replace('T', ' ').slice(11, 19) + ' IST' : ''}</span>`; el.hidden = false;
+    el.innerHTML = `${desk}<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd">${q ? 'quotes ' + q.replace('T', ' ').slice(11, 19) + ' IST' : ''}</span>${tg}`; el.hidden = false;
+    const b = el.querySelector('.mo-tg'); if (b) b.onclick = () => { st.span = b.dataset.span; try { localStorage.setItem('mo-span', st.span); } catch (e) {} renderIdx(); renderSec(); };
   }
 
   // ---- charts (ECharts loads after first paint; updates use setOption so nothing re-flows) ----

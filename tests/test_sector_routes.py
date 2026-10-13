@@ -310,3 +310,11 @@ def test_dashboard_gift_sanity_guard_and_sector_movers(monkeypatch):
     out = ss.dashboard_summary(lite=True)
     assert not any(x['name'] == 'GIFT NIFTY' for x in out['indices'])
     assert 'sector_movers' in out
+
+
+def test_dashboard_lite_carries_day_line_and_desk(monkeypatch):
+    from app import sector_service as ss
+    monkeypatch.setattr(ss, '_desk', lambda: {'lean': 'DOWN', 'strong': True, 'view': 0.4, 'picks': []})
+    out = ss.dashboard_summary(lite=True)
+    assert out['desk']['lean'] == 'DOWN'
+    assert all('day' in x for x in out['indices'])

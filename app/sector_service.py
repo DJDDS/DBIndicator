@@ -26,6 +26,7 @@ _lock=threading.RLock()
 _started=False
 _requested_intraday=set()
 _intraday={}
+_idx_day={'at':0.0,'data':{}}
 _summaries={}
 _tokens={}
 _instrument_symbols={}
@@ -397,6 +398,14 @@ def gift_nifty():
     return v
 
 
+def _desk():
+    try:
+        from . import v133_direction
+        return v133_direction.desk_summary()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def dashboard_summary(lite=False):
     """Light payload for the main dashboard: index cards, sector performance and a per-stock price map (watchlist),
     all derived from the cached sector overview (no extra Kite calls)."""
@@ -422,13 +431,14 @@ def dashboard_summary(lite=False):
         pc=dd.get('pc') or (px/(1+rt/100) if px is not None and rt is not None and rt>-99 else None)          # previous close: the quote's own, else implied by today's %
         idx.append({'name':name,'label':label,'price':r2(sm.get('price')),'r':{q:r2((sm.get('returns') or {}).get(q)) for q in COMPARE},
                     'chg':r2(px-pc) if px is not None and pc else None,
-                    'd':dd,'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
+                    'd':dd,'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist,
+                    'day':list(_idx_day['data'].get(name) or []),'day_date':_idx_day['data'].get(name+'|day')})
     skip={n for n,_ in DASH_INDICES}
     ranked=[(x['name'],x['id'],a.finite((x.get('returns') or {}).get('today'))) for x in ov['sectors'] if x['name'] not in skip]
     ranked=sorted([r for r in ranked if r[2] is not None],key=lambda r:-r[2])
     movers={'lead':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[:3]],'lag':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[::-1][:3]]} if len(ranked)>=6 else None
     if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
-        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag')}
+        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag'),'desk':_desk()}
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []
@@ -711,6 +721,25 @@ def _hydrate(kite, now):
     return complete
 
 
+def _load_index_day(kite,now):
+    """Today's 5-minute closes for the dashboard index cards (1D line). Runs in the worker, never in a request."""
+    if time.time()-_idx_day['at']<(120 if _market_hours(now) else 1800): return
+    out={}
+    for name,_ in DASH_INDICES:
+        token=_tokens.get(name)
+        if not token: continue
+        try:
+            bars=kite.historical_data(token,now-dt.timedelta(days=5),now,'5minute')
+            if not bars: continue
+            last=max(pd.Timestamp(b['date']).date() for b in bars)
+            out[name]=[[pd.Timestamp(b['date']).strftime('%H:%M'),round(float(b['close']),2)] for b in bars if pd.Timestamp(b['date']).date()==last]
+            out[name+'|day']=last.isoformat()
+        except Exception as exc:
+            log.warning('Index day line unavailable for %s: %s',name,exc)
+        time.sleep(0.4)
+    with _lock: _idx_day.update(at=time.time(),data=out or _idx_day['data'])
+
+
 def _load_intraday(kite,now):
     with _lock:
         wanted=list(_requested_intraday)
@@ -791,6 +820,7 @@ def _worker():
                 if _quote_window(scanner.now_ist()):
                     _refresh_quotes(kite,scanner.now_ist())
                 _load_intraday(kite,scanner.now_ist())
+                _load_index_day(kite,scanner.now_ist())
                 _persist()
                 t=scanner.now_ist()
                 if t.weekday()<5 and dt.time(15,32)<=t.time()<=dt.time(23,0) and (_state.get('quote_at') or '')[:10]==t.date().isoformat():

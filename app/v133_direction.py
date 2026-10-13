@@ -1186,6 +1186,28 @@ def status() -> dict:
             'lab': lab_summary()}
 
 
+_DESK = {'at': 0.0, 'value': None}
+
+
+def desk_summary() -> dict | None:
+    """One-line read for the main dashboard: today's lean and STRONG/normal flag from the daily pool. Cached 60 s."""
+    import time as _t
+    if _t.time() - _DESK['at'] < 60: return _DESK['value']
+    v = None
+    try:
+        today = str(now_ist().date())
+        d = next((d for d in reversed(_read_jsonl('days.jsonl')[-5:]) if d.get('date') == today), None)
+        L = ((d or {}).get('lists') or {}).get('hc')
+        if L:
+            picks = L.get('picks') or []
+            v = {'lean': L.get('lean'), 'strong': bool(L.get('strong')), 'view': L.get('view'),
+                 'picks': [{'symbol': p['symbol'], 'side': p['side']} for p in picks[:3]]}
+    except Exception:  # noqa: BLE001
+        v = None
+    _DESK.update(at=_t.time(), value=v)
+    return v
+
+
 def of_status(day: str) -> dict:
     if day in _of_buf: return dict(_of_buf[day])
     polls = _read_of(day)
