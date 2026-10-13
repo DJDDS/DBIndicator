@@ -1,0 +1,184 @@
+"""Recorder monitor: one read-only table that says, for every recorder / paper ledger, whether it is alive and writing.
+
+Nothing here places orders or writes anything. Every row is computed from the recorder's own files (newest write time, record count),
+its scheduler thread (alive or not) and the last step result it reported. Rules:
+
+  daily  - writes once per trading day after ``due`` (IST). OK if the newest write is at/after the most recent due time,
+           DUE for the first ``grace`` minutes after it, otherwise MISSED. Weekend: the last weekday's due time is used.
+           A weekday market holiday therefore shows MISSED - read it together with the NSE holiday list.
+  live   - streams during 09:15-15:30. OK if written in the last 10 minutes; STALE if not; outside market hours it shows the last write.
+  event  - written only when something happens (a ledger). Never stale; shows the last event time.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import gzip
+import threading
+from pathlib import Path
+
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+LINE_COUNT_MAX_BYTES = 25_000_000
+
+
+def _alive_names() -> set[str]:
+    return {t.name for t in threading.enumerate() if t.is_alive()}
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(IST)
+
+
+def _stat(path: Path):
+    try:
+        return path.stat()
+    except OSError:
+        return None
+
+
+def _gather(root: Path, patterns: list[str]) -> list[Path]:
+    out: list[Path] = []
+    for pat in patterns:
+        try:
+            out += [p for p in root.glob(pat) if p.is_file()]
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def _count_lines(path: Path) -> int | None:
+    st = _stat(path)
+    if st is None or st.st_size > LINE_COUNT_MAX_BYTES:
+        return None
+    try:
+        op = gzip.open if path.suffix == '.gz' else open
+        with op(path, 'rb') as fh:
+            return sum(1 for _ in fh)
+    except (OSError, EOFError):
+        return None
+
+
+def _last_due(now: dt.datetime, due: dt.time) -> dt.datetime:
+    """Most recent weekday due moment that is <= now."""
+    d = now.date()
+    cand = dt.datetime.combine(d, due, tzinfo=IST)
+    while d.weekday() >= 5 or cand > now:
+        d -= dt.timedelta(days=1)
+        cand = dt.datetime.combine(d, due, tzinfo=IST)
+    return cand
+
+
+def _market_open(now: dt.datetime) -> bool:
+    return now.weekday() < 5 and dt.time(9, 15) <= now.time() <= dt.time(15, 30)
+
+
+# name, group, what it records, kind, due (daily), grace minutes, file patterns (relative to storage root), scheduler thread
+def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]:
+    r = []
+    add = lambda **k: r.append(k)
+    add(name='Swing desk evening plan', group='V13.0 Swing desk', what='Tomorrow\'s gate, picks and rejected stocks (plans.jsonl)',
+        kind='daily', due=dt.time(18, 45), grace=105, files=['v130/plans.jsonl'], thread='v130-swing')
+    add(name='Swing desk ledger', group='V13.0 Swing desk', what='Entries, exits, skips, option instructions, settings changes',
+        kind='event', files=['v130/ledger.jsonl'], thread='v130-swing')
+    add(name='Pre-open snapshot', group='V13.1 Intraday lanes', what='09:00-09:08 pre-open prices of the F&O universe',
+        kind='daily', due=dt.time(9, 10), grace=20, files=['v131/preopen.jsonl'], thread='v131-intraday')
+    add(name='Gap-down bounce basket', group='V13.1 Intraday lanes', what='Market gap, active or not, basket and 09:45 / 10:15 exits',
+        kind='daily', due=dt.time(9, 20), grace=25, files=['v131/gaps.jsonl'], thread='v131-intraday')
+    add(name='09:25 short detector', group='V13.1 Intraday lanes', what='Three shorts at 09:25 and the 15:15 cover',
+        kind='daily', due=dt.time(9, 30), grace=25, files=['v131/shorts.jsonl'], thread='v131-intraday')
+    add(name='09:16 movement predictor', group='V13.2 Movement predictor', what='Top-3 stocks likely to move unusually, 09:45 final pick, result',
+        kind='daily', due=dt.time(9, 25), grace=25, files=['v132/picks.jsonl'], thread='v132-movers')
+    add(name='09:25 direction desk', group='V13.3 Direction desk', what='UP/DOWN lists for 30/60/90/120 min and the day',
+        kind='daily', due=dt.time(9, 35), grace=25, files=['v133/days.jsonl', 'v133/scores_*.json.gz'], thread='v133-direction')
+    add(name='Order-flow polls', group='V13.3 Direction desk', what='Futures order-flow polls 09:15-15:30 (of_<date>.jsonl)',
+        kind='live', files=['v133/of_*.jsonl', 'v133/of_*.jsonl.gz'], thread='v133-orderflow')
+    add(name='Setup A v1.1 scan', group='Setup A dip-buy', what='Nightly NIFTY-500 stress score, signals and paper ledger',
+        kind='daily', due=dt.time(19, 15), grace=195, files=['v11/runs.jsonl', 'v11/summary.json'], thread='v11-setup-a')
+    add(name='Setup A WIDE ledger', group='Setup A dip-buy', what='Second paper ledger with relaxed gates (F&O only)',
+        kind='event', files=['v11/v11w_paper_ledger.csv', 'v11/summary_wide.json'], thread='v11-setup-a')
+    add(name='Option edge recorder', group='V12 option research', what='Option snapshots at 09:30, 13:00, 15:10 and 15:37',
+        kind='daily', due=dt.time(9, 40), grace=30, files=['v12_option_snapshots.jsonl', 'v12/v12_option_snapshots.jsonl'], thread=None)
+    add(name='Skew validation recorder', group='V12 option research', what='ATM call IV minus put IV at 09:30 and 13:00',
+        kind='daily', due=dt.time(9, 40), grace=30, files=['v123_skew_shadow.jsonl'], thread=None)
+    add(name='Trial 25 event recorder', group='V12 option research', what='Earnings-event shadow trades and raw quotes',
+        kind='event', files=['trial25/trial25_event_ledger.jsonl', 'trial25/trial25_universe_ledger.jsonl', 'v12_earnings_ledger.jsonl'], thread=None)
+    add(name='Index volatility recorder', group='V12 option research', what='NIFTY option micro-structure and depth, 5-second WebSocket',
+        kind='live', files=['__INDEX_VOL__/*_micro.jsonl', '__INDEX_VOL__/*_depth.jsonl', 'v121_index_vol_state.json'], thread=None)
+    add(name='Math recorder (quant regime shadow)', group='V12 option research', what='Daily features and regimes of the F&O universe',
+        kind='daily', due=dt.time(15, 40), grace=120, files=['v123_quant_regime_shadow/features_*.jsonl.gz', 'v123_quant_regime_shadow/regimes_*.jsonl.gz'], thread=None)
+    add(name='CALL V1 / tactical event recorder', group='V12 option research', what='Tactical stock-option events and CALL V1 forward records',
+        kind='event', files=['v122b_tactical_events.jsonl', 'v122b_tactical_state.json'], thread=None)
+    add(name='Universe live stream checkpoint', group='V12 option research', what='Full F&O underlying quote stream checkpoint',
+        kind='live', files=['v123_market_checkpoint.json'], thread=None)
+    return r
+
+
+def _evaluate(spec: dict, root: Path, iv_root: Path | None, now: dt.datetime) -> dict:
+    pats = []
+    for p in spec['files']:
+        if p.startswith('__INDEX_VOL__/'):
+            if iv_root is not None:
+                pats.append(('abs', iv_root, p.split('/', 1)[1]))
+        else:
+            pats.append(('rel', root, p))
+    files: list[Path] = []
+    for _, base, pat in pats:
+        files += _gather(base, [pat])
+    files = sorted(set(files))
+    sts = [(f, _stat(f)) for f in files]
+    sts = [(f, s) for f, s in sts if s is not None]
+    newest = max(sts, key=lambda x: x[1].st_mtime) if sts else None
+    last_write = dt.datetime.fromtimestamp(newest[1].st_mtime, IST) if newest else None
+    size = sum(s.st_size for _, s in sts)
+    records = None
+    jl = [f for f, _ in sts if '.jsonl' in f.name or f.suffix == '.csv']
+    if jl and spec['kind'] != 'live':
+        counts = [_count_lines(f) for f in jl]
+        records = sum(c for c in counts if c is not None) if any(c is not None for c in counts) else None
+    kind = spec['kind']; status = 'OK'; note = ''
+    if not sts:
+        status = 'NO DATA YET'; note = 'no file written yet - appears after the first scheduled run'
+        if kind == 'event':
+            status = 'WAITING'; note = 'event-based: the file is created on the first event'
+    elif kind == 'daily':
+        due = _last_due(now, spec['due']); mins = (now - due).total_seconds() / 60
+        if last_write >= due: status = 'OK'; note = f"written {last_write:%a %d-%b %H:%M} IST"
+        elif mins <= spec['grace']: status = 'DUE'; note = f"due at {due:%H:%M}; checking for {spec['grace']} min"
+        else: status = 'MISSED'; note = f"expected after {due:%a %d-%b %H:%M}; last write {last_write:%a %d-%b %H:%M} (a market holiday shows as MISSED)"
+    elif kind == 'live':
+        if _market_open(now):
+            age = (now - last_write).total_seconds() / 60
+            status = 'OK' if age <= 10 else 'STALE'; note = f"last write {age:.0f} min ago" if age >= 1 else 'writing now'
+        else: status = 'IDLE'; note = f"market closed; last write {last_write:%a %d-%b %H:%M} IST"
+    else:
+        status = 'OK'; note = f"last event {last_write:%a %d-%b %H:%M} IST"
+    thread_alive = None
+    if spec.get('thread'):
+        thread_alive = spec['thread'] in _alive_names()
+        if not thread_alive and status in ('OK', 'DUE', 'IDLE'):
+            status = 'NOT RUNNING'; note = f"scheduler thread {spec['thread']} is not alive - restart the service. {note}"
+    return {'name': spec['name'], 'group': spec['group'], 'what': spec['what'], 'kind': kind, 'status': status, 'note': note,
+            'last_write': last_write.isoformat(timespec='seconds') if last_write else None, 'files': len(sts), 'size_kb': round(size / 1024, 1),
+            'records': records, 'thread': spec.get('thread'), 'thread_alive': thread_alive}
+
+
+def scheduler_steps() -> dict:
+    """Last step results the V13 / Setup A schedulers reported (ok flag, time, error)."""
+    out: dict = {}
+    for mod, label in (('v130_swing', 'V13.0 swing desk'), ('v131_intraday', 'V13.1 intraday lanes'), ('v132_movers', 'V13.2 movement predictor'),
+                       ('v133_direction', 'V13.3 direction desk'), ('v11_setup_a', 'Setup A')):
+        try:
+            m = __import__(f'app.{mod}', fromlist=['_status'])
+            st = getattr(m, '_status', {}) or {}
+            steps = {k: {'ok': v.get('ok'), 'at': str(v.get('at'))[:19], 'error': v.get('error')} for k, v in (st.get('steps') or {}).items() if isinstance(v, dict)}
+            out[label] = {'started': str(st.get('started'))[:19] if st.get('started') else None, 'last_error': st.get('last_error'), 'steps': steps}
+        except Exception as exc:  # noqa: BLE001
+            out[label] = {'started': None, 'last_error': f'cannot read: {exc}', 'steps': {}}
+    return out
+
+
+def report(storage_root: str, index_vol_root: str | None = None, now: dt.datetime | None = None) -> dict:
+    now = now or _now(); root = Path(storage_root); iv = Path(index_vol_root) if index_vol_root else None
+    rows = [_evaluate(s, root, iv, now) for s in registry(storage_root, index_vol_root)]
+    count = lambda *names: sum(1 for r in rows if r['status'] in names)
+    return {'as_of': now.isoformat(timespec='seconds'), 'storage': str(root), 'rows': rows, 'schedulers': scheduler_steps(),
+            'summary': {'total': len(rows), 'ok': count('OK', 'IDLE'), 'waiting': count('DUE', 'WAITING', 'NO DATA YET'), 'problems': count('MISSED', 'STALE', 'NOT RUNNING')}}

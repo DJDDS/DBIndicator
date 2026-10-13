@@ -1416,6 +1416,14 @@ def api_v11_export(kind):
     return _v12_export(v11_setup_a._p(name), name, mime)
 
 
+@app.route("/api/recorders")
+@require_roles(OWNER, AUDITOR)
+def api_recorders():
+    """Read-only recorder monitor for the Backtest page: last write, record count and scheduler health per recorder."""
+    from . import recorder_monitor
+    return Response(json.dumps(recorder_monitor.report(config.V12_STORAGE_ROOT, config.V121_INDEX_VOL_ROOT), default=str), mimetype="application/json")
+
+
 @app.route("/api/v130/status")
 @require_roles(OWNER)
 def api_v130_status():
