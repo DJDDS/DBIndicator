@@ -894,6 +894,14 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
     days = _read_jsonl('days.jsonl'); n = 0
     prep = _read_json(f'prep_{today}.json', None) or {}
     bars_cache: dict = {}
+    nifty = None
+    try:                                                    # hedge leg: Nifty 50 5-minute bars (one call); a failure only drops the hedged figure
+        from . import v131_intraday as v31
+        if not v31._NIFTY['token']: v31._market_bps(kite, today, 560, 560)
+        if v31._NIFTY['token']:
+            nifty = _kite_5min(kite, v31._NIFTY['token'], dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v133 market leg unavailable: %s', exc)
     for day in days:
         if day.get('date') != str(today): continue
         for h, L in (day.get('lists') or {}).items():
@@ -906,7 +914,12 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                     time.sleep(0.34)
                 res = outcome_from_bars(bars_cache[p['symbol']], p['entry'], p['p925'], p['side'], EXIT_BAR[h], book_pct=L.get('book_pct') or day.get('settings', {}).get('book_target_pct'),
                                            stop_pct=(p.get('rng20_pct') or 0) * float((day.get('settings') or {}).get('stop_k', 0) or 0) if h == 'hc' else None)
-                if res: p.update(res); n += 1
+                if res:
+                    p.update(res); n += 1
+                    mk = market_pct_from_bars(nifty, EXIT_BAR[h]) if nifty is not None else None
+                    if mk is not None and 'ret925_pct' in res:
+                        sg = 1 if p['side'] == 'UP' else -1
+                        p['mkt_pct'] = mk; p['vs_mkt_pct'] = round(res['ret925_pct'] - sg * mk, 3)           # pick's own result after removing Nifty's move
                 op = p.get('option') or {}
                 if op.get('status') == 'OPEN' and op.get('token'):
                     try:
@@ -996,6 +1009,15 @@ def export_lab_zip() -> Path:
                 if f.name not in seen and not f.name.endswith(('.zip', '.tmp')): seen.add(f.name); z.write(f, f.name)
     tmp.replace(p)
     return p
+
+
+def market_pct_from_bars(b: pd.DataFrame, k_exit: int) -> float | None:
+    """Nifty move (log %) from the 09:25 price (close of candle 1) to the close of candle k_exit; the hedge leg for a pick's raw result."""
+    if b is None or b.empty: return None
+    m = b.date.dt.hour * 60 + b.date.dt.minute; k = ((m - 555) // 5).astype(int)
+    C = pd.Series(np.nan, index=range(75)); ok = (k >= 0) & (k <= 74); C[k[ok].values] = b.close[ok].values; Cf = C.ffill()
+    if not (np.isfinite(Cf[1]) and np.isfinite(Cf[k_exit]) and Cf[1] > 0): return None
+    return round(math.log(Cf[k_exit] / Cf[1]) * 100, 3)
 
 
 def outcome_from_bars(b: pd.DataFrame, entry: float, p925: float, side: str, k_exit: int = K_EXIT, book_pct: float | None = None, stop_pct: float | None = None) -> dict | None:

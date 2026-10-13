@@ -49,3 +49,13 @@ def test_paper_hold_plus_stop_result():
     assert st['stopped'] is True and st['stop_ret_pct'] < -1.0 and st['stop_win'] is False
     assert 'stopped' not in v.outcome_from_bars(bars(h_ok), entry=base, p925=base, side='DOWN', k_exit=74)
     assert v.load_settings()['stop_k'] == 1.0
+
+
+def test_market_leg_and_vs_nifty_result():
+    import pandas as pd
+    from app import v133_direction as d
+    ts = pd.date_range('2026-10-13 09:15', periods=75, freq='5min')
+    nifty = pd.DataFrame({'date': ts, 'open': 100.0, 'high': 101.0, 'low': 99.0, 'close': [100.0 + 0.02 * i for i in range(75)], 'volume': 1})
+    mk = d.market_pct_from_bars(nifty, 74)
+    assert mk == round(__import__('math').log(nifty.close[74] / nifty.close[1]) * 100, 3) and mk > 1.4
+    assert d.market_pct_from_bars(None, 74) is None
