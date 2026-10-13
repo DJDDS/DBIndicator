@@ -302,3 +302,11 @@ def test_gift_nifty_from_market_status_object_and_fetch_order(monkeypatch):
     monkeypatch.setattr(ss, '_gift', {'at': 0.0, 'value': None, 'busy': True, 'warned': 0.0})
     ss._gift_fetch()
     assert ss._gift['value']['price'] == 25012.5 and FakeNSE.urls == [ss.GIFT_STATUS_URL]
+
+
+def test_dashboard_gift_sanity_guard_and_sector_movers(monkeypatch):
+    from app import sector_service as ss
+    monkeypatch.setattr(ss, 'gift_nifty', lambda: {'price': 8210.65, 'chg': None, 'pct': None})         # a wrong field far from Nifty
+    out = ss.dashboard_summary(lite=True)
+    assert not any(x['name'] == 'GIFT NIFTY' for x in out['indices'])
+    assert 'sector_movers' in out

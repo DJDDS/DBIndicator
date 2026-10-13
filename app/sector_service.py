@@ -405,8 +405,11 @@ def dashboard_summary(lite=False):
     idx=[]
     for name,label in DASH_INDICES:
         if name=='GIFT NIFTY':
-            g=gift_nifty()
-            if g: idx.append({'name':name,'label':label,'price':r2(g['price']),'r':{'today':r2(g.get('pct'))},'chg':r2(g.get('chg')),'d':{},'id':None,'hist':[],'live':True})
+            g=gift_nifty(); nf=next((x for x in idx if x['name']=='NIFTY 50'),None)
+            if g and not (nf and nf.get('price') and abs(g['price']/nf['price']-1)<=0.04):      # GIFT trades within ~1% of Nifty; anything else is the wrong field (or cannot be checked)
+                _gift['diag']='rejected %s: not within 4%% of NIFTY 50 (%s)'%(g['price'],nf.get('price') if nf else 'no NIFTY price'); g=None
+            if g: idx.append({'name':name,'label':label,'price':r2(g['price']),'r':{'today':r2(g.get('pct'))},'chg':r2(g.get('chg')),'d':{},'id':None,'hist':[],'live':True,
+                              'prem':r2(g['price']-nf['price']) if nf and nf.get('price') else None})
             continue
         sm=_summary(name,now)
         if sm.get('price') is None: continue
@@ -420,8 +423,12 @@ def dashboard_summary(lite=False):
         idx.append({'name':name,'label':label,'price':r2(sm.get('price')),'r':{q:r2((sm.get('returns') or {}).get(q)) for q in COMPARE},
                     'chg':r2(px-pc) if px is not None and pc else None,
                     'd':dd,'id':next((x['id'] for x in ov['sectors'] if x['name']==name),None),'hist':hist})
+    skip={n for n,_ in DASH_INDICES}
+    ranked=[(x['name'],x['id'],a.finite((x.get('returns') or {}).get('today'))) for x in ov['sectors'] if x['name'] not in skip]
+    ranked=sorted([r for r in ranked if r[2] is not None],key=lambda r:-r[2])
+    movers={'lead':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[:3]],'lag':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[::-1][:3]]} if len(ranked)>=6 else None
     if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
-        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'gift_diag':_gift.get('diag')}
+        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag')}
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []

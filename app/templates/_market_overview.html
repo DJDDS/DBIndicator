@@ -11,6 +11,15 @@
   .mo-pill.up{color:var(--green);background:var(--green-bg)}.mo-pill.dn{color:var(--red);background:var(--red-bg)}.mo-pill.na{color:var(--muted);background:var(--panel2)}
   .mo-spark{display:block;width:100%;height:34px;margin-top:4px}
   .mo-pts{font-size:12px;font-weight:650;font-family:var(--mono);margin:1px 0 2px}.mo-pts.up{color:var(--green)}.mo-pts.dn{color:var(--red)}.mo-pts.na{color:var(--muted)}.mo-pts i{font-style:normal;font-size:9.5px;font-weight:600;color:var(--muted);margin-left:4px;text-transform:uppercase}
+  .mo-rng{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--dim);font-family:var(--mono);margin:3px 0 1px}
+  .mo-rng .bar{position:relative;flex:1;height:4px;border-radius:2px;background:var(--border)}
+  .mo-rng .bar i{position:absolute;top:-3px;width:3px;height:10px;border-radius:2px;background:var(--text);transform:translateX(-1px)}
+  .mo-rng .bar u{position:absolute;top:-1px;width:1px;height:6px;background:var(--muted)}
+  @keyframes moUp{from{background:rgba(22,199,132,.28)}to{background:transparent}}@keyframes moDn{from{background:rgba(234,57,67,.28)}to{background:transparent}}
+  .mo-card .v b.fu{animation:moUp 1.4s ease-out}.mo-card .v b.fd{animation:moDn 1.4s ease-out}
+  .mo-sec{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:11.5px;margin:0 0 10px;padding:6px 10px;background:var(--panel);border:1px solid var(--border);border-radius:10px}
+  .mo-sec b{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.mo-sec a{color:var(--text);text-decoration:none;font-family:var(--mono)}.mo-sec a:hover{color:var(--accent)}
+  .mo-sec .up{color:var(--green)}.mo-sec .dn{color:var(--red)}.mo-sec .upd{margin-left:auto;color:var(--dim);font-size:10.5px}
   .mo-wk{display:flex;gap:9px;font-size:10.5px;color:var(--muted);font-family:var(--mono)}
   .mo-wk .up{color:var(--green)}.mo-wk .dn{color:var(--red)}
   .mo-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
@@ -28,6 +37,7 @@
   @media (max-width:640px){.mo-grid{grid-template-columns:1fr}.mo-idx{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
   <div class="mo-idx" id="mo-idx"></div>
+  <div class="mo-sec" id="mo-sec" hidden></div>
   <div class="mo-grid">
     <div class="mo-panel"><div class="mo-head"><h2>Scanner direction</h2><small>click a slice to filter</small></div><div class="mo-chart" id="mo-c-dir"><div class="mo-empty">Waiting for the first scan…</div></div></div>
     <div class="mo-panel"><div class="mo-head"><h2>OI structure</h2><small>click to filter the table</small></div><div class="mo-chart" id="mo-c-oi"><div class="mo-empty">Waiting for OI data…</div></div></div>
@@ -55,16 +65,30 @@
     const pts = v.map((x, i) => (i * dx).toFixed(1) + ',' + y(x).toFixed(1)), col = up ? 'var(--green)' : 'var(--red)';
     return `<svg class="mo-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polygon points="0,${H} ${pts.join(' ')} ${W},${H}" fill="${col}" opacity=".10"/><polyline points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
   }
+  st.prev = {};
+  function rng(x) {
+    const d = x.d || {}; if (!ok(d.h) || !ok(d.l) || !(d.h > d.l) || !ok(x.price)) return '';
+    const pos = v => Math.max(0, Math.min(100, (v - d.l) / (d.h - d.l) * 100)).toFixed(1);
+    return `<div class="mo-rng" title="Today: low ${fmt(d.l)} · high ${fmt(d.h)}${ok(d.o) ? ' · open ' + fmt(d.o) : ''}"><span>${fmt(d.l, 0)}</span><div class="bar">${ok(d.o) ? `<u style="left:${pos(d.o)}%"></u>` : ''}<i style="left:${pos(x.price)}%"></i></div><span>${fmt(d.h, 0)}</span></div>`;
+  }
   function renderIdx() {
     const L = (st.idx && st.idx.indices) || [];
     if (!L.length) { $('mo-idx').innerHTML = ''; return; }
     $('mo-idx').innerHTML = L.map(x => {
       const r = x.r || {}, up = ((r['3M'] ?? r.today ?? 0) >= 0) !== (x.label === 'INDIA VIX');   // a rising VIX is the red case
-      const inner = `<span class="l">${esc(x.label)}</span><div class="v"><b>${fmt(x.price)}</b><span class="mo-pill ${cls(r.today)}">${pct(r.today)}</span></div>
-        <div class="mo-pts ${cls(x.chg)}">${ok(x.chg) ? (x.chg > 0 ? '▲ +' : x.chg < 0 ? '▼ ' : '') + fmt(x.chg) + ' pts' : '—'}${x.live ? ' <i>live</i>' : ''}</div>${spark((x.hist || []).slice(-45), up)}
+      const fl = ok(x.price) && ok(st.prev[x.label]) && x.price !== st.prev[x.label] ? (x.price > st.prev[x.label] ? ' fu' : ' fd') : ''; st.prev[x.label] = x.price;
+      const inner = `<span class="l">${esc(x.label)}</span><div class="v"><b class="${fl.trim()}">${fmt(x.price)}</b><span class="mo-pill ${cls(r.today)}">${pct(r.today)}</span></div>
+        <div class="mo-pts ${cls(x.chg)}">${ok(x.chg) ? (x.chg > 0 ? '▲ +' : x.chg < 0 ? '▼ ' : '') + fmt(x.chg) + ' pts' : '—'}${x.live ? ' <i>live</i>' : ''}${ok(x.prem) ? ' <i>' + (x.prem > 0 ? '+' : '') + fmt(x.prem, 0) + ' prem</i>' : ''}</div>${rng(x)}${spark((x.hist || []).slice(-45), up)}
         ${['1W', '1M', '3M'].some(k => ok(r[k])) ? `<div class="mo-wk">${[['1W', '1W'], ['1M', '1M'], ['3M', '3M']].map(([k, l]) => `<span>${l} <span class="${cls(r[k])}">${pct(r[k])}</span></span>`).join('')}</div>` : ''}`;
       return x.id ? `<a class="mo-card" href="/sector-analysis#${encodeURIComponent(x.id)}" title="Open ${esc(x.label)} on the Sector Analysis page">${inner}</a>` : `<div class="mo-card">${inner}</div>`;
     }).join('');
+  }
+
+  function renderSec() {
+    const m = st.idx && st.idx.sector_movers, el = $('mo-sec'); if (!m) { el.hidden = true; return; }
+    const chip = x => `<a href="/sector-analysis#${encodeURIComponent(x.id)}">${esc(x.name)} <span class="${cls(x.pct)}">${pct(x.pct)}</span></a>`;
+    const q = st.idx.status && st.idx.status.quote_at;
+    el.innerHTML = `<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd">${q ? 'quotes ' + q.replace('T', ' ').slice(11, 19) + ' IST' : ''}</span>`; el.hidden = false;
   }
 
   // ---- charts (ECharts loads after first paint; updates use setOption so nothing re-flows) ----
@@ -153,13 +177,13 @@
     $('mo-foot').textContent = 'Index prices from the sector cache' + (q ? ' · quotes ' + q.replace('T', ' ').slice(11, 16) + ' IST' : '') + (s ? ' · scanner ' + (s.scan_status || '') : '') + '. Sector and stock detail: Sector Analysis page.';
   }
   async function loadIdx() {
-    try { const r = await fetch('/api/sector-analysis/dashboard?lite=1', {cache: 'no-store'}); if (!r.ok) throw 0; st.idx = await r.json(); renderIdx(); renderFoot(); charts(); }
+    try { const r = await fetch('/api/sector-analysis/dashboard?lite=1', {cache: 'no-store'}); if (!r.ok) throw 0; st.idx = await r.json(); renderIdx(); renderSec(); renderFoot(); charts(); }
     catch (e) { if (!st.idx) $('mo-idx').innerHTML = ''; }
   }
   $('mo-win').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; st.win = +b.dataset.w; document.querySelectorAll('#mo-win button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); charts(); });
   window.addEventListener('resize', () => Object.values(st.charts).forEach(c => c && !c.isDisposed() && c.resize()));
   function live() { const t = new Date(new Date().toLocaleString('en-US', {timeZone: 'Asia/Kolkata'})), m = t.getHours() * 60 + t.getMinutes(); return t.getDay() > 0 && t.getDay() < 6 && m >= 545 && m <= 945; }
-  setInterval(() => { if (!document.hidden && live()) loadIdx(); }, 60000);
+  setInterval(() => { if (!document.hidden && live()) loadIdx(); }, 20000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { loadIdx(); Object.values(st.charts).forEach(c => c && c.resize()); } });
   loadIdx(); loadEcharts().catch(() => {});
 })();
