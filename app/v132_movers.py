@@ -554,6 +554,64 @@ def run_stage2(kite, today: dt.date | None = None) -> int:
     return len(X)
 
 
+STRADDLE_MAX_SPREAD_PCT = 6.0      # each leg's two-sided spread must be within this to be recorded as tradable
+
+
+def straddle_entry(chain: dict, spot: float, quotes: dict, max_spread_pct: float = STRADDLE_MAX_SPREAD_PCT) -> dict:
+    """ATM straddle (same-strike call + put) from live quotes; entry = buying both at the ask. Paper evidence only: whether the
+    stock-mover edge still pays after paying the premium. {'status': 'NO_OPTION', 'reason': ...} when no tradable pair exists."""
+    ce = {r[0]: r for r in (chain or {}).get('CE') or []}; pe = {r[0]: r for r in (chain or {}).get('PE') or []}
+    common = sorted(set(ce) & set(pe))
+    if not common or not spot: return {'status': 'NO_OPTION', 'reason': 'no CE/PE pair'}
+    k = min(common, key=lambda x: abs(x - spot)); legs = {}
+    for typ, row in (('CE', ce[k]), ('PE', pe[k])):
+        q = quotes.get(row[1]) or {}; dp = q.get('depth') or {}
+        bid = ((dp.get('buy') or [{}])[0] or {}).get('price'); ask = ((dp.get('sell') or [{}])[0] or {}).get('price')
+        if not (bid and ask and ask >= bid > 0): return {'status': 'NO_OPTION', 'reason': f'{typ} {k:g} has no two-sided quote'}
+        spr = (ask - bid) / ((ask + bid) / 2) * 100
+        if spr > max_spread_pct: return {'status': 'NO_OPTION', 'reason': f'{typ} {k:g} spread {spr:.1f}%'}
+        legs[typ] = {'ts': row[1], 'token': row[2], 'bid': bid, 'ask': ask, 'spread_pct': round(spr, 2)}
+    entry = legs['CE']['ask'] + legs['PE']['ask']
+    return {'status': 'OPEN', 'strike': k, 'spot': spot, 'ce': legs['CE'], 'pe': legs['PE'], 'entry': round(entry, 2),
+            'entry_pct_of_spot': round(entry / spot * 100, 2), 'lot': chain.get('lot'), 'expiry': chain.get('expiry')}
+
+
+def straddle_outcome(ce_bars, pe_bars, st: dict, k_exit: int = 71) -> dict | None:
+    """Paper straddle exit at the close of candle k_exit, each leg less half its entry spread (proxy for selling at the bid)."""
+    def leg(b, spread):
+        if b is None or b.empty: return None
+        m = b.date.dt.hour * 60 + b.date.dt.minute; k = ((m - 555) // 5).astype(int); c = b.close[k <= k_exit]
+        return None if c.empty else float(c.iloc[-1]) * (1 - (spread or 0) / 200.0)
+    a, b = leg(ce_bars, st['ce']['spread_pct']), leg(pe_bars, st['pe']['spread_pct'])
+    if a is None or b is None or not st.get('entry'): return None
+    ex = a + b
+    return {'exit': round(ex, 2), 'ret_pct': round((ex / st['entry'] - 1) * 100, 2), 'win': bool(ex > st['entry']), 'status': 'CLOSED'}
+
+
+def run_straddle(kite, today: dt.date | None = None, stage: str = 's1') -> int:
+    """Record the ATM straddle for the 09:16 top-3 (stage 's1') or the 09:45 final pick (stage 's2') at live asks. Paper only."""
+    from . import v133_direction as d3
+    today = today or now_ist().date()
+    rows = _read_jsonl('picks.jsonl'); day = next((x for x in rows if x.get('date') == str(today)), None)
+    if not day: raise RuntimeError('no picks today')
+    syms = [p['symbol'] for p in day.get('picks', [])] if stage == 's1' else ([day['stage2']['symbol']] if day.get('stage2') else [])
+    if not syms: raise RuntimeError(f'no {stage} symbols yet')
+    book = day.setdefault('straddle', {}).setdefault(stage, {})
+    todo = [x for x in syms if x not in book]
+    if not todo: return 0
+    chains = d3.option_chain_map(kite.instruments('NFO'), set(todo), today)
+    spots = _quotes(kite, todo)
+    for sym in todo:
+        spot = (spots.get(sym) or {}).get('last_price')
+        ch = chains.get(sym)
+        if not ch: book[sym] = {'status': 'NO_OPTION', 'reason': 'no option chain'}; continue
+        keys = [f'NFO:{r[1]}' for r in ch['CE'] + ch['PE'] if abs(r[0] - (spot or 0)) <= (spot or 0) * 0.06]
+        raw = kite.quote(keys) or {}
+        book[sym] = {**straddle_entry(ch, spot, {k[4:]: v for k, v in raw.items()}), 'at': now_ist()}
+    _rewrite_jsonl('picks.jsonl', rows)
+    return len(todo)
+
+
 def _after945(kite, token: int, today: dt.date) -> tuple[float | None, float | None, float | None]:
     raw = kite.historical_data(token, dt.datetime.combine(today, dt.time(9, 45)), dt.datetime.combine(today, dt.time(15, 15)), '5minute')
     b = pd.DataFrame(raw)
@@ -590,6 +648,20 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                 s2.update(max_move_pct=round(max(up, dn) * 100, 2), dir='UP' if up >= dn else 'DOWN', hit=bool(max(up, dn) * 100 >= s2['need_pct']), status='CLOSED')
                 if cl and s2.get('lean') in ('UP', 'DOWN'):
                     s2['close_pct'] = round(math.log(cl / s2['entry']) * 100, 2); s2['lean_hit'] = bool((cl > s2['entry']) == (s2['lean'] == 'UP'))
+    try:
+        from . import v133_direction as d3
+        for day in rows:
+            if day.get('date') != str(today): continue
+            for stage, book in (day.get('straddle') or {}).items():
+                for sym, st in book.items():
+                    if st.get('status') != 'OPEN': continue
+                    a = dt.datetime.combine(today, dt.time(9, 15)); b = dt.datetime.combine(today, dt.time(15, 30))
+                    cb = d3._kite_5min(kite, st['ce']['token'], a, b); time.sleep(0.34)
+                    pb = d3._kite_5min(kite, st['pe']['token'], a, b); time.sleep(0.34)
+                    res = straddle_outcome(cb, pb, st)
+                    if res: st.update(res)
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v132 straddle outcome: %s', exc)
     _rewrite_jsonl('picks.jsonl', rows)
     if n == 0: raise RuntimeError('no outcomes recorded yet')
     return n
@@ -618,6 +690,8 @@ def _loop(get_kite):
                     if due('prep', 490, 548, 3): done[key('prep')] = _step('prep', run_prep, kite)
                     if due('pick', 556, 569): done[key('pick')] = _step('pick', run_pick, kite)
                     if due('stage2', 585, 594): done[key('stage2')] = _step('stage2', run_stage2, kite)
+                    if due('straddle1', 559, 585): done[key('straddle1')] = _step('straddle1', run_straddle, kite, None, 's1')
+                    if due('straddle2', 587, 615): done[key('straddle2')] = _step('straddle2', run_straddle, kite, None, 's2')
                     if due('outcome', 931, 990, 5): done[key('outcome')] = _step('outcome', run_outcomes, kite)
         except Exception:  # noqa: BLE001
             log.exception('v132 scheduler tick failed')
@@ -639,7 +713,17 @@ def scorecard(rows: list) -> dict:
     conf = [d['picks'][0] for d in rows if d.get('picks') and d.get('confident')]
     allp = [p for d in rows for p in d.get('picks', [])]
     s2 = [d['stage2'] for d in rows if d.get('stage2')]
-    return {'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')]),
+    def stv(stage):
+        rs = []
+        for d in rows:
+            for sym, st in ((d.get('straddle') or {}).get(stage) or {}).items():
+                if isinstance(st.get('ret_pct'), (int, float)):
+                    pk = next((p for p in d.get('picks', []) if p['symbol'] == sym), None) if stage == 's1' else d.get('stage2')
+                    rs.append((st['ret_pct'], (pk or {}).get('hit')))
+        r = [x for x, _ in rs]; hit = [x for x, h in rs if h is True]; miss = [x for x, h in rs if h is False]
+        avg = lambda v: round(sum(v) / len(v), 1) if v else None
+        return {'n': len(r), 'win': round(100 * sum(1 for x in r if x > 0) / len(r)) if r else None, 'avg_pct': avg(r), 'avg_hit': avg(hit), 'avg_miss': avg(miss)}
+    return {'straddle_s1': stv('s1'), 'straddle_s2': stv('s2'), 'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')]),
             'lean': (lambda h: {'n': len(h), 'hit': round(100 * sum(h) / len(h)) if h else None})([x['lean_hit'] for x in s2 if isinstance(x.get('lean_hit'), bool)])}
 
 

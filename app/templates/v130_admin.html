@@ -195,7 +195,16 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
       · lean: {% if s2.get('lean') in ('UP','DOWN') %}<b>{{ s2.lean }}</b>{% if s2.get('lean_hit') is not none %} ({{ 'right' if s2.lean_hit else 'wrong' }}, close {{ s2.close_pct }}%){% endif %}{% else %}none (first 30 min not strong){% endif %}
       · result: {% if s2.get('hit') is not none %}<span class="{{ 'open' if s2.hit else 'closed' }}">{{ 'HIT' if s2.hit else 'miss' }} · {{ s2.max_move_pct }}% {{ s2.dir }}</span>{% else %}open{% endif %}</div>{% endif %}
   {% else %}<div class="empty">Picks appear at 09:16 on trading days (prep runs 08:10-09:08).</div>{% endif %}
+  {% if mt and mt.get('straddle') %}
+    <div class="small" style="margin-top:8px"><b>Paper ATM straddle (buy call + put at the ask, exit 15:15 at the bid)</b> - measures whether the mover edge still pays after the premium. Not an order.</div>
+    <table class="small"><tr><th>When</th><th>Stock</th><th>Strike</th><th>Cost</th><th>% of spot</th><th>Spread</th><th>Result</th></tr>
+    {% for stage, book in mt.straddle.items() %}{% for sym, st in book.items() %}<tr><td>{{ '09:16 top-3' if stage == 's1' else '09:45 final' }}</td><td><b>{{ sym }}</b></td>
+      {% if st.status == 'NO_OPTION' %}<td colspan="5" class="small">{{ st.reason }}</td>{% else %}<td>{{ st.strike }}</td><td>{{ st.entry }}</td><td>{{ st.entry_pct_of_spot }}%</td><td>{{ st.ce.spread_pct }}% / {{ st.pe.spread_pct }}%</td>
+      <td class="{{ 'open' if st.get('win') else ('closed' if st.get('win') is sameas false else '') }}">{% if st.get('ret_pct') is not none %}{{ '%+.1f'|format(st.ret_pct) }}%{% else %}open{% endif %}</td>{% endif %}</tr>{% endfor %}{% endfor %}</table>
+  {% endif %}
   {% set sc = movers.score or {} %}
+  {% set st1 = sc.get('straddle_s1') or {} %}{% set st2 = sc.get('straddle_s2') or {} %}
+  {% if st1.get('n') or st2.get('n') %}<div class="small" style="margin-top:6px">Straddle paper record · 09:16 top-3: {{ st1.n }} trades, {{ st1.win }}% won, average {{ st1.avg_pct }}% (when the stock hit {{ st1.avg_hit }}%, when it missed {{ st1.avg_miss }}%) · 09:45 final pick: {{ st2.n }} trades, {{ st2.win }}% won, average {{ st2.avg_pct }}% (hit {{ st2.avg_hit }}%, miss {{ st2.avg_miss }}%)</div>{% endif %}
   <div class="kpis" style="margin-top:8px">
     <div class="kpi"><div class="v">{{ (sc.top1_confident.hit|string + '%') if sc.top1_confident and sc.top1_confident.hit is not none else '—' }}</div><div class="l">high-confidence top pick ({{ sc.top1_confident.n if sc.top1_confident else 0 }})</div></div>
     <div class="kpi"><div class="v">{{ (sc.top1.hit|string + '%') if sc.top1 and sc.top1.hit is not none else '—' }}</div><div class="l">top pick, all days ({{ sc.top1.n if sc.top1 else 0 }})</div></div>
