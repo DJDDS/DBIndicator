@@ -334,3 +334,31 @@ def test_status_is_cached_and_never_blocks_a_request(monkeypatch):
         time.sleep(0.05)
     assert cd.cached_status(lambda: None)['engine'] == 'x'
     cd.invalidate_status(); assert cd._SC['at'] == 0.0
+
+
+def test_open_meteo_gateway_blip_is_retried(monkeypatch):
+    from app import commodity_desk as cd
+    calls = []
+
+    class R:
+        def __init__(self, code, body): self.status_code = code; self._b = body; self.text = 'x'
+        def json(self):
+            if self._b is None: raise ValueError('html')
+            return self._b
+    seq = [R(502, None), R(502, None), R(200, [{'ok': 1}])]
+    monkeypatch.setattr(cd.requests, 'get', lambda *a, **k: (calls.append(1), seq[len(calls) - 1])[1])
+    monkeypatch.setattr(cd.time, 'sleep', lambda s: None)
+    assert cd._om_json('u', {}, 5) == [{'ok': 1}] and len(calls) == 3
+
+
+def test_failed_source_triggers_early_refresh(monkeypatch):
+    from app import commodity_desk as cd
+    from datetime import datetime, timezone, timedelta
+    started = []
+    monkeypatch.setattr(cd, 'refresh_async', lambda: started.append(1) or True)
+    old = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat(timespec='seconds')
+    monkeypatch.setattr(cd, '_meta', lambda: {'refreshed_at': old, 'errors': {'hdd': 'HTTP 502'}})
+    cd.maybe_refresh_async(); assert started
+    started.clear()
+    monkeypatch.setattr(cd, '_meta', lambda: {'refreshed_at': old, 'errors': {}})
+    cd.maybe_refresh_async(); assert not started

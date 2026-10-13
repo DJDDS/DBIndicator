@@ -144,7 +144,15 @@ def _cot() -> pd.DataFrame:
 
 def _om_json(url: str, params: dict, timeout: int) -> list:
     """Open-Meteo returns a list for multi-location requests, or {"error": true, "reason": ...}; surface the reason."""
-    r = requests.get(url, params=params, timeout=timeout, headers=UA)
+    for attempt in range(3):                               # a gateway blip (502/503/504) or a dropped connection is retried; real errors are not
+        try:
+            r = requests.get(url, params=params, timeout=timeout, headers=UA)
+        except requests.RequestException:
+            if attempt == 2: raise
+            time.sleep(2 * (attempt + 1)); continue
+        if r.status_code in (502, 503, 504) and attempt < 2:
+            time.sleep(2 * (attempt + 1)); continue
+        break
     try:
         js = r.json()
     except ValueError:
@@ -263,6 +271,9 @@ def refresh_async() -> bool:
     return True
 
 
+RETRY_AFTER_ERROR_MIN = 10
+
+
 def maybe_refresh_async() -> None:
     """Kick a background refresh when the cache is older than settings.refresh_hours (non-blocking)."""
     m = _meta(); s = load_settings()
@@ -270,7 +281,7 @@ def maybe_refresh_async() -> None:
         age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(m["refreshed_at"])).total_seconds() / 3600
     except Exception:
         age_h = 1e9
-    if age_h >= s["refresh_hours"]:
+    if age_h >= s["refresh_hours"] or (m.get("errors") and age_h >= RETRY_AFTER_ERROR_MIN / 60):      # a source failed last time: try again soon, not after 6 h
         refresh_async()
 
 
