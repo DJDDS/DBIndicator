@@ -53,7 +53,7 @@
   .bt-group-count { font-weight: 400; color: var(--muted); font-size: 12px; }
   .bt-group-drawdown { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
   .rm-pill { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:700; letter-spacing:.02em; white-space:nowrap; }
-  .rm-OK, .rm-IDLE { background:#e4f5e8; color:#1e7b34; } .rm-DUE, .rm-WAITING { background:#fff3d6; color:#7a5b00; } .rm-NODATAYET { background:#eef1f5; color:#4b5563; }
+  .rm-OK, .rm-IDLE { background:#e4f5e8; color:#1e7b34; } .rm-DUE, .rm-WAITING, .rm-BEHIND { background:#fff3d6; color:#7a5b00; } .rm-NODATAYET { background:#eef1f5; color:#4b5563; }
   .rm-MISSED, .rm-STALE, .rm-NOTRUNNING { background:#fbe7e7; color:#c00000; }
   #rm-table td.l, #rm-table th.l { text-align:left; } #rm-table td { vertical-align:top; } #rm-table tr.rm-grp td { background:#f1f4f9; color:var(--navy); font-weight:700; font-size:12px; }
   .rm-note { font-size:11.5px; color:var(--muted); margin-top:2px; }
@@ -70,6 +70,7 @@
   <p class="hint">Every recorder and paper ledger in one place. <b>OK</b> = wrote after its last scheduled time. <b>DUE</b> = inside its grace window. <b>MISSED</b> / <b>STALE</b> / <b>NOT RUNNING</b> need attention. Event-based ledgers only write when something happens, so they never go stale.
     Refreshes every 30 s. A weekday market holiday shows MISSED for the daily recorders.</p>
   <table id="rm-table"><thead><tr><th class="l">Recorder</th><th class="l">Status</th><th>Last write (IST)</th><th>Records</th><th>Size</th></tr></thead><tbody><tr><td class="l" colspan="5">Loading...</td></tr></tbody></table>
+  <div id="rm-of" style="margin-top:16px"></div>
   <div id="rm-sched" class="hint" style="margin-top:12px"></div>
   <div style="margin-top:10px"><button class="btn" id="rm-refresh" type="button">Refresh now</button></div>
 </div>
@@ -88,6 +89,17 @@
     });
     document.querySelector('#rm-table tbody').innerHTML=html||'<tr><td class="l" colspan="5">No recorders found.</td></tr>';
     var s=d.summary||{}; document.getElementById('rm-sum').innerHTML=' · '+s.ok+' OK · '+s.waiting+' waiting · <b style="color:'+(s.problems?'#c00000':'#1e7b34')+'">'+s.problems+' need attention</b> · as of '+fmt(d.as_of);
+    var of=d.orderflow||{}, h='';
+    if(of.lab){ var L=of.lab, pct=Math.min(100,Math.round(100*(L.sessions||0)/(L.target||40))), ph=Object.keys(L.by_phase||{}).map(function(k){return k+' '+L.by_phase[k];}).join(' · ');
+      h+='<h2 style="margin:0 0 6px">Order flow</h2><div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:8px">'
+        +'<b>'+esc(L.name)+'</b> <span class="rm-pill rm-'+String(L.status).replace(/\s+/g,'')+'">'+esc(L.status)+'</span><div class="rm-note">'+esc(L.note)+'</div>'
+        +'<div style="margin:10px 0 4px;font-size:13px"><b>'+(L.sessions||0)+' of '+(L.target||40)+' sessions</b> recorded'+(L.sessions_first?' ('+esc(L.sessions_first)+' to '+esc(L.sessions_last||'')+')':'')+' &middot; judged on the leaderboard at '+(L.target||40)+'</div>'
+        +'<div class="progress-bar"><div class="progress-bar-fill" style="width:'+pct+'%"></div></div>'
+        +'<div class="rm-note" style="margin-top:8px">Today: '+(L.today_polls||0)+' polls (about '+(L.expected_polls||0)+' expected by now) &middot; '+(L.stocks_per_poll||0)+' stocks and '+(L.futures_per_poll||0)+' futures per poll'+(ph?' &middot; '+esc(ph):'')+(L.last_poll?' &middot; last poll '+esc(String(L.last_poll).slice(0,19)):'')+'</div></div>'; }
+    if(of.minute){ var M=of.minute;
+      h+='<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px"><b>'+esc(M.name)+'</b> <span class="rm-pill rm-'+String(M.status).replace(/\s+/g,'')+'">'+esc(M.status)+'</span><div class="rm-note">'+esc(M.note)+'</div>'
+        +'<div class="rm-note" style="margin-top:6px">'+esc(M.file)+' &middot; '+(M.size_kb||0).toLocaleString('en-IN')+' KB'+(M.lines!=null?' &middot; '+M.lines.toLocaleString('en-IN')+' minute rows':'')+(M.last_write?' &middot; last write '+fmt(M.last_write):'')+' &middot; <a href="/api/v124-orderflow/export">export</a></div></div>'; }
+    document.getElementById('rm-of').innerHTML=h;
     var sc=d.schedulers||{}, out=[];
     Object.keys(sc).forEach(function(k){ var v=sc[k], bad=Object.keys(v.steps||{}).filter(function(n){return v.steps[n].ok===false;});
       out.push('<b>'+esc(k)+'</b>: '+(v.started?'started '+esc(v.started):'not started')+(bad.length?' · <span style="color:#c00000">failed steps: '+esc(bad.join(', '))+'</span>':'')+(v.last_error?' · last error: '+esc(String(v.last_error).slice(0,140)):' · no errors')); });

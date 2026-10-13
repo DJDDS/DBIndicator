@@ -89,8 +89,6 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='daily', due=dt.time(9, 25), grace=25, files=['v132/picks.jsonl'], thread='v132-movers')
     add(name='09:25 direction desk', group='V13.3 Direction desk', what='UP/DOWN lists for 30/60/90/120 min and the day',
         kind='daily', due=dt.time(9, 35), grace=25, files=['v133/days.jsonl', 'v133/scores_*.json.gz'], thread='v133-direction')
-    add(name='Order-flow polls', group='V13.3 Direction desk', what='Futures order-flow polls 09:15-15:30 (of_<date>.jsonl)',
-        kind='live', files=['v133/of_*.jsonl', 'v133/of_*.jsonl.gz'], thread='v133-orderflow')
     add(name='Setup A v1.1 scan', group='Setup A dip-buy', what='Nightly NIFTY-500 stress score, signals and paper ledger',
         kind='daily', due=dt.time(19, 15), grace=195, files=['v11/runs.jsonl', 'v11/summary.json'], thread='v11-setup-a')
     add(name='Setup A WIDE ledger', group='Setup A dip-buy', what='Second paper ledger with relaxed gates (F&O only)',
@@ -176,9 +174,64 @@ def scheduler_steps() -> dict:
     return out
 
 
+def _expected_polls(now: dt.datetime) -> int:
+    """Polls the V13.3 order-flow recorder should have made so far today: 60 s from 09:08, 10 s from 09:15, 5 min from 09:40 to 15:15."""
+    if now.weekday() >= 5: return 0
+    m = now.hour * 60 + now.minute + now.second / 60
+    n = 0.0
+    n += max(0.0, min(m, 555) - 548) / 1.0                       # 09:08-09:15, every 60 s
+    n += max(0.0, min(m, 580) - 555) * 6                         # 09:15-09:40, every 10 s
+    n += max(0.0, min(m, 915) - 580) / 5.0                       # 09:40-15:15, every 5 min
+    return int(n)
+
+
+def orderflow(storage_root: str, now: dt.datetime | None = None) -> dict:
+    """The two order-flow recorders: the V13.3 LAB (all F&O stocks + futures, judged after 40 sessions) and the V12.4 minute recorder."""
+    now = now or _now(); root = Path(storage_root); today = now.date().isoformat(); out: dict = {}
+    # --- V13.3 LAB
+    lab = {'name': 'V13.3 order-flow LAB (all F&O stocks + near-month futures)', 'target': 40, 'sessions': 0, 'today_polls': 0, 'expected_polls': _expected_polls(now),
+           'stocks_per_poll': None, 'futures_per_poll': None, 'first': None, 'last_poll': None, 'by_phase': {}, 'sessions_first': None, 'sessions_last': None, 'status': 'NO DATA YET', 'note': ''}
+    try:
+        from . import v133_direction as d
+        s = d.of_status(today); ls = d.lab_summary()
+        lab.update(sessions=int(ls.get('sessions') or 0), target=int(ls.get('target') or 40), sessions_first=ls.get('first'), sessions_last=ls.get('last'),
+                   today_polls=int(s.get('polls') or 0), stocks_per_poll=s.get('stocks'), futures_per_poll=s.get('futures'), first=s.get('first'), last_poll=s.get('last'), by_phase=s.get('by_phase') or {})
+    except Exception as exc:  # noqa: BLE001
+        lab['note'] = f'cannot read: {exc}'
+    files = _gather(root / 'v133', ['of_20*.jsonl', 'of_20*.jsonl.gz', 'of_20*.json'])
+    days = sorted({f.name[3:13] for f in files})
+    lab['files_days'] = len(days)
+    if lab['sessions'] == 0 and days: lab['sessions'] = len([x for x in days if x != today])    # leaderboard not built yet: count finished days
+    open_now = now.weekday() < 5 and dt.time(9, 8) <= now.time() <= dt.time(15, 15)
+    thread_ok = 'v133-orderflow' in _alive_names()
+    if now.weekday() >= 5: lab['status'] = 'IDLE'; lab['note'] = 'weekend'
+    elif now.time() < dt.time(9, 8): lab['status'] = 'WAITING'; lab['note'] = 'polling starts 09:08'
+    elif open_now:
+        gap = lab['expected_polls'] - lab['today_polls']
+        if not thread_ok: lab['status'] = 'NOT RUNNING'; lab['note'] = 'order-flow thread is not alive - restart the service'
+        elif lab['today_polls'] == 0 and now.time() > dt.time(9, 12): lab['status'] = 'MISSED'; lab['note'] = 'no polls today - Kite login missing or quote call failing'
+        elif gap > max(12, 0.25 * lab['expected_polls']): lab['status'] = 'BEHIND'; lab['note'] = f"{lab['today_polls']} polls vs ~{lab['expected_polls']} expected by now (a restart or login gap loses polls)"
+        else: lab['status'] = 'OK'; lab['note'] = f"{lab['today_polls']} polls so far (~{lab['expected_polls']} expected)"
+    else:
+        lab['status'] = 'OK' if lab['today_polls'] else 'MISSED'; lab['note'] = f"market closed; {lab['today_polls']} polls recorded today"
+    out['lab'] = lab
+    # --- V12.4 minute recorder (tactical stream)
+    p = root / 'v124_orderflow_minutes.jsonl'; st = _stat(p)
+    m = {'name': 'V12.4 minute order-flow recorder (focus-list stocks, 5-level book)', 'file': p.name, 'size_kb': round(st.st_size / 1024, 1) if st else 0, 'last_write': None, 'lines': None, 'status': 'NO DATA YET', 'note': ''}
+    if st:
+        lw = dt.datetime.fromtimestamp(st.st_mtime, IST); m['last_write'] = lw.isoformat(timespec='seconds'); m['lines'] = _count_lines(p)
+        if _market_open(now):
+            age = (now - lw).total_seconds() / 60
+            m['status'] = 'OK' if age <= 10 else 'STALE'; m['note'] = f"last minute row {age:.0f} min ago" + ('' if age <= 10 else ' - the tactical stream may be down or the focus list empty')
+        else: m['status'] = 'IDLE'; m['note'] = f"market closed; last write {lw:%a %d-%b %H:%M} IST"
+    else: m['note'] = 'written only while the tactical stream has focus-list ticks; the file appears on the first session with ticks'
+    out['minute'] = m
+    return out
+
+
 def report(storage_root: str, index_vol_root: str | None = None, now: dt.datetime | None = None) -> dict:
     now = now or _now(); root = Path(storage_root); iv = Path(index_vol_root) if index_vol_root else None
     rows = [_evaluate(s, root, iv, now) for s in registry(storage_root, index_vol_root)]
     count = lambda *names: sum(1 for r in rows if r['status'] in names)
-    return {'as_of': now.isoformat(timespec='seconds'), 'storage': str(root), 'rows': rows, 'schedulers': scheduler_steps(),
+    return {'as_of': now.isoformat(timespec='seconds'), 'storage': str(root), 'rows': rows, 'schedulers': scheduler_steps(), 'orderflow': orderflow(storage_root, now),
             'summary': {'total': len(rows), 'ok': count('OK', 'IDLE'), 'waiting': count('DUE', 'WAITING', 'NO DATA YET'), 'problems': count('MISSED', 'STALE', 'NOT RUNNING')}}

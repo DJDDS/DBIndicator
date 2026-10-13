@@ -46,15 +46,15 @@ def test_before_due_uses_previous_day_and_weekend(tmp_path):
 
 
 def test_live_and_event_rules(tmp_path):
-    _touch(tmp_path / 'v133/of_2026-10-13.jsonl', dt.datetime(2026, 10, 13, 10, 0, tzinfo=IST))
+    _touch(tmp_path / 'v123_market_checkpoint.json', dt.datetime(2026, 10, 13, 10, 0, tzinfo=IST))
     _touch(tmp_path / 'v130/ledger.jsonl', dt.datetime(2026, 9, 1, 10, 0, tzinfo=IST))
     live_ok = m.report(str(tmp_path), None, dt.datetime(2026, 10, 13, 10, 5, tzinfo=IST))
-    assert _row(live_ok, 'Order-flow polls')['status'] == 'OK'
+    assert _row(live_ok, 'Universe live stream checkpoint')['status'] == 'OK'
     assert _row(live_ok, 'Swing desk ledger')['status'] == 'OK'      # events never go stale
     live_stale = m.report(str(tmp_path), None, dt.datetime(2026, 10, 13, 10, 40, tzinfo=IST))
-    assert _row(live_stale, 'Order-flow polls')['status'] == 'STALE'
+    assert _row(live_stale, 'Universe live stream checkpoint')['status'] == 'STALE'
     closed = m.report(str(tmp_path), None, dt.datetime(2026, 10, 13, 18, 0, tzinfo=IST))
-    assert _row(closed, 'Order-flow polls')['status'] == 'IDLE'
+    assert _row(closed, 'Universe live stream checkpoint')['status'] == 'IDLE'
 
 
 def test_dead_scheduler_thread_flagged(tmp_path):
@@ -76,7 +76,19 @@ def test_route_and_page(tmp_path, monkeypatch):
     c = web.app.test_client()
     h = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
     r = c.get('/api/recorders', headers=h)
-    assert r.status_code == 200 and json.loads(r.data)['summary']['total'] == 17
+    assert r.status_code == 200 and json.loads(r.data)['summary']['total'] == 16
     page = c.get('/backtest', headers=h)
     assert page.status_code == 200 and b'recorder-monitor' in page.data and b'/api/recorders' in page.data
     assert c.get('/api/recorders').status_code in (401, 403)
+
+
+def test_orderflow_progress_and_expected_polls(tmp_path):
+    assert m._expected_polls(dt.datetime(2026, 10, 13, 9, 0, tzinfo=IST)) == 0
+    assert 140 < m._expected_polls(dt.datetime(2026, 10, 13, 9, 40, tzinfo=IST)) < 170          # 7 pre + ~150 fast
+    assert m._expected_polls(dt.datetime(2026, 10, 13, 15, 30, tzinfo=IST)) > 220
+    _touch(tmp_path / 'v124_orderflow_minutes.jsonl', dt.datetime(2026, 10, 13, 10, 58, tzinfo=IST), '{"m":1}\n{"m":2}\n')
+    of = m.orderflow(str(tmp_path), dt.datetime(2026, 10, 13, 11, 0, tzinfo=IST))
+    assert of['minute']['status'] == 'OK' and of['minute']['lines'] == 2
+    assert of['lab']['target'] == 40 and of['lab']['status'] in ('OK', 'MISSED', 'BEHIND', 'NOT RUNNING')
+    sat = m.orderflow(str(tmp_path), dt.datetime(2026, 10, 17, 11, 0, tzinfo=IST))
+    assert sat['lab']['status'] == 'IDLE'
