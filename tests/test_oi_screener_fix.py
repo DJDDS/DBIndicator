@@ -106,7 +106,7 @@ def test_oi_api_row_is_compact_json_safe_and_numeric_strings_are_normalized():
         'oi_chg_60m_pct': None, 'oi_acceleration': 0.4,
         'oi_accel_label': 'Stable', 'oi_structure': 'Long Buildup',
         'vol_multiple': 1.8, 'direction': 'Bullish', 'oi_z': 1.7,
-        'param_tier': 3.0,
+        'param_tier': 3.0, 'day_chg_pct': None,
     }
 
 

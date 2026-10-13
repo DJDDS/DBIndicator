@@ -41,6 +41,7 @@ ROOT = Path(config.V12_STORAGE_ROOT) / 'v132'
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 INDEX_NAMES = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50', 'SENSEX', 'BANKEX'}
 TOP_K, ABS_MOVE, REL_MOVE, CONF_WINDOW = 3, 0.02, 1.3, 250
+LEAN_MIN = 0.83   # direction lean: first-30-minute move (in the stock's own normal-travel units) must be at least this big; adjustable via mover_meta.json stage2.lean_min
 RES_PAT = ('financial result', 'outcome of board')
 
 _lock = threading.Lock()
@@ -296,6 +297,19 @@ def stage2_features(shortlist: list, q945: dict, exc20: dict, vs20: dict) -> pd.
     return pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
 
 
+def lean_min() -> float:
+    try: return float((meta().get('stage2') or {}).get('lean_min', LEAN_MIN))
+    except Exception: return LEAN_MIN  # noqa: BLE001
+
+
+def direction_lean(f_mv30: float, minimum: float | None = None) -> str:
+    """Weak, advisory direction for the 09:45 pick: continuation of a strong first-30-minute move (research 2018-26, top-3 movers:
+    strong-move continuation ~54-56% right and +15 bps after 10 bps cost, market-adjusted the same; weaker moves carry no lean)."""
+    m = lean_min() if minimum is None else minimum
+    if f_mv30 is None or not np.isfinite(f_mv30) or abs(f_mv30) < m: return 'NONE'
+    return 'UP' if f_mv30 > 0 else 'DOWN'
+
+
 def need_move2(p_exc20: float) -> float:
     return max(0.015, 0.7 * p_exc20)
 
@@ -527,7 +541,7 @@ def run_stage2(kite, today: dt.date | None = None) -> int:
     day['stage2'] = {'at': now_ist(), 'confident': conf, 'threshold_pct': round(thr * 100, 1) if thr else None, 'symbol': top.symbol,
                      'prob_pct': round(float(top.prob2) * 100, 1), 'entry': round(float(top.c945), 2), 'normal_move_pct': round(float(top.exc20) * 100, 2),
                      'need_pct': round(need * 100, 2), 'up_level': round(float(top.c945) * math.exp(need), 2), 'down_level': round(float(top.c945) * math.exp(-need), 2),
-                     'moved_since_open_pct': round(float(top.f_mv30 * top.exc20) * 100, 2), 'status': 'OPEN',
+                     'moved_since_open_pct': round(float(top.f_mv30 * top.exc20) * 100, 2), 'lean': direction_lean(float(top.f_mv30)), 'status': 'OPEN',
                      'ranked': [{'symbol': r.symbol, 'prob_pct': round(float(r.prob2) * 100, 1)} for r in X.head(5).itertuples()]}
     _rewrite_jsonl('picks.jsonl', rows)
     _write_json('conf2_hist.json', (hist + [float(top.prob2)])[-CONF_WINDOW * 2:])
@@ -535,18 +549,19 @@ def run_stage2(kite, today: dt.date | None = None) -> int:
     s2 = day['stage2']
     _telegram(('✅ 09:45 FINAL PICK - HIGH CONFIDENCE' if conf else '09:45 final pick (normal confidence)') + f" · {today}\n"
               f"{s2['symbol']} at {s2['entry']} · needs ±{s2['need_pct']}% more by 15:15 (normal {s2['normal_move_pct']}%) → {s2['up_level']} / {s2['down_level']} · {s2['prob_pct']}%\n"
-              'Direction not predicted. Spotting/paper only - not an order.')
+              + (f"Lean {s2['lean']} (strong first-30-min move continues; weak edge ~55%). " if s2['lean'] != 'NONE' else 'No direction lean (first 30 min not strong enough). ')
+              + 'Spotting/paper only - not an order.')
     return len(X)
 
 
-def _after945(kite, token: int, today: dt.date) -> tuple[float | None, float | None]:
+def _after945(kite, token: int, today: dt.date) -> tuple[float | None, float | None, float | None]:
     raw = kite.historical_data(token, dt.datetime.combine(today, dt.time(9, 45)), dt.datetime.combine(today, dt.time(15, 15)), '5minute')
     b = pd.DataFrame(raw)
-    if b.empty: return None, None
+    if b.empty: return None, None, None
     b['date'] = pd.to_datetime(b['date'])
     if getattr(b['date'].dt, 'tz', None) is not None: b['date'] = b['date'].dt.tz_convert('Asia/Kolkata').dt.tz_localize(None)
     m = b.date.dt.hour * 60 + b.date.dt.minute; b = b[(m >= 585) & (m <= 910)]
-    return (float(b.high.max()), float(b.low.min())) if len(b) else (None, None)
+    return (float(b.high.max()), float(b.low.min()), float(b.close.iloc[-1])) if len(b) else (None, None, None)
 
 
 def run_outcomes(kite, today: dt.date | None = None) -> int:
@@ -567,12 +582,14 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
         if s2 and s2.get('status') != 'CLOSED':
             tok = ((_read_json(f'prep_{today}.json', None) or {}).get('pre') or {}).get(s2['symbol'], {}).get('token')
             try:
-                h, l = _after945(kite, tok, today) if tok else (None, None)
+                h, l, cl = _after945(kite, tok, today) if tok else (None, None, None)
             except Exception as exc:  # noqa: BLE001
-                log.warning('v132 stage2 outcome: %s', exc); h = l = None
+                log.warning('v132 stage2 outcome: %s', exc); h = l = cl = None
             if h and l:
                 up = math.log(h / s2['entry']); dn = math.log(s2['entry'] / l)
                 s2.update(max_move_pct=round(max(up, dn) * 100, 2), dir='UP' if up >= dn else 'DOWN', hit=bool(max(up, dn) * 100 >= s2['need_pct']), status='CLOSED')
+                if cl and s2.get('lean') in ('UP', 'DOWN'):
+                    s2['close_pct'] = round(math.log(cl / s2['entry']) * 100, 2); s2['lean_hit'] = bool((cl > s2['entry']) == (s2['lean'] == 'UP'))
     _rewrite_jsonl('picks.jsonl', rows)
     if n == 0: raise RuntimeError('no outcomes recorded yet')
     return n
@@ -622,7 +639,8 @@ def scorecard(rows: list) -> dict:
     conf = [d['picks'][0] for d in rows if d.get('picks') and d.get('confident')]
     allp = [p for d in rows for p in d.get('picks', [])]
     s2 = [d['stage2'] for d in rows if d.get('stage2')]
-    return {'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')])}
+    return {'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')]),
+            'lean': (lambda h: {'n': len(h), 'hit': round(100 * sum(h) / len(h)) if h else None})([x['lean_hit'] for x in s2 if isinstance(x.get('lean_hit'), bool)])}
 
 
 def status() -> dict:

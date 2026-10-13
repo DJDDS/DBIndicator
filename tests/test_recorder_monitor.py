@@ -57,15 +57,13 @@ def test_live_and_event_rules(tmp_path):
     assert _row(closed, 'Universe live stream checkpoint')['status'] == 'IDLE'
 
 
-def test_dead_scheduler_thread_flagged(tmp_path):
+def test_dead_scheduler_thread_flagged(tmp_path, monkeypatch):
+    monkeypatch.setattr(m, '_alive_names', lambda: set())      # deterministic: no scheduler thread alive
     _touch(tmp_path / 'v131/gaps.jsonl', dt.datetime(2026, 10, 13, 9, 22, tzinfo=IST))
     now = dt.datetime(2026, 10, 13, 10, 0, tzinfo=IST)
     assert _row(m.report(str(tmp_path), None, now), 'Gap-down bounce basket')['status'] == 'NOT RUNNING'   # no v131-intraday thread alive in the test
-    stop = threading.Event(); t = threading.Thread(target=stop.wait, name='v131-intraday', daemon=True); t.start()
-    try:
-        assert _row(m.report(str(tmp_path), None, now), 'Gap-down bounce basket')['status'] == 'OK'
-    finally:
-        stop.set()
+    monkeypatch.setattr(m, '_alive_names', lambda: {'v131-intraday'})                                         # thread alive -> OK
+    assert _row(m.report(str(tmp_path), None, now), 'Gap-down bounce basket')['status'] == 'OK'
 
 
 def test_route_and_page(tmp_path, monkeypatch):

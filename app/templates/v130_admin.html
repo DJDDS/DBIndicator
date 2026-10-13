@@ -192,6 +192,7 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
   {% if mt.stage2 %}{% set s2 = mt.stage2 %}
     <div style="margin-top:10px;padding:8px;border:1px solid #e0a030;border-radius:6px"><b>09:45 FINAL PICK: {{ s2.symbol }}</b> {% if s2.confident %}<b style="color:#e0a030">HIGH CONFIDENCE</b>{% else %}(normal confidence){% endif %}
       · entry {{ s2.entry }} · needs ±{{ s2.need_pct }}% more by 15:15 (normal {{ s2.normal_move_pct }}%) → {{ s2.up_level }} / {{ s2.down_level }} · model {{ s2.prob_pct }}% · already moved {{ s2.moved_since_open_pct }}% since open
+      · lean: {% if s2.get('lean') in ('UP','DOWN') %}<b>{{ s2.lean }}</b>{% if s2.get('lean_hit') is not none %} ({{ 'right' if s2.lean_hit else 'wrong' }}, close {{ s2.close_pct }}%){% endif %}{% else %}none (first 30 min not strong){% endif %}
       · result: {% if s2.get('hit') is not none %}<span class="{{ 'open' if s2.hit else 'closed' }}">{{ 'HIT' if s2.hit else 'miss' }} · {{ s2.max_move_pct }}% {{ s2.dir }}</span>{% else %}open{% endif %}</div>{% endif %}
   {% else %}<div class="empty">Picks appear at 09:16 on trading days (prep runs 08:10-09:08).</div>{% endif %}
   {% set sc = movers.score or {} %}

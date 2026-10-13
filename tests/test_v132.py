@@ -194,3 +194,9 @@ def test_v132_route_is_owner_only(monkeypatch):
     c = app.test_client()
     assert c.get("/api/v132/status", headers={"Authorization": "Basic " + base64.b64encode(b"m:mp").decode()}).status_code == 403
     assert c.get("/api/v132/status", headers={"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}).status_code == 200
+
+
+def test_direction_lean_only_on_strong_first_30_minutes():
+    assert v.direction_lean(1.2, 0.83) == 'UP' and v.direction_lean(-0.9, 0.83) == 'DOWN'
+    assert v.direction_lean(0.4, 0.83) == 'NONE' and v.direction_lean(float('nan'), 0.83) == 'NONE'
+    assert v.scorecard([{'picks': [], 'stage2': {'lean_hit': True}}, {'picks': [], 'stage2': {'lean_hit': False}}, {'picks': [], 'stage2': {'lean_hit': True}}])['lean'] == {'n': 3, 'hit': 67}
