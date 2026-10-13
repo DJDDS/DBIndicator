@@ -55,7 +55,7 @@ HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
 DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
                     'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0,
-                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0}
+                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3}
 
 _lock = threading.Lock()
 _model = None
@@ -170,6 +170,10 @@ def load_settings() -> dict:
     s['opt_max_spread_pct'] = float(min(20.0, max(0.5, float(s['opt_max_spread_pct']))))
     s['hc_quantile'] = float(min(0.97, max(0.5, float(s['hc_quantile'])))); s['hc_top_n'] = int(max(1, min(5, int(s['hc_top_n']))))
     s['hc_book_pct'] = float(min(5.0, max(0.1, float(s['hc_book_pct']))))
+    s['entry_check'] = bool(s['entry_check']); s['ec_min_score'] = int(max(1, min(4, int(s['ec_min_score']))))
+    for k in ('ec_rsi', 'ec_stoch', 'ec_bbz', 'ec_ema50'):
+        try: lo, hi = (float(x) for x in s[k]); s[k] = [min(lo, hi), max(lo, hi)]
+        except Exception: s[k] = list(DEFAULT_SETTINGS[k])  # noqa: BLE001
     return s
 
 
@@ -233,6 +237,43 @@ def _ext_last(x: np.ndarray, w: int, mp: int, f) -> float:
     return float(f(x)) if len(x) >= mp else np.nan
 
 
+def _entry_indicators(o, h, l, c) -> dict:
+    """Daily indicators as of the last completed session (research: entry-quality study on 7,200 DOWN picks, 2017-26):
+    RSI14 (Wilder), position in the 20-day high/low range, Bollinger z (20, sample std), 50-day EMA and 14-day ATR."""
+    out = {'ec_rsi': None, 'ec_stoch': None, 'ec_bbz': None, 'ec_ema50': None, 'ec_atr14': None}
+    n = len(c)
+    if n < 60: return out
+    try:
+        s = pd.Series(c); d = s.diff()
+        up = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]; dn = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
+        out['ec_rsi'] = float(100 - 100 / (1 + up / dn)) if dn > 0 else 100.0
+        hi20, lo20 = float(np.max(h[-20:])), float(np.min(l[-20:]))
+        out['ec_stoch'] = float((c[-1] - lo20) / (hi20 - lo20)) if hi20 > lo20 else None
+        w = c[-20:]; sd = float(np.std(w, ddof=1))
+        out['ec_bbz'] = float((c[-1] - np.mean(w)) / sd) if sd > 0 else None
+        out['ec_ema50'] = float(s.ewm(span=50, adjust=False).mean().iloc[-1])
+        tr = np.maximum(h[1:] - l[1:], np.maximum(np.abs(h[1:] - c[:-1]), np.abs(l[1:] - c[:-1])))
+        out['ec_atr14'] = float(np.mean(tr[-14:]))
+    except Exception:  # noqa: BLE001
+        return {k: None for k in out}
+    return out
+
+
+def entry_check(hp: dict | None, px: float | None, side: str, s: dict) -> dict:
+    """Advisory entry-quality tag for a DOWN pick: how many of 4 'not extreme' conditions hold (RSI14, 20-day range position, Bollinger z,
+    distance from the 50-day EMA in ATR units). Validated for DOWN picks only; extremes at either end earned ~0 (walk-forward 2019-26:
+    score>=3 -> +13.7 bps/pick vs +5.4 for all picks). Advisory only: it never changes which stocks are picked."""
+    if not s.get('entry_check', True): return {'label': 'off'}
+    if side != 'DOWN': return {'label': 'n/a', 'note': 'validated for DOWN picks only'}
+    if not hp or not px or hp.get('ec_rsi') is None or not hp.get('ec_atr14') or not hp.get('pc'): return {'label': 'n/a', 'note': 'indicators not available'}
+    atr_rel = hp['ec_atr14'] / hp['pc']
+    v = {'rsi': hp['ec_rsi'], 'stoch': hp['ec_stoch'], 'bbz': hp['ec_bbz'], 'ema50': (px / hp['ec_ema50'] - 1) / atr_rel if hp.get('ec_ema50') else None}
+    rng = {'rsi': s['ec_rsi'], 'stoch': s['ec_stoch'], 'bbz': s['ec_bbz'], 'ema50': s['ec_ema50']}
+    ok = {k: (v[k] is not None and rng[k][0] <= v[k] <= rng[k][1]) for k in v}
+    n = sum(ok.values()); label = 'GOOD' if n >= s['ec_min_score'] else ('BORDERLINE' if n == s['ec_min_score'] - 1 else 'WEAK')
+    return {'label': label, 'score': n, 'of': 4, 'ok': ok, 'values': {k: (None if x is None else round(float(x), 2)) for k, x in v.items()}}
+
+
 def stock_history(A: pd.DataFrame) -> dict | None:
     """History inputs from the stock's completed sessions (day_aggregates rows strictly before today, ascending).
     Research: premover_final.py (daily), h925_ds.py (09:25 habits)."""
@@ -263,6 +304,7 @@ def stock_history(A: pd.DataFrame) -> dict | None:
         col = f'r_{hz}'
         p[f'hab_{hz}'] = _mean_last(A[col].to_numpy(float), 20, 10) / e if (col in A and e) else np.nan
     p['v925_med'] = _ext_last(A['v925'].to_numpy(float), 20, 10, np.median) if 'v925' in A else np.nan
+    p.update(_entry_indicators(o, h, l, c))
     p['last_date'] = str(A['date'].iloc[-1])[:10]
     p['day_oc'] = float(oc[-1]) if np.isfinite(oc[-1]) else None; p['day_gap'] = float(gap[-1]) if np.isfinite(gap[-1]) else None
     return {k: (None if isinstance(x, float) and (math.isnan(x) or math.isinf(x)) else x) for k, x in p.items()}
@@ -817,6 +859,7 @@ def run_list(kite, today: dt.date | None = None) -> int:
             picks.append({'symbol': r.symbol, 'side': r.side, 'p_up': round(float(r.p_up), 4), 'conf': round(float(r.conf), 4), 'open': r.o,
                           'p925': r.p925, 'entry': ltp or r.p925, 'gap_pct': round(r.gap * 100, 2), 'exc20_pct': round(r.exc20 * 100, 2),
                           'of': o, 'of_agree': agree, 'status': 'OPEN' if trade else 'WATCH',
+                          'entry_check': entry_check((prep['hist'] or {}).get(r.symbol), r.p925, r.side, s) if h == 'hc' else None,
                           'option': dict(opts[(r.symbol, r.side)]) if (r.symbol, r.side) in opts else None})
         lists[h] = {'exit_at': EXIT_LABEL[h], 'view': round(sel['view'], 4), 'strength': round(sel['view_strength'], 4),
                     'book_pct': s['hc_book_pct'] if h == 'hc' else s['book_target_pct'],
@@ -840,6 +883,7 @@ def telegram_text(day: dict) -> str:
         out.append(f"\n[{name} -> exit {L['exit_at']}] {tag}, lean {L['lean']}")
         out += [f"{i + 1}. {p['symbol']} {'▲ UP' if p['side'] == 'UP' else '▼ DOWN'} @ {p['entry']}"
                 + ('' if p['of_agree'] is None else (' OF+' if p['of_agree'] else ' OF-'))
+                + (f" entry {p['entry_check']['label']} {p['entry_check']['score']}/4" if (p.get('entry_check') or {}).get('score') is not None else '')
                 + (f" | {p['option']['ts']} ask {p['option']['ask']}" if (p.get('option') or {}).get('status') == 'OPEN' else '') for i, p in enumerate(L['picks'])]
     return '\n'.join(out)
 
