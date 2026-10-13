@@ -227,3 +227,23 @@ def test_admin_page_renders_open_trades_without_results():
              "short_recent": [dict(open_short, date="2026-10-06"), dict(no_put, date="2026-10-06")], "gap_recent": [dict(gap, date="2026-10-06")]}
     html = env.get_template("v130_admin.html").render(status=status, plan=None, intra=intra)
     assert "ABC26OCT100PE" in html and "No put: spread 5.1%" in html and "GGG" in html and "open" in html
+
+
+def test_short_outcome_carries_hedged_result(store, monkeypatch):
+    day = dt.date(2026, 10, 6); k = FakeKite(day)
+    v.run_prep(k, day); v.run_preopen(k, day); v.run_gap(k, day); v.run_shorts(k, day)
+    monkeypatch.setattr(v, "_market_bps", lambda kite, d, a, b: 80.0)            # Nifty +0.8% over the window: a long Nifty future gains 80 bps
+    assert v.run_short_outcomes(k, day) == 3
+    rec = v._read_jsonl("shorts.jsonl")[-1]
+    for p in rec["picks"]:
+        assert p["mkt_bps"] == 80.0 and p["hedged_bps"] == pytest.approx(p["ret_bps"] + 80.0, abs=0.1)
+    s = v.status()["score_short"]
+    assert s["h_n"] == 3 and s["h_avg_bps"] == pytest.approx(s["avg_bps"] + 80.0, abs=0.2)
+
+
+def test_market_leg_failure_leaves_hedge_out(store, monkeypatch):
+    day = dt.date(2026, 10, 6); k = FakeKite(day)
+    v.run_prep(k, day); v.run_preopen(k, day); v.run_gap(k, day); v.run_shorts(k, day)
+    monkeypatch.setattr(v, "_market_bps", lambda kite, d, a, b: None)
+    assert v.run_short_outcomes(k, day) == 3
+    assert all("hedged_bps" not in p for p in v._read_jsonl("shorts.jsonl")[-1]["picks"])

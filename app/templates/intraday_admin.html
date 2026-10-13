@@ -56,9 +56,10 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
     <h2>09:25 short detector · 3 paper shorts a day, cover 15:15 (details on the swing page)</h2>
     <div class="kpis">
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(s0.get('avg_bps')) ~ ' bps') if s0.get('avg_bps') is not none else '—' }}</div><div class="l">all shorts ({{ s0.get('n') or 0 }}, win {{ s0.get('win') if s0.get('win') is not none else '—' }}%)</div></div>
+      <div class="kpi"><div class="v">{{ ('%+.0f'|format(s0.get('h_avg_bps')) ~ ' bps') if s0.get('h_avg_bps') is not none else '—' }}</div><div class="l">hedged with a long Nifty future ({{ s0.get('h_n') or 0 }}, win {{ s0.get('h_win') if s0.get('h_win') is not none else '—' }}%)</div></div>
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(sb.get('avg_bps')) ~ ' bps') if sb.get('avg_bps') is not none else '—' }}</div><div class="l">on strong-bearish 09:25 days ({{ sb.get('n') or 0 }})</div></div>
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(so.get('avg_bps')) ~ ' bps') if so.get('avg_bps') is not none else '—' }}</div><div class="l">other days ({{ so.get('n') or 0 }})</div></div></div>
-    <div class="small" style="margin-top:6px">Research (09:25 model, 12-Oct-2026): 2019-26 +56 bps / 61% win, 2023-26 +37 bps, 2026 +40 bps, every year positive. Futures/cash only, no puts. Judge live after 60+ shorts.</div>
+    <div class="small" style="margin-top:6px">Research (09:25 model, 12-Oct-2026): 2019-26 +56 bps / 61% win, 2023-26 +37 bps, 2026 +40 bps, every year positive. Futures/cash only, no puts. Judge live after 60+ shorts. Hedge test (2017-26): shorts alone +41 bps but -90 bps on days the market rose over 0.5% (26% won); paired with a long Nifty future of equal value +33 bps, 61% won, positive every year, +8 bps even on market-up days. Paper hedge = buy Nifty futures for the same rupee value as the 3 shorts.</div>
   </div>
 {% endif %}
 </div>

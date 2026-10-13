@@ -391,16 +391,44 @@ def _close_at(kite, token: int, day: dt.date, bar_minute: int) -> tuple[float | 
     return (float(x.close.iloc[0]) if len(x) else None), b.assign(t=t)
 
 
+_NIFTY = {'token': None}
+
+
+def _market_bps(kite, day: dt.date, from_min: int, to_min: int) -> float | None:
+    """Nifty 50 move in bps between the close of the bar starting at from_min and the close of the bar starting at to_min. The hedge
+    leg: a long Nifty future against the shorts. None when the index bars cannot be read (the hedged figure is then simply left out)."""
+    try:
+        if not _NIFTY['token']:
+            try:
+                from . import sector_service
+                _NIFTY['token'] = sector_service._tokens.get('NIFTY 50')
+            except Exception:  # noqa: BLE001
+                pass
+        if not _NIFTY['token']:
+            for r in kite.instruments('NSE'):
+                if r.get('tradingsymbol') == 'NIFTY 50': _NIFTY['token'] = r['instrument_token']; break
+        if not _NIFTY['token']: return None
+        a, b = _close_at(kite, _NIFTY['token'], day, from_min)
+        x1 = b[b.t == to_min]
+        if a is None or not len(x1): return None
+        return round(math.log(float(x1.close.iloc[0]) / a) * 1e4, 1)
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v131 market leg unavailable: %s', exc); return None
+
+
 def run_short_outcomes(kite, today: dt.date | None = None) -> int:
     today = today or now_ist().date()
     rows = _read_jsonl('shorts.jsonl'); n = 0
     for day in rows:
         if day['date'] != str(today): continue
         prep = _read_json(f"prep_{day['date']}.json", {}).get('stocks', {})
+        mkt = None; mkt_done = False
         for p in day['picks']:
             if p.get('status') != 'OPEN': continue
             tok = (prep.get(p['symbol']) or {}).get('token')
             if not tok: continue
+            if not mkt_done:
+                mkt = _market_bps(kite, today, (SHORT_AT if day.get('lane') == LANE else 9 * 60 + 45) - 5, 15 * 60 + 10); mkt_done = True; day['market_bps'] = mkt
             ex, b = _close_at(kite, tok, today, 15 * 60 + 10)                 # bar 15:10-15:15 -> the 15:15 close
             if ex is None: raise RuntimeError(f"15:15 bar not available yet for {p['symbol']}")
             after = b[(b.t >= (SHORT_AT if day.get('lane') == LANE else 9 * 60 + 45)) & (b.t <= 15 * 60 + 10)]
@@ -416,6 +444,7 @@ def run_short_outcomes(kite, today: dt.date | None = None) -> int:
             p.update(exit=ex, status='CLOSED', ret_bps=round(-math.log(ex / e) * 1e4 - COST_SHORT, 1),
                      best_bps=round(math.log(e / after.low.min()) * 1e4, 1) if len(after) else None,
                      worst_bps=round(-math.log(after.high.max() / e) * 1e4, 1) if len(after) else None)
+            if mkt is not None: p.update(mkt_bps=mkt, hedged_bps=round(p['ret_bps'] + mkt, 1))      # short + long Nifty future of equal value (hedge cost not included)
             n += 1
     _rewrite_jsonl('shorts.jsonl', rows)
     return n
@@ -505,7 +534,9 @@ def market_view(today: dt.date) -> dict | None:
 def _score(trades: list) -> dict:
     r = [t['ret_bps'] for t in trades if isinstance(t.get('ret_bps'), (int, float))]
     if not r: return {'n': 0, 'win': None, 'avg_bps': None, 'total_bps': None}
-    return {'n': len(r), 'win': round(100 * sum(x > 0 for x in r) / len(r)), 'avg_bps': round(sum(r) / len(r), 1), 'total_bps': round(sum(r), 1)}
+    h = [t['hedged_bps'] for t in trades if isinstance(t.get('hedged_bps'), (int, float))]
+    return {'n': len(r), 'win': round(100 * sum(x > 0 for x in r) / len(r)), 'avg_bps': round(sum(r) / len(r), 1), 'total_bps': round(sum(r), 1),
+            'h_n': len(h), 'h_win': round(100 * sum(x > 0 for x in h) / len(h)) if h else None, 'h_avg_bps': round(sum(h) / len(h), 1) if h else None}
 
 
 def status() -> dict:
