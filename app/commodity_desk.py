@@ -780,6 +780,12 @@ def start_once() -> None:
 
     def loop():
         time.sleep(30)
+        try:        # the year-round study runs once per deploy even when the data cache is still fresh
+            ng_, cot_, hd_ = _read("ng.csv"), _read("cot.csv"), _read("hdd_obs.csv")
+            if ng_ is not None and cot_ is not None and hd_ is not None and not _p("year_round.json").exists():
+                st_ = load_settings(); log_year_round(_settled(features(ng_, cot_, hd_.set_index("date").hdd, st_)), st_, (ng_, cot_, hd_.set_index("date").hdd))
+        except Exception:  # noqa: BLE001
+            log.exception("commodity_desk startup study failed")
         while True:
             try:
                 maybe_refresh_async()
