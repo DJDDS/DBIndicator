@@ -1132,6 +1132,10 @@ def _of_loop(get_kite):
                 kite = get_kite()
                 if kite is not None:
                     last[ph] = time.time(); _step(f'of_poll_{ph}', run_of_poll, kite, None, ph)
+                    try:
+                        from . import v134_relstrength; v134_relstrength.tick(now)
+                    except Exception:  # noqa: BLE001
+                        log.exception('v134 relative-strength tick failed')
         except Exception:  # noqa: BLE001
             log.exception('v133 order-flow tick failed')
         _real_sleep(1)
@@ -1183,7 +1187,7 @@ def status() -> dict:
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
             'hc_research': (m.get('ensemble') or {}).get('research', {}), 'pool_research': (m.get('ensemble') or {}).get('pool', {}),
             'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today),
-            'lab': lab_summary()}
+            'lab': lab_summary(), 'rs': _rs_status()}
 
 
 _DESK = {'at': 0.0, 'value': None}
@@ -1206,6 +1210,13 @@ def desk_summary() -> dict | None:
         v = None
     _DESK.update(at=_t.time(), value=v)
     return v
+
+
+def _rs_status():
+    try:
+        from . import v134_relstrength; return v134_relstrength.status()
+    except Exception:  # noqa: BLE001
+        log.exception('v134 status failed'); return None
 
 
 def of_status(day: str) -> dict:

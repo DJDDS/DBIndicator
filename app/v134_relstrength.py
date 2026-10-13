@@ -28,7 +28,7 @@ from . import v133_direction as d
 log = logging.getLogger(__name__)
 FILE = 'rs_days.jsonl'
 DEFAULT_SETTINGS = {'enabled': True, 'slots': ['11:15', '12:15', '13:15'], 'exit_at': '15:15', 'z_min': 3.0, 'max_picks': 5,
-                    'min_stocks': 100, 'regime_pct': 0.5}
+                    'min_stocks': 100, 'regime_pct': 0.5, 'persist_z': 1.5, 'persist_back_min': 60}
 _lock = threading.Lock()
 
 
@@ -37,7 +37,7 @@ def load_settings() -> dict:
     try:
         s.update({k: v for k, v in (d._read_json('rs_settings.json', {}) or {}).items() if k in s})
         s['z_min'] = float(min(6.0, max(1.0, float(s['z_min'])))); s['max_picks'] = int(min(12, max(1, int(s['max_picks']))))
-        s['min_stocks'] = int(max(20, int(s['min_stocks']))); s['regime_pct'] = float(max(0.1, float(s['regime_pct'])))
+        s['min_stocks'] = int(max(20, int(s['min_stocks']))); s['regime_pct'] = float(max(0.1, float(s['regime_pct']))); s['persist_z'] = float(max(0.0, float(s['persist_z']))); s['persist_back_min'] = int(max(15, int(s['persist_back_min'])))
         s['slots'] = [x for x in s['slots'] if isinstance(x, str) and len(x) == 5 and x[2] == ':']
     except Exception:  # noqa: BLE001
         log.exception('v134: bad settings; using defaults'); return dict(DEFAULT_SETTINGS)
@@ -66,30 +66,50 @@ def _px(row, i):
         return None
 
 
-def slot_picks(polls: list, hm: str, s: dict) -> dict | None:
-    """Pure: compute one refresh from today's polls."""
+def _zmap(polls: list, hm: str, min_stocks: int):
+    """symbol -> z of (move since open minus market move) at hm, plus the rows and market move. None when quotes are too few."""
     pl = _poll_at(polls, hm)
     if not pl: return None
     rows = {}
     for sym, row in (pl.get('q') or {}).items():
         ltp, op = _px(row, 0), _px(row, 13)
         if ltp and op: rows[sym] = (ltp, op, (ltp / op - 1) * 100)
-    if len(rows) < s['min_stocks']: return {'at': hm, 'poll': pl['t'], 'n': len(rows), 'picks': [], 'note': 'too few quotes'}
-    r = np.array([v[2] for v in rows.values()]); m = float(r.mean()); e = r - m
-    sd = float(e.std())
-    if not sd > 0: return {'at': hm, 'poll': pl['t'], 'n': len(rows), 'market_pct': round(m, 3), 'picks': [], 'note': 'no dispersion'}
+    if len(rows) < min_stocks: return {'pl': pl, 'rows': rows, 'z': None}
+    syms = list(rows); r = np.array([rows[k][2] for k in syms]); e = r - r.mean(); sd = float(e.std())
+    if not sd > 0: return {'pl': pl, 'rows': rows, 'z': None, 'm': float(r.mean())}
     z = (e - e.mean()) / sd
-    syms = list(rows)
+    return {'pl': pl, 'rows': rows, 'syms': syms, 'r': r, 'e': e, 'z': z, 'm': float(r.mean())}
+
+
+def _hm_minus(hm: str, minutes: int) -> str:
+    t = _minutes(hm) - minutes; return '%02d:%02d' % (t // 60, t % 60)
+
+
+def slot_picks(polls: list, hm: str, s: dict) -> dict | None:
+    """Pure: compute one refresh from today's polls."""
+    Z = _zmap(polls, hm, s['min_stocks'])
+    if not Z: return None
+    pl, rows = Z['pl'], Z['rows']
+    if Z['z'] is None: return {'at': hm, 'poll': pl['t'], 'n': len(rows), 'picks': [], 'note': 'too few quotes or no dispersion'}
+    syms, r, e, z, m = Z['syms'], Z['r'], Z['e'], Z['z'], Z['m']
+    Zp = _zmap(polls, _hm_minus(hm, s['persist_back_min']), s['min_stocks'])      # an hour earlier: strength must be building, not a sudden spike
+    zp = dict(zip(Zp['syms'], Zp['z'])) if Zp and Zp.get('z') is not None else None
     ofs = d.of_scores([p for p in polls if str(p.get('t', ''))[11:16] <= hm], {k: v[1] for k, v in rows.items()})
     order = sorted(range(len(syms)), key=lambda i: -abs(z[i]))
-    picks = []
+    picks, skipped = [], []
     for i in order:
-        if abs(z[i]) < s['z_min'] or len(picks) >= s['max_picks']: break
-        side = 'UP' if z[i] > 0 else 'DOWN'; o = ofs.get(syms[i])
-        picks.append({'symbol': syms[i], 'side': side, 'z': round(float(z[i]), 2), 'move_pct': round(float(r[i]), 2), 'vs_mkt_pct': round(float(e[i]), 2),
-                      'entry': rows[syms[i]][0], 'of': o, 'of_agree': None if not o else bool((o['ofs'] > 0) == (side == 'UP'))})
+        if abs(z[i]) < s['z_min']: break
+        side = 'UP' if z[i] > 0 else 'DOWN'
+        prior = None if zp is None else zp.get(syms[i])
+        if zp is not None and (prior is None or prior * z[i] <= 0 or abs(prior) < s['persist_z']):
+            skipped.append({'symbol': syms[i], 'side': side, 'z': round(float(z[i]), 2), 'why': 'sudden spike (not building for the last hour)'}); continue
+        if len(picks) >= s['max_picks']: break
+        o = ofs.get(syms[i])
+        picks.append({'symbol': syms[i], 'side': side, 'z': round(float(z[i]), 2), 'z_prev': None if prior is None else round(float(prior), 2),
+                      'move_pct': round(float(r[i]), 2), 'vs_mkt_pct': round(float(e[i]), 2), 'entry': rows[syms[i]][0], 'of': o,
+                      'of_agree': None if not o else bool((o['ofs'] > 0) == (side == 'UP'))})
     regime = 'UP' if m > s['regime_pct'] else 'DOWN' if m < -s['regime_pct'] else 'FLAT'
-    return {'at': hm, 'poll': pl['t'], 'n': len(rows), 'market_pct': round(m, 3), 'regime': regime, 'picks': picks,
+    return {'at': hm, 'poll': pl['t'], 'n': len(rows), 'market_pct': round(m, 3), 'regime': regime, 'picks': picks, 'skipped': skipped,
             'ups': sum(1 for p in picks if p['side'] == 'UP'), 'downs': sum(1 for p in picks if p['side'] == 'DOWN')}
 
 
