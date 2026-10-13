@@ -91,10 +91,14 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='daily', due=dt.time(9, 20), grace=25, files=['v131/gaps.jsonl'], thread='v131-intraday')
     add(name='09:25 short detector', group='V13.1 Intraday lanes', what='Three shorts at 09:25 and the 15:15 cover',
         kind='daily', due=dt.time(9, 30), grace=25, files=['v131/shorts.jsonl'], thread='v131-intraday')
-    add(name='09:16 movement predictor', group='V13.2 Movement predictor', what='Top-3 stocks likely to move unusually, 09:45 final pick, result',
+    add(name='09:16 movement predictor', group='V13.2 Movement predictor', what='Top-3 stocks likely to move unusually, 09:45 final pick, result, paper ATM straddle entries and exits',
         kind='daily', due=dt.time(9, 25), grace=25, files=['v132/picks.jsonl'], thread='v132-movers')
     add(name='09:25 direction desk', group='V13.3 Direction desk', what='UP/DOWN lists for 30/60/90/120 min and the day',
         kind='daily', due=dt.time(9, 35), grace=25, files=['v133/days.jsonl', 'v133/scores_*.json.gz'], thread='v133-direction')
+    add(name='V13.4 relative-strength desk', group='V13.4 Relative-strength desk', what='11:15 / 12:15 / 13:15 picks far stronger or weaker than the market, 15:15 results',
+        kind='daily', due=dt.time(11, 20), grace=60, files=['v133/rs_days.jsonl'], thread='v133-orderflow')
+    add(name='NG desk ledger', group='MCX commodity desk', what='Natural gas playbook days, paper results and MCX ledger',
+        kind='event', files=['commodity_desk/ledger.jsonl', 'commodity_desk/mcx_ledger.jsonl'], thread=None)
     add(name='Setup A v1.1 scan', group='Setup A dip-buy', what='Nightly NIFTY-500 stress score, signals and paper ledger',
         kind='daily', due=dt.time(19, 15), grace=195, files=['v11/runs.jsonl', 'v11/summary.json'], thread='v11-setup-a')
     add(name='Setup A WIDE ledger', group='Setup A dip-buy', what='Second paper ledger with relaxed gates (F&O only)',

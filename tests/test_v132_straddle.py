@@ -40,3 +40,19 @@ def test_scorecard_splits_hit_and_miss():
              'straddle': {'s1': {'A': {'ret_pct': 40.0}, 'B': {'ret_pct': -30.0}}}}]
     s = m.scorecard(rows)['straddle_s1']
     assert (s['n'], s['win'], s['avg_hit'], s['avg_miss']) == (2, 50, 40.0, -30.0)
+
+
+def test_page_renders_straddle_table(monkeypatch):
+    import base64
+    from app import security, v132_movers
+    from app.web import app
+    monkeypatch.setenv("DBI_OWNER_PASSWORD", "t"); security.reset_security_state_for_tests()
+    st = {'status': 'OPEN', 'strike': 400.0, 'entry': 21.5, 'entry_pct_of_spot': 5.4, 'ce': {'spread_pct': 2.1}, 'pe': {'spread_pct': 3.0}, 'ret_pct': 35.2, 'win': True}
+    real = v132_movers.status()
+    today = {'date': '2026-10-13', 'scored': 213, 'market_gap_pct': 0.0, 'confident': True, 'top_prob_pct': 81.6, 'threshold_pct': 67.1, 'picks': [],
+             'news_ok': True, 'board_ok': True, 'straddle': {'s1': {'RBLBANK': st, 'XYZ': {'status': 'NO_OPTION', 'reason': 'CE spread 9%'}}}}
+    fake = dict(real, today=today, score=dict(real.get('score') or {}, straddle_s1={'n': 3, 'win': 67, 'avg_pct': 12.3, 'avg_hit': 30.0, 'avg_miss': -20.0}, straddle_s2={}))
+    monkeypatch.setattr(v132_movers, 'status', lambda: fake)
+    owner = {"Authorization": "Basic " + base64.b64encode(b"admin:t").decode()}
+    html = app.test_client().get('/admin/v130', headers=owner).data.decode()
+    assert 'Paper ATM straddle' in html and '+35.2%' in html and 'CE spread 9%' in html and 'Straddle paper record' in html

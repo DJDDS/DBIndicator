@@ -85,13 +85,29 @@
     }).join('');
   }
 
+  // ---- live clock: ticks every second in the browser, no refetch ----
+  function istParts() {
+    const f = new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit'}).formatToParts(new Date()), g = {};
+    f.forEach(p => g[p.type] = p.value); return {wd: g.weekday, h: +g.hour % 24, m: +g.minute, s: +g.second};
+  }
+  function tickClock() {
+    const el = $('mo-upd'); if (!el) return;
+    const t = istParts(), mins = t.h * 60 + t.m, wk = !['Sat', 'Sun'].includes(t.wd), open = wk && mins >= 555 && mins < 930, pre = wk && mins >= 540 && mins < 555;
+    const fmt2 = n => String(n).padStart(2, '0'), left = open ? 930 - mins : (pre ? 555 - mins : 0), lt = left ? (left >= 60 ? Math.floor(left / 60) + 'h ' + fmt2(left % 60) + 'm' : left + 'm') : '';
+    const state = open ? `<b class="up">● Market open</b> · closes in ${lt}` : pre ? `<b>◐ Pre-open</b> · opens in ${lt}` : '<b>○ Market closed</b>';
+    const q = el.dataset.q, qt = q ? Date.parse(q) : NaN, age = isFinite(qt) ? Math.max(0, Math.round((Date.now() - qt) / 1000)) : null;
+    const ageTxt = age == null ? '' : ` · quotes ${age < 90 ? age + 's' : Math.round(age / 60) + 'm'} ago`, stale = open && age != null && age > 120;
+    el.innerHTML = `${state}${stale ? ` <span class="dn">${ageTxt.trim()} (stale)</span>` : ageTxt} · ${fmt2(t.h)}:${fmt2(t.m)}:${fmt2(t.s)} IST`;
+  }
+  setInterval(() => { if (!document.hidden) tickClock(); }, 1000);
+
   function renderSec() {
     const m = (st.idx && st.idx.sector_movers) || {lead: [], lag: []}, el = $('mo-sec'); if (!st.idx) { el.hidden = true; return; }
     const tg = `<button type="button" class="mo-tg" data-span="${st.span === '1D' ? '3M' : '1D'}" title="Switch the index lines between today (5-min) and the last 3 months">Lines: ${st.span === '1D' ? 'Today' : '3M'} ⇄</button>`;
     const bd = st.idx.breadth, adv = bd ? Math.round(100 * bd.up / Math.max(1, bd.up + bd.dn)) : null;
     const read = !bd ? '' : (adv >= 65 ? 'broad strength' : adv <= 35 ? 'broad weakness' : bd.gap != null && bd.gap > 0.4 ? 'index ahead of the average stock (narrow)' : bd.gap != null && bd.gap < -0.4 ? 'average stock ahead of the index' : 'mixed');
     const br = bd ? `<b>Breadth</b><span><span class="up">${bd.up}▲</span> / <span class="dn">${bd.dn}▼</span> (${adv}% up) · avg <span class="${cls(bd.avg)}">${pct(bd.avg)}</span> · ≥+1% ${bd.up1} · ≤−1% ${bd.dn1} · <i style="font-style:normal;color:var(--muted)">${read}</i></span>` : '';
-    el.innerHTML = `${br}<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd">${q ? 'quotes ' + q.replace('T', ' ').slice(11, 19) + ' IST' : ''}</span>${tg}`; el.hidden = false;
+    el.innerHTML = `${br}<b>Leading</b>${m.lead.map(chip).join('')}<b>Lagging</b>${m.lag.map(chip).join('')}<span class="upd" id="mo-upd" data-q="${esc(q || '')}"></span>${tg}`; el.hidden = false; tickClock();
     const b = el.querySelector('.mo-tg'); if (b) b.onclick = () => { st.span = b.dataset.span; try { localStorage.setItem('mo-span', st.span); } catch (e) {} renderIdx(); renderSec(); };
   }
 
