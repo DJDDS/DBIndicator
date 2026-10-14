@@ -1350,6 +1350,30 @@ def api_v133_settings():
     return jsonify(s)
 
 
+@app.route("/api/v135/settings", methods=["POST"])
+@require_roles(OWNER)
+def api_v135_settings():
+    from . import v133_direction
+    src = request.get_json(silent=True) or request.form
+    cur = v133_direction._read_json("v47_settings.json", {}) or {}
+    for k in ("min_group", "observe_n", "min_vol_days"):
+        if src.get(k) not in (None, ""):
+            try: cur[k] = int(src.get(k))
+            except (TypeError, ValueError): pass
+    for k in ("cost_bps", "min_eff", "min_volrel"):
+        if src.get(k) not in (None, ""):
+            try: cur[k] = float(src.get(k))
+            except (TypeError, ValueError): pass
+    for k in ("enabled", "down_only"):
+        if k in src: cur[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
+        elif src.get("_cb"): cur[k] = False
+    v133_direction._write_json("v47_settings.json", cur)
+    from . import v135_hierarchy
+    if request.form or not request.is_json:
+        return redirect("/admin/intraday#hierarchy")
+    return jsonify(v135_hierarchy.load_settings())
+
+
 @app.route("/api/v133/export")
 @require_roles(OWNER)
 def api_v133_export():

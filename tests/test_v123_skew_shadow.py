@@ -254,7 +254,7 @@ def test_dashboard_has_production_skew_opportunity_desk():
     assert 'id="skew-desk-reversal"' in html
     assert 'id="skew-desk-extremes"' in html
     assert "REVERSAL WATCH" in html
-    assert "Math Recorder, CALL V1, quant shadow, Trial 25 and missed-mover forensics remain separate and unchanged." in html
+    assert "Trial 25 and missed-mover forensics remain separate and unchanged." in html
 
 
 def test_live_skew_primary_carries_research_instrument_and_timing(tmp_path):

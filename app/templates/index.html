@@ -543,20 +543,6 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-mini .label{display:block;color:#66798c;font-size:8.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:800}
 .focus-mini .value{display:block;margin-top:3px;font:750 11px var(--mono);color:#d3dfe7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .focus-mini .subvalue{display:block;margin-top:3px;color:#708194;font-size:8.5px;line-height:1.35}
-.focus-call-v1{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:8px;padding:9px 10px;border:1px solid #2a3948;border-radius:8px;background:rgba(7,12,17,.62)}
-.focus-call-v1.pass{border-color:#256447;background:rgba(22,199,132,.065)}
-.focus-call-v1.warming,.focus-call-v1.below_gate{border-color:#806526;background:rgba(240,185,11,.055)}
-.focus-call-v1.blocked,.focus-call-v1.not_applicable{border-color:#5c4141;background:rgba(217,139,136,.04)}
-.focus-call-v1 .left{min-width:0}
-.focus-call-v1 .title{font-size:9px;text-transform:uppercase;letter-spacing:.08em;font-weight:850;color:#8294a6}
-.focus-call-v1 .decision{margin-top:3px;font:850 12px var(--mono);color:#dbe7ef}
-.focus-call-v1.pass .decision{color:#83d9ae}
-.focus-call-v1.warming .decision,.focus-call-v1.below_gate .decision{color:#dfc56f}
-.focus-call-v1.blocked .decision,.focus-call-v1.not_applicable .decision{color:#d7928f}
-.focus-call-v1 .detail{margin-top:4px;color:#7d8fa1;font-size:9px;line-height:1.4}
-.focus-call-v1 .action{flex:0 0 auto;text-align:right;font-size:9px;font-weight:850;line-height:1.4;color:#94a6b7}
-.focus-call-v1.pass .action{color:#83d9ae}
-.focus-call-v1.below_gate .action,.focus-call-v1.warming .action{color:#dfc56f}
 .focus-math{margin-top:8px;padding:8px 9px;border:1px dashed #31516a;border-radius:8px;background:rgba(44,105,145,.055)}
 .focus-math-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:6px}
 .focus-math-head strong{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;color:#82b8d3}
@@ -994,7 +980,7 @@ button, a, summary, input, select { touch-action: manipulation; }
     <strong style="color:#c9d3dc">Hidden (failed live/forward checks, 1 Oct 2026):</strong>
     Skew desk &amp; recorder (116-day OOS: +1 bps/day) · Tactical Option Console (379 episodes, 0.0%, median 44 s) ·
     Opportunity radar / decision console (2,500 picks, no edge) · Event early detection (all families negative after cost) ·
-    Continuation watch (32% vs 33% break-even). All recorder panels (option edge, index volatility, Trial 25, skew, Math, CALL V1) are hidden by request. Recorders keep collecting. <a href="/?show_retired=1">Show retired panels</a>
+    Continuation watch (32% vs 33% break-even). All recorder panels (option edge, index volatility, Trial 25, skew) are hidden by request. Recorders keep collecting. <a href="/?show_retired=1">Show retired panels</a>
   </div>
   {% endif %}
   <section id="skew-opportunity-desk"{% if not show_retired %} hidden data-retired="1"{% endif %} class="skew-opportunity" aria-label="Production research skew opportunity desk">
@@ -1029,7 +1015,7 @@ button, a, summary, input, select { touch-action: manipulation; }
     </div>
     <div class="foot">
       <span><strong>Colour guide:</strong> GREEN = research entry window (anchor to +15m); AMBER = late/reversal track only; RED = no fresh trade. Futures are the primary research vehicle; options are only marked eligible when the relevant ATM spread is ≤3%.</span>
-      <span><strong>No auto-orders.</strong> Math Recorder, CALL V1, quant shadow, Trial 25 and missed-mover forensics remain separate and unchanged.</span>
+      <span><strong>No auto-orders.</strong> Trial 25 and missed-mover forensics remain separate and unchanged.</span>
     </div>
   </section>
 
@@ -1050,7 +1036,6 @@ button, a, summary, input, select { touch-action: manipulation; }
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Directional Spots"><span>Directional spots</span><strong id="v123-kpi-building">0</strong><small>locked regime · pre-entry only</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
-      <div class="focus-kpi"{% if not show_retired %} hidden data-retired="1"{% endif %}><span>CALL V1 recorder</span><strong id="v123-kpi-callrec">WAIT</strong><small id="v123-kpi-callrec-sub">live bid/ask forward validation</small></div>
     </div>
 
     <div class="focus-workspace">
@@ -1060,7 +1045,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       </main>
       <aside class="focus-sidebar">
         <div id="v123-call-scouts-section" class="focus-sidebar-block focus-jump-target">
-          <div class="focus-section-head"><h3>Scouts — Call &amp; Put</h3><span>significant movers outside Focus, both sides · bullish scored by CALL V1 · all recorded for order flow</span></div>
+          <div class="focus-section-head"><h3>Scouts — Call &amp; Put</h3><span>significant movers outside Focus, both sides · all recorded for order flow</span></div>
           <div id="v123-call-scouts" class="focus-list"><div class="focus-empty">No scout is being watched right now.</div></div>
         </div>
         <div id="v123-focus-building-section" class="focus-sidebar-block focus-jump-target">
@@ -2058,88 +2043,6 @@ button, a, summary, input, select { touch-action: manipulation; }
       var zoneDistance=Number(zoneObj.distance_atr);
       var maxOptionPay=Number(row.max_option_entry_price);
       var signalAge=Number(row.signal_age_seconds);
-      var callV1=row.call_execution_candidate||{};
-      var callV1State=String(callV1.state||'').toUpperCase();
-      var callV1Prob=Number(callV1.probability);
-      var callV1Threshold=Number(callV1.threshold);
-      var callV1Contract=String(callV1.selected_contract||'');
-      var callV1Spread=Number(callV1.selected_spread_pct);
-      var callV1Delta=Number(callV1.selected_delta_abs);
-      var callV1Hold=Number(callV1.evaluation_horizon_seconds);
-      var callV1Age=Number(callV1.pass_age_seconds);
-      var callV1AgeLabel=String(callV1.pass_age_label||'');
-      var callV1AgeText='';
-      if(Number.isFinite(callV1Age)){
-        if(callV1Age<60) callV1AgeText=n(callV1Age,0)+'s';
-        else callV1AgeText=Math.floor(callV1Age/60)+'m '+String(Math.floor(callV1Age%60)).padStart(2,'0')+'s';
-      }
-      var callV1Decision='';
-      var callV1Action='';
-      var callV1Detail='';
-      var callV1Win=callV1.trade_window||null;
-      function mmss(sec){sec=Math.max(0,Math.round(Number(sec)||0));return Math.floor(sec/60)+'m '+String(sec%60).padStart(2,'0')+'s';}
-      if(dir!=='Bearish' && callV1Win && callV1Win.contract){
-        // A PASS opens a trade window for the configured hold (default = 5-min
-        // model horizon; longer holds are being forward-tested, not assumed).
-        var winAsk=Number(callV1Win.reference_ask), winP=Number(callV1Win.signal_probability);
-        var liveAsk=Number(callV1Win.live_ask);
-        if(String(callV1Win.phase)==='ENTRY_OPEN' && callV1Win.entry_price_ok===false){
-          callV1State='PASS';
-          callV1Decision='CALL V1 PRICE MOVED · '+n(callV1Win.entry_seconds_left,0)+'s left';
-          callV1Action="DON'T CHASE"+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):' · no fresh quote');
-        }else if(String(callV1Win.phase)==='ENTRY_OPEN'){
-          callV1State='PASS';
-          callV1Decision='CALL V1 ENTRY OPEN · '+n(callV1Win.entry_seconds_left,0)+'s left';
-          callV1Action='CALL ENTRY WINDOW'+(Number.isFinite(liveAsk)?' · ask '+n(liveAsk,2):'');
-        }else{
-          callV1State='PASS';
-          var pnl=Number(callV1Win.running_pnl_pct);
-          callV1Decision=(callV1Win.stop_hit?'CALL V1 STOP HIT · exit now':'CALL V1 HOLDING · exit in '+mmss(callV1Win.hold_seconds_left));
-          callV1Action=(callV1Win.stop_hit?'EXIT · premium down 25%':'HOLD · NO NEW ENTRY')+
-            (Number.isFinite(pnl)?' · P&L '+(pnl>=0?'+':'')+n(pnl,1)+'%':'')+
-            (callV1Win.beyond_model_horizon?' · past 5m model horizon (extended hold, testing)':'');
-        }
-        callV1Detail=String(callV1Win.contract)+
-          (Number.isFinite(winAsk)?' · ref ask '+n(winAsk,2)+' (do not chase above)':'')+
-          (Number.isFinite(winP)?' · signal p '+n(winP,3):'')+
-          ' · signal '+String(callV1Win.signal_minute||'').slice(11,16)+
-          ' · exit '+String(callV1Win.exit_at||'').slice(11,19)+
-          ' · now: '+(String(callV1.state||'').toUpperCase()==='PASS'?'still PASS':'below gate (trade unchanged)');
-      }else if(dir==='Bearish'){
-        callV1State='NOT_APPLICABLE';
-        callV1Decision='PE execution model not validated';
-        callV1Action='NO PE DECISION';
-        callV1Detail='Bearish underlying evidence may still be valid, but PUT V1 failed historical OOS and is not deployed.';
-      }else if(callV1State==='PASS'){
-        callV1Decision='CALL V1 PASS'+(callV1AgeText?' · '+callV1AgeText:'')+(callV1AgeLabel?' · '+callV1AgeLabel:'');
-        callV1Action='CALL CANDIDATE';
-        callV1Detail=(Number.isFinite(callV1Prob)?'p '+n(callV1Prob,3):'')+
-          (Number.isFinite(callV1Threshold)?' / gate '+n(callV1Threshold,3):'')+
-          (callV1Contract?' · '+callV1Contract:'')+
-          (Number.isFinite(callV1Spread)?' · spread '+n(callV1Spread,2)+'%':'')+
-          (Number.isFinite(callV1Delta)?' · |Δ| '+n(callV1Delta,2):'')+
-          (Number.isFinite(callV1Hold)?' · '+n(callV1Hold/60,0)+'m horizon':'')+
-          ' · PASS age is descriptive only, not extra confidence';
-      }else if(callV1State==='BELOW_GATE'){
-        callV1Decision='CALL V1 BELOW GATE';
-        callV1Action='SKIP CALL';
-        callV1Detail=(Number.isFinite(callV1Prob)?'p '+n(callV1Prob,3):'')+
-          (Number.isFinite(callV1Threshold)?' / gate '+n(callV1Threshold,3):'')+
-          (callV1Contract?' · best '+callV1Contract:'');
-      }else if(callV1State==='WARMING'){
-        callV1Decision='CALL V1 WARMING';
-        callV1Action='WAIT';
-        callV1Detail='Building same-contract 1m / 3m / 5m option history before scoring.';
-      }else if(callV1State==='BLOCKED'){
-        callV1Decision='CALL V1 BLOCKED';
-        callV1Action='NO ENTRY';
-        callV1Detail=String(callV1.reason||'No quoted ATM±1 CALL contract passes live execution checks.');
-      }else{
-        callV1State=callV1State||'NOT_APPLICABLE';
-        callV1Decision='CALL V1 '+callV1State.replaceAll('_',' ');
-        callV1Action='WAIT';
-        callV1Detail=String(callV1.reason||'Bullish CALL execution evidence not available yet.');
-      }
       var freshLine=fresh===false
         ? '<div class="focus-fresh wait">Fresh-entry gate: waiting for new structure / re-arm evidence</div>'
         : (freshReason && freshReason!=='OPEN_EPISODE_OR_FIRST_SIGNAL'
@@ -2179,12 +2082,6 @@ button, a, summary, input, select { touch-action: manipulation; }
             (Number.isFinite(movementP)?'move p '+movementP.toExponential(2):'move p —')+
             (Number.isFinite(structureP)?' · structure p '+structureP.toExponential(2):' · structure forming')+
             (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
-        '</div>'+
-        '<div class="focus-call-v1 '+v12Esc(callV1State.toLowerCase())+'">'+
-          '<div class="left"><div class="title">Option execution decision · research candidate</div>'+
-          '<div class="decision">'+v12Esc(callV1Decision)+'</div>'+
-          '<div class="detail">'+v12Esc(callV1Detail)+'</div></div>'+
-          '<div class="action">'+v12Esc(callV1Action)+'</div>'+
         '</div>'+
         '<div class="focus-vehicles">'+
           '<span class="focus-vehicle'+(zoneState==='IN_ZONE'?' good':(zoneState==='EXTENDED'||zoneState==='INVALID'?' bad':' warn'))+'">ZONE '+v12Esc(zoneState.replaceAll('_',' '))+'</span>'+
@@ -2226,39 +2123,17 @@ button, a, summary, input, select { touch-action: manipulation; }
     setText('v123-kpi-building',building.length);
     setText('v123-kpi-continuation',continuation.length);
     setText('v123-kpi-missed',Number.isFinite(coverageMisses)?coverageMisses:misses.length);
-    var callRec=tactical.call_v1_forward_recorder||{};
-    setText('v123-kpi-callrec',callRec.status==='RECORDING_FORWARD'?'LIVE':'WAIT');
-    setText('v123-kpi-callrec-sub',callRec.status==='RECORDING_FORWARD'
-      ? String(callRec.entries||0)+' entries · '+String(callRec.completed||0)+' complete · '+String(callRec.open_events||0)+' open'
-      : 'live bid/ask forward validation');
-
     (function renderCallScouts(){
       var box=document.getElementById('v123-call-scouts'); if(!box) return;
       var cands=Array.isArray(tactical.candidates)?tactical.candidates:[];
-      var scouts=cands.filter(function(r){return r&&(r.call_v1_scout||r.flow_scout);});
-      if(!scouts.length){box.innerHTML='<div class="focus-empty">No bullish scout is being scored right now.</div>';return;}
+      var scouts=cands.filter(function(r){return r&&r.flow_scout;});
+      if(!scouts.length){box.innerHTML='<div class="focus-empty">No scout is being recorded right now.</div>';return;}
       function esc2(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
       box.innerHTML=scouts.map(function(r){
-        var c=r.call_execution_candidate||{}, w=c.trade_window||null, st=String(c.state||'WAIT').toUpperCase();
-        var line, isPut=String(r.scout_side||'')==='PUT'||String(r.direction||'')==='Bearish';
-        if(isPut){
-          line='PUT side · order flow recording (no validated put model yet — watch only)';
-          w=null;
-        }else if(w&&w.contract){
-          line=(String(w.phase)==='ENTRY_OPEN'
-            ?(w.entry_price_ok===false?'PRICE MOVED · don\'t chase':'ENTRY OPEN · '+Math.round(Number(w.entry_seconds_left)||0)+'s left')
-            :(w.stop_hit?'STOP HIT · exit now':'HOLDING · exit '+String(w.exit_at||'').slice(11,19))+
-              (Number.isFinite(Number(w.running_pnl_pct))?' · P&L '+(Number(w.running_pnl_pct)>=0?'+':'')+Number(w.running_pnl_pct).toFixed(1)+'%':''))+' · '+esc2(w.contract)+
-            (Number.isFinite(Number(w.reference_ask))?' · ref ask '+Number(w.reference_ask).toFixed(2):'');
-        }else if(st==='BELOW_GATE'){
-          line='below gate · p '+(Number.isFinite(Number(c.probability))?Number(c.probability).toFixed(3):'—');
-        }else{
-          line=st.replace(/_/g,' ').toLowerCase()+(c.reason?' · '+esc2(c.reason):'');
-        }
-        var cls=w&&w.contract?(String(w.phase)==='ENTRY_OPEN'&&w.entry_price_ok!==false?'pass':'hold'):'wait';
-        return '<div class="focus-card scout '+cls+'"><div class="focus-card-head"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc2(r.symbol)+'</a>'+
+        var isPut=String(r.scout_side||'')==='PUT'||String(r.direction||'')==='Bearish';
+        return '<div class="focus-card scout wait"><div class="focus-card-head"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc2(r.symbol)+'</a>'+
           (isPut?' <span class="side bearish">Bearish scout</span>':' <span class="side bullish">Bullish scout</span>')+(Number.isFinite(Number(r.live_price))?' · CMP '+Number(r.live_price).toFixed(2):'')+'</div>'+
-          '<div class="focus-meta">'+(isPut?'':'CALL V1: ')+line+'</div></div>';
+          '<div class="focus-meta">Order flow recording · watch only</div></div>';
       }).join('');
     })();
     fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');

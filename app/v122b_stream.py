@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import median
 from typing import Callable
 
-from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical, v3_call_execution, v3_call_forward_recorder
+from . import derivative_intelligence, scanner, v12_earnings_calendar, v122b_tactical
 from . import v124_orderflow_recorder
 
 
@@ -53,37 +53,6 @@ def _dt(v):
         return dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
-
-
-def _annotate_call_v1_pass_age(store, symbol, candidate, now):
-    """Attach display-only persistence metadata to the current CALL V1 PASS."""
-    out = dict(candidate or {})
-    symbol = str(symbol or "")
-    contract = str(out.get("selected_contract") or "")
-    is_pass = bool(out.get("pass")) and str(out.get("state") or "").upper() == "PASS"
-    if not is_pass or not symbol or not contract:
-        store.pop(symbol, None)
-        out["pass_since"] = None
-        out["pass_age_seconds"] = None
-        out["pass_age_label"] = None
-        return out
-
-    prev = store.get(symbol) or {}
-    since = prev.get("since") if str(prev.get("contract") or "") == contract else None
-    if not isinstance(since, dt.datetime):
-        since = now
-    store[symbol] = {"contract": contract, "since": since}
-    age = max(0.0, (now - since).total_seconds())
-    if age < 30:
-        label = "FRESH"
-    elif age < 180:
-        label = "PERSISTING"
-    else:
-        label = "EXTENDED"
-    out["pass_since"] = _iso(since)
-    out["pass_age_seconds"] = round(age, 1)
-    out["pass_age_label"] = label
-    return out
 
 
 def _ticker_factory(api_key, access_token):
@@ -159,18 +128,6 @@ class TacticalStockStreamService:
             str(Path(event_file).with_name("v123_continuation_shadow.jsonl"))
             if event_file else None
         )
-        self.call_v1_forward_file = (
-            str(Path(event_file).with_name("v3_call_v1_forward.jsonl"))
-            if event_file else None
-        )
-        self.call_v1_forward_state_file = (
-            str(Path(event_file).with_name("v3_call_v1_forward_state.json"))
-            if event_file else None
-        )
-        self._call_v1_forward = v3_call_forward_recorder.CallV1ForwardRecorder(
-            self.call_v1_forward_file,
-            self.call_v1_forward_state_file,
-        )
         self.orderflow_file = (
             str(Path(event_file).with_name("v124_orderflow_minutes.jsonl"))
             if event_file else None
@@ -199,11 +156,9 @@ class TacticalStockStreamService:
         self._depth_samples = defaultdict(lambda: deque(maxlen=180))
         self._basis_samples = defaultdict(lambda: deque(maxlen=180))
         self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
-        # Bounded live option history for the frozen CALL_EXECUTION_CANDIDATE_V1 scorer.
+        # Bounded live option history for the option-route checks.
         # This is read-only evidence; it never places orders or mutates the underlying thesis.
         self._option_samples = defaultdict(lambda: deque(maxlen=1200))
-        self._call_v1_pass_state = {}
-        self._call_v1_latch = v3_call_execution.MinuteDecisionLatch()
         self._lifecycle = {}
         self._last_states = {}
         self._transition_ids = set()
@@ -353,8 +308,6 @@ class TacticalStockStreamService:
             self._basis_samples = defaultdict(lambda: deque(maxlen=180))
             self._cash_samples = defaultdict(lambda: deque(maxlen=1800))
             self._option_samples = defaultdict(lambda: deque(maxlen=1200))
-            self._call_v1_pass_state = {}
-            self._call_v1_latch = v3_call_execution.MinuteDecisionLatch()
             self._orderflow.reset()
             self._lifecycle = {}
             self._last_states = {}
@@ -476,8 +429,7 @@ class TacticalStockStreamService:
         self.sleep_fn(0.38)
 
     def _resolve_universe(self, kite, candidates, now):
-        forward_refs = self._call_v1_forward.active_subscriptions()
-        requested_cash = [x.get("symbol") for x in candidates] + [x.get("symbol") for x in forward_refs]
+        requested_cash = [x.get("symbol") for x in candidates]
         cash_map = scanner.cached_nse_instrument_tokens(requested_cash)
         fut_map = scanner.get_futures_contracts_map(kite)
         opt_map = derivative_intelligence.get_option_contracts_map(kite)
@@ -531,39 +483,6 @@ class TacticalStockStreamService:
                             "strike": con.get("strike"), "expiry": con.get("expiry"),
                             "lot_size": con.get("lot_size"),
                         }
-
-        # Keep exact CALL V1 forward-study contracts and their underlying cash
-        # subscribed through +10m even if the name temporarily leaves Focus.
-        candidate_symbols = {str(x.get("symbol") or "") for x in candidates}
-        for ref in forward_refs:
-            symbol = str((ref or {}).get("symbol") or "")
-            contract_symbol = str((ref or {}).get("contract") or "")
-            if not symbol or not contract_symbol:
-                continue
-            if symbol not in candidate_symbols:
-                cash_token = cash_map.get(symbol)
-                if cash_token:
-                    metadata[int(cash_token)] = {
-                        "kind": "CASH", "symbol": symbol, "tradingsymbol": symbol
-                    }
-            exact = next(
-                (
-                    row for row in list(opt_map.get(symbol) or [])
-                    if str(row.get("tradingsymbol") or "") == contract_symbol
-                ),
-                None,
-            )
-            if exact and exact.get("instrument_token"):
-                tok = int(exact["instrument_token"])
-                metadata[tok] = {
-                    "kind": "OPTION", "symbol": symbol,
-                    "tradingsymbol": exact.get("tradingsymbol"),
-                    "instrument_token": tok,
-                    "instrument_type": exact.get("instrument_type"),
-                    "strike": exact.get("strike"),
-                    "expiry": exact.get("expiry"),
-                    "lot_size": exact.get("lot_size"),
-                }
 
         # Subscribe to NIFTY spot as a light 3m relative-move witness.
         try:
@@ -641,7 +560,7 @@ class TacticalStockStreamService:
                 snap = None
             if snap:
                 snap["lot_size"] = meta.get("lot_size")
-                # Quote age lets CALL V1 refuse a stale last mid that would
+                # Quote age lets the route check refuse a stale last mid that would
                 # otherwise look like a premium move.
                 snap["quote_age_s"] = self._tick_age(tick, now)
                 out.append(snap)
@@ -1331,50 +1250,6 @@ class TacticalStockStreamService:
             "last_error": last_error,
         }
 
-    def _record_call_v1_forward_outcomes(self, now, metadata, ticks):
-        refs = self._call_v1_forward.active_subscriptions()
-        for ref in refs:
-            symbol = str((ref or {}).get("symbol") or "")
-            contract_symbol = str((ref or {}).get("contract") or "")
-            if not symbol or not contract_symbol:
-                continue
-            cash_tok = next(
-                (
-                    tok for tok, meta in metadata.items()
-                    if meta.get("kind") == "CASH" and meta.get("symbol") == symbol
-                ),
-                None,
-            )
-            option_tok = next(
-                (
-                    tok for tok, meta in metadata.items()
-                    if meta.get("kind") == "OPTION"
-                    and str(meta.get("tradingsymbol") or "") == contract_symbol
-                ),
-                None,
-            )
-            cash_tick = ticks.get(cash_tok) or {}
-            option_tick = ticks.get(option_tok) or {}
-            spot = _f(cash_tick.get("last_price"))
-            snapshot = None
-            if option_tok is not None and spot is not None and spot > 0:
-                try:
-                    snapshot = derivative_intelligence.contract_snapshot(
-                        metadata.get(option_tok) or {},
-                        option_tick,
-                        spot,
-                        now,
-                    )
-                except Exception:
-                    snapshot = None
-            self._call_v1_forward.observe_market(
-                now=now,
-                symbol=symbol,
-                contract=contract_symbol,
-                spot=spot,
-                snapshot=snapshot or {},
-            )
-
     def _evaluate(self, now):
         self._maybe_reset_session(now)
         feed_health = self._feed_health(now)
@@ -1486,57 +1361,6 @@ class TacticalStockStreamService:
                     "structure_horizon_seconds": candidate.get("movement_horizon_seconds"),
                     "route_tradeable": False,
                 }
-
-            call_direction = setup.get("direction") or direction
-            underlying_stale = cash_age is None or cash_age > self.stale_seconds
-
-            def _score_call_v1(scored_at):
-                # Never score on a stale underlying: the frozen model's spot
-                # features would be missing/old and could fake a PASS.
-                if underlying_stale and str(call_direction) == "Bullish":
-                    return v3_call_execution.blocked_result(
-                        f"underlying feed stale (cash tick age {cash_age if cash_age is not None else 'n/a'}s)",
-                        code="UNDERLYING_STALE",
-                    )
-                return v3_call_execution.evaluate_call_candidates(
-                    option_snaps,
-                    self._option_samples,
-                    price_samples,
-                    now=scored_at,
-                    direction=call_direction,
-                    spot=live_price,
-                )
-
-            # Score once per minute (the frozen model's sampling) and keep a
-            # PASS actionable for its 5-minute trade window.
-            call_execution_candidate = self._call_v1_latch.decide(
-                symbol,
-                call_direction,
-                now,
-                _score_call_v1,
-                live_snaps=option_snaps,
-            )
-            call_execution_candidate = _annotate_call_v1_pass_age(
-                self._call_v1_pass_state,
-                symbol,
-                call_execution_candidate,
-                now,
-            )
-            selected_call_snapshot = next(
-                (
-                    snap for snap in option_snaps
-                    if str((snap or {}).get("symbol") or "")
-                    == str(call_execution_candidate.get("selected_contract") or "")
-                ),
-                None,
-            )
-            self._call_v1_forward.observe_signal(
-                now=now,
-                symbol=symbol,
-                spot=live_price,
-                candidate=call_execution_candidate,
-                contract_snapshot=selected_call_snapshot,
-            )
 
             five_minute = v122b_tactical.five_minute_witness(
                 setup.get("direction") or direction,
@@ -1799,15 +1623,9 @@ class TacticalStockStreamService:
                 "fast_veto": fast,
                 "earnings": event,
                 "option_route": option_route,
-                "call_execution_candidate": call_execution_candidate,
-                "call_v1_scout": bool(candidate.get("call_v1_scout")),
                 "flow_scout": bool(candidate.get("flow_scout")),
                 "scout_side": candidate.get("scout_side"),
                 "candidate_lifecycle": candidate.get("focus_lifecycle"),
-                "call_execution_candidate_pass": bool(call_execution_candidate.get("pass")),
-                "call_execution_candidate_contract": call_execution_candidate.get("selected_contract"),
-                "call_execution_candidate_probability": call_execution_candidate.get("probability"),
-                "call_execution_candidate_hold_seconds": call_execution_candidate.get("evaluation_horizon_seconds"),
                 "best_option_contract": (option_route.get("contract") or {}).get("symbol"),
                 "best_option_strike": (option_route.get("contract") or {}).get("strike"),
                 "best_option_expiry": (option_route.get("contract") or {}).get("expiry"),
@@ -1850,9 +1668,6 @@ class TacticalStockStreamService:
             if state.get("state") in ("EXIT", "TIME_EXIT", "CANCELLED"):
                 self._reset_trigger(life)
 
-        # Record any due +1m/+3m/+5m/+10m outcomes after processing current PASS transitions.
-        self._record_call_v1_forward_outcomes(now, metadata, ticks)
-
         priority = {
             "TRADEABLE": 10, "PROFIT_PROTECT": 9, "READY": 8, "TRIGGERED": 7,
             "ROUTE_DEGRADED": 7, "FORMING": 6, "OPTION_NOT_TRADEABLE": 5, "TIME_EXIT": 4,
@@ -1877,7 +1692,6 @@ class TacticalStockStreamService:
                 "file": Path(self.continuation_file).name if self.continuation_file else None,
                 "controls_trading": False,
             },
-            "call_v1_forward_recorder": self._call_v1_forward.status(),
             "rules": {
                 "pool_max": v122b_tactical.TACTICAL_POOL_MAX,
                 "pre_result_next_month_dte_lte": v122b_tactical.PROPOSED_PRE_RESULT_NEXT_MONTH_DTE,
@@ -1887,14 +1701,6 @@ class TacticalStockStreamService:
                 "risk_plan_trailing_method": "ADAPTIVE_EVIDENCE_PERSISTENCE",
                 "risk_plan_atr3_shadow_length": v122b_tactical.RISK_PLAN_ATR3_LENGTH,
                 "risk_plan_controls_trading": False,
-                "call_execution_candidate_v1": {
-                    "direction": "Bullish",
-                    "threshold": v3_call_execution.MODEL_THRESHOLD,
-                    "hold_seconds": v3_call_execution.EVALUATION_HORIZON_SECONDS,
-                    "max_live_spread_pct": v3_call_execution.MAX_LIVE_SPREAD_PCT,
-                    "controls_trading": False,
-                    "validation_label": v3_call_execution.VALIDATION_LABEL,
-                },
             },
         })
 

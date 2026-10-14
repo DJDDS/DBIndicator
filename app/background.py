@@ -2099,26 +2099,24 @@ def _v122b_candidate_provider():
         for row in rows:
             row["option_preeligible"] = True
             row["option_preeligibility_source"] = "V12_10D_FREEZE"
-    return _with_call_v1_scouts(rows, focus_state, observer, results, eligible)
+    return _with_flow_scouts(rows, focus_state, observer, results, eligible)
 
 
-CALL_V1_MAX_SCOUTS = 4
+FLOW_MAX_SCOUTS = 4
 
 
-def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
-    """Give CALL V1 more chances without widening the Focus desk.
+def _with_flow_scouts(rows, focus_state, observer, results, eligible):
+    """Fill free tactical-pool slots with order-flow scouts.
 
-    Focus holds at most six names, so on most days only one or two bullish
-    stocks ever reached CALL V1. Free tactical-pool slots are now filled with
-    "CALL scouts": bullish, family-wise significant multiscale movers that did
-    not fit on the Focus desk, ranked by |z|. They are subscribed and scored by
-    the frozen CALL V1 model only; Focus/lifecycle logic is unchanged.
+    Scouts are family-wise significant multiscale movers that did not fit on
+    the Focus desk, ranked by |z|, subscribed so the order-flow recorder sees
+    them. Focus/lifecycle logic is unchanged.
     Ordering: Focus names, then scouts, then continuation alumni (whose
     shadow evidence failed the 1 Oct review).
 
     Scouts are taken from both sides, alternating bullish/bearish by |z|
     (bullish first), so the order-flow recorder sees falling stocks too and
-    the put side gets data. Bearish scouts are never scored by CALL V1.
+    the put side gets data.
     """
     pool_max = v122b_tactical.TACTICAL_POOL_MAX
     continuation = set((focus_state.get("continuation_watch") or {}).keys())
@@ -2149,7 +2147,6 @@ def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
         base.update({
             "symbol": symbol, "direction": direction, "trade_direction": direction,
             "focus_lifecycle": "CALL_SCOUT" if direction == "Bullish" else "PUT_SCOUT",
-            "call_v1_scout": direction == "Bullish",
             "flow_scout": True, "scout_side": "CALL" if direction == "Bullish" else "PUT",
             "movement_z": ev.get("movement_z"), "movement_p_value": p,
             "movement_familywise_alpha": alpha,
@@ -2174,7 +2171,7 @@ def _with_call_v1_scouts(rows, focus_state, observer, results, eligible):
         if bears:
             ordered.append(bears.pop(0))
     free = max(0, pool_max - len(primary))
-    return (primary + ordered[:min(CALL_V1_MAX_SCOUTS, free)] + alumni)[:pool_max]
+    return (primary + ordered[:min(FLOW_MAX_SCOUTS, free)] + alumni)[:pool_max]
 
 
 def _update_v123_focus(observer=None, tactical=None, radar=None, results=None, now=None):

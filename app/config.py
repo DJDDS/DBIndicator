@@ -186,7 +186,7 @@ V123_FORENSIC_ROOT = os.getenv(
 )
 
 # 09:30 / 13:00 ATM CE-IV minus PE-IV cross-sectional skew SHADOW study.
-# Research-only. It is intentionally isolated from Math Recorder, CALL V1,
+# Research-only. It is intentionally isolated from other recorders,
 # Focus admission, alerts, and broker execution.
 V123_SKEW_SHADOW_STATE_FILE = os.getenv(
     "V123_SKEW_SHADOW_STATE_FILE",

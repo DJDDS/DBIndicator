@@ -99,6 +99,8 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='daily', due=dt.time(9, 35), grace=25, files=['v133/days.jsonl', 'v133/scores_*.json.gz'], thread='v133-direction')
     add(name='V13.4 relative-strength desk', group='V13.4 Relative-strength desk', what='11:15 / 12:15 / 13:15 picks far stronger or weaker than the market, 15:15 results',
         kind='daily', due=dt.time(11, 20), grace=60, files=['v133/rs_days.jsonl'], thread='v133-orderflow')
+    add(name='V13.5 hierarchy desk (V4.7, research)', group='V13.5 Hierarchy desk', what='09:45 market > industry > stock pick, candidates, rejected-candidate audit, +3/+5/+15/+30/+60 min and 15:15 outcomes',
+        kind='daily', due=dt.time(9, 50), grace=30, files=['v133/v47_days.jsonl', 'v133/v47_volhist.json'], thread='v133-orderflow')
     add(name='Order-flow lab (polls, bars, futures, scores)', group='V13.3 Direction desk', what='Every day\'s order-flow polls, 5-minute bars, futures and 09:25 model scores - the data for the research formula fit',
         kind='event', files=['v133/of_*.jsonl.gz', 'v133/of_*.jsonl', 'v133/of_*.json', 'v133/bars_*.json.gz', 'v133/futs_*.json', 'v133/of_lab.json'], thread=None)
     add(name='NG desk ledger', group='MCX commodity desk', what='Natural gas playbook days, paper results and MCX ledger',
@@ -115,7 +117,7 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='event', files=['trial25/trial25_event_ledger.jsonl', 'trial25/trial25_universe_ledger.jsonl', 'v12_earnings_ledger.jsonl'], thread=None)
     add(name='Index volatility recorder', group='V12 option research', what='NIFTY option micro-structure and depth, 5-second WebSocket',
         kind='live', files=['__INDEX_VOL__/*_micro.jsonl', '__INDEX_VOL__/*_micro.jsonl.gz', '__INDEX_VOL__/*_depth.jsonl', '__INDEX_VOL__/*_depth.jsonl.gz', 'v121_index_vol_state.json'], thread=None)
-    add(name='CALL V1 / tactical event recorder', group='V12 option research', what='Tactical stock-option events and CALL V1 forward records',
+    add(name='Tactical event recorder', group='V12 option research', what='Tactical stock-option events',
         kind='event', files=['v122b_tactical_events.jsonl', 'v122b_tactical_state.json'], thread=None)
     add(name='Universe live stream checkpoint', group='V12 option research', what='Full F&O underlying quote stream checkpoint',
         kind='live', files=['v123_market_checkpoint.json'], thread=None)
