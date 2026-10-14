@@ -76,15 +76,23 @@ def test_dashboard_template_compiles_in_flask_jinja_environment():
 
 
 
-def test_v123_focus_dashboard_is_professional_dynamic_workspace():
+def test_live_focus_desk_removed_but_swing_desk_still_renders():
+    # Live Focus Desk (app/v123_focus.py) had no forward-validation ledger at all - unlike
+    # Direction/RS/Hierarchy, nobody ever graded whether its READY/ACTIVE picks worked. Removed
+    # from the dashboard by member request (14 Oct 2026); backend keeps running quietly, raw
+    # state stays reachable via /api/v123-focus-state and /api/v123-continuation-shadow/export.
     text = Path('app/templates/index.html').read_text(encoding='utf-8')
     assert 'DBIndicator · NSE F&amp;O Command Center' in text
-    assert 'id="v123-kpi-active"' in text
-    assert 'id="v123-kpi-continuation"' in text
-    assert 'Shadow continuation mathematics' in text
-    assert 'Fresh-entry gate' in text
-    assert '/api/v123-continuation-shadow/export' in text
-    assert 'renderV123Focus(state.v123_focus_desk, state.v123_market_observer, state.v122b_tactical)' in text
+    assert 'id="v123-focus-desk"' not in text
+    assert 'Live Focus Desk' not in text
+    assert 'id="v123-kpi-active"' not in text
+    assert 'Shadow continuation mathematics' not in text
+    assert 'function renderV123Focus' not in text
+    # the slower 1D swing desk is a separate, still-live section and keeps rendering
+    assert 'id="v123-swing-desk"' in text
+    assert 'id="v123-swing-list"' in text
+    assert 'function renderV123Swing(desk)' in text
+    assert 'renderV123Swing(state.v123_focus_desk);' in text
 
 
 def test_web_exposes_continuation_shadow_export():
@@ -99,8 +107,10 @@ def test_live_dashboard_hides_unvalidated_sl_target_plan_but_keeps_research_pipe
     assert 'Dynamic SL / Target Plan' not in text
     assert '<strong>PLAN</strong>' not in text
     assert 'freshLine+riskHtml+mathHtml' not in text
-    assert 'Shadow continuation mathematics' in text
-    assert 'research only · does not control trade' in text
+    # The "shadow continuation mathematics" block lived inside Live Focus Desk's rowHtml renderer,
+    # which was removed along with the rest of that desk (14 Oct 2026 - no forward-validation ledger
+    # ever existed for it); it's gone from the dashboard entirely now, not merely hidden.
+    assert 'Shadow continuation mathematics' not in text
 
 
 def test_failed_panels_hidden_by_default_but_recoverable():
@@ -108,7 +118,7 @@ def test_failed_panels_hidden_by_default_but_recoverable():
     html = Path("app/templates/index.html").read_text(encoding="utf-8")
     assert "[data-retired]{display:none!important}" in html
     for pid in ("skew-opportunity-desk", "v122b-tactical-console", "v123-skew-shadow",
-                "v8-decision-console", "v123-focus-continuation-section"):
+                "v8-decision-console"):
         assert f'id="{pid}"{{% if not show_retired %}} hidden data-retired="1"{{% endif %}}' in html
     assert "/?show_retired=1" in html
     web = Path("app/web.py").read_text(encoding="utf-8")

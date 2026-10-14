@@ -488,33 +488,10 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-life{margin-left:auto;font-size:10px;border:1px solid #344455;border-radius:999px;padding:3px 7px;font-weight:800}
 .focus-action{margin-top:6px;font-size:12px;font-weight:800;color:#dce8ef}
 .focus-meta{margin-top:5px;font-size:10px;color:#91a1b2;line-height:1.5}
-.focus-vehicles{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
-.focus-vehicle{font-size:9px;border:1px solid #2d3947;border-radius:5px;padding:3px 6px;color:#91a1b2}
-.focus-vehicle.good{border-color:#23583f;color:#77c79f}.focus-vehicle.warn{border-color:#7d6426;color:#d7b75e}.focus-vehicle.bad{border-color:#663e3e;color:#d98b88}
-.focus-history{margin-top:7px;padding-top:6px;border-top:1px solid #202b37;font-size:9px;color:#718295;line-height:1.55}
 .focus-empty{padding:14px;border:1px dashed #2b3948;border-radius:8px;color:#7f8ea0;font-size:11px}
-.focus-miss{display:grid;grid-template-columns:minmax(80px,.7fr) 70px minmax(0,1.5fr);gap:8px;padding:7px 0;border-top:1px solid #1f2a35;font-size:10px}
-.focus-miss:first-child{border-top:0}.focus-miss strong{font-size:11px}.focus-miss .move{text-align:right}
 .focus-note{padding:10px 16px;border-top:1px solid #22303d;font-size:10px;color:#7f91a2;line-height:1.5}
 @media(max-width:900px){.focus-grid{grid-template-columns:1fr}.focus-pane+ .focus-pane{border-left:0;border-top:1px solid #22303d}.focus-status{white-space:normal}}
 
-
-/* V12.3 professional trading workspace */
-.focus-desk.focus-pro{border-color:#35566c;background:
-  radial-gradient(circle at 8% 0%,rgba(59,130,246,.10),transparent 33%),
-  linear-gradient(180deg,#0d141c 0%,#0a0f16 100%);box-shadow:0 16px 44px rgba(0,0,0,.22)}
-.focus-pro .focus-head{padding:18px 20px;background:rgba(7,11,16,.58);backdrop-filter:blur(8px)}
-.focus-pro .focus-head h2{font-size:20px;text-transform:none;letter-spacing:-.025em}
-.focus-pro .focus-status{display:flex;align-items:center;gap:7px;background:#0b131b}
-.focus-live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(22,199,132,.10)}
-.focus-kpis{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;padding:12px 16px;border-bottom:1px solid #21303d;background:rgba(8,13,19,.72)}
-.focus-kpi{padding:10px 11px;border:1px solid #263746;border-radius:9px;background:#0d151e;min-width:0}
-.focus-kpi span{display:block;color:#718397;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:750}
-.focus-kpi strong{display:block;margin-top:4px;font:800 17px var(--mono);color:#dce7ef}
-.focus-kpi small{display:block;margin-top:2px;color:#627487;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.focus-kpi-button{width:100%;font:inherit;text-align:left;color:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;transition:border-color .16s ease,background .16s ease,transform .16s ease}
-.focus-kpi-button:hover{border-color:#41647b;background:#111d28;transform:translateY(-1px)}
-.focus-kpi-button:focus-visible{outline:2px solid #6ea8fe;outline-offset:2px}
 
 /* Production research opportunity desk — validation in process */
 [data-retired]{display:none!important}
@@ -555,63 +532,6 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .skew-opportunity .foot{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;border-top:1px solid #30291c;background:#0a0f14;font-size:9px;color:#7d8994;line-height:1.4}
 @media(max-width:1050px){.skew-kpis{grid-template-columns:repeat(4,1fr)}.skew-board{grid-template-columns:1fr}.skew-lane+.skew-lane{border-left:0;border-top:1px solid #30291c}}
 @media(max-width:720px){.skew-opportunity .head{flex-direction:column}.skew-validation{white-space:normal}.skew-kpis{grid-template-columns:repeat(2,1fr)}.skew-guide{grid-template-columns:1fr}.skew-opportunity .foot{flex-direction:column}}
-.focus-jump-target{scroll-margin-top:88px}
-.focus-jump-target.focus-jump-flash{animation:focus-jump-flash .9s ease-out}
-@keyframes focus-jump-flash{0%{box-shadow:0 0 0 2px rgba(110,168,254,.62)}100%{box-shadow:none}}
-.focus-workspace{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.78fr);gap:0}
-.focus-primary{padding:14px 16px 16px;min-width:0}
-.focus-sidebar{padding:14px;border-left:1px solid #21303d;background:rgba(7,11,16,.35);min-width:0}
-.focus-section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 9px}
-.focus-section-head h3{margin:0;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#9cafc0}
-.focus-section-head span{font-size:9px;color:#687b8e}
-.focus-sidebar-block+.focus-sidebar-block{margin-top:15px;padding-top:14px;border-top:1px solid #1d2a35}
-.focus-pro .focus-list{gap:9px}
-.focus-pro .focus-row{position:relative;padding:12px 13px;border-radius:10px;background:linear-gradient(180deg,#101923,#0c131b);box-shadow:inset 0 1px 0 rgba(255,255,255,.018);transition:border-color .18s ease,transform .18s ease,background .18s ease}
-.focus-pro .focus-row:hover{transform:translateY(-1px);border-color:#3a536a}
-.focus-pro .focus-row.active,.focus-pro .focus-row.manage{background:linear-gradient(180deg,rgba(22,199,132,.055),#0c1518);border-color:#285f49}
-.focus-pro .focus-row.ready,.focus-pro .focus-row.reentry_ready{background:linear-gradient(180deg,rgba(240,185,11,.055),#14140d)}
-.focus-pro .focus-row.pullback,.focus-pro .focus-row.weakening{background:linear-gradient(180deg,rgba(240,185,11,.03),#12120e)}
-.focus-pro .focus-symbol{font-size:16px;letter-spacing:-.01em}
-.focus-pro .focus-life{font-family:var(--mono);font-size:9px}
-.focus-pro .focus-action{font-size:11px;color:#cfdbe5}
-.focus-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px}
-  .focus-card-grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-.focus-mini{border:1px solid #21303d;border-radius:8px;background:rgba(7,12,17,.52);padding:8px 9px;min-width:0}
-.focus-mini .label{display:block;color:#66798c;font-size:8.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:800}
-.focus-mini .value{display:block;margin-top:3px;font:750 11px var(--mono);color:#d3dfe7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.focus-mini .subvalue{display:block;margin-top:3px;color:#708194;font-size:8.5px;line-height:1.35}
-.focus-math{margin-top:8px;padding:8px 9px;border:1px dashed #31516a;border-radius:8px;background:rgba(44,105,145,.055)}
-.focus-math-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:6px}
-.focus-math-head strong{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;color:#82b8d3}
-.focus-math-head span{font-size:8px;color:#617b8c}
-.focus-math-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
-.focus-math-cell{min-width:0}
-.focus-math-cell span{display:block;color:#607588;font-size:7.5px;text-transform:uppercase;letter-spacing:.06em}
-.focus-math-cell b{display:block;margin-top:2px;font:700 10px var(--mono);color:#c9d8e1}
-.focus-fresh{margin-top:7px;font-size:9px;color:#7890a3}
-.focus-fresh.good{color:#79c79f}.focus-fresh.wait{color:#d6b45d}
-.focus-risk-plan{margin-top:8px;padding:9px 10px;border:1px solid #335341;border-radius:8px;background:linear-gradient(180deg,rgba(22,199,132,.055),rgba(9,18,15,.45))}
-.focus-risk-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:7px}
-.focus-risk-head strong{font-size:8.5px;text-transform:uppercase;letter-spacing:.09em;color:#83cfaa}
-.focus-risk-head span{font-size:8px;color:#6f8d7e}
-.focus-risk-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-.focus-risk-cell{min-width:0;border-left:2px solid #2a4036;padding-left:7px}
-.focus-risk-cell.stop{border-left-color:#a94f59}.focus-risk-cell.t1{border-left-color:#b99943}.focus-risk-cell.t2{border-left-color:#4e9b70}.focus-risk-cell.option{border-left-color:#426f96}
-.focus-risk-cell span{display:block;color:#637b6e;font-size:7.5px;text-transform:uppercase;letter-spacing:.06em}
-.focus-risk-cell b{display:block;margin-top:2px;font:750 11px var(--mono);color:#d3e2da}
-.focus-risk-cell small{display:block;margin-top:2px;color:#6b7d74;font-size:7.5px;line-height:1.25}
-.focus-risk-note{margin-top:6px;color:#71857a;font-size:8px;line-height:1.35}
-@media(max-width:720px){.focus-risk-grid{grid-template-columns:repeat(2,1fr)}}
-.focus-audit-grid{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #21303d}
-.focus-audit-pane{padding:13px 16px;min-width:0}
-.focus-audit-pane+.focus-audit-pane{border-left:1px solid #21303d}
-.focus-audit-pane h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#8fa3b6}
-.focus-pro .focus-miss{grid-template-columns:minmax(90px,.7fr) 64px minmax(0,1.7fr)}
-.focus-pro .focus-note{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 16px;background:#091017}
-.focus-note-links{display:flex;gap:10px;flex-wrap:wrap;white-space:nowrap}
-.focus-note-links a{text-decoration:none}
-@media(max-width:1050px){.focus-kpis{grid-template-columns:repeat(3,1fr)}.focus-workspace{grid-template-columns:1fr}.focus-sidebar{border-left:0;border-top:1px solid #21303d}.focus-card-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:720px){.focus-kpis{grid-template-columns:repeat(2,1fr)}.focus-card-grid{grid-template-columns:1fr}.focus-math-grid{grid-template-columns:repeat(3,1fr)}.focus-audit-grid{grid-template-columns:1fr}.focus-audit-pane+.focus-audit-pane{border-left:0;border-top:1px solid #21303d}.focus-pro .focus-note{align-items:flex-start;flex-direction:column}}
 
 
 /* MOBILE-RESPONSIVE-2026-09-27: presentation only; no scanner/research logic */
@@ -742,12 +662,11 @@ button, a, summary, input, select { touch-action: manipulation; }
   tr.filter-row input, tr.filter-row select { font-size: 16px; min-height: 40px; }
 
   .focus-desk { margin: 10px 0 12px; border-radius: 10px; }
-  .focus-head, .focus-pro .focus-head {
+  .focus-head {
     padding: 13px 12px;
     flex-direction: column;
     gap: 8px;
   }
-  .focus-pro .focus-head h2 { font-size: 19px; }
   .focus-kicker { font-size: 9.5px; line-height: 1.4; }
   .focus-sub { font-size: 11.5px; line-height: 1.55; }
   .focus-status {
@@ -756,52 +675,9 @@ button, a, summary, input, select { touch-action: manipulation; }
     padding: 5px 8px;
     white-space: normal;
   }
-  .focus-kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-    padding: 9px;
-  }
-  .focus-kpi { padding: 9px; }
-  .focus-kpi span { font-size: 9.5px; }
-  .focus-kpi strong { font-size: 16px; }
-  .focus-kpi small { font-size: 9.5px; white-space: normal; line-height: 1.3; }
-  .focus-primary, .focus-sidebar, .focus-audit-pane, .focus-pane { padding: 11px; }
-  .focus-section-head { align-items: flex-end; }
-  .focus-section-head h3, .focus-audit-pane h3 { font-size: 10.5px; }
-  .focus-section-head span { font-size: 9.5px; text-align: right; }
-  .focus-pro .focus-row { padding: 11px; border-radius: 9px; }
-  .focus-pro .focus-symbol { font-size: 17px; }
-  .focus-pro .focus-action { font-size: 12px; line-height: 1.4; }
+  .focus-pane { padding: 11px; }
   .focus-meta { font-size: 10.5px; line-height: 1.55; }
-  .focus-vehicle { font-size: 9.5px; padding: 4px 6px; }
-  .focus-history { font-size: 9.5px; }
-  .focus-card-grid { grid-template-columns: 1fr; gap: 6px; }
-  .focus-mini { padding: 9px; }
-  .focus-mini .label { font-size: 9px; }
-  .focus-mini .value { font-size: 11.5px; }
-  .focus-mini .subvalue { font-size: 9.5px; }
-  .focus-math-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-  .focus-math-head { align-items: flex-start; }
-  .focus-math-head strong { font-size: 9px; }
-  .focus-math-head span { font-size: 8.5px; text-align: right; }
-  .focus-math-cell span, .focus-risk-cell span { font-size: 8.5px; }
-  .focus-math-cell b, .focus-risk-cell b { font-size: 11px; }
-  .focus-risk-grid { grid-template-columns: repeat(2, 1fr); }
-  .focus-risk-cell small { font-size: 8.5px; }
-  .focus-note, .focus-pro .focus-note { padding: 10px 11px; font-size: 10.5px; }
-  .focus-note-links { width: 100%; white-space: normal; gap: 6px; }
-  .focus-note-links a {
-    display: inline-flex;
-    min-height: 36px;
-    align-items: center;
-    padding: 5px 7px;
-    border: 1px solid #263746;
-    border-radius: 6px;
-  }
-  .focus-miss, .focus-pro .focus-miss {
-    grid-template-columns: minmax(82px, .8fr) 58px minmax(0, 1.5fr);
-    font-size: 9.5px;
-  }
+  .focus-note { padding: 10px 11px; font-size: 10.5px; }
 
   .v12-head { gap: 8px; }
   .v12-kicker { font-size: 9.5px; line-height: 1.4; }
@@ -889,8 +765,6 @@ button, a, summary, input, select { touch-action: manipulation; }
 @media (max-width: 390px) {
   .quick-settings-form { grid-template-columns: 1fr; }
   .qs-apply-btn { grid-column: 1; }
-  .focus-miss, .focus-pro .focus-miss { grid-template-columns: 1fr auto; }
-  .focus-miss > :last-child { grid-column: 1 / -1; }
 }
 
 </style>
@@ -1080,64 +954,6 @@ button, a, summary, input, select { touch-action: manipulation; }
     <div class="foot">
       <span><strong>Colour guide:</strong> GREEN = research entry window (anchor to +15m); AMBER = late/reversal track only; RED = no fresh trade. Futures are the primary research vehicle; options are only marked eligible when the relevant ATM spread is ≤3%.</span>
       <span><strong>No auto-orders.</strong> Trial 25 and missed-mover forensics remain separate and unchanged.</span>
-    </div>
-  </section>
-
-  {% set fdesk = v123_focus_desk|default({}) %}
-  {% set mobserver = v123_market_observer|default({}) %}
-  <section id="v123-focus-desk" class="focus-desk focus-pro" aria-label="V12.3 underlying first live focus desk">
-    <div class="focus-head">
-      <div>
-        <div class="focus-kicker">V13 · UNDERLYING-FIRST · LIVE STOCK + DIRECTION DESK</div>
-        <h2>Live Focus Desk</h2>
-        <div class="focus-sub">The whole F&amp;O universe is watched continuously; only a few underlyings are worked deeply for stock direction and structure. 3m times the entry, 5m checks stability, 15m supplies context. Stock selection and direction only — no option instruction.</div>
-      </div>
-      <div id="v123-focus-status" class="focus-status"><span class="focus-live-dot"></span>{{ mobserver.get('status','WAITING') }} · {{ mobserver.get('universe_count',0) }} F&amp;O</div>
-    </div>
-
-    <div class="focus-kpis" aria-label="Live Focus Desk summary">
-      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-active-section" aria-label="Go to Actionable desk"><span>Actionable desk</span><strong id="v123-kpi-active">0</strong><small>ready / active / manage</small></button>
-      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Directional Spots"><span>Directional spots</span><strong id="v123-kpi-building">0</strong><small>locked regime · pre-entry only</small></button>
-      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
-      <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
-    </div>
-
-    <div class="focus-workspace">
-      <main id="v123-focus-active-section" class="focus-primary focus-jump-target">
-        <div class="focus-section-head"><h3>Active / Ready / Manage</h3><span>highest attention first</span></div>
-        <div id="v123-focus-active" class="focus-list"><div class="focus-empty">Waiting for a persistent underlying opportunity…</div></div>
-      </main>
-      <aside class="focus-sidebar">
-        <div id="v123-call-scouts-section" class="focus-sidebar-block focus-jump-target">
-          <div class="focus-section-head"><h3>Scouts — Call &amp; Put</h3><span>significant movers outside Focus, both sides · all recorded for order flow</span></div>
-          <div id="v123-call-scouts" class="focus-list"><div class="focus-empty">No scout is being watched right now.</div></div>
-        </div>
-        <div id="v123-focus-building-section" class="focus-sidebar-block focus-jump-target">
-          <div class="focus-section-head"><h3>Directional Spots</h3><span>direction must be locked before display</span></div>
-          <div id="v123-focus-building" class="focus-list"><div class="focus-empty">No direction-locked stock has persistent evidence yet.</div></div>
-        </div>
-        <div id="v123-focus-continuation-section"{% if not show_retired %} hidden data-retired="1"{% endif %} class="focus-sidebar-block focus-jump-target">
-          <div class="focus-section-head"><h3>Continuation Watch</h3><span>fresh evidence required</span></div>
-          <div id="v123-focus-continuation" class="focus-list"><div class="focus-empty">No important alumni is waiting for re-entry.</div></div>
-        </div>
-      </aside>
-    </div>
-
-    <div class="focus-audit-grid">
-      <div id="v123-focus-missed-section" class="focus-audit-pane focus-jump-target">
-        <h3>Missed-Mover Forensics</h3>
-        <div id="v123-forensic-coverage" class="focus-meta" style="margin:0 0 8px 0;">Coverage warming up…</div>
-        <div id="v123-focus-missed"><div class="focus-empty">No important mover is currently failing the pipeline.</div></div>
-      </div>
-      <div class="focus-audit-pane">
-        <h3>Recent / Completed</h3>
-        <div id="v123-focus-recent" class="focus-list"><div class="focus-empty">Completed and invalidated theses remain here for review.</div></div>
-      </div>
-    </div>
-
-    <div class="focus-note">
-      <span><strong>Execution rule:</strong> a prior episode cannot recycle the same stale trigger; fresh structure/re-arm evidence is required. Continuation mathematics is recorded in shadow only and does not control live trades.</span>
-      <span class="focus-note-links"><a href="/api/v123-focus-state">Raw Focus state</a><a href="/api/v122b-tactical-events/export">Lifecycle events</a><a href="/api/v123-continuation-shadow/export">Continuation math</a></span>
     </div>
   </section>
 
@@ -2026,194 +1842,10 @@ button, a, summary, input, select { touch-action: manipulation; }
       .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   }
 
-  function renderV123Focus(desk, observer, tactical) {
-    desk = desk || {}; observer = observer || {}; tactical = tactical || {};
-    var status = document.getElementById('v123-focus-status');
-    var ws = observer.feed_health || {};
-    var wsAge = Number(ws.last_tick_age_seconds);
-    var wsLabel = ws.fresh ? 'WS LIVE' : (ws.active ? 'WS DEGRADED' : 'WS DOWN');
-    var freshCount = Number(observer.fresh_symbol_count);
-    if (status) status.innerHTML = '<span class="focus-live-dot"></span>' +
-      v12Esc(observer.status || 'WAITING') + ' · ' + v12Esc(observer.universe_count || 0) + ' F&O · ' +
-      v12Esc(wsLabel) +
-      (Number.isFinite(wsAge) ? ' ' + v12Esc(wsAge.toFixed(0)) + 's' : '') +
-      (Number.isFinite(freshCount) ? ' · fresh ' + v12Esc(freshCount) : '') +
-      ' · Focus ' + v12Esc(desk.focus_count || 0);
-
+  function renderV123Swing(desk) {
+    desk = desk || {};
     function n(v,d){ var x=Number(v); return Number.isFinite(x)?x.toFixed(d==null?2:d):'—'; }
     function s(v,d){ var x=Number(v); return Number.isFinite(x)?(x>=0?'+':'')+x.toFixed(d==null?2:d):'—'; }
-    function setText(id,value){var el=document.getElementById(id);if(el)el.textContent=value;}
-    function action(row){
-      var st=String(row.lifecycle||'DISCOVERED').toUpperCase();
-      var zone=String(((row||{}).entry_zone||{}).state||'').toUpperCase();
-      if(['DISCOVERED','BUILDING','READY','REENTRY_READY','PULLBACK','WEAKENING'].indexOf(st)>=0){
-        if(zone==='APPROACHING') return 'Approaching trigger — prepare, do not chase';
-        if(zone==='IN_ZONE') return 'In entry zone — act only within the defined zone';
-        if(zone==='EXTENDED') return 'Extended — wait for retest / fresh structure';
-        if(zone==='WATCH') return 'Watch — price not yet close enough to trigger';
-        if(zone==='INVALID') return 'Entry structure invalid — wait for a new setup';
-      }
-      var map={
-        'DISCOVERED':'Observing the underlying',
-        'BUILDING':'Wait for exact price structure',
-        'READY':'Structure ready — wait for price trigger',
-        'ACTIVE':'Underlying trigger accepted',
-        'MANAGE':'Follow-through established — manage',
-        'PROVEN_MOVER':'First move worked — watch continuation',
-        'CONTINUATION_WATCH':'Waiting for genuinely fresh re-entry evidence',
-        'PULLBACK':'Do not chase — wait for continuation/reclaim',
-        'REENTRY_READY':'Fresh structure is ready',
-        'WEAKENING':'Thesis weakening — no automatic flip',
-        'INVALIDATED':'Underlying thesis invalidated',
-        'COMPLETED':'Observation completed'
-      }; return map[st]||st;
-    }
-    function mathCell(label,value,suffix){
-      return '<div class="focus-math-cell"><span>'+v12Esc(label)+'</span><b>'+v12Esc(value)+(suffix||'')+'</b></div>';
-    }
-    // Risk-plan values remain in backend/shadow evidence for forensic research,
-    // but are intentionally not rendered live until episode/contract coherence
-    // is validated across forward sessions.
-    function rowHtml(row){
-      row=row||{};
-      var life=String(row.lifecycle||'DISCOVERED').toLowerCase();
-      var v=row.vehicles||{};
-      var hist=(row.history||[]).slice(-2);
-      var h=hist.map(function(x){return v12Esc((x.ts||'').slice(11,16))+' '+v12Esc(x.state||'')+(x.note?' — '+v12Esc(x.note):'');}).join('<br>');
-      var cm=row.continuation_math||{};
-      var cmp=Number(row.live_price), trigger=Number(row.trigger), atr=Number(row.atr);
-      var dir=String(row.direction||'');
-      var sign=dir==='Bearish'?-1:1;
-      var triggerAtr=(Number.isFinite(cmp)&&Number.isFinite(trigger)&&Number.isFinite(atr)&&atr>0)?sign*(cmp-trigger)/atr:NaN;
-      var movementH=Number(row.movement_horizon_seconds);
-      var movementZ=Number(row.movement_z);
-      var movementP=Number(row.movement_p_value);
-      var structureP=Number(row.structure_p_value);
-      var fresh=row.fresh_entry_gate;
-      var freshReason=String(row.fresh_entry_reason||'');
-      var zoneObj=row.entry_zone||{};
-      var zoneState=String(zoneObj.state||'UNAVAILABLE').toUpperCase();
-      var zoneDistance=Number(zoneObj.distance_atr);
-      var signalAge=Number(row.signal_age_seconds);
-      var freshLine=fresh===false
-        ? '<div class="focus-fresh wait">Fresh-entry gate: waiting for new structure / re-arm evidence</div>'
-        : (freshReason && freshReason!=='OPEN_EPISODE_OR_FIRST_SIGNAL'
-          ? '<div class="focus-fresh good">Fresh evidence: '+v12Esc(freshReason.replaceAll('_',' '))+'</div>' : '');
-      var mathHtml='';
-      if(cm && Object.keys(cm).length){
-        mathHtml='<div class="focus-math"><div class="focus-math-head"><strong>Shadow continuation mathematics</strong><span>research only · does not control trade</span></div>'+
-          '<div class="focus-math-grid">'+
-          mathCell('Progress',s(cm.progress_atr,2),' ATR')+
-          mathCell('MFE',n(cm.mfe_atr,2),' ATR')+
-          mathCell('MAE',n(cm.mae_atr,2),' ATR')+
-          mathCell('Efficiency',n(cm.path_efficiency,2),'')+
-          mathCell('Pullback',cm.pullback_ratio==null?'—':n(Number(cm.pullback_ratio)*100,0),'%')+
-          '</div></div>';
-      }
-      return '<article class="focus-row '+life+'">' +
-        '<div class="focus-top"><span class="focus-symbol"><a href="/chart/'+encodeURIComponent(row.symbol||'')+'">'+v12Esc(row.symbol||'—')+'</a></span>' +
-        '<span class="focus-direction '+dir.toLowerCase()+'">'+v12Esc(dir)+'</span>' +
-        '<span class="focus-life">'+v12Esc(String(row.lifecycle||'').replaceAll('_',' '))+'</span></div>' +
-        '<div class="focus-action">'+v12Esc(action(row))+'</div>' +
-        '<div class="focus-card-grid focus-card-grid-2">' +
-          '<div class="focus-mini"><span class="label">Underlying / Entry zone</span><span class="value">CMP '+n(row.live_price,2)+' · '+v12Esc(zoneState.replaceAll('_',' '))+'</span><span class="subvalue">'+
-            (row.trigger!=null?'Trigger '+n(row.trigger,2):'Trigger forming')+
-            (Number.isFinite(zoneDistance)?' · Δ '+s(zoneDistance,2)+' ATR':'')+
-            (row.invalidation!=null?' · invalid '+n(row.invalidation,2):'')+
-            (Number.isFinite(signalAge)?' · signal '+n(signalAge,0)+'s':'')+'</span></div>'+
-          '<div class="focus-mini"><span class="label">Underlying movement / structure</span><span class="value">'+
-            (Number.isFinite(movementH)?n(movementH,0)+'s natural horizon':'Horizon forming')+
-            (Number.isFinite(movementZ)?' · Z '+s(movementZ,2):'')+
-            '</span><span class="subvalue">'+
-            (Number.isFinite(movementP)?'move p '+movementP.toExponential(2):'move p —')+
-            (Number.isFinite(structureP)?' · structure p '+structureP.toExponential(2):' · structure forming')+
-            (row.focus_age_min!=null?' · '+n(row.focus_age_min,0)+'m focus':'')+'</span></div>'+
-        '</div>'+
-        '<div class="focus-vehicles">'+
-          '<span class="focus-vehicle'+(zoneState==='IN_ZONE'?' good':(zoneState==='EXTENDED'||zoneState==='INVALID'?' bad':' warn'))+'">ZONE '+v12Esc(zoneState.replaceAll('_',' '))+'</span>'+
-          (Number.isFinite(movementH)?'<span class="focus-vehicle good">H* '+n(movementH,0)+'s</span>':'')+
-          (Number.isFinite(structureP)?'<span class="focus-vehicle'+(structureP<=0.01?' good':(structureP<=0.10?' warn':' bad'))+'">STRUCT p '+structureP.toExponential(1)+'</span>':'')+
-        '</div>'+
-        freshLine+mathHtml+
-        (h?'<div class="focus-history">'+h+'</div>':'')+
-      '</article>';
-    }
-    function fill(id,rows,empty){
-      var el=document.getElementById(id); if(!el)return;
-      rows=Array.isArray(rows)?rows:[];
-      el.innerHTML=rows.length?rows.map(rowHtml).join(''):'<div class="focus-empty">'+v12Esc(empty)+'</div>';
-    }
-
-    var active=Array.isArray(desk.active_now)?desk.active_now.slice():[];
-    active.sort(function(a,b){
-      function rank(x){
-        var v=x.vehicles||{}, life=String(x.lifecycle||'');
-        return (v.execution_window_open?100:0)+(String(x.route_health||v.route_health||'')==='HEALTHY'?20:0)+
-          ({MANAGE:9,ACTIVE:8,REENTRY_READY:7,READY:6,PULLBACK:4,WEAKENING:2}[life]||0);
-      }
-      return rank(b)-rank(a);
-    });
-    var building=Array.isArray(desk.building_next)?desk.building_next:[];
-    var continuation=Array.isArray(desk.continuation_watch)?desk.continuation_watch:[];
-    var forensic=Array.isArray(desk.mover_forensics)?desk.mover_forensics:[];
-    var misses=Array.isArray(desk.missed_movers)?desk.missed_movers:
-      forensic.filter(function(x){return x.stage!=='FOCUS' && x.stage!=='CONTINUATION';});
-    var coverage=desk.forensic_coverage||{};
-    var coverageMisses=Number(coverage.pipeline_misses);
-
-    setText('v123-kpi-active',active.length);
-    setText('v123-kpi-building',building.length);
-    setText('v123-kpi-continuation',continuation.length);
-    setText('v123-kpi-missed',Number.isFinite(coverageMisses)?coverageMisses:misses.length);
-    (function renderCallScouts(){
-      var box=document.getElementById('v123-call-scouts'); if(!box) return;
-      var cands=Array.isArray(tactical.candidates)?tactical.candidates:[];
-      var scouts=cands.filter(function(r){return r&&r.flow_scout;});
-      if(!scouts.length){box.innerHTML='<div class="focus-empty">No scout is being recorded right now.</div>';return;}
-      function esc2(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-      box.innerHTML=scouts.map(function(r){
-        var isPut=String(r.scout_side||'')==='PUT'||String(r.direction||'')==='Bearish';
-        return '<div class="focus-card scout wait"><div class="focus-card-head"><a href="/chart/'+encodeURIComponent(r.symbol||'')+'">'+esc2(r.symbol)+'</a>'+
-          (isPut?' <span class="side bearish">Bearish scout</span>':' <span class="side bullish">Bullish scout</span>')+(Number.isFinite(Number(r.live_price))?' · CMP '+Number(r.live_price).toFixed(2):'')+'</div>'+
-          '<div class="focus-meta">Order flow recording · watch only</div></div>';
-      }).join('');
-    })();
-    fill('v123-focus-active',active,'No actionable Focus-Desk stock yet. The system will not invent one.');
-    fill('v123-focus-building',building,'No direction-locked spot has enough continuing evidence right now.');
-    fill('v123-focus-continuation',continuation,'No recent important stock is waiting for fresh re-entry evidence.');
-
-    var recentSeen={};
-    var recentRows=(Array.isArray(desk.recent)?desk.recent:[]).filter(function(row){
-      var key=String((row||{}).symbol||'')+'|'+String((row||{}).direction||'');
-      if(!key||recentSeen[key]) return false;
-      recentSeen[key]=true; return true;
-    });
-    fill('v123-focus-recent',recentRows,'No completed/invalidated focus thesis yet.');
-
-    var coverageBox=document.getElementById('v123-forensic-coverage');
-    if(coverageBox){
-      if(String(coverage.mode||'')==='WHOLE_UNIVERSE'){
-        coverageBox.textContent=
-          'Whole-universe audit · '+String(coverage.observed_rows||0)+'/'+String(coverage.universe_count||0)+
-          ' live rows · '+String(coverage.meaningful_movers||0)+' movers ≥0.75% · '+
-          String(coverage.captured_movers||0)+' in Focus/Continuation · '+
-          String(coverage.pipeline_misses||0)+' pipeline misses';
-      }else{
-        coverageBox.textContent='Forensic coverage fallback active · waiting for whole-universe observer rows.';
-      }
-    }
-
-    var missed=document.getElementById('v123-focus-missed');
-    if(missed){
-      missed.innerHTML=misses.length?misses.map(function(x){
-        var gates=Array.isArray(x.discovery_failed_gates)&&x.discovery_failed_gates.length
-          ? ' · gates: '+x.discovery_failed_gates.slice(0,3).join(', ')
-          : '';
-        return '<div class="focus-miss"><strong>'+v12Esc(x.symbol||'—')+'</strong>'+
-          '<span class="move">'+s(x.day_change_pct,2)+'%</span>'+
-          '<span><strong>'+v12Esc(x.stage||'')+'</strong> · '+v12Esc(String(x.reason||'').replaceAll('_',' '))+v12Esc(gates)+'</span></div>';
-      }).join(''):'<div class="focus-empty">No important mover is currently failing the pipeline.</div>';
-    }
 
     var swing=desk.swing_1d||{}, swingRows=Object.values(swing.selected||{});
     var swingStatus=document.getElementById('v123-swing-status');
@@ -2620,7 +2252,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       renderLiveMarketState(state.market_state);
       renderLiveOpportunityRadar(state.opportunity_radar);
       renderOpportunityForward(state.opportunity_forward);
-      renderV123Focus(state.v123_focus_desk, state.v123_market_observer, state.v122b_tactical);
+      renderV123Swing(state.v123_focus_desk);
       renderV122BTactical(state.v122b_tactical);
       renderV12TradeConsole(state.v12_trade_console);
       renderV12Recorder(state.v12_option_recorder, state.v12_feasibility, state.v12_earnings, state.v12_trial25_status);
@@ -2875,19 +2507,6 @@ button, a, summary, input, select { touch-action: manipulation; }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) pollV8Dashboard(); });
 
 
-  (function bindFocusKpiNavigation() {
-    document.querySelectorAll('.focus-kpi-button[data-scroll-target]').forEach(function (button) {
-      button.addEventListener('click', function () {
-        var target = document.getElementById(button.getAttribute('data-scroll-target'));
-        if (!target) return;
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        target.classList.remove('focus-jump-flash');
-        void target.offsetWidth;
-        target.classList.add('focus-jump-flash');
-        window.setTimeout(function () { target.classList.remove('focus-jump-flash'); }, 950);
-      });
-    });
-  })();
 
 </script>
 </body>
