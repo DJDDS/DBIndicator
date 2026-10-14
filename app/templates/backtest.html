@@ -69,10 +69,10 @@
   <h2>Recorder monitor <span id="rm-sum" class="hint" style="font-weight:400"></span></h2>
   <p class="hint">Every recorder and paper ledger in one place. <b>OK</b> = wrote after its last scheduled time. <b>DUE</b> = inside its grace window. <b>MISSED</b> / <b>STALE</b> / <b>NOT RUNNING</b> need attention. Event-based ledgers only write when something happens, so they never go stale.
     Refreshes every 30 s. A weekday market holiday shows MISSED for the daily recorders.</p>
-  <table id="rm-table"><thead><tr><th class="l">Recorder</th><th class="l">Status</th><th>Last write (IST)</th><th>Records</th><th>Size</th></tr></thead><tbody><tr><td class="l" colspan="5">Loading...</td></tr></tbody></table>
+  <table id="rm-table"><thead><tr><th class="l">Recorder</th><th class="l">Status</th><th>Last write (IST)</th><th>Records</th><th>Size</th><th>Export</th></tr></thead><tbody><tr><td class="l" colspan="6">Loading...</td></tr></tbody></table>
   <div id="rm-of" style="margin-top:16px"></div>
   <div id="rm-sched" class="hint" style="margin-top:12px"></div>
-  <div style="margin-top:10px"><button class="btn" id="rm-refresh" type="button">Refresh now</button></div>
+  <div style="margin-top:10px"><button class="btn" id="rm-refresh" type="button">Refresh now</button> <a class="btn" href="/api/recorders/export" download title="One zip with the data files of every recorder above (paths inside the zip are the paths on the data volume)">Download all recorders (zip)</a></div>
 </div>
 <script>
 (function(){
@@ -81,13 +81,13 @@
   function render(d){
     var rows=d.rows||[], grp='', html='';
     rows.forEach(function(r){
-      if(r.group!==grp){ grp=r.group; html+='<tr class="rm-grp"><td colspan="5">'+esc(grp)+'</td></tr>'; }
+      if(r.group!==grp){ grp=r.group; html+='<tr class="rm-grp"><td colspan="6">'+esc(grp)+'</td></tr>'; }
       var cls='rm-'+String(r.status).replace(/\s+/g,'');
       html+='<tr><td class="l"><b>'+esc(r.name)+'</b><div class="rm-note">'+esc(r.what)+'</div></td>'
         +'<td class="l"><span class="rm-pill '+cls+'">'+esc(r.status)+'</span><div class="rm-note">'+esc(r.note)+'</div></td>'
-        +'<td>'+fmt(r.last_write)+'</td><td>'+(r.records==null?'-':r.records.toLocaleString('en-IN'))+'</td><td>'+(r.files?r.size_kb.toLocaleString('en-IN')+' KB':'-')+'</td></tr>';
+        +'<td>'+fmt(r.last_write)+'</td><td>'+(r.records==null?'-':r.records.toLocaleString('en-IN'))+'</td><td>'+(r.files?r.size_kb.toLocaleString('en-IN')+' KB':'-')+'</td><td>'+(r.files&&r.id!=null?'<a href="/api/recorders/export/'+r.id+'" download>download</a>':'-')+'</td></tr>';
     });
-    document.querySelector('#rm-table tbody').innerHTML=html||'<tr><td class="l" colspan="5">No recorders found.</td></tr>';
+    document.querySelector('#rm-table tbody').innerHTML=html||'<tr><td class="l" colspan="6">No recorders found.</td></tr>';
     var s=d.summary||{}; document.getElementById('rm-sum').innerHTML=' · '+s.ok+' OK · '+s.waiting+' waiting · <b style="color:'+(s.problems?'#c00000':'#1e7b34')+'">'+s.problems+' need attention</b> · as of '+fmt(d.as_of);
     var of=d.orderflow||{}, h='';
     if(of.lab){ var L=of.lab, pct=Math.min(100,Math.round(100*(L.sessions||0)/(L.target||40))), ph=Object.keys(L.by_phase||{}).map(function(k){return k+' '+L.by_phase[k];}).join(' · ');

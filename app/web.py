@@ -1455,6 +1455,27 @@ def api_recorders():
     return Response(json.dumps(recorder_monitor.cached_report(config.V12_STORAGE_ROOT, config.V121_INDEX_VOL_ROOT), default=str), mimetype="application/json")
 
 
+@app.route("/api/recorders/export")
+@app.route("/api/recorders/export/<int:idx>")
+@require_roles(OWNER, AUDITOR)
+def api_recorders_export(idx=None):
+    """Download every recorder's data (or one recorder's, by its row id) as a zip, so nobody has to locate the files on the volume."""
+    from . import recorder_monitor
+    from flask import after_this_request
+    import os as _os
+    made = recorder_monitor.export_zip(config.V12_STORAGE_ROOT, config.V121_INDEX_VOL_ROOT, idx, dest_dir=config.V12_STORAGE_ROOT)
+    if not made:
+        return jsonify({"status": "UNAVAILABLE", "error": "No recorder file exists yet for this selection."}), 404
+    tmp, name, _n = made
+
+    @after_this_request
+    def _cleanup(resp):
+        try: _os.remove(tmp)
+        except OSError: pass
+        return resp
+    return send_file(tmp, mimetype="application/zip", as_attachment=True, download_name=name)
+
+
 @app.route("/api/v130/status")
 @require_roles(OWNER)
 def api_v130_status():

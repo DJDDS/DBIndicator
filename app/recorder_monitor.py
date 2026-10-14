@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import datetime as dt
 import gzip
+import os
+import re
 import threading
 from pathlib import Path
 
@@ -97,8 +99,10 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='daily', due=dt.time(9, 35), grace=25, files=['v133/days.jsonl', 'v133/scores_*.json.gz'], thread='v133-direction')
     add(name='V13.4 relative-strength desk', group='V13.4 Relative-strength desk', what='11:15 / 12:15 / 13:15 picks far stronger or weaker than the market, 15:15 results',
         kind='daily', due=dt.time(11, 20), grace=60, files=['v133/rs_days.jsonl'], thread='v133-orderflow')
+    add(name='Order-flow lab (polls, bars, futures, scores)', group='V13.3 Direction desk', what='Every day\'s order-flow polls, 5-minute bars, futures and 09:25 model scores - the data for the research formula fit',
+        kind='event', files=['v133/of_*.jsonl.gz', 'v133/of_*.jsonl', 'v133/of_*.json', 'v133/bars_*.json.gz', 'v133/futs_*.json', 'v133/of_lab.json'], thread=None)
     add(name='NG desk ledger', group='MCX commodity desk', what='Natural gas playbook days, paper results and MCX ledger',
-        kind='event', files=['commodity_desk/ledger.jsonl', 'commodity_desk/mcx_ledger.jsonl'], thread=None)
+        kind='event', files=['commodity_desk/ledger.jsonl', 'commodity_desk/mcx_ledger.jsonl', 'commodity_desk/year_round.json', 'commodity_desk/sensitivity.json'], thread=None)
     add(name='Setup A v1.1 scan', group='Setup A dip-buy', what='Nightly NIFTY-500 stress score, signals and paper ledger',
         kind='daily', due=dt.time(19, 15), grace=195, files=['v11/runs.jsonl', 'v11/summary.json'], thread='v11-setup-a')
     add(name='Setup A WIDE ledger', group='Setup A dip-buy', what='Second paper ledger with relaxed gates (F&O only)',
@@ -118,6 +122,42 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
     add(name='Universe live stream checkpoint', group='V12 option research', what='Full F&O underlying quote stream checkpoint',
         kind='live', files=['v123_market_checkpoint.json'], thread=None)
     return r
+
+
+def resolve_files(spec: dict, root: Path, iv_root: Path | None) -> list[Path]:
+    """The real files behind one recorder row (whitelist = the registry patterns only; nothing else on the volume is reachable)."""
+    files: list[Path] = []
+    for p in spec['files']:
+        if p.startswith('__INDEX_VOL__/'):
+            if iv_root is not None: files += _gather(iv_root, [p.split('/', 1)[1]])
+        else:
+            files += _gather(root, [p])
+    return sorted(set(files))
+
+
+def export_zip(storage_root: str, index_vol_root: str | None, idx: int | None, dest_dir: str | None = None):
+    """Zip one recorder (idx) or all recorders (idx None) into a temp file. Returns (path, download_name, file_count) or None when nothing exists yet.
+    Stored paths are relative to the data volume; the caller deletes the temp file after sending."""
+    import tempfile, zipfile
+    root = Path(storage_root); iv = Path(index_vol_root) if index_vol_root else None
+    specs = registry(storage_root, index_vol_root)
+    if idx is not None:
+        if not 0 <= idx < len(specs): return None
+        specs = [specs[idx]]
+    names: dict[str, Path] = {}
+    for sp in specs:
+        for f in resolve_files(sp, root, iv):
+            try: arc = str(f.relative_to(root))
+            except ValueError: arc = 'index_vol/' + f.name
+            names.setdefault(arc, f)
+    if not names: return None
+    fd, tmp = tempfile.mkstemp(suffix='.zip', prefix='recorders_', dir=dest_dir if dest_dir and Path(dest_dir).is_dir() else None); os.close(fd)
+    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as z:
+        for arc, f in sorted(names.items()):
+            try: z.write(f, arc)
+            except OSError: continue
+    label = 'all_recorders' if idx is None else re.sub(r'[^A-Za-z0-9]+', '_', specs[0]['name']).strip('_').lower()
+    return tmp, f"{label}_{_now():%Y%m%d}.zip", len(names)
 
 
 def _evaluate(spec: dict, root: Path, iv_root: Path | None, now: dt.datetime) -> dict:
@@ -165,7 +205,7 @@ def _evaluate(spec: dict, root: Path, iv_root: Path | None, now: dt.datetime) ->
         thread_alive = spec['thread'] in _alive_names()
         if not thread_alive and status in ('OK', 'DUE', 'IDLE'):
             status = 'NOT RUNNING'; note = f"scheduler thread {spec['thread']} is not alive - restart the service. {note}"
-    return {'name': spec['name'], 'group': spec['group'], 'what': spec['what'], 'kind': kind, 'status': status, 'note': note,
+    return {'id': spec.get('_id'), 'name': spec['name'], 'group': spec['group'], 'what': spec['what'], 'kind': kind, 'status': status, 'note': note,
             'last_write': last_write.isoformat(timespec='seconds') if last_write else None, 'files': len(sts), 'size_kb': round(size / 1024, 1),
             'records': records, 'thread': spec.get('thread'), 'thread_alive': thread_alive}
 
@@ -244,7 +284,7 @@ def orderflow(storage_root: str, now: dt.datetime | None = None) -> dict:
 
 def report(storage_root: str, index_vol_root: str | None = None, now: dt.datetime | None = None) -> dict:
     now = now or _now(); root = Path(storage_root); iv = Path(index_vol_root) if index_vol_root else None
-    rows = [_evaluate(s, root, iv, now) for s in registry(storage_root, index_vol_root)]
+    rows = [_evaluate({**s, '_id': i}, root, iv, now) for i, s in enumerate(registry(storage_root, index_vol_root))]
     count = lambda *names: sum(1 for r in rows if r['status'] in names)
     return {'as_of': now.isoformat(timespec='seconds'), 'storage': str(root), 'rows': rows, 'schedulers': scheduler_steps(), 'orderflow': orderflow(storage_root, now),
             'summary': {'total': len(rows), 'ok': count('OK', 'IDLE'), 'waiting': count('DUE', 'WAITING', 'NO DATA YET'), 'problems': count('MISSED', 'STALE', 'NOT RUNNING')}}
