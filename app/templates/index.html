@@ -32,21 +32,45 @@
   header nav a:hover { color: #fff; border-color: var(--accent); }
   header nav { display: flex; gap: 8px; }
 
-  .rticker{background:linear-gradient(180deg,#0d1119,#0a0d12);border-bottom:1px solid var(--border);overflow:hidden;position:sticky;top:53px;z-index:19;display:flex;align-items:stretch}
-  .rticker .rticker-label{flex:0 0 auto;background:#141a24;color:#8fb3ff;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;padding:7px 12px;display:flex;align-items:center;border-right:1px solid var(--border);white-space:nowrap}
+  .rticker{background:linear-gradient(180deg,#121a26,#0a0f17);border-bottom:2px solid #22354a;overflow:hidden;position:sticky;top:53px;z-index:19;display:flex;align-items:stretch;box-shadow:0 2px 14px rgba(0,0,0,.35)}
+  .rticker .rticker-label{flex:0 0 auto;background:linear-gradient(180deg,#17263a,#101b29);color:#8fb3ff;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:13px 16px;display:flex;flex-direction:column;justify-content:center;gap:2px;border-right:1px solid #22354a;white-space:nowrap}
+  .rticker .rticker-label small{font-size:9px;font-weight:600;letter-spacing:.04em;color:var(--muted);text-transform:none}
+  .rticker .rticker-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);margin-right:6px;animation:rticker-pulse 1.6s ease-in-out infinite}
+  @keyframes rticker-pulse{0%,100%{opacity:1}50%{opacity:.35}}
   .rticker-track-wrap{flex:1;overflow:hidden;position:relative}
-  .rticker-track{display:flex;align-items:center;white-space:nowrap;width:max-content;animation:rticker-scroll 38s linear infinite}
+  .rticker-track{display:flex;align-items:stretch;white-space:nowrap;width:max-content;animation:rticker-scroll 42s linear infinite}
   .rticker-track-wrap:hover .rticker-track{animation-play-state:paused}
   @keyframes rticker-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
-  .rtick{display:inline-flex;align-items:center;gap:7px;padding:7px 18px;font-size:11.5px;color:var(--text);border-right:1px solid #1c2330}
-  .rtick .rtag{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-  .rtick .rsym{font-weight:800;font-family:var(--mono)}
+  .rtick{display:inline-flex;align-items:center;gap:10px;padding:10px 22px;margin:7px 5px;font-size:14.5px;color:var(--text);border-radius:8px;border:1px solid #223247;background:#121b28}
+  .rtick.up{border-color:rgba(22,199,132,.35);background:linear-gradient(180deg,rgba(22,199,132,.13),rgba(22,199,132,.03))}
+  .rtick.down{border-color:rgba(234,57,67,.35);background:linear-gradient(180deg,rgba(234,57,67,.13),rgba(234,57,67,.03))}
+  .rtick .rtag{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border-right:1px solid #2a3b4e;padding-right:9px}
+  .rtick .rsym{font-weight:800;font-family:var(--mono);font-size:16px}
   .rtick.up .rsym{color:var(--green)}.rtick.down .rsym{color:var(--red)}
-  .rtick .rarr{font-weight:800}
+  .rtick .rarr{font-weight:900;font-size:15px}
   .rtick.up .rarr{color:var(--green)}.rtick.down .rarr{color:var(--red)}
-  .rtick .rdetail{color:var(--muted)}
-  .rticker-empty{padding:7px 14px;font-size:11px;color:var(--muted)}
-  @media(max-width:720px){.rticker{top:0}}
+  .rtick .rdetail{color:var(--muted);font-size:12.5px}
+  .rticker-empty{padding:13px 16px;font-size:12.5px;color:var(--muted)}
+  @media(max-width:720px){.rticker{top:0;flex-direction:column}.rticker .rticker-label{border-right:0;border-bottom:1px solid #22354a;padding:8px 12px}.rtick{font-size:13px;padding:8px 16px}}
+  .rscore{margin:14px 0}
+  .rscore-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px}
+  .rscore-head h2{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--text)}
+  .rscore-head span{font-size:11px;color:var(--muted)}
+  .rscore-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .rscore-card{display:block;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-decoration:none;color:var(--text);transition:border-color .15s}
+  .rscore-card:hover{border-color:var(--accent)}
+  .rscore-name{font-size:13px;font-weight:800}
+  .rscore-sub{font-size:10.5px;color:var(--muted);margin-top:2px}
+  .rscore-row{display:flex;align-items:baseline;gap:10px;margin-top:10px}
+  .rscore-win{font-size:24px;font-weight:800;font-family:var(--mono)}
+  .rscore-win.good{color:var(--green)}.rscore-win.bad{color:var(--red)}
+  .rscore-n{font-size:11px;color:var(--muted)}
+  .rscore-metric{margin-top:7px;padding-top:7px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:11.5px}
+  .rscore-metric-label{color:var(--muted)}
+  .rscore-metric-value{font-family:var(--mono);font-weight:700}
+  .rscore-empty{font-size:11.5px;color:var(--muted);padding:10px 0}
+  @media(max-width:900px){.rscore-grid{grid-template-columns:1fr}}
+
 
   .wrap { max-width: 1360px; margin: 0 auto; padding: 14px 18px 30px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
@@ -902,13 +926,13 @@ button, a, summary, input, select { touch-action: manipulation; }
     <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/sector-analysis">Sector Analysis</a>{% if security_role == "owner" %}<a href="/admin/v130">Swing Desk (V13)</a><a href="/admin/intraday">Intraday Desk</a><a href="/admin/commodity">NG Desk</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a>{% endif %}<a href="/logout" data-logout>Logout</a></nav><script src="/static/logout.js"></script>
   </div>
 </header>
-<div class="rticker" aria-label="Today's research desk picks - paper only">
-  <div class="rticker-label">Research picks · not trade calls</div>
+<div class="rticker" aria-label="Today's relative-strength and hierarchy desk picks - paper only">
+  <div class="rticker-label"><span><span class="rticker-dot"></span>Live picks</span><small>Rel-strength · Hierarchy — research, not trade calls</small></div>
   <div class="rticker-track-wrap">
     <div class="rticker-track" id="rticker-track">
       {% if research_ticker %}
         {% for it in research_ticker * 2 %}<span class="rtick {{ it.cls }}"><span class="rtag">{{ it.tag }}</span><span class="rsym">{{ it.symbol }}</span><span class="rarr">{{ '▲' if it.side == 'UP' else '▼' }}</span><span class="rdetail">{{ it.text }}</span></span>{% endfor %}
-      {% else %}<span class="rticker-empty">Evaluating today's picks — direction desk, relative-strength and hierarchy desk appear here once computed.</span>{% endif %}
+      {% else %}<span class="rticker-empty">Evaluating today's picks — relative-strength (11:15/12:15/13:15) and the hierarchy desk (09:45) appear here once computed.</span>{% endif %}
     </div>
   </div>
 </div>
@@ -946,6 +970,17 @@ button, a, summary, input, select { touch-action: manipulation; }
   {% endmacro %}
 
   {% include "_market_overview.html" %}
+  <section class="rscore" aria-label="Research desks scoreboard">
+    <div class="rscore-head"><h2>Research desks · how they're doing</h2><span>Paper only · win rate and headline economics, most recent picks first</span></div>
+    <div class="rscore-grid" id="rscore-grid">
+      {% if research_scoreboard %}{% for r in research_scoreboard %}<a class="rscore-card" href="{{ r.href }}">
+        <div class="rscore-name">{{ r.name }}</div><div class="rscore-sub">{{ r.sub }}</div>
+        <div class="rscore-row"><span class="rscore-win {{ 'good' if r.win is not none and r.win >= 50 else 'bad' }}">{{ '%.1f'|format(r.win)+'%' if r.win is not none else '—' }}</span><span class="rscore-n">{{ r.n }} picks</span></div>
+        <div class="rscore-metric"><span class="rscore-metric-label">{{ r.metric_label }}</span><span class="rscore-metric-value">{{ r.metric }}</span></div>
+      </a>{% endfor %}{% else %}<div class="rscore-empty">No settled picks yet — scoreboard fills in as today's (and past) picks complete.</div>{% endif %}
+    </div>
+  </section>
+
 
   {% if not logged_in %}
   <div class="card">
@@ -1051,9 +1086,9 @@ button, a, summary, input, select { touch-action: manipulation; }
   <section id="v123-focus-desk" class="focus-desk focus-pro" aria-label="V12.3 underlying first live focus desk">
     <div class="focus-head">
       <div>
-        <div class="focus-kicker">V12.3 · UNDERLYING-FIRST · LIVE EXECUTION WORKSPACE</div>
+        <div class="focus-kicker">V13 · UNDERLYING-FIRST · LIVE STOCK + DIRECTION DESK</div>
         <h2>Live Focus Desk</h2>
-        <div class="focus-sub">The whole F&amp;O universe is watched continuously; only a few underlyings are worked deeply. 3m times the entry, 5m checks stability, 15m supplies context, and cash/futures/options remain separate execution vehicles.</div>
+        <div class="focus-sub">The whole F&amp;O universe is watched continuously; only a few underlyings are worked deeply for stock direction and structure. 3m times the entry, 5m checks stability, 15m supplies context. Stock selection and direction only — no option instruction.</div>
       </div>
       <div id="v123-focus-status" class="focus-status"><span class="focus-live-dot"></span>{{ mobserver.get('status','WAITING') }} · {{ mobserver.get('universe_count',0) }} F&amp;O</div>
     </div>
@@ -2515,7 +2550,7 @@ button, a, summary, input, select { touch-action: manipulation; }
     items = Array.isArray(items) ? items : [];
     if (!items.length) {
       el.style.animation = 'none';
-      el.innerHTML = '<span class="rticker-empty">Evaluating today\'s picks — direction desk, relative-strength and hierarchy desk appear here once computed.</span>';
+      el.innerHTML = '<span class="rticker-empty">Evaluating today\'s picks — relative-strength (11:15/12:15/13:15) and the hierarchy desk (09:45) appear here once computed.</span>';
       return;
     }
     el.style.animation = '';
@@ -2526,6 +2561,25 @@ button, a, summary, input, select { touch-action: manipulation; }
         '<span class="rsym">' + v12Esc(it.symbol) + '</span>' +
         '<span class="rarr">' + (it.side === 'UP' ? '▲' : '▼') + '</span>' +
         '<span class="rdetail">' + v12Esc(it.text) + '</span></span>';
+    }).join('');
+  }
+  function renderResearchScoreboard(rows) {
+    var el = document.getElementById('rscore-grid');
+    if (!el) return;
+    rows = Array.isArray(rows) ? rows : [];
+    if (!rows.length) {
+      el.innerHTML = '<div class="rscore-empty">No settled picks yet — scoreboard fills in as today\'s (and past) picks complete.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(function (r) {
+      var winNum = Number(r.win);
+      var winCls = Number.isFinite(winNum) ? (winNum >= 50 ? 'good' : 'bad') : '';
+      return '<a class="rscore-card" href="' + v12Esc(r.href || '#') + '">' +
+        '<div class="rscore-name">' + v12Esc(r.name) + '</div>' +
+        '<div class="rscore-sub">' + v12Esc(r.sub || '') + '</div>' +
+        '<div class="rscore-row"><span class="rscore-win ' + winCls + '">' + (Number.isFinite(winNum) ? winNum.toFixed(1) + '%' : '—') + '</span><span class="rscore-n">' + v12Esc(r.n) + ' picks</span></div>' +
+        '<div class="rscore-metric"><span class="rscore-metric-label">' + v12Esc(r.metric_label || '') + '</span><span class="rscore-metric-value">' + v12Esc(r.metric) + '</span></div>' +
+      '</a>';
     }).join('');
   }
 
@@ -2568,6 +2622,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
       renderResearchTicker(state.research_ticker);
+      renderResearchScoreboard(state.research_scoreboard);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;

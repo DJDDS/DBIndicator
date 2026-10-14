@@ -187,12 +187,15 @@ def dashboard():
     try:
         from . import v133_direction
         research_ticker = v133_direction.research_ticker()
+        research_scoreboard = v133_direction.research_scoreboard()
     except Exception:  # noqa: BLE001
         research_ticker = []
+        research_scoreboard = []
 
     return render_template(
         "index.html",
         research_ticker=research_ticker,
+        research_scoreboard=research_scoreboard,
         # Panels whose live/forward evidence failed (1 Oct 2026 recorder review)
         # are hidden by default; their recorders keep running. ?show_retired=1
         # brings them back for audit.
@@ -289,6 +292,14 @@ def _research_ticker_safe():
         log.exception("research ticker failed"); return []
 
 
+def _research_scoreboard_safe():
+    try:
+        from . import v133_direction
+        return v133_direction.research_scoreboard()
+    except Exception:  # noqa: BLE001
+        log.exception("research scoreboard failed"); return []
+
+
 @app.route("/api/dashboard-state")
 @require_roles(OWNER, MEMBER)
 @_response_cache("dashboard-state")
@@ -366,6 +377,7 @@ def api_dashboard_state():
         "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
         "market_open": scanner.is_market_open(),
         "research_ticker": _research_ticker_safe(),
+        "research_scoreboard": _research_scoreboard_safe(),
     })
 
 
