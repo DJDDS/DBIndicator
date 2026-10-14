@@ -13,83 +13,97 @@ def _patch(monkeypatch, pattern_rows, ind_map, results):
     return results
 
 
-# IT Services industry (4 members, meets MIN_INDUSTRY_GROUP): TCS +0.5, INFY -0.5, WIPRO +0.3, HCLTECH +0.1
-# -> industry median +0.2. Plus four unmapped stocks (RELIANCE 0.0, ONGC -0.05, TATASTEEL +0.02, HINDALCO -0.02)
-# -> whole-market median +0.01. Industry edge = +0.19, over the +0.15pp threshold either way.
-# TCS (Long Buildup, bullish OI) sits on the side the industry is actually outperforming -> sector confirms.
-# INFY (Short Buildup, bearish OI) needs the industry to be UNDERperforming to confirm a bearish call, but
-# IT Services is outperforming (same +0.19pp edge TCS sees) -> sector does NOT confirm INFY.
-_IND_MAP = {'TCS': 'IT Services', 'INFY': 'IT Services', 'WIPRO': 'IT Services', 'HCLTECH': 'IT Services'}
-_RESULTS = [
-    {'symbol': 'TCS', 'oi_structure': 'Long Buildup', 'price_chg_today_pct': 0.5},
-    {'symbol': 'INFY', 'oi_structure': 'Short Buildup', 'price_chg_today_pct': -0.5},
-    {'symbol': 'WIPRO', 'price_chg_today_pct': 0.3},
-    {'symbol': 'HCLTECH', 'price_chg_today_pct': 0.1},
-    {'symbol': 'RELIANCE', 'price_chg_today_pct': 0.0},
-    {'symbol': 'ONGC', 'price_chg_today_pct': -0.05},
-    {'symbol': 'TATASTEEL', 'price_chg_today_pct': 0.02},
-    {'symbol': 'HINDALCO', 'price_chg_today_pct': -0.02},
-]
-_PATTERN_ROWS = [
-    {'symbol': 'TCS', 'pattern': 'Bull Flag', 'status': 'BREAKOUT', 'direction': 'BULL', 'tier': 'A', 'tier_rank': 0},
-    {'symbol': 'INFY', 'pattern': 'Head and Shoulders', 'status': 'RETEST_HOLD', 'direction': 'BEAR', 'tier': 'WATCH', 'tier_rank': 1},
-    {'symbol': 'WIPRO', 'pattern': 'Ascending Triangle', 'status': 'FORMING', 'direction': 'BULL', 'tier': 'NONE', 'tier_rank': 2},
-    {'symbol': 'ZEEL', 'pattern': 'Descending Triangle', 'status': 'EXTENDED', 'direction': 'BEAR', 'tier': 'NONE', 'tier_rank': 2},
-]
+def test_confluence_sector_floor_excludes_small_industries(monkeypatch):
+    # TinyGroup has only 3 F&O members (below MIN_INDUSTRY_GROUP=4), so it never becomes a trusted median
+    # and can never reach the leaderboard, however extreme its today-return is.
+    ind_map = {'T1': 'TinyGroup', 'T2': 'TinyGroup', 'T3': 'TinyGroup',
+               'B1': 'BigGroup', 'B2': 'BigGroup', 'B3': 'BigGroup', 'B4': 'BigGroup'}
+    results = [
+        {'symbol': 'T1', 'oi_structure': 'Long Buildup', 'price_chg_today_pct': 20.0},
+        {'symbol': 'T2', 'price_chg_today_pct': 20.0},
+        {'symbol': 'T3', 'price_chg_today_pct': 20.0},
+        {'symbol': 'B1', 'oi_structure': 'Long Buildup', 'price_chg_today_pct': 2.0},
+        {'symbol': 'B2', 'price_chg_today_pct': 2.0},
+        {'symbol': 'B3', 'price_chg_today_pct': 2.0},
+        {'symbol': 'B4', 'price_chg_today_pct': 2.0},
+    ]
+    _patch(monkeypatch, [], ind_map, results)
+    rows = confluence.watch(results)
+    assert not any(r['symbol'] == 'T1' for r in rows)
+    assert any(r['symbol'] == 'B1' for r in rows)
 
 
-def test_confluence_requires_oi_structure_row_to_qualify(monkeypatch):
-    # WIPRO has no oi_structure field on its live scan row at all -> never reaches the confirmation stage,
-    # regardless of its (FORMING, inactive) pattern.
-    _patch(monkeypatch, _PATTERN_ROWS, _IND_MAP, _RESULTS)
-    rows = confluence.watch(_RESULTS)
-    assert not any(r['symbol'] == 'WIPRO' for r in rows)
+# Three industries, each exactly at the MIN_INDUSTRY_GROUP floor, spread well apart so the overall market
+# median sits cleanly in the middle one. With TOP_N_SECTORS patched to 1, only the top (hi) and bottom (lo)
+# industries make the leaderboard; the middle (mid) industry is dropped entirely, regardless of any OI bias
+# its members carry.
+def _hi_mid_lo_results():
+    ind_map = {}
+    results = []
+    for prefix, chg in (('H', 5.0), ('M', 0.0), ('L', -5.0)):
+        for i in range(1, 5):
+            sym = f'{prefix}{i}'
+            ind_map[sym] = {'H': 'Hi', 'M': 'Mid', 'L': 'Lo'}[prefix]
+            results.append({'symbol': sym, 'price_chg_today_pct': chg})
+    # overwrite the first two members of Hi/Mid/Lo with explicit OI reads for the tests below
+    by_sym = {r['symbol']: r for r in results}
+    by_sym['H1']['oi_structure'] = 'Long Buildup'    # bullish OI, in the GAINER sector -> agrees
+    by_sym['H2']['oi_structure'] = 'Short Buildup'   # bearish OI, in the GAINER sector -> contra
+    by_sym['M1']['oi_structure'] = 'Long Buildup'    # bullish OI, but Mid never makes the leaderboard
+    by_sym['L1']['oi_structure'] = 'Short Buildup'   # bearish OI, in the LOSER sector -> agrees
+    by_sym['L2']['oi_structure'] = 'Long Buildup'    # bullish OI, in the LOSER sector -> contra
+    return ind_map, results
 
 
-def test_confluence_excludes_stock_with_no_live_scan_row(monkeypatch):
-    # ZEEL has an EXTENDED bear pattern but isn't in the live scan results at all (no OI row, nothing to
-    # confirm against) -> pattern alone is never enough to make the list.
-    _patch(monkeypatch, _PATTERN_ROWS, _IND_MAP, _RESULTS)
-    rows = confluence.watch(_RESULTS)
-    assert not any(r['symbol'] == 'ZEEL' for r in rows)
+def test_confluence_classifies_gainer_and_loser_sectors_and_drops_the_middle(monkeypatch):
+    monkeypatch.setattr(confluence, 'TOP_N_SECTORS', 1)
+    ind_map, results = _hi_mid_lo_results()
+    _patch(monkeypatch, [], ind_map, results)
+    rows = confluence.watch(results)
+    syms = {r['symbol'] for r in rows}
+    assert 'H1' in syms and 'H2' in syms
+    assert 'L1' in syms and 'L2' in syms
+    assert 'M1' not in syms                           # Mid is neither today's best nor worst -> dropped
+    assert all(r['industry'] != 'Mid' for r in rows)
+    h1 = next(r for r in rows if r['symbol'] == 'H1')
+    l1 = next(r for r in rows if r['symbol'] == 'L1')
+    assert h1['sector_trend'] == 'GAINER'
+    assert l1['sector_trend'] == 'LOSER'
 
 
-def test_confluence_oi_and_sector_confirm_and_pattern_bonus_scores_three(monkeypatch):
-    _patch(monkeypatch, _PATTERN_ROWS, _IND_MAP, _RESULTS)
-    rows = confluence.watch(_RESULTS)
-    assert len(rows) == 1
-    tcs = rows[0]
-    assert tcs['symbol'] == 'TCS'
-    assert tcs['score'] == 3                       # OI + sector + matching active BREAKOUT pattern
-    assert tcs['direction'] == 'UP'
-    assert tcs['oi_structure'] == 'Long Buildup'
-    assert tcs['industry'] == 'IT Services'
-    assert tcs['industry_edge_pct'] > 0
-    assert tcs['pattern'] == {'name': 'Bull Flag', 'status': 'BREAKOUT', 'tier': 'A'}
+def test_confluence_agree_flag_reflects_oi_direction_vs_sector_trend(monkeypatch):
+    monkeypatch.setattr(confluence, 'TOP_N_SECTORS', 1)
+    ind_map, results = _hi_mid_lo_results()
+    _patch(monkeypatch, [], ind_map, results)
+    rows = confluence.watch(results)
+    by_sym = {r['symbol']: r for r in rows}
+    assert by_sym['H1']['agree'] is True and by_sym['H1']['score'] == 2     # bullish OI, gainer sector
+    assert by_sym['H2']['agree'] is False and by_sym['H2']['score'] == 1    # bearish OI, gainer sector
+    assert by_sym['L1']['agree'] is True and by_sym['L1']['score'] == 2     # bearish OI, loser sector
+    assert by_sym['L2']['agree'] is False and by_sym['L2']['score'] == 1    # bullish OI, loser sector
 
 
-def test_confluence_oi_without_sector_backing_is_excluded(monkeypatch):
-    # INFY has an agreeing bear pattern too, but with no sector backing on the bearish side it's excluded.
-    _patch(monkeypatch, _PATTERN_ROWS, _IND_MAP, _RESULTS)
-    rows = confluence.watch(_RESULTS)
-    assert not any(r['symbol'] == 'INFY' for r in rows)
+def test_confluence_pattern_bonus_only_applies_when_oi_agrees_with_sector(monkeypatch):
+    monkeypatch.setattr(confluence, 'TOP_N_SECTORS', 1)
+    ind_map, results = _hi_mid_lo_results()
+    pattern_rows = [
+        {'symbol': 'H1', 'pattern': 'Bull Flag', 'status': 'BREAKOUT', 'direction': 'BULL', 'tier': 'A', 'tier_rank': 0},
+        # H2's own OI read is bearish and its pattern agrees with THAT (not with the sector) - since H2 is
+        # contra (agree=False), the bonus must not apply even though the pattern matches its OI direction.
+        {'symbol': 'H2', 'pattern': 'Head and Shoulders', 'status': 'RETEST_HOLD', 'direction': 'BEAR', 'tier': 'A', 'tier_rank': 0},
+    ]
+    _patch(monkeypatch, pattern_rows, ind_map, results)
+    rows = confluence.watch(results)
+    by_sym = {r['symbol']: r for r in rows}
+    assert by_sym['H1']['score'] == 3
+    assert by_sym['H1']['pattern'] == {'name': 'Bull Flag', 'status': 'BREAKOUT', 'tier': 'A'}
+    assert by_sym['H2']['score'] == 1                 # still contra -> no pattern bonus
+    assert by_sym['H2']['pattern'] is None
 
 
-def test_confluence_non_empty_when_oi_and_sector_agree_even_with_zero_patterns(monkeypatch):
-    # The direct regression test for "mostly empty": with no active patterns at all (empty pattern_rows,
-    # simulating most of the trading day before the once-daily 15:45 IST scan), OI+sector alone must still
-    # produce rows, scored 2/3.
-    _patch(monkeypatch, [], _IND_MAP, _RESULTS)
-    rows = confluence.watch(_RESULTS)
-    assert len(rows) == 1
-    assert rows[0]['symbol'] == 'TCS'
-    assert rows[0]['score'] == 2
-    assert rows[0]['pattern'] is None
-
-
-# Two industries, both clear of the sector threshold on the bullish side: GrpA (modest edge) and GrpC (large
-# edge), with eight very-negative unmapped filler rows to pull the whole-market median well below both so
-# neither edge depends on symmetric group placement.
+# Two gainer-side industries (TOP_N_SECTORS defaults to 4, and with only 2 industries total both end up
+# GAINER after the top/bottom dedup) with eight very-negative unmapped filler rows pulling the market
+# median well below both, so neither edge depends on symmetric group placement.
 def _two_industry_results():
     ind_map = {'A1': 'GrpA', 'A2': 'GrpA', 'A3': 'GrpA', 'A4': 'GrpA',
                'C1': 'GrpC', 'C2': 'GrpC', 'C3': 'GrpC', 'C4': 'GrpC'}
@@ -118,15 +132,14 @@ def test_confluence_higher_score_outranks_larger_industry_edge(monkeypatch):
 
 def test_confluence_larger_industry_edge_sorts_first_at_equal_score(monkeypatch):
     ind_map, results = _two_industry_results()
-    # No patterns at all -> both A1 and C1 score 2/3; GrpC's larger sector edge sorts it first.
-    _patch(monkeypatch, [], ind_map, results)
+    _patch(monkeypatch, [], ind_map, results)   # no patterns -> both A1 and C1 score 2/3
     rows = confluence.watch(results)
     syms = [r['symbol'] for r in rows]
     assert syms == ['C1', 'A1']
     assert rows[0]['score'] == rows[1]['score'] == 2
 
 
-def test_confluence_larger_price_change_breaks_tie_within_same_industry(monkeypatch):
+def test_confluence_larger_price_change_breaks_tie_within_same_sector(monkeypatch):
     # X1 and X2 are in the same industry, so they share the exact same industry_edge_pct; the tie is
     # broken by the bigger |price_chg_today_pct|.
     ind_map = {'X1': 'GrpX', 'X2': 'GrpX', 'X3': 'GrpX', 'X4': 'GrpX'}
@@ -148,14 +161,15 @@ def test_confluence_larger_price_change_breaks_tie_within_same_industry(monkeypa
 
 
 def test_confluence_caps_at_max_rows(monkeypatch):
-    # 25 same-industry members, all qualifying, plus 30 unmapped filler rows at a far lower value so the
-    # market median sits well below the group's own median -> all 25 confirm, output caps at MAX_ROWS (20).
-    ind_map = {f'SYM{i}': 'BigGroup' for i in range(25)}
-    results = [{'symbol': f'SYM{i}', 'oi_structure': 'Long Buildup', 'price_chg_today_pct': 5.0} for i in range(25)]
-    results += [{'symbol': f'FILL{i}', 'price_chg_today_pct': 0.0} for i in range(30)]
+    # 35 same-industry members, all qualifying, plus 40 unmapped filler rows at a far lower value (more
+    # filler than group members, so the market median lands in the filler block) -> all 35 confirm, output
+    # caps at MAX_ROWS (30).
+    ind_map = {f'SYM{i}': 'BigGroup' for i in range(35)}
+    results = [{'symbol': f'SYM{i}', 'oi_structure': 'Long Buildup', 'price_chg_today_pct': 5.0} for i in range(35)]
+    results += [{'symbol': f'FILL{i}', 'price_chg_today_pct': 0.0} for i in range(40)]
     _patch(monkeypatch, [], ind_map, results)
     rows = confluence.watch(results)
-    assert len(rows) == confluence.MAX_ROWS == 20
+    assert len(rows) == confluence.MAX_ROWS == 30
 
 
 def test_confluence_is_cached_per_ttl_window(monkeypatch):
@@ -207,7 +221,7 @@ def test_dashboard_state_api_exposes_confluence_watch(client, monkeypatch):
     monkeypatch.setattr(web, '_confluence_watch_safe',
                          lambda results: [{'symbol': 'TCS', 'direction': 'UP', 'price_chg_today_pct': 0.52,
                                             'oi_structure': 'Long Buildup', 'industry': 'IT Services',
-                                            'industry_edge_pct': 0.19,
+                                            'sector_trend': 'GAINER', 'industry_edge_pct': 0.19, 'agree': True,
                                             'pattern': {'name': 'Bull Flag', 'status': 'BREAKOUT', 'tier': 'A'},
                                             'score': 3}])
     r = client.get('/api/dashboard-state', headers=_auth())
@@ -221,3 +235,4 @@ def test_dashboard_page_renders_confluence_watch_markup(client):
     assert r.status_code == 200
     assert b'cwatch-tbody' in r.data
     assert b'oi-structure-badge' in r.data
+    assert b'sector-trend-badge' in r.data

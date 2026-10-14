@@ -57,8 +57,15 @@
   .cwatch-score{font-family:var(--mono);font-weight:800;font-size:12px;padding:2px 8px;border-radius:5px;display:inline-block}
   .cwatch-score.s3{background:var(--green-bg);color:var(--green)}
   .cwatch-score.s2{background:#1a2029;color:var(--muted)}
+  .cwatch-score.s1{background:rgba(240,185,11,0.12);color:var(--amber)}
   .cwatch-pattern-name{font-size:11px;color:var(--text)}
   .cwatch-pattern-none{font-size:11px;color:var(--dim)}
+  .sector-trend-badge{font-family:var(--mono);font-weight:700;font-size:10px;padding:2px 6px;border-radius:5px;display:inline-block;margin-right:6px;white-space:nowrap}
+  .sector-trend-badge.gainer{background:var(--green-bg);color:var(--green)}
+  .sector-trend-badge.loser{background:var(--red-bg);color:var(--red)}
+  .cwatch-agree-tag{font-size:11px;font-weight:700}
+  .cwatch-agree-tag.yes{color:var(--green)}
+  .cwatch-agree-tag.no{color:var(--amber)}
 
   .wrap { max-width: 1360px; margin: 0 auto; padding: 14px 18px 30px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
@@ -835,24 +842,24 @@ button, a, summary, input, select { touch-action: manipulation; }
 
   <div class="card table-card" aria-label="Confluence Watch">
     <div class="table-card-head">
-      <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Confluence Watch <span class="sub" style="text-transform:none;">OI positioning confirmed by sector strength, pattern match as a bonus third signal &middot; research, not trade calls</span></h2>
+      <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Confluence Watch <span class="sub" style="text-transform:none;">today's strongest &amp; weakest F&amp;O sectors, with every OI-biased stock inside them &middot; research, not trade calls</span></h2>
       <span class="footer-note">Live with the scan · pattern column uses /patterns' last run (15:45 IST, once/day)</span>
     </div>
     <div class="table-scroll">
     <table id="cwatch-table">
       <thead><tr>
-        <th>Symbol</th><th>Dir</th><th>Chg%</th><th>OI structure</th><th>Sector edge</th><th>Pattern (bonus)</th><th>Score</th>
+        <th>Symbol</th><th>OI structure</th><th>Sector</th><th>Agrees?</th><th>Chg%</th><th>Pattern (bonus)</th><th>Score</th>
       </tr></thead>
       <tbody id="cwatch-tbody">
         {% if confluence_watch %}{% for c in confluence_watch %}<tr class="data-row">
           <td><a class="chart-link" href="/chart/{{ c.symbol }}">{{ c.symbol }}</a></td>
-          <td class="{{ 'bull' if c.direction == 'UP' else 'bear' }}">{{ '▲ UP' if c.direction == 'UP' else '▼ DOWN' }}</td>
-          <td>{{ '%+.2f'|format(c.price_chg_today_pct) + '%' if c.price_chg_today_pct is not none else '—' }}</td>
           <td><span class="oi-structure-badge {{ c.oi_structure|lower|replace(' ', '-') }}">{{ c.oi_structure }}</span></td>
-          <td>{{ c.industry }} <span style="color:var(--muted)">{{ '%+.2f'|format(c.industry_edge_pct) }}pp</span></td>
+          <td><span class="sector-trend-badge {{ 'gainer' if c.sector_trend == 'GAINER' else 'loser' }}">{{ '▲ Gainer' if c.sector_trend == 'GAINER' else '▼ Loser' }}</span>{{ c.industry }} <span style="color:var(--muted)">{{ '%+.2f'|format(c.industry_edge_pct) }}pp</span></td>
+          <td><span class="cwatch-agree-tag {{ 'yes' if c.agree else 'no' }}">{{ 'Agrees' if c.agree else 'Contra' }}</span></td>
+          <td>{{ '%+.2f'|format(c.price_chg_today_pct) + '%' if c.price_chg_today_pct is not none else '—' }}</td>
           <td>{% if c.pattern %}<span class="cwatch-pattern-name">{{ c.pattern.name }} &middot; {{ c.pattern.status.replace('_', ' ').title() }}</span>{% else %}<span class="cwatch-pattern-none">—</span>{% endif %}</td>
           <td><span class="cwatch-score s{{ c.score }}">{{ c.score }}/3</span></td>
-        </tr>{% endfor %}{% else %}<tr><td colspan="7"><div class="cwatch-empty">No stock currently has OI positioning confirmed by sector strength — fills in as the live scan updates.</div></td></tr>{% endif %}
+        </tr>{% endfor %}{% else %}<tr><td colspan="7"><div class="cwatch-empty">No stock in today's leading/lagging sectors currently carries a directional OI read — fills in as the live scan updates.</div></td></tr>{% endif %}
       </tbody>
     </table>
     </div>
@@ -2203,17 +2210,21 @@ button, a, summary, input, select { touch-action: manipulation; }
     if (!el) return;
     rows = Array.isArray(rows) ? rows : [];
     if (!rows.length) {
-      el.innerHTML = '<tr><td colspan="7"><div class="cwatch-empty">No stock currently has OI positioning confirmed by sector strength — fills in as the live scan updates.</div></td></tr>';
+      el.innerHTML = '<tr><td colspan="7"><div class="cwatch-empty">No stock in today\'s leading/lagging sectors currently carries a directional OI read — fills in as the live scan updates.</div></td></tr>';
       return;
     }
     el.innerHTML = rows.map(function (c) {
-      var up = c.direction === 'UP';
       var chg = (typeof c.price_chg_today_pct === 'number')
         ? (c.price_chg_today_pct >= 0 ? '+' : '') + c.price_chg_today_pct.toFixed(2) + '%' : '—';
       var structure = c.oi_structure || '';
       var slug = structure.toLowerCase().replace(/ /g, '-');
       var edge = (typeof c.industry_edge_pct === 'number')
         ? (c.industry_edge_pct >= 0 ? '+' : '') + c.industry_edge_pct.toFixed(2) + 'pp' : '—';
+      var isGainer = c.sector_trend === 'GAINER';
+      var trendHtml = '<span class="sector-trend-badge ' + (isGainer ? 'gainer' : 'loser') + '">' +
+        (isGainer ? '▲ Gainer' : '▼ Loser') + '</span>';
+      var agreeHtml = '<span class="cwatch-agree-tag ' + (c.agree ? 'yes' : 'no') + '">' +
+        (c.agree ? 'Agrees' : 'Contra') + '</span>';
       var patternHtml = '<span class="cwatch-pattern-none">—</span>';
       if (c.pattern) {
         var statusLabel = String(c.pattern.status || '').replace(/_/g, ' ').replace(/\w\S*/g, function (t) {
@@ -2223,10 +2234,10 @@ button, a, summary, input, select { touch-action: manipulation; }
       }
       return '<tr class="data-row">' +
         '<td><a class="chart-link" href="/chart/' + v12Esc(c.symbol) + '">' + v12Esc(c.symbol) + '</a></td>' +
-        '<td class="' + (up ? 'bull' : 'bear') + '">' + (up ? '▲ UP' : '▼ DOWN') + '</td>' +
-        '<td>' + chg + '</td>' +
         '<td><span class="oi-structure-badge ' + slug + '">' + v12Esc(structure) + '</span></td>' +
-        '<td>' + v12Esc(c.industry || '') + ' <span style="color:var(--muted)">' + edge + '</span></td>' +
+        '<td>' + trendHtml + v12Esc(c.industry || '') + ' <span style="color:var(--muted)">' + edge + '</span></td>' +
+        '<td>' + agreeHtml + '</td>' +
+        '<td>' + chg + '</td>' +
         '<td>' + patternHtml + '</td>' +
         '<td><span class="cwatch-score s' + v12Esc(c.score) + '">' + v12Esc(c.score) + '/3</span></td>' +
       '</tr>';
