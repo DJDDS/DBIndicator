@@ -1259,7 +1259,7 @@ def desk_summary() -> dict | None:
     return v
 
 
-_RESEARCH_CACHE = {'at': 0.0, 'ticker': [], 'scoreboard': []}
+_RESEARCH_CACHE = {'at': 0.0, 'ticker': []}
 RESEARCH_CACHE_TTL = 20.0   # seconds - the main dashboard polls every 8s; RS refreshes 3x/day and the
                             # hierarchy desk once/day, so re-reading+scoring their whole history every poll
                             # is pure waste. desk_summary() above uses the same idea for the direction desk.
@@ -1267,16 +1267,7 @@ RESEARCH_CACHE_TTL = 20.0   # seconds - the main dashboard polls every 8s; RS re
 
 def _refresh_research_cache() -> None:
     import time as _t
-    ticker, scoreboard = [], []
-    try:
-        days = _read_jsonl('days.jsonl')
-        sc = (scorecard(days).get('hc') or {}).get('traded') or {}
-        if sc.get('n'):
-            scoreboard.append({'name': 'Direction desk', 'sub': 'daily pool, held to 15:15', 'n': sc['n'], 'win': sc['win'],
-                                'metric_label': 'avg / trade', 'metric': (f"{sc['avg_pct']:+.2f}%" if sc.get('avg_pct') is not None else '—'),
-                                'href': '/admin/intraday#direction'})
-    except Exception:  # noqa: BLE001
-        log.exception('research cache: direction desk failed')
+    ticker = []
     try:
         from . import v134_relstrength as _rs
         rst = _rs.status() or {}
@@ -1288,12 +1279,6 @@ def _refresh_research_cache() -> None:
                                'text': f"z {p['z']} · grade {p.get('grade', '')}{' (reserve)' if p.get('reserve') else ''} · {hm} refresh",
                                'cls': 'up' if p['side'] == 'UP' else 'down'})
             if sl.get('picks'): break
-        s = rst.get('score') or {}
-        allsc = s.get('all') or {}
-        if allsc.get('n'):
-            scoreboard.append({'name': 'Relative-strength desk', 'sub': '11:15/12:15/13:15, held to 15:15', 'n': allsc['n'], 'win': allsc['win'],
-                                'metric_label': 'vs market / pick', 'metric': (f"{s['edge_avg_pct']:+.3f}%" if s.get('edge_avg_pct') is not None else '—'),
-                                'href': '/admin/intraday#relstrength'})
     except Exception:  # noqa: BLE001
         log.exception('research cache: RS desk failed')
     try:
@@ -1306,35 +1291,20 @@ def _refresh_research_cache() -> None:
             ticker.append({'tag': f"HIERARCHY {pick.get('role', 'PICK')} (research)", 'symbol': pick['symbol'], 'side': pick['side'],
                            'text': pick['industry'] + (f" · {latest:+.2f}%" if latest is not None else ' · entered ' + str(pick.get('entry', ''))),
                            'cls': 'up' if pick['side'] == 'UP' else 'down'})
-        s = hst.get('score') or {}
-        pk = (s.get('pick') or {}).get('exit') or {}
-        if pk.get('n'):
-            scoreboard.append({'name': 'Hierarchy desk', 'sub': 'V4.7, research / not validated', 'n': pk['n'], 'win': pk['win'],
-                                'metric_label': 'net / trade', 'metric': (f"{pk['net_bps']:+.1f} bps" if pk.get('net_bps') is not None else '—'),
-                                'href': '/admin/intraday#hierarchy'})
     except Exception:  # noqa: BLE001
         log.exception('research cache: hierarchy desk failed')
-    _RESEARCH_CACHE.update(at=_t.time(), ticker=ticker, scoreboard=scoreboard)
+    _RESEARCH_CACHE.update(at=_t.time(), ticker=ticker)
 
 
 def research_ticker() -> list:
-    """Member-facing read of today's live-signal desks (relative-strength and the V4.7 hierarchy desk only - by
-    request; the direction desk's own numbers are in research_scoreboard instead), for the dashboard ticker.
+    """Member-facing read of today's live-signal desks (relative-strength and the V4.7 hierarchy desk only, by
+    request - no direction desk, no scoreboard, just the ticker) for the dashboard ticker.
     Each item: {tag, symbol, side, text, cls}. Stock + direction only - no option instruction. Cached (see
     RESEARCH_CACHE_TTL): the dashboard polls every 8s and this would otherwise re-read + re-score each desk's
     whole history that often."""
     import time as _t
     if _t.time() - _RESEARCH_CACHE['at'] >= RESEARCH_CACHE_TTL: _refresh_research_cache()
     return _RESEARCH_CACHE['ticker']
-
-
-def research_scoreboard() -> list:
-    """One row per paper-trading desk for a member-facing dashboard scoreboard: recent sample size, win rate and
-    its own headline economics (avg return / edge vs market / net bps), each linking to its admin section.
-    Shares the same cache as research_ticker (one read of each desk's history per refresh, not two)."""
-    import time as _t
-    if _t.time() - _RESEARCH_CACHE['at'] >= RESEARCH_CACHE_TTL: _refresh_research_cache()
-    return _RESEARCH_CACHE['scoreboard']
 
 
 def _v47_status():
