@@ -1,20 +1,23 @@
-"""Confluence Watch - a new, synthesized view correlating three things that already exist as separate
-pages: chart Patterns (/patterns), the OI Screener's live positioning read (/oi-screener, the oi_structure
-field on every scan row), and Sector Analysis's industry relative strength (built from the same industry
-map the V4.7 hierarchy desk already uses). None of the three is new data; what's new is checking whether
-they agree.
+"""Confluence Watch - correlates three things that already exist as separate pages: the OI Screener's live
+positioning read (/oi-screener, the oi_structure field on every live scan row), Sector Analysis's industry
+relative strength (built from the same industry map the V4.7 hierarchy desk already uses), and chart
+Patterns (/patterns). None of the three is new data; what's new is checking whether they agree.
 
-Anchored on active chart patterns (status BREAKOUT / RETEST_HOLD / EXTENDED - a pattern still in FORMING
-has nothing yet to confirm or contradict). For each one, two independent reads are checked against the
-pattern's own direction:
-  - OI positioning: Long Buildup / Short Covering agree with a bullish pattern; Short Buildup / Long
-    Unwinding agree with a bearish one (classic F&O positioning labels, already computed once per stock
-    in the live scan).
-  - Industry relative strength: is the stock's industry (>=4 F&O members needed, same floor the hierarchy
-    desk uses) beating or trailing the whole F&O market's today-return by more than a small threshold, in
-    the pattern's direction.
-A row only surfaces here when at least one of those two agrees with the pattern (agree >= 2, counting the
-pattern itself) - a technical setup nobody else is confirming stays on /patterns, not here.
+Rebuilt 14 Oct 2026 after member feedback that v1 (anchored on active chart patterns) was mostly empty and
+the wrong synthesis. The chart-pattern scan only runs once a day, at 15:45 IST after the close
+(chart_patterns.AUTO_SLOTS), so for most of the trading day that list is yesterday's and often small -
+anchoring a "live" dashboard card on it meant the card sat empty for hours. OI positioning and sector/
+industry relative strength are both live, computed fresh every scan, so v2 anchors there instead:
+
+  1. OI positioning gives the directional read: Long Buildup / Short Covering = bullish, Short Buildup /
+     Long Unwinding = bearish (classic F&O positioning labels, already on every live scan row).
+  2. Sector confirmation: is the stock's industry (>=4 F&O members needed, same floor the hierarchy desk
+     uses) beating or trailing the whole F&O market's today-return by more than a small threshold, in OI's
+     direction. A row only exists once this agrees - OI alone is noisy; OI without any sector backing stays
+     off this list.
+  3. Chart-pattern confirmation is a bonus third signal, layered on top when /patterns' last scan has an
+     active pattern (BREAKOUT / RETEST_HOLD / EXTENDED) on the same stock in the same direction. It raises
+     the score from 2 to 3 but is never required, since it only refreshes once a day.
 
 Paper / spotting only. Stock + direction only - no option instruction, no execution advice.
 """
@@ -26,15 +29,16 @@ import time
 log = logging.getLogger(__name__)
 
 _CACHE = {'at': 0.0, 'value': []}
-CACHE_TTL = 20.0   # seconds - this reads the whole patterns results file (with NSE-evidence enrichment)
-                    # plus the live scan's whole results list on every refresh; the dashboard polls every
-                    # 8s, so, learning directly from the research-ticker slowdown, this is cached from day one.
+CACHE_TTL = 20.0    # seconds - reads the live scan's whole results list plus the patterns results file on
+                     # every refresh; the dashboard polls every 8s, so this is cached from day one (the
+                     # lesson from the earlier research-ticker slowdown).
 
-ACTIVE_STATUS = {"BREAKOUT", "RETEST_HOLD", "EXTENDED"}
+MAX_ROWS = 20
+ACTIVE_PATTERN_STATUS = {"BREAKOUT", "RETEST_HOLD", "EXTENDED"}
 _OI_BULL = {"Long Buildup", "Short Covering"}
 _OI_BEAR = {"Short Buildup", "Long Unwinding"}
 INDUSTRY_THRESHOLD_PCT = 0.15   # an industry must beat/trail the F&O market median today-return by more
-                                 # than this many points, in the pattern's direction, to count as agreeing
+                                 # than this many points, in OI's direction, to count as confirming
 MIN_INDUSTRY_GROUP = 4          # same floor v135_hierarchy uses before trusting an industry median
 
 
@@ -45,16 +49,6 @@ def _median(vals):
         return None
     mid = n // 2
     return vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2.0
-
-
-def _oi_lookup(results):
-    """symbol -> its current oi_structure label, straight off the live scan row."""
-    out = {}
-    for row in results or []:
-        sym = row.get("symbol")
-        if sym:
-            out[sym] = row.get("oi_structure")
-    return out
 
 
 def _industry_reads(results, ind_map):
@@ -79,58 +73,72 @@ def _industry_reads(results, ind_map):
     return reads, market_med
 
 
+def _active_pattern_lookup(pattern_rows):
+    """symbol -> its best active pattern row (lowest tier_rank wins), status in ACTIVE_PATTERN_STATUS."""
+    best = {}
+    for row in pattern_rows:
+        if row.get("status") not in ACTIVE_PATTERN_STATUS or row.get("direction") not in ("BULL", "BEAR"):
+            continue
+        sym = row.get("symbol")
+        if not sym:
+            continue
+        cur = best.get(sym)
+        if cur is None or row.get("tier_rank", 3) < cur.get("tier_rank", 3):
+            best[sym] = row
+    return best
+
+
 def _refresh(results) -> list:
     from . import chart_patterns, v135_hierarchy
 
     ind_map = v135_hierarchy.industry_map()
-    pattern_rows = chart_patterns.public_rows(chart_patterns.load_results())
-    oi_by_symbol = _oi_lookup(results)
+    pattern_by_symbol = _active_pattern_lookup(chart_patterns.public_rows(chart_patterns.load_results()))
     industry_reads, market_med = _industry_reads(results, ind_map)
 
     out = []
-    for row in pattern_rows:
-        status = row.get("status")
-        direction = row.get("direction")           # "BULL" / "BEAR"
-        if status not in ACTIVE_STATUS or direction not in ("BULL", "BEAR"):
-            continue
-        pdir = 1 if direction == "BULL" else -1
+    for row in results or []:
         sym = row.get("symbol")
-
-        signals = [f"Pattern: {row.get('pattern')} ({status.replace('_', ' ').title()})"]
-        agree = 1
-
-        structure = oi_by_symbol.get(sym)
-        if (pdir > 0 and structure in _OI_BULL) or (pdir < 0 and structure in _OI_BEAR):
-            agree += 1
-            signals.append(f"OI: {structure}")
+        structure = row.get("oi_structure")
+        if not sym or structure not in _OI_BULL | _OI_BEAR:
+            continue
+        pdir = 1 if structure in _OI_BULL else -1
 
         industry = ind_map.get(sym)
-        industry_edge = None
-        if industry and market_med is not None and industry in industry_reads:
-            industry_edge = round(industry_reads[industry] - market_med, 3)
-            if pdir * industry_edge > INDUSTRY_THRESHOLD_PCT:
-                agree += 1
-                signals.append(f"Sector: {industry} {'leading' if pdir > 0 else 'lagging'} market "
-                                f"({industry_edge:+.2f}pp)")
-
-        if agree < 2:
+        if not industry or industry not in industry_reads or market_med is None:
             continue
+        industry_edge = round(industry_reads[industry] - market_med, 3)
+        if pdir * industry_edge <= INDUSTRY_THRESHOLD_PCT:
+            continue   # OI alone, with no sector backing, doesn't make the list
+
+        score = 2
+        pattern = None
+        p = pattern_by_symbol.get(sym)
+        if p and ((pdir > 0 and p["direction"] == "BULL") or (pdir < 0 and p["direction"] == "BEAR")):
+            score = 3
+            pattern = {"name": p.get("pattern"), "status": p.get("status"), "tier": p.get("tier")}
+
+        chg = row.get("price_chg_today_pct")
+        try:
+            chg = round(float(chg), 2) if chg is not None else None
+        except (TypeError, ValueError):
+            chg = None
 
         out.append({
             "symbol": sym, "direction": "UP" if pdir > 0 else "DOWN",
-            "pattern": row.get("pattern"), "status": status,
-            "tier": row.get("tier"), "tier_rank": row.get("tier_rank", 3),
-            "industry": industry, "oi_structure": structure, "industry_edge_pct": industry_edge,
-            "agree": agree, "signals": signals,
+            "price_chg_today_pct": chg, "oi_structure": structure,
+            "industry": industry, "industry_edge_pct": industry_edge,
+            "pattern": pattern, "score": score,
         })
 
-    out.sort(key=lambda r: (-r["agree"], r.get("tier_rank", 3)))
-    return out
+    out.sort(key=lambda r: (-r["score"], -abs(r["industry_edge_pct"]),
+                             -(abs(r["price_chg_today_pct"]) if r["price_chg_today_pct"] is not None else 0)))
+    return out[:MAX_ROWS]
 
 
 def watch(results) -> list:
-    """Member-facing read: patterns confirmed by OI positioning and/or sector strength. Cached (see
-    CACHE_TTL). On a transient failure, keeps serving the last good value rather than flashing empty."""
+    """Member-facing read: live OI positioning confirmed by sector/industry strength, with chart-pattern
+    confirmation layered on as a bonus third signal when available. Cached (see CACHE_TTL). On a transient
+    failure, keeps serving the last good value rather than flashing empty."""
     now = time.time()
     if now - _CACHE['at'] < CACHE_TTL:
         return _CACHE['value']
