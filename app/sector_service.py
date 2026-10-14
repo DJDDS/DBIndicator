@@ -439,6 +439,19 @@ def _dash_breadth(ov,idx):
             'nifty':nfp,'gap':round(nfp-avg,2) if nfp is not None else None}
 
 
+def _stock_movers(ov, n=6):
+    """Today's biggest gainers and losers among the stocks in the cached sector overview (no extra calls). None until enough stocks have a price."""
+    seen={}
+    for x in ov.get('sectors') or []:
+        for m in x.get('members_mini') or []:
+            v=a.finite((m.get('r') or {}).get('today'))
+            if v is not None: seen.setdefault(m['s'],(v,m.get('p'),x.get('name')))
+    if len(seen)<50: return None
+    rows=sorted(seen.items(),key=lambda kv:-kv[1][0])
+    row=lambda kv:{'s':kv[0],'pct':round(kv[1][0],2),'p':kv[1][1],'sector':kv[1][2]}
+    return {'gain':[row(kv) for kv in rows[:n]],'lose':[row(kv) for kv in rows[::-1][:n]],'n':len(seen)}
+
+
 def dashboard_summary(lite=False):
     """Light payload for the main dashboard: index cards, sector performance and a per-stock price map (watchlist),
     all derived from the cached sector overview (no extra Kite calls)."""
@@ -471,7 +484,7 @@ def dashboard_summary(lite=False):
     ranked=sorted([r for r in ranked if r[2] is not None],key=lambda r:-r[2])
     movers={'lead':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[:3]],'lag':[{'name':n,'id':i,'pct':r2(v)} for n,i,v in ranked[::-1][:3]]} if len(ranked)>=6 else None
     if lite:                    # the scanner dashboard only needs the index strip; sector/stock detail lives on the sector page
-        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag'),'breadth':_dash_breadth(ov,idx)}
+        return {'as_of':ov.get('as_of'),'status':ov.get('status'),'indices':idx,'sector_movers':movers,'gift_diag':_gift.get('diag'),'breadth':_dash_breadth(ov,idx),'stock_movers':_stock_movers(ov)}
     sectors=[]; stocks={}
     for x in ov['sectors']:
         mm=x.get('members_mini') or []

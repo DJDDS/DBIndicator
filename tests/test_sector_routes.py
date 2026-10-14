@@ -341,3 +341,12 @@ def test_gift_nifty_first_call_waits_for_the_first_reading(monkeypatch):
     monkeypatch.setattr(s.time, 'sleep', s.time.sleep)
     g = s.gift_nifty()
     assert g and g['price'] == 25000.0                                              # first call returns the reading instead of None
+
+
+def test_stock_movers_top_gainers_and_losers():
+    from app import sector_service as s
+    members = [{'s': f'S{i:03d}', 'p': 100.0 + i, 'r': {'today': float(i - 30)}} for i in range(60)]
+    ov = {'sectors': [{'name': 'Banks', 'members_mini': members[:30]}, {'name': 'IT', 'members_mini': members[30:] + members[:3]}]}
+    m = s._stock_movers(ov, 3)
+    assert [r['s'] for r in m['gain']] == ['S059', 'S058', 'S057'] and [r['s'] for r in m['lose']] == ['S000', 'S001', 'S002'] and m['n'] == 60
+    assert m['gain'][0]['pct'] == 29.0 and s._stock_movers({'sectors': [{'name': 'X', 'members_mini': members[:10]}]}) is None
