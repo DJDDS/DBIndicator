@@ -32,6 +32,22 @@
   header nav a:hover { color: #fff; border-color: var(--accent); }
   header nav { display: flex; gap: 8px; }
 
+  .rticker{background:linear-gradient(180deg,#0d1119,#0a0d12);border-bottom:1px solid var(--border);overflow:hidden;position:sticky;top:53px;z-index:19;display:flex;align-items:stretch}
+  .rticker .rticker-label{flex:0 0 auto;background:#141a24;color:#8fb3ff;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;padding:7px 12px;display:flex;align-items:center;border-right:1px solid var(--border);white-space:nowrap}
+  .rticker-track-wrap{flex:1;overflow:hidden;position:relative}
+  .rticker-track{display:flex;align-items:center;white-space:nowrap;width:max-content;animation:rticker-scroll 38s linear infinite}
+  .rticker-track-wrap:hover .rticker-track{animation-play-state:paused}
+  @keyframes rticker-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .rtick{display:inline-flex;align-items:center;gap:7px;padding:7px 18px;font-size:11.5px;color:var(--text);border-right:1px solid #1c2330}
+  .rtick .rtag{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .rtick .rsym{font-weight:800;font-family:var(--mono)}
+  .rtick.up .rsym{color:var(--green)}.rtick.down .rsym{color:var(--red)}
+  .rtick .rarr{font-weight:800}
+  .rtick.up .rarr{color:var(--green)}.rtick.down .rarr{color:var(--red)}
+  .rtick .rdetail{color:var(--muted)}
+  .rticker-empty{padding:7px 14px;font-size:11px;color:var(--muted)}
+  @media(max-width:720px){.rticker{top:0}}
+
   .wrap { max-width: 1360px; margin: 0 auto; padding: 14px 18px 30px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
   .card h2 { margin: 0 0 8px; font-size: 12.5px; color: var(--text); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
@@ -539,6 +555,7 @@ div.card:has(> #early-radar-card) { display:none !important; }
 .focus-pro .focus-life{font-family:var(--mono);font-size:9px}
 .focus-pro .focus-action{font-size:11px;color:#cfdbe5}
 .focus-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px}
+  .focus-card-grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .focus-mini{border:1px solid #21303d;border-radius:8px;background:rgba(7,12,17,.52);padding:8px 9px;min-width:0}
 .focus-mini .label{display:block;color:#66798c;font-size:8.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:800}
 .focus-mini .value{display:block;margin-top:3px;font:750 11px var(--mono);color:#d3dfe7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -885,6 +902,16 @@ button, a, summary, input, select { touch-action: manipulation; }
     <nav><a href="/patterns">Patterns</a><a href="/oi-screener">OI Screener</a><a href="/sector-analysis">Sector Analysis</a>{% if security_role == "owner" %}<a href="/admin/v130">Swing Desk (V13)</a><a href="/admin/intraday">Intraday Desk</a><a href="/admin/commodity">NG Desk</a><a href="/backtest">Backtest</a><a href="/settings">Settings</a>{% endif %}<a href="/logout" data-logout>Logout</a></nav><script src="/static/logout.js"></script>
   </div>
 </header>
+<div class="rticker" aria-label="Today's research desk picks - paper only">
+  <div class="rticker-label">Research picks · not trade calls</div>
+  <div class="rticker-track-wrap">
+    <div class="rticker-track" id="rticker-track">
+      {% if research_ticker %}
+        {% for it in research_ticker * 2 %}<span class="rtick {{ it.cls }}"><span class="rtag">{{ it.tag }}</span><span class="rsym">{{ it.symbol }}</span><span class="rarr">{{ '▲' if it.side == 'UP' else '▼' }}</span><span class="rdetail">{{ it.text }}</span></span>{% endfor %}
+      {% else %}<span class="rticker-empty">Evaluating today's picks — direction desk, relative-strength and hierarchy desk appear here once computed.</span>{% endif %}
+    </div>
+  </div>
+</div>
 <div class="wrap">
 
   {% macro chip_stats(r) %}
@@ -2004,11 +2031,6 @@ button, a, summary, input, select { touch-action: manipulation; }
         'COMPLETED':'Observation completed'
       }; return map[st]||st;
     }
-    function vehicle(label,value){
-      value=String(value||'WAIT').toUpperCase();
-      var cls=value==='ELIGIBLE'?' good':(value==='DEGRADED'?' warn':(value==='BLOCKED'||value==='STALE'?' bad':''));
-      return '<span class="focus-vehicle'+cls+'">'+v12Esc(label)+' '+v12Esc(value)+'</span>';
-    }
     function mathCell(label,value,suffix){
       return '<div class="focus-math-cell"><span>'+v12Esc(label)+'</span><b>'+v12Esc(value)+(suffix||'')+'</b></div>';
     }
@@ -2026,22 +2048,15 @@ button, a, summary, input, select { touch-action: manipulation; }
       var dir=String(row.direction||'');
       var sign=dir==='Bearish'?-1:1;
       var triggerAtr=(Number.isFinite(cmp)&&Number.isFinite(trigger)&&Number.isFinite(atr)&&atr>0)?sign*(cmp-trigger)/atr:NaN;
-      var optionContract=row.best_option_contract||row.locked_option_contract||v.option_contract||'—';
-      var route=String(row.route_health||v.route_health||'WAIT').toUpperCase();
-      var bestStrike=Number(row.best_option_strike);
-      var bestRoi=Number(row.best_option_expected_net_roi_pct);
-      var bestFriction=Number(row.best_option_friction_pct);
       var movementH=Number(row.movement_horizon_seconds);
       var movementZ=Number(row.movement_z);
       var movementP=Number(row.movement_p_value);
       var structureP=Number(row.structure_p_value);
-      var window=String(row.execution_window_state||v.execution_window_state||(v.execution_window_open?'OPEN':'CLOSED')).toUpperCase();
       var fresh=row.fresh_entry_gate;
       var freshReason=String(row.fresh_entry_reason||'');
       var zoneObj=row.entry_zone||{};
       var zoneState=String(zoneObj.state||'UNAVAILABLE').toUpperCase();
       var zoneDistance=Number(zoneObj.distance_atr);
-      var maxOptionPay=Number(row.max_option_entry_price);
       var signalAge=Number(row.signal_age_seconds);
       var freshLine=fresh===false
         ? '<div class="focus-fresh wait">Fresh-entry gate: waiting for new structure / re-arm evidence</div>'
@@ -2063,18 +2078,12 @@ button, a, summary, input, select { touch-action: manipulation; }
         '<span class="focus-direction '+dir.toLowerCase()+'">'+v12Esc(dir)+'</span>' +
         '<span class="focus-life">'+v12Esc(String(row.lifecycle||'').replaceAll('_',' '))+'</span></div>' +
         '<div class="focus-action">'+v12Esc(action(row))+'</div>' +
-        '<div class="focus-card-grid">' +
+        '<div class="focus-card-grid focus-card-grid-2">' +
           '<div class="focus-mini"><span class="label">Underlying / Entry zone</span><span class="value">CMP '+n(row.live_price,2)+' · '+v12Esc(zoneState.replaceAll('_',' '))+'</span><span class="subvalue">'+
             (row.trigger!=null?'Trigger '+n(row.trigger,2):'Trigger forming')+
             (Number.isFinite(zoneDistance)?' · Δ '+s(zoneDistance,2)+' ATR':'')+
             (row.invalidation!=null?' · invalid '+n(row.invalidation,2):'')+
             (Number.isFinite(signalAge)?' · signal '+n(signalAge,0)+'s':'')+'</span></div>'+
-          '<div class="focus-mini"><span class="label">Execution / Best option</span><span class="value">Route '+v12Esc(route)+' · '+v12Esc(window)+'</span><span class="subvalue">'+
-            v12Esc(optionContract)+
-            (Number.isFinite(bestStrike)?' · K '+n(bestStrike,2):'')+
-            (Number.isFinite(bestRoi)?' · net ROI '+s(bestRoi,2)+'%':'')+
-            (Number.isFinite(bestFriction)?' · friction '+n(bestFriction,2)+'%':'')+
-            (Number.isFinite(maxOptionPay)?' · max pay '+n(maxOptionPay,2):'')+'</span></div>'+
           '<div class="focus-mini"><span class="label">Underlying movement / structure</span><span class="value">'+
             (Number.isFinite(movementH)?n(movementH,0)+'s natural horizon':'Horizon forming')+
             (Number.isFinite(movementZ)?' · Z '+s(movementZ,2):'')+
@@ -2085,14 +2094,10 @@ button, a, summary, input, select { touch-action: manipulation; }
         '</div>'+
         '<div class="focus-vehicles">'+
           '<span class="focus-vehicle'+(zoneState==='IN_ZONE'?' good':(zoneState==='EXTENDED'||zoneState==='INVALID'?' bad':' warn'))+'">ZONE '+v12Esc(zoneState.replaceAll('_',' '))+'</span>'+
-          vehicle('CASH',v.cash)+vehicle('FUT',v.future)+vehicle('OPTION',v.option)+
-          (v.execution_window_open?'<span class="focus-vehicle good">ENTRY WINDOW '+v12Esc(window)+'</span>':'')+
           (Number.isFinite(movementH)?'<span class="focus-vehicle good">H* '+n(movementH,0)+'s</span>':'')+
           (Number.isFinite(structureP)?'<span class="focus-vehicle'+(structureP<=0.01?' good':(structureP<=0.10?' warn':' bad'))+'">STRUCT p '+structureP.toExponential(1)+'</span>':'')+
-          (route!=='WAIT'?'<span class="focus-vehicle'+(route==='HEALTHY'?' good':(route==='DEGRADED'?' warn':' bad'))+'">ROUTE '+v12Esc(route)+'</span>':'')+
         '</div>'+
         freshLine+mathHtml+
-        (v.option_reason?'<div class="focus-meta">Option route: '+v12Esc(v.option_reason)+'</div>':'')+
         (h?'<div class="focus-history">'+h+'</div>':'')+
       '</article>';
     }
@@ -2504,6 +2509,26 @@ button, a, summary, input, select { touch-action: manipulation; }
     });
   })();
 
+  function renderResearchTicker(items) {
+    var el = document.getElementById('rticker-track');
+    if (!el) return;
+    items = Array.isArray(items) ? items : [];
+    if (!items.length) {
+      el.style.animation = 'none';
+      el.innerHTML = '<span class="rticker-empty">Evaluating today\'s picks — direction desk, relative-strength and hierarchy desk appear here once computed.</span>';
+      return;
+    }
+    el.style.animation = '';
+    var pair = items.concat(items);                      // doubled for a seamless scroll loop
+    el.innerHTML = pair.map(function (it) {
+      var cls = it.cls === 'up' ? 'up' : 'down';
+      return '<span class="rtick ' + cls + '"><span class="rtag">' + v12Esc(it.tag) + '</span>' +
+        '<span class="rsym">' + v12Esc(it.symbol) + '</span>' +
+        '<span class="rarr">' + (it.side === 'UP' ? '▲' : '▼') + '</span>' +
+        '<span class="rdetail">' + v12Esc(it.text) + '</span></span>';
+    }).join('');
+  }
+
   function pollDashboardState() {
     fetch('/api/dashboard-state').then(function (r) {
       if (!r.ok) throw new Error('state failed: ' + r.status);
@@ -2542,6 +2567,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       renderSkewShadow(state.v123_skew_shadow);
       renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
+      renderResearchTicker(state.research_ticker);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;

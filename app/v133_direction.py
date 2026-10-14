@@ -1259,6 +1259,49 @@ def desk_summary() -> dict | None:
     return v
 
 
+def research_ticker() -> list:
+    """Compact, member-facing read of today's picks across the paper/spotting desks, for a dashboard ticker.
+    Each item: {tag, symbol, side, text, cls}. Stock + direction only - no option instruction. Cached via the
+    desks' own status() (cheap: small JSON/JSONL reads), so this is safe to call on every dashboard poll."""
+    items = []
+    try:
+        d = desk_summary()
+        picks = (d or {}).get('picks') or []
+        if picks:
+            p0 = picks[0]
+            items.append({'tag': 'DIRECTION', 'symbol': p0['symbol'], 'side': p0['side'],
+                          'text': ('STRONG day' if d.get('strong') else 'normal day'),
+                          'cls': 'up' if p0['side'] == 'UP' else 'down'})
+    except Exception:  # noqa: BLE001
+        log.exception('research_ticker: direction desk failed')
+    try:
+        from . import v134_relstrength as _rs
+        today = (_rs.status() or {}).get('today') or {}
+        for hm in sorted((today.get('slots') or {}), reverse=True):
+            sl = today['slots'][hm]
+            if sl.get('picks'):
+                p0 = sl['picks'][0]
+                items.append({'tag': 'REL-STRENGTH', 'symbol': p0['symbol'], 'side': p0['side'],
+                              'text': f"z {p0['z']} · grade {p0.get('grade', '')}{' (reserve)' if p0.get('reserve') else ''} · {hm}",
+                              'cls': 'up' if p0['side'] == 'UP' else 'down'})
+                break
+    except Exception:  # noqa: BLE001
+        log.exception('research_ticker: RS desk failed')
+    try:
+        from . import v135_hierarchy as _h
+        today = (_h.status() or {}).get('today') or {}
+        pick = next((c for c in (today.get('picks') or []) if c.get('role') == 'PICK'), None)
+        if pick:
+            out = pick.get('out') or {}
+            latest = next((out[k] for k in ('exit', '60', '30', '15', '5', '3') if k in out), None)
+            items.append({'tag': 'HIERARCHY (research)', 'symbol': pick['symbol'], 'side': pick['side'],
+                          'text': pick['industry'] + (f" · {latest:+.2f}%" if latest is not None else ' · entered ' + str(pick.get('entry', ''))),
+                          'cls': 'up' if pick['side'] == 'UP' else 'down'})
+    except Exception:  # noqa: BLE001
+        log.exception('research_ticker: hierarchy desk failed')
+    return items
+
+
 def _v47_status():
     try:
         from . import v135_hierarchy; return v135_hierarchy.status()
