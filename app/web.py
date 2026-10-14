@@ -1366,11 +1366,11 @@ def api_v133_settings():
         if src.get(k) not in (None, ""):
             try: new[k] = int(src.get(k))
             except (TypeError, ValueError): pass
-    for k in ("strong_quantile", "book_target_pct", "opt_max_spread_pct", "hc_quantile", "hc_book_pct"):
+    for k in ("strong_quantile", "book_target_pct", "opt_max_spread_pct", "hc_quantile", "hc_book_pct", "stop_k", "trail_k"):
         if src.get(k) not in (None, ""):
             try: new[k] = float(src.get(k))
             except (TypeError, ValueError): pass
-    for k in ("trade_normal_days", "telegram", "options"):
+    for k in ("trade_normal_days", "telegram", "options", "hc_down_only"):
         if k in src: new[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
         elif src.get("_cb"): new[k] = False          # HTML form: an unticked checkbox is simply absent
     s = v133_direction.save_settings(new)

@@ -59,3 +59,29 @@ def test_market_leg_and_vs_nifty_result():
     mk = d.market_pct_from_bars(nifty, 74)
     assert mk == round(__import__('math').log(nifty.close[74] / nifty.close[1]) * 100, 3) and mk > 1.4
     assert d.market_pct_from_bars(None, 74) is None
+
+
+def test_trailing_stop_locks_in_profit_and_never_loosens():
+    idx = pd.date_range('2026-10-13 09:15', periods=75, freq='5min'); base = 100.0
+    lows = [base - 0.2] * 10 + [base - 3.0] + [base - 0.2] * 64                      # a deep dip (short is in profit by ~3%)
+    highs = [base + 0.1] * 12 + [base - 1.0] * 3 + [base - 1.0] * 60                  # then price bounces back up to 99.0 (above the trail)
+    highs[13] = base - 1.0; highs = [min(x, base + 0.1) for x in highs]
+    df = pd.DataFrame({'date': idx, 'open': base, 'high': highs, 'low': lows, 'close': base - 2.0})
+    df.loc[20:, 'high'] = base - 1.0; df.loc[30, 'high'] = base - 0.5               # bounce through the trailing stop (best 97.0 + 0.75%)
+    plain = v.outcome_from_bars(df, entry=base, p925=base, side='DOWN', k_exit=74, stop_pct=1.0)
+    tr = v.outcome_from_bars(df, entry=base, p925=base, side='DOWN', k_exit=74, stop_pct=1.0, trail_pct=0.75)
+    assert plain['stopped'] is False                                               # fixed 1% stop is never touched
+    assert tr['stopped'] is True and tr['trail_pct'] == 0.75 and tr['stop_ret_pct'] > 1.5 and tr['stop_win'] is True   # the trail banked most of the dip
+    up = v.outcome_from_bars(df.assign(open=base, high=base + 3.0, low=base - 0.1, close=base), entry=base, p925=base, side='UP', k_exit=74, stop_pct=1.0, trail_pct=0.75)
+    assert up['stopped'] is False or up['stop_ret_pct'] > -2.0
+
+
+def test_pool_can_be_limited_to_down_picks_and_settings_validate(monkeypatch):
+    X = pd.DataFrame({'symbol': list('ABCDEF'), 'o': 1.0}); p = np.array([0.95, 0.9, 0.2, 0.3, 0.4, 0.6])
+    both = v.select(X, p, [0.5] * 300, {'strong_quantile': 0.7, 'window': 250, 'top_n': 3})
+    down = v.select(X, p, [0.5] * 300, {'strong_quantile': 0.7, 'window': 250, 'top_n': 3, 'only_side': 'DOWN'})
+    assert set(both['list'].side) == {'UP', 'DOWN'} and list(down['list'].symbol) == ['C', 'D', 'E'] and set(down['list'].side) == {'DOWN'}
+    assert down['view'] == both['view']                                           # the day view still uses every stock
+    s = v.load_settings(); assert s['hc_down_only'] is True and s['trail_k'] == 0.75
+    monkeypatch.setattr(v, '_read_json', lambda n, d=None: {'trail_k': 99, 'hc_down_only': 0} if n == 'settings.json' else d)
+    s = v.load_settings(); assert s['trail_k'] == 5.0 and s['hc_down_only'] is False

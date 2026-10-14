@@ -19,7 +19,7 @@
           <td>{{ p.get('exit', '—') }}</td>
           <td class="{{ 'open' if p.get('win') else ('closed' if p.get('win') is sameas false else '') }}">{% if p.get('win') is not none %}{{ 'RIGHT' if p.win else 'wrong' }} · {{ '%+.2f'|format(p.ret_pct) }}%{% else %}{{ p.status|lower }}{% endif %}</td>
           <td class="{{ 'open' if p.get('book_win') else ('closed' if p.get('book_win') is sameas false else '') }}">{% if p.get('book_ret_pct') is not none %}{{ 'booked' if p.booked else 'not hit' }} · {{ '%+.2f'|format(p.book_ret_pct) }}%{% else %}—{% endif %}</td>
-          <td class="{{ 'open' if p.get('stop_win') else ('closed' if p.get('stop_win') is sameas false else '') }}" title="stop = {{ p.get('stop_pct') }}% against entry">{% if p.get('stop_ret_pct') is not none %}{{ 'stopped' if p.stopped else 'held' }} · {{ '%+.2f'|format(p.stop_ret_pct) }}%{% else %}—{% endif %}</td>
+          <td class="{{ 'open' if p.get('stop_win') else ('closed' if p.get('stop_win') is sameas false else '') }}" title="stop = {{ p.get('stop_pct') }}% against entry{% if p.get('trail_pct') %}, then trailing {{ p.get('trail_pct') }}% from the best price{% endif %}">{% if p.get('stop_ret_pct') is not none %}{{ 'stopped' if p.stopped else 'held' }} · {{ '%+.2f'|format(p.stop_ret_pct) }}%{% else %}—{% endif %}</td>
           <td class="{{ 'open' if (p.get('vs_mkt_pct') or 0) > 0 else ('closed' if p.get('vs_mkt_pct') is not none else '') }}" title="Nifty moved {{ p.get('mkt_pct') }}% over the same window">{{ ('%+.2f'|format(p.vs_mkt_pct) ~ '%') if p.get('vs_mkt_pct') is not none else '—' }}</td>
           <td class="small">{{ p.get('best_pct', '—') }} / {{ p.get('worst_pct', '—') }}%</td></tr>{% endfor %}</table>
       {% set ph = pr.get('hold') or {} %}{% set pb = pr.get('book_1.0') or {} %}{% set r8 = hr.get('q80_hold') or {} %}
@@ -88,7 +88,8 @@
     · strong-day bar (quantile) <input name="strong_quantile" size="4" value="{{ ds.strong_quantile }}"> · window <input name="window" size="4" value="{{ ds.window }}">
     · book profit at +<input name="book_target_pct" size="4" value="{{ ds.book_target_pct }}">%
     · option max spread <input name="opt_max_spread_pct" size="4" value="{{ ds.opt_max_spread_pct }}">%
-    · daily pool: ★ bar <input name="hc_quantile" size="4" value="{{ ds.hc_quantile }}"> · stocks <input name="hc_top_n" size="2" value="{{ ds.hc_top_n }}"> · book +<input name="hc_book_pct" size="4" value="{{ ds.hc_book_pct }}">%
+    · daily pool: ★ bar <input name="hc_quantile" size="4" value="{{ ds.hc_quantile }}"> · stocks <input name="hc_top_n" size="2" value="{{ ds.hc_top_n }}"> · book +<input name="hc_book_pct" size="4" value="{{ ds.hc_book_pct }}">% · stop <input name="stop_k" size="3" value="{{ ds.stop_k }}">x range · trail <input name="trail_k" size="3" value="{{ ds.trail_k }}">x
+    · <label style="display:inline"><input type="checkbox" name="hc_down_only" value="1" {{ 'checked' if ds.hc_down_only }}> pool: DOWN picks only</label>
     · <label style="display:inline"><input type="checkbox" name="options" value="1" {{ 'checked' if ds.options }}> suggest options</label>
     · <label style="display:inline"><input type="checkbox" name="trade_normal_days" value="1" {{ 'checked' if ds.trade_normal_days }}> paper-trade normal days too</label>
     · <label style="display:inline"><input type="checkbox" name="telegram" value="1" {{ 'checked' if ds.telegram }}> Telegram</label>
