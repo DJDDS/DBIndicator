@@ -85,7 +85,7 @@ tr.pick td{background:#16253d}
 <div class="card"><div class="bad">{{ st.error }}</div></div>
 {% else %}
 {% set i = st.inputs %}{% set sg = st.signal %}{% set mx_ = st.mcx or {} %}
-<div class="card hero">
+<div class="card hero" id="ng-hero">
   <h2>{% if sg and sg.provisional %}Today · {{ sg.weekday }} {{ sg.date }} · enter {{ st.session.entry_window }} IST (MCX closes {{ st.session.close_str }}){% elif sg %}Signal at settled close · {{ sg.weekday }} {{ sg.date }}{% else %}{{ i.weekday }} {{ i.date }}{% endif %} <span class="small" style="text-transform:none;letter-spacing:0">· {{ st.now_ist }} IST</span></h2>
   {% if not i.in_season %}<div class="warn small" style="margin-bottom:8px">Outside Oct–Feb: the playbook was researched on winter only.</div>{% endif %}
   {% if sg %}
@@ -261,5 +261,24 @@ tr.pick td{background:#16253d}
   <div class="small" style="margin-top:8px">Changing a setting re-runs the backtest on the same data. Research defaults: 4 weeks, z&gt;0, holds 1/2/1, targets 0.5/1.0σ, stop 1.0σ.</div>
 </div>
 </div>
+<script>
+// Live view: every 10 s while the tab is visible, re-read this page and swap in the signal/MCX card only when it changed (no reload, no scroll jump).
+(function () {
+  var hero = document.getElementById('ng-hero'), busy = false, last = Date.now(), base = hero ? hero.innerHTML : null, tag = document.createElement('span');
+  tag.className = 'small'; tag.style.cssText = 'float:right;color:var(--muted)';
+  if (hero) hero.insertBefore(tag, hero.firstChild);
+  setInterval(function () { var s = Math.round((Date.now() - last) / 1000); tag.textContent = 'live · updated ' + (s < 5 ? 'just now' : s + 's ago'); }, 1000);
+  function tick() {
+    if (document.hidden || busy) return; busy = true;
+    fetch(location.pathname, {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.text() : null; }).then(function (t) {
+      if (!t) return; var n = new DOMParser().parseFromString(t, 'text/html').getElementById('ng-hero');
+      if (!hero) { if (n) location.reload(); return; }                 // the page first loaded without data (e.g. just after a restart)
+      if (n && n.innerHTML !== base) { base = n.innerHTML; hero.innerHTML = base; hero.insertBefore(tag, hero.firstChild); }
+      last = Date.now();
+    }).catch(function () {}).then(function () { busy = false; });
+  }
+  setInterval(tick, 10000);
+})();
+</script>
 </body>
 </html>

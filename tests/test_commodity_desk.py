@@ -385,11 +385,11 @@ def test_scheduler_starts_once_without_a_page_view(monkeypatch):
     started = []
 
     class T:
-        def __init__(self, target=None, name=None, daemon=None): started.append(name)
+        def __init__(self, target=None, name=None, daemon=None, args=()): started.append(name)
         def start(self): pass
     monkeypatch.setattr(cd.threading, 'Thread', T); monkeypatch.setitem(cd._SCHED, 'started', False)
     cd.start_once(); cd.start_once()
-    assert started == ['commodity-desk-scheduler']
+    assert started == ['commodity-status-loop', 'commodity-desk-scheduler']      # status keep-warm loop + data refresh scheduler, each once
 
 
 def test_refresh_state_route_and_button(client, store):
@@ -412,3 +412,16 @@ def test_year_round_study_runs_and_covers_non_winter(store):
     assert all("p_all" in L for L in r["legs"])
     cd.log_year_round(f, s, (ng, cot, hdd))
     assert (cd.ROOT / "year_round.json").exists() and (cd.ROOT / "sensitivity.json").exists()
+
+
+def test_backtest_is_memoised_and_status_loop_is_exposed(store, monkeypatch):
+    _synthetic(store)
+    s = cd.load_settings(); ng, cot, hd = cd._read("ng.csv"), cd._read("cot.csv"), cd._read("hdd_obs.csv")
+    f = cd._settled(cd.features(ng, cot, hd.set_index("date").hdd, s))
+    calls = []; orig = cd._backtest
+    monkeypatch.setattr(cd, "_backtest", lambda *a: (calls.append(1), orig(*a))[1])
+    cd._BT.update(key=None, val=None)
+    a = cd.backtest(f, s); b = cd.backtest(f, s)
+    assert a is b and len(calls) == 1                                   # second call served from the memo
+    cd.backtest(f, {**s, "t1": s["t1"] + 0.1}); assert len(calls) == 2  # a setting change recomputes
+    assert callable(cd._status_loop) and cd.STATUS_LIVE_S < cd.STATUS_IDLE_S

@@ -1447,6 +1447,24 @@ def api_recorders_export(idx=None):
     return send_file(tmp, mimetype="application/zip", as_attachment=True, download_name=name)
 
 
+@app.route("/api/desks/glance")
+@require_roles(OWNER)
+def api_desks_glance():
+    """Read-only summary for the 'Desks at a glance' strip on the main dashboard (cached sources only; no Kite calls)."""
+    from . import commodity_desk, desk_glance, recorder_monitor, v133_direction, v134_relstrength
+    try:
+        rec = (recorder_monitor.cached_report(config.V12_STORAGE_ROOT, config.V121_INDEX_VOL_ROOT) or {}).get("summary")
+    except Exception:  # noqa: BLE001
+        rec = None
+    try:
+        ng = commodity_desk.cached_status(_commodity_kite)
+    except Exception:  # noqa: BLE001
+        ng = None
+    today = str(scanner.now_ist().date())
+    out = desk_glance.glance(v133_direction._read_jsonl("days.jsonl")[-60:], v133_direction._read_jsonl(v134_relstrength.FILE)[-8:], today, ng, rec, kite_auth.is_logged_in_today())
+    return Response(json.dumps(out, default=str), mimetype="application/json")
+
+
 @app.route("/api/v130/status")
 @require_roles(OWNER)
 def api_v130_status():

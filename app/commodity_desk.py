@@ -412,7 +412,18 @@ def outcome(f: pd.DataFrame, i: int, side: int, hold: int) -> dict | None:
                 move_pct=round(float(np.log(c1 / c0) * 100 * side), 2), exit_close=round(float(c1), 4))
 
 
+_BT: dict = {'key': None, 'val': None}
+
+
 def backtest(f: pd.DataFrame, s: dict) -> dict:
+    """Memoised: the result only changes when a new settled bar arrives or a setting changes, so the 10-30 s status refresh does not redo it."""
+    key = (str(f.index[-1]), len(f), json.dumps(s, sort_keys=True, default=str))
+    if _BT['key'] == key and _BT['val'] is not None: return _BT['val']
+    val = _backtest(f, s); _BT.update(key=key, val=val)
+    return val
+
+
+def _backtest(f: pd.DataFrame, s: dict) -> dict:
     rows = []
     idx = {d: i for i, d in enumerate(f.index)}
     for d, row in f[f.index.month.isin(WINTER) & (f.season >= 2010)].iterrows():
@@ -748,7 +759,9 @@ _SLOCK = threading.Lock()
 def _status_job(kite_fn) -> None:
     t0 = time.time()
     try:
-        st = status(kite=kite_fn() if kite_fn else None)
+        try: kite = kite_fn() if kite_fn else None
+        except Exception: kite = None                     # not logged in: the NYMEX view still renders
+        st = status(kite=kite)
         _SC.update(st=st, at=time.time(), took=round(time.time() - t0, 1), err=None)
     except Exception as exc:  # noqa: BLE001
         log.warning('commodity_desk status failed: %s', exc)
@@ -757,7 +770,7 @@ def _status_job(kite_fn) -> None:
         _SC['busy'] = False
 
 
-def cached_status(kite_fn=None, ttl: float = 20.0) -> dict | None:
+def cached_status(kite_fn=None, ttl: float = 30.0) -> dict | None:
     """Last computed status (None until the first background run finishes). Starts a refresh when older than ttl seconds."""
     with _SLOCK:
         if time.time() - _SC['at'] > ttl and not _SC['busy']:
@@ -773,10 +786,33 @@ def invalidate_status() -> None:
     _SC['at'] = 0.0
 
 
-def start_once() -> None:
+STATUS_LIVE_S, STATUS_IDLE_S = 12.0, 120.0
+
+
+def _status_loop(kite_fn) -> None:
+    """Keeps the desk status warm without any page view: every ~12 s while MCX is open, every 2 min otherwise. Before this the status was only
+    recomputed when a page asked for it, so the first view after a quiet spell showed old numbers and needed a reload; it also means the MCX
+    paper-ledger entry snapshot (taken inside status) no longer depends on someone having the page open in the entry window."""
+    time.sleep(20)
+    while True:
+        try:
+            from .commodity_mcx import mcx_session
+            live = mcx_session(_now_ist())["is_open"]
+            if time.time() - _SC['at'] >= (STATUS_LIVE_S if live else STATUS_IDLE_S) - 1:
+                with _SLOCK:
+                    go = not _SC['busy']
+                    if go: _SC['busy'] = True
+                if go: _status_job(kite_fn)                  # clears 'busy' itself
+        except Exception:  # noqa: BLE001
+            log.exception("commodity_desk status loop tick failed")
+        time.sleep(4)
+
+
+def start_once(kite_fn=None) -> None:
     """Background scheduler: the cloud has no page views at night, so the refresh must not depend on someone opening the page."""
     if _SCHED["started"]: return
     _SCHED["started"] = True
+    threading.Thread(target=_status_loop, args=(kite_fn,), name="commodity-status-loop", daemon=True).start()
 
     def loop():
         time.sleep(30)
