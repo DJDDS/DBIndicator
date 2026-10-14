@@ -35,7 +35,8 @@ def test_glance_route_is_owner_only_and_dashboard_has_the_strip(monkeypatch):
     auth = lambda u, p: {"Authorization": "Basic " + base64.b64encode(f"{u}:{p}".encode()).decode()}
     c = web.app.test_client()
     assert c.get("/api/desks/glance").status_code == 401
-    assert c.get("/api/desks/glance", headers=auth("member", "test-member-glance-pw")).status_code == 403
+    m = c.get("/api/desks/glance", headers=auth("member", "test-member-glance-pw"))
+    assert m.status_code == 200 and m.get_json()["role"] == "member"             # members see the strip too (read-only; no links to the admin desks)
     r = c.get("/api/desks/glance", headers=auth("owner", "test-owner-glance-pw"))
     assert r.status_code == 200 and {"kite", "pod", "rs", "ng", "rec"} <= set(r.get_json())
     page = c.get("/", headers=auth("owner", "test-owner-glance-pw")).data

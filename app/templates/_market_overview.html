@@ -215,10 +215,10 @@
   // ---- desks at a glance (owner only; the route answers 403 for anyone else and the strip simply stays hidden) ----
   function renderDesks(g) {
     const el = $('mo-desks'); if (!g) { el.hidden = true; return; }
-    const chip = (label, val, sub, o) => { o = o || {}; const t = `<span>${label}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}`; return o.href ? `<a class="mo-chip ${o.cls || ''}" href="${o.href}">${t}</a>` : `<div class="mo-chip ${o.cls || ''}">${t}</div>`; };
-    const c = [], p = g.pod || {}, t = p.today, rc = p.record, rs = g.rs, ng = g.ng, rec = g.rec;
+    const chip = (label, val, sub, o) => { o = o || {}; const t = `<span>${label}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}`; return o.href && own ? `<a class="mo-chip ${o.cls || ''}" href="${o.href}">${t}</a>` : `<div class="mo-chip ${o.cls || ''}">${t}</div>`; };
+    const own = g.role === 'owner', c = [], p = g.pod || {}, t = p.today, rc = p.record, rs = g.rs, ng = g.ng, rec = g.rec;
     c.push(chip('Kite', g.kite ? '● logged in' : '○ login needed', g.kite ? '' : 'log in before 09:00', {cls: g.kite ? 'ok' : 'bad', href: '/'}));
-    c.push(t ? chip('Pick of the day', `${t.side === 'UP' ? '▲' : '▼'} ${esc(t.symbol)} · ${esc(t.grade || '')}`, ok(t.ret_pct) ? `result ${t.ret_pct > 0 ? '+' : ''}${t.ret_pct}%` : `${t.trades} trade${t.trades === 1 ? '' : 's'} today · exit ${esc(t.exit_at || '15:15')}`, {cls: t.side === 'UP' ? 'up' : 'dn', href: '/admin/intraday'})
+    c.push(t ? chip('Pick of the day', `${t.side === 'UP' ? '▲' : '▼'} ${esc(t.symbol)}${t.grade ? ' · ' + esc(t.grade) : ''}`, ok(t.ret_pct) ? `result ${t.ret_pct > 0 ? '+' : ''}${t.ret_pct}%` : `${t.trades} trade${t.trades === 1 ? '' : 's'} today · exit ${esc(t.exit_at || '15:15')}`, {cls: t.side === 'UP' ? 'up' : 'dn', href: '/admin/intraday'})
                  : chip('Pick of the day', 'waiting 09:25', 'one DOWN trade every day', {href: '/admin/intraday'}));
     if (rc) c.push(chip('Last ' + rc.n + ' picks', `${rc.win}% won`, rc.a_n ? `grade A ${rc.a_win}% (${rc.a_n})` : 'no grade A yet', {href: '/admin/intraday'}));
     c.push(rs ? chip('Relative strength', `${esc(rs.at)} · ${rs.n} pick${rs.n === 1 ? '' : 's'}`, rs.top ? `${esc(rs.top.symbol)} ${rs.top.side === 'UP' ? '▲' : '▼'} z ${rs.top.z}${rs.top.reserve ? ' (reserve)' : ''}` + (rs.settled ? ` · ${rs.wins}/${rs.settled} won` : '') : 'none qualify', {href: '/admin/intraday'}) : chip('Relative strength', 'from 11:15', '', {href: '/admin/intraday'}));

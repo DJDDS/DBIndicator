@@ -1448,7 +1448,7 @@ def api_recorders_export(idx=None):
 
 
 @app.route("/api/desks/glance")
-@require_roles(OWNER)
+@require_roles(OWNER, MEMBER)
 def api_desks_glance():
     """Read-only summary for the 'Desks at a glance' strip on the main dashboard (cached sources only; no Kite calls)."""
     from . import commodity_desk, desk_glance, recorder_monitor, v133_direction, v134_relstrength
@@ -1462,6 +1462,7 @@ def api_desks_glance():
         ng = None
     today = str(scanner.now_ist().date())
     out = desk_glance.glance(v133_direction._read_jsonl("days.jsonl")[-60:], v133_direction._read_jsonl(v134_relstrength.FILE)[-8:], today, ng, rec, kite_auth.is_logged_in_today())
+    out["role"] = current_role()
     return Response(json.dumps(out, default=str), mimetype="application/json")
 
 
