@@ -1050,7 +1050,6 @@ button, a, summary, input, select { touch-action: manipulation; }
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-building-section" aria-label="Go to Directional Spots"><span>Directional spots</span><strong id="v123-kpi-building">0</strong><small>locked regime · pre-entry only</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-continuation-section" aria-label="Go to Continuation"><span>Continuation</span><strong id="v123-kpi-continuation">0</strong><small>alumni waiting fresh evidence</small></button>
       <button type="button" class="focus-kpi focus-kpi-button" data-scroll-target="v123-focus-missed-section" aria-label="Go to Pipeline misses"><span>Pipeline misses</span><strong id="v123-kpi-missed">0</strong><small>important movers outside Focus</small></button>
-      <div class="focus-kpi"{% if not show_retired %} hidden data-retired="1"{% endif %}><span>Math recorder</span><strong id="v123-kpi-shadow">SHADOW</strong><small id="v123-kpi-shadow-sub">research only · no trade control</small></div>
       <div class="focus-kpi"{% if not show_retired %} hidden data-retired="1"{% endif %}><span>CALL V1 recorder</span><strong id="v123-kpi-callrec">WAIT</strong><small id="v123-kpi-callrec-sub">live bid/ask forward validation</small></div>
     </div>
 
@@ -2227,11 +2226,6 @@ button, a, summary, input, select { touch-action: manipulation; }
     setText('v123-kpi-building',building.length);
     setText('v123-kpi-continuation',continuation.length);
     setText('v123-kpi-missed',Number.isFinite(coverageMisses)?coverageMisses:misses.length);
-    var shadow=tactical.continuation_shadow||{};
-    setText('v123-kpi-shadow',shadow.status==='RECORDING_SHADOW'?'LIVE':'SHADOW');
-    setText('v123-kpi-shadow-sub',shadow.status==='RECORDING_SHADOW'
-      ? String(shadow.samples_written||0)+' samples · '+String(shadow.episodes_with_close_record||0)+' closed episodes'
-      : 'research only · no trade control');
     var callRec=tactical.call_v1_forward_recorder||{};
     setText('v123-kpi-callrec',callRec.status==='RECORDING_FORWARD'?'LIVE':'WAIT');
     setText('v123-kpi-callrec-sub',callRec.status==='RECORDING_FORWARD'

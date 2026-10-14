@@ -81,7 +81,6 @@ def test_v123_focus_dashboard_is_professional_dynamic_workspace():
     assert 'DBIndicator · NSE F&amp;O Command Center' in text
     assert 'id="v123-kpi-active"' in text
     assert 'id="v123-kpi-continuation"' in text
-    assert 'id="v123-kpi-shadow"' in text
     assert 'Shadow continuation mathematics' in text
     assert 'Fresh-entry gate' in text
     assert '/api/v123-continuation-shadow/export' in text

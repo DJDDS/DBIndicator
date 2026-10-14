@@ -327,3 +327,17 @@ def test_breadth_counts_unique_stocks_and_needs_enough_of_them():
     ov = {'sectors': [{'members_mini': [mk(i, 1.5 if i < 40 else -0.5) for i in range(60)]}, {'members_mini': [mk(0, 9)]}]}
     b = ss._dash_breadth(ov, [{'name': 'NIFTY 50', 'r': {'today': 0.9}}])
     assert (b['n'], b['up'], b['dn'], b['up1']) == (60, 40, 20, 40) and b['gap'] is not None
+
+
+def test_gift_nifty_first_call_waits_for_the_first_reading(monkeypatch):
+    import time as _t
+    from app import sector_service as s
+    monkeypatch.setitem(s._gift, 'value', None); monkeypatch.setitem(s._gift, 'at', 0.0); monkeypatch.setitem(s._gift, 'busy', False); monkeypatch.setitem(s._gift_loop, 'on', False)
+    def fake():
+        _t.sleep(0.4)
+        with s._lock: s._gift.update(at=_t.time(), busy=False, value={'price': 25000.0, 'chg': 10.0, 'pct': 0.04, 'at': 'x', 'moved': _t.time()})
+        _t.sleep(3600)                                                              # the keep-warm loop would sleep here; test thread is a daemon
+    monkeypatch.setattr(s, '_gift_fetch', fake)
+    monkeypatch.setattr(s.time, 'sleep', s.time.sleep)
+    g = s.gift_nifty()
+    assert g and g['price'] == 25000.0                                              # first call returns the reading instead of None

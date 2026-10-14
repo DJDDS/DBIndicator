@@ -115,8 +115,6 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='event', files=['trial25/trial25_event_ledger.jsonl', 'trial25/trial25_universe_ledger.jsonl', 'v12_earnings_ledger.jsonl'], thread=None)
     add(name='Index volatility recorder', group='V12 option research', what='NIFTY option micro-structure and depth, 5-second WebSocket',
         kind='live', files=['__INDEX_VOL__/*_micro.jsonl', '__INDEX_VOL__/*_micro.jsonl.gz', '__INDEX_VOL__/*_depth.jsonl', '__INDEX_VOL__/*_depth.jsonl.gz', 'v121_index_vol_state.json'], thread=None)
-    add(name='Math recorder (quant regime shadow)', group='V12 option research', what='Daily features and regimes of the F&O universe',
-        kind='daily', due=dt.time(15, 40), grace=120, files=['v123_quant_regime_shadow/features_*.jsonl.gz', 'v123_quant_regime_shadow/regimes_*.jsonl.gz'], thread=None)
     add(name='CALL V1 / tactical event recorder', group='V12 option research', what='Tactical stock-option events and CALL V1 forward records',
         kind='event', files=['v122b_tactical_events.jsonl', 'v122b_tactical_state.json'], thread=None)
     add(name='Universe live stream checkpoint', group='V12 option research', what='Full F&O underlying quote stream checkpoint',

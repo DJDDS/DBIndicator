@@ -390,13 +390,35 @@ def _gift_fetch():
         log.warning('GIFT Nifty fetch failed',exc_info=True)
 
 
+_gift_loop={'on':False}
+
+
+def _gift_keepwarm():
+    """Keeps the GIFT Nifty reading fresh in the background (every 25 s on weekdays, 5 min otherwise) so a page load never starts from cold."""
+    while True:
+        try:
+            with _lock:
+                go=not _gift['busy']
+                if go: _gift['busy']=True
+            if go: _gift_fetch()
+        except Exception:  # noqa: BLE001
+            log.warning('GIFT keep-warm failed',exc_info=True)
+        time.sleep(25 if scanner.now_ist().weekday()<5 else 300)
+
+
 def gift_nifty():
-    """Latest GIFT Nifty from NSE's site, refreshed in the background at most every 30 s. None when the feed is unavailable (the card is then simply hidden)."""
+    """Latest GIFT Nifty from NSE's site, kept fresh by a background loop (started on first use). On the very first call after a restart there is no
+    reading yet and NSE's session needs a few seconds to warm up, so wait briefly for it (this was why the card only appeared after a second refresh).
+    None when the feed is unavailable (the card is then simply hidden)."""
     with _lock:
-        stale=time.time()-_gift['at']>30 and not _gift['busy']
-        if stale: _gift['busy']=True
-        v=copy.deepcopy(_gift['value'])
-    if stale: threading.Thread(target=_gift_fetch,daemon=True,name='gift-nifty').start()
+        start=not _gift_loop['on']
+        if start: _gift_loop['on']=True
+    if start: threading.Thread(target=_gift_keepwarm,daemon=True,name='gift-nifty').start()
+    if _gift['value'] is None:
+        for _ in range(28):                                                         # up to ~7 s, only while nothing has ever been read
+            if _gift['value'] is not None or (_gift['at'] and not _gift['busy']): break
+            time.sleep(0.25)
+    with _lock: v=copy.deepcopy(_gift['value'])
     if v and time.time()-_gift['at']>900 and _gift['at']: return None                 # a quarter-hour old reading is not shown as live
     return v
 

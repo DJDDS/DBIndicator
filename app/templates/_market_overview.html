@@ -197,7 +197,8 @@
     $('mo-foot').textContent = 'Index prices from the sector cache' + (q ? ' · quotes ' + q.replace('T', ' ').slice(11, 16) + ' IST' : '') + (s ? ' · scanner ' + (s.scan_status || '') : '') + '. Sector and stock detail: Sector Analysis page.';
   }
   async function loadIdx() {
-    try { const r = await fetch('/api/sector-analysis/dashboard?lite=1', {cache: 'no-store'}); if (!r.ok) throw 0; st.idx = await r.json(); renderIdx(); renderSec(); renderFoot(); charts(); }
+    try { const r = await fetch('/api/sector-analysis/dashboard?lite=1', {cache: 'no-store'}); if (!r.ok) throw 0; st.idx = await r.json(); renderIdx(); renderSec(); renderFoot(); charts();
+      if (!(st.idx.indices || []).some(x => x.label === 'GIFT NIFTY') && (st.giftTry = (st.giftTry || 0) + 1) <= 3) setTimeout(loadIdx, 4000); }
     catch (e) { if (!st.idx) $('mo-idx').innerHTML = ''; }
   }
   $('mo-win').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; st.win = +b.dataset.w; document.querySelectorAll('#mo-win button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); charts(); });

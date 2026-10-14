@@ -185,13 +185,6 @@ V123_FORENSIC_ROOT = os.getenv(
     os.path.join(V12_STORAGE_ROOT, "v123_forensics"),
 )
 
-# V12.3 quantitative regime SHADOW recorder. Research-only: it cannot control
-# Focus Desk, tactical states, options, alerts or execution.
-V123_QUANT_REGIME_ROOT = os.getenv(
-    "V123_QUANT_REGIME_ROOT",
-    os.path.join(V12_STORAGE_ROOT, "v123_quant_regime_shadow"),
-)
-
 # 09:30 / 13:00 ATM CE-IV minus PE-IV cross-sectional skew SHADOW study.
 # Research-only. It is intentionally isolated from Math Recorder, CALL V1,
 # Focus admission, alerts, and broker execution.
