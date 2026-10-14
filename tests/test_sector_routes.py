@@ -350,3 +350,14 @@ def test_stock_movers_top_gainers_and_losers():
     m = s._stock_movers(ov, 3)
     assert [r['s'] for r in m['gain']] == ['S059', 'S058', 'S057'] and [r['s'] for r in m['lose']] == ['S000', 'S001', 'S002'] and m['n'] == 60
     assert m['gain'][0]['pct'] == 29.0 and s._stock_movers({'sectors': [{'name': 'X', 'members_mini': members[:10]}]}) is None
+
+
+def test_final_quote_with_pre_1530_stamp_stays_valid_after_the_close_when_fetched_after_it():
+    import datetime as dt
+    from app import sector_service as s
+    now = dt.datetime(2026, 10, 14, 17, 25)
+    assert not s._fresh_timestamp('2026-10-14 15:24:10', now, final_quote=True)                                   # old rule: blank after hours
+    assert s._fresh_timestamp('2026-10-14 15:24:10', now, final_quote=True, retrieved='2026-10-14T15:41:00')      # fetched after the close: it is the final quote
+    assert not s._fresh_timestamp('2026-10-14 12:00:00', now, final_quote=True, retrieved='2026-10-14T15:41:00')  # but not a stale midday stamp
+    assert not s._fresh_timestamp('2026-10-14 15:24:10', now, final_quote=True, retrieved='2026-10-14T15:20:00')  # nor one fetched before the close
+    assert s._fresh_timestamp('2026-10-14 15:31:00', now, final_quote=True)

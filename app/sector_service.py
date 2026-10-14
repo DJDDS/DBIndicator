@@ -111,7 +111,7 @@ def _chart_bars(name, now):
     bars=_history(name)
     with _lock:
         stored=copy.deepcopy(_state['quotes'].get(name))
-    if not stored or not _fresh_timestamp(stored.get('timestamp'),now,final_quote=True):
+    if not stored or not _fresh_timestamp(stored.get('timestamp'),now,final_quote=True,retrieved=stored.get('retrieved_at')):
         return bars
     q=stored.get('data') or {}
     last=a.finite(q.get('last_price'))
@@ -147,13 +147,22 @@ def _status():
         return {k:_state.get(k) for k in keys}
 
 
-def _fresh_timestamp(stamp, now, *, final_quote=False, max_age=180):
+def _fresh_timestamp(stamp, now, *, final_quote=False, max_age=180, retrieved=None):
     if not stamp: return False
     try:
         t=pd.Timestamp(stamp)
         if t.tzinfo: t=t.tz_convert('Asia/Kolkata').tz_localize(None)
         if t.date()!=now.date(): return False
-        if final_quote and now.time()>=dt.time(15,31) and t.time()>=dt.time(15,30): return True   # the close-of-day quote stays valid right after 15:30 (was 16:00, which blanked 'Today' for half an hour)
+        if final_quote and now.time()>=dt.time(15,31):
+            if t.time()>=dt.time(15,30): return True                  # the close-of-day quote stays valid after 15:30 (was 16:00, which blanked 'Today' for half an hour)
+            # Many stocks' own exchange stamp is a little before 15:30 (their last trade/update), yet the quote fetched after the close IS their final one.
+            # Judging only by the stamp blanked Today / breadth / top movers for those stocks every evening.
+            if retrieved:
+                try:
+                    r=pd.Timestamp(retrieved)
+                    if r.tzinfo: r=r.tz_convert('Asia/Kolkata').tz_localize(None)
+                    if r.date()==now.date() and r.time()>=dt.time(15,31) and t.time()>=dt.time(15,0): return True
+                except (ValueError, TypeError): pass
         return -30 <= (now-t.to_pydatetime()).total_seconds() <= max_age
     except (ValueError, TypeError): return False
 
@@ -163,7 +172,7 @@ def _summary(symbol, now):
         r=copy.deepcopy(_summaries.get(symbol))
     if r is None:
         r=a.finish_summary(_base(symbol,now,False))
-    elif r.get('quote_fresh') and not _fresh_timestamp(r.get('quote_timestamp'),now,final_quote=True):
+    elif r.get('quote_fresh') and not _fresh_timestamp(r.get('quote_timestamp'),now,final_quote=True,retrieved=r.get('quote_retrieved_at')):
         metadata={k:r.get(k) for k in ('quote_timestamp','quote_retrieved_at')}
         r=r.get('_historical') or a.finish_summary(_base(symbol,now,False))
         r.update(metadata,quote_fresh=False)
@@ -305,7 +314,7 @@ def _day_ohlc(symbol, now):
         stored=_state['quotes'].get(symbol)
         q=copy.deepcopy((stored or {}).get('data') or {})
         stamp=(stored or {}).get('timestamp')
-    if not q or not _fresh_timestamp(stamp,now,final_quote=True): return {}
+    if not q or not _fresh_timestamp(stamp,now,final_quote=True,retrieved=(stored or {}).get('retrieved_at')): return {}
     o=q.get('ohlc') or {}
     r=lambda v: round(v,2) if a.finite(v) is not None else None
     return {'o':r(o.get('open')),'h':r(o.get('high')),'l':r(o.get('low')),'pc':r(o.get('close'))}
@@ -439,6 +448,9 @@ def _dash_breadth(ov,idx):
             'nifty':nfp,'gap':round(nfp-avg,2) if nfp is not None else None}
 
 
+_movers_warn={'at':0.0}
+
+
 def _stock_movers(ov, n=6):
     """Today's biggest gainers and losers among the stocks in the cached sector overview (no extra calls). None until enough stocks have a price."""
     seen={}
@@ -446,7 +458,10 @@ def _stock_movers(ov, n=6):
         for m in x.get('members_mini') or []:
             v=a.finite((m.get('r') or {}).get('today'))
             if v is not None: seen.setdefault(m['s'],(v,m.get('p'),x.get('name')))
-    if len(seen)<50: return None
+    if len(seen)<50:
+        if time.time()-_movers_warn['at']>600:
+            _movers_warn['at']=time.time(); log.warning('stock movers unavailable: %d stocks have a Today return (sectors=%d)',len(seen),len(ov.get('sectors') or []))
+        return None
     rows=sorted(seen.items(),key=lambda kv:-kv[1][0])
     row=lambda kv:{'s':kv[0],'pct':round(kv[1][0],2),'p':kv[1][1],'sector':kv[1][2]}
     return {'gain':[row(kv) for kv in rows[:n]],'lose':[row(kv) for kv in rows[::-1][:n]],'n':len(seen)}
@@ -696,7 +711,7 @@ def _recalculate(name,now):
         stored=copy.deepcopy(_state['quotes'].get(name,{}))
     q=stored.get('data',{})
     stamp=stored.get('timestamp')
-    acceptable=_fresh_timestamp(stamp,now,final_quote=True)
+    acceptable=_fresh_timestamp(stamp,now,final_quote=True,retrieved=stored.get('retrieved_at'))
     historical=a.finish_summary(_base(name,now,False))
     r=a.finish_summary(_base(name,now,bool(q.get('last_price'))),q) if acceptable else copy.deepcopy(historical)
     r.update(quote_timestamp=stamp,quote_fresh=acceptable,quote_retrieved_at=stored.get('retrieved_at'),_historical=historical)
