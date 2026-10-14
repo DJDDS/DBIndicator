@@ -53,6 +53,20 @@
   .rticker-empty{padding:13px 16px;font-size:12.5px;color:var(--muted)}
   @media(max-width:720px){.rticker{top:0;flex-direction:column}.rticker .rticker-label{border-right:0;border-bottom:1px solid #22354a;padding:8px 12px}.rtick{font-size:13px;padding:8px 16px}}
 
+  .cwatch-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .cwatch-head span{font-size:11px;color:var(--muted)}
+  .cwatch-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  .cwatch-row{display:flex;align-items:center;gap:14px;background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:10px 14px;flex-wrap:wrap}
+  .cwatch-sym{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-weight:800;font-size:15px;min-width:118px}
+  .cwatch-row.up .cwatch-sym{color:var(--green)}.cwatch-row.down .cwatch-sym{color:var(--red)}
+  .cwatch-main{flex:1 1 220px;min-width:180px}
+  .cwatch-pattern{font-size:12.5px;font-weight:700}
+  .cwatch-sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .cwatch-signals{display:flex;gap:6px;flex-wrap:wrap;flex:2 1 320px}
+  .cwatch-chip{font-size:10.5px;color:var(--text);background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);border-radius:20px;padding:3px 10px;white-space:nowrap}
+  .cwatch-agree{flex:0 0 auto;font-family:var(--mono);font-weight:800;font-size:13px;color:var(--accent);background:var(--accent-bg);border-radius:20px;padding:3px 11px}
+  .cwatch-empty{font-size:11.5px;color:var(--muted);padding:10px 0}
+  @media(max-width:720px){.cwatch-row{flex-direction:column;align-items:flex-start}.cwatch-signals{flex:1 1 auto}}
 
   .wrap { max-width: 1360px; margin: 0 auto; padding: 14px 18px 30px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
@@ -952,6 +966,22 @@ button, a, summary, input, select { touch-action: manipulation; }
   {% endmacro %}
 
   {% include "_market_overview.html" %}
+
+  <section class="card" aria-label="Confluence Watch">
+    <h2>Confluence Watch <span class="sub">patterns where OI positioning and/or sector strength agree — research, not trade calls</span></h2>
+    <div class="cwatch-head"><span>Correlates /patterns, /oi-screener and /sector-analysis into one list · updates with the live scan</span></div>
+    <div class="cwatch-list" id="cwatch-list">
+      {% if confluence_watch %}{% for c in confluence_watch %}<div class="cwatch-row {{ 'up' if c.direction == 'UP' else 'down' }}">
+        <div class="cwatch-sym">{{ c.symbol }} <span>{{ '▲' if c.direction == 'UP' else '▼' }}</span></div>
+        <div class="cwatch-main">
+          <div class="cwatch-pattern">{{ c.pattern }} · {{ c.status.replace('_', ' ').title() }}</div>
+          <div class="cwatch-sub">{{ c.industry or 'industry n/a' }}{% if c.tier and c.tier != 'NONE' %} · tier {{ c.tier }}{% endif %}</div>
+        </div>
+        <div class="cwatch-signals">{% for s in c.signals %}<span class="cwatch-chip">{{ s }}</span>{% endfor %}</div>
+        <div class="cwatch-agree">{{ c.agree }}/3 signals</div>
+      </div>{% endfor %}{% else %}<div class="cwatch-empty">No active pattern currently confirmed by OI positioning or sector strength — fills in as today's scan and patterns update.</div>{% endif %}
+    </div>
+  </section>
 
 
   {% if not logged_in %}
@@ -2535,6 +2565,30 @@ button, a, summary, input, select { touch-action: manipulation; }
         '<span class="rdetail">' + v12Esc(it.text) + '</span></span>';
     }).join('');
   }
+  function renderConfluenceWatch(rows) {
+    var el = document.getElementById('cwatch-list');
+    if (!el) return;
+    rows = Array.isArray(rows) ? rows : [];
+    if (!rows.length) {
+      el.innerHTML = '<div class="cwatch-empty">No active pattern currently confirmed by OI positioning or sector strength — fills in as today\'s scan and patterns update.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(function (c) {
+      var cls = c.direction === 'UP' ? 'up' : 'down';
+      var statusLabel = String(c.status || '').replace(/_/g, ' ').replace(/\w\S*/g, function (t) {
+        return t.charAt(0).toUpperCase() + t.substr(1).toLowerCase();
+      });
+      var sub = (c.industry || 'industry n/a') + (c.tier && c.tier !== 'NONE' ? ' · tier ' + v12Esc(c.tier) : '');
+      var chips = (c.signals || []).map(function (s) { return '<span class="cwatch-chip">' + v12Esc(s) + '</span>'; }).join('');
+      return '<div class="cwatch-row ' + cls + '">' +
+        '<div class="cwatch-sym">' + v12Esc(c.symbol) + ' <span>' + (cls === 'up' ? '▲' : '▼') + '</span></div>' +
+        '<div class="cwatch-main"><div class="cwatch-pattern">' + v12Esc(c.pattern) + ' · ' + v12Esc(statusLabel) + '</div>' +
+        '<div class="cwatch-sub">' + sub + '</div></div>' +
+        '<div class="cwatch-signals">' + chips + '</div>' +
+        '<div class="cwatch-agree">' + v12Esc(c.agree) + '/3 signals</div>' +
+      '</div>';
+    }).join('');
+  }
   function pollDashboardState() {
     fetch('/api/dashboard-state').then(function (r) {
       if (!r.ok) throw new Error('state failed: ' + r.status);
@@ -2574,6 +2628,7 @@ button, a, summary, input, select { touch-action: manipulation; }
       renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
       renderResearchTicker(state.research_ticker);
+      renderConfluenceWatch(state.confluence_watch);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;
