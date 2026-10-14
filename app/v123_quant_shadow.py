@@ -292,9 +292,9 @@ class QuantRegimeShadowRecorder:
         for day, path in files:
             if day in keep_days:
                 continue
+            # features_/regimes_ files are the recorded data and are kept from inception (the Backtest page exports them);
+            # only the small per-day model file is rotated. keep_sessions still bounds the training window.
             for candidate in (
-                path,
-                self._event_path(day),
                 self._model_path(day),
             ):
                 try:

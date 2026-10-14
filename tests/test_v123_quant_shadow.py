@@ -236,3 +236,14 @@ def test_shadow_ignores_prior_feature_schema_sessions(tmp_path):
     status = recorder.process(_payload(), now=dt.datetime(2026, 9, 25, 10, 0))
     assert status["status"] == "COLLECTING_BASELINE"
     assert status["training_sessions"] == []
+
+
+def test_rotation_keeps_recorded_features_and_regimes_from_inception(tmp_path):
+    for k in range(5):
+        d = dt.date(2026, 9, 1) + dt.timedelta(days=k)
+        _write_training_session(tmp_path, d, 0.0)
+        (tmp_path / f"regimes_{d.isoformat()}.jsonl.gz").write_bytes(b"x"); (tmp_path / f"model_for_{d.isoformat()}.json").write_text("{}")
+    rec = v123_quant_shadow.QuantRegimeShadowRecorder(tmp_path, keep_sessions=2)
+    rec._rotate()
+    assert len(list(tmp_path.glob("features_*.jsonl.gz"))) == 5 and len(list(tmp_path.glob("regimes_*.jsonl.gz"))) == 5   # data never deleted
+    assert len(list(tmp_path.glob("model_for_*.json"))) == 2                                                               # only the small model files rotate

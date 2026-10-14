@@ -24,3 +24,9 @@ def test_export_all_and_single_recorder_only_whitelisted_files(tmp_path):
 def test_report_rows_carry_export_ids(tmp_path):
     _mk(tmp_path); rows = rm.report(str(tmp_path))['rows']
     assert [r['id'] for r in rows] == list(range(len(rows)))
+
+
+def test_index_vol_archives_are_exported(tmp_path):
+    iv = tmp_path / 'iv'; iv.mkdir(); (iv / '2026-10-13_micro.jsonl.gz').write_bytes(b'x'); (iv / '2026-10-14_micro.jsonl').write_text('{}\n')
+    made = rm.export_zip(str(tmp_path), str(iv), None, dest_dir=str(tmp_path))
+    assert {'iv/2026-10-13_micro.jsonl.gz', 'iv/2026-10-14_micro.jsonl'} <= set(zipfile.ZipFile(made[0]).namelist())

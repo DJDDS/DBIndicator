@@ -164,7 +164,7 @@ def tick(now: dt.datetime | None = None) -> None:
             if res: rec['slots'][h] = res
         if settle_due: settle(rec, polls, s)
         rec['settings'] = {k: s[k] for k in ('z_min', 'max_picks', 'slots', 'exit_at')}
-        d._rewrite_jsonl(FILE, days[-120:])
+        d._rewrite_jsonl(FILE, days)               # whole history, from inception (exported on the Backtest page)
 
 
 def status() -> dict:
