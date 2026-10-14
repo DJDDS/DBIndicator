@@ -55,7 +55,7 @@ HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
 DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
                     'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0,
-                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3, 'stop_k': 1.0, 'trail_k': 0.75, 'hc_down_only': True}
+                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3, 'stop_k': 1.0, 'trail_k': 0.75, 'hc_down_only': True, 'grade_a_conf': 0.14, 'hc_min_trades': 1}
 
 _lock = threading.Lock()
 _model = None
@@ -170,7 +170,7 @@ def load_settings() -> dict:
     s['opt_max_spread_pct'] = float(min(20.0, max(0.5, float(s['opt_max_spread_pct']))))
     s['hc_quantile'] = float(min(0.97, max(0.5, float(s['hc_quantile'])))); s['hc_top_n'] = int(max(1, min(5, int(s['hc_top_n']))))
     s['hc_book_pct'] = float(min(5.0, max(0.1, float(s['hc_book_pct']))))
-    s['stop_k'] = float(min(5.0, max(0.0, float(s['stop_k'])))); s['trail_k'] = float(min(5.0, max(0.0, float(s['trail_k'])))); s['hc_down_only'] = bool(s['hc_down_only'])
+    s['stop_k'] = float(min(5.0, max(0.0, float(s['stop_k'])))); s['trail_k'] = float(min(5.0, max(0.0, float(s['trail_k'])))); s['hc_down_only'] = bool(s['hc_down_only']); s['grade_a_conf'] = float(min(0.5, max(0.0, float(s['grade_a_conf'])))); s['hc_min_trades'] = int(max(1, min(5, int(s['hc_min_trades'])))); s['hc_min_trades'] = int(max(1, min(5, int(s['hc_min_trades'])))); s['grade_a_conf'] = float(min(0.5, max(0.0, float(s['grade_a_conf']))))
     s['entry_check'] = bool(s['entry_check']); s['ec_min_score'] = int(max(1, min(4, int(s['ec_min_score']))))
     for k in ('ec_rsi', 'ec_stoch', 'ec_bbz', 'ec_ema50'):
         try: lo, hi = (float(x) for x in s[k]); s[k] = [min(lo, hi), max(lo, hi)]
@@ -375,6 +375,17 @@ def day_view_threshold(hist: list, quantile: float, window: int) -> float | None
     """Trailing strength bar for the day view: quantile of |mean P - 0.5| over the last `window` days (needs >= 60)."""
     h = [abs(x - 0.5) for x in hist[-window:] if isinstance(x, (int, float))]
     return float(np.quantile(h, quantile)) if len(h) >= 60 else None
+
+
+def grade_picks(picks: list, settings: dict) -> None:
+    """Pick of the day = the #1 DOWN pick, every day (2019-26 research: 61.9% held to 15:15, +51 bps; edge is gone by day 2-3, so intraday only).
+    Grade A = confident AND entry check passes (~67% win, about 1 day in 4). Trades per day = max(hc_min_trades, number of A picks); the rest are WATCH."""
+    for i, p in enumerate(picks):
+        sc = (p.get('entry_check') or {}).get('score')
+        p['pod'] = i == 0
+        p['grade'] = 'A' if (p['conf'] >= float(settings.get('grade_a_conf', 0.14)) and (sc is None or sc >= int(settings.get('ec_min_score', 3)))) else 'B'
+    n = max(int(settings.get('hc_min_trades', 1)), sum(p['grade'] == 'A' for p in picks))
+    for i, p in enumerate(picks): p['status'] = 'OPEN' if i < n else 'WATCH'
 
 
 def select(X: pd.DataFrame, p_up: np.ndarray, hist: list, settings: dict) -> dict:
@@ -863,6 +874,7 @@ def run_list(kite, today: dt.date | None = None) -> int:
                           'of': o, 'of_agree': agree, 'status': 'OPEN' if trade else 'WATCH',
                           'entry_check': entry_check((prep['hist'] or {}).get(r.symbol), r.p925, r.side, s) if h == 'hc' else None,
                           'option': dict(opts[(r.symbol, r.side)]) if (r.symbol, r.side) in opts else None})
+        if h == 'hc': grade_picks(picks, s)
         lists[h] = {'exit_at': EXIT_LABEL[h], 'view': round(sel['view'], 4), 'strength': round(sel['view_strength'], 4),
                     'book_pct': s['hc_book_pct'] if h == 'hc' else s['book_target_pct'],
                     'threshold': None if sel['threshold'] is None else round(sel['threshold'], 4), 'strong': sel['strong'],
@@ -883,7 +895,7 @@ def telegram_text(day: dict) -> str:
         tag = ('★ STRONG day' if L['strong'] else 'normal day') if h == 'hc' else ('STRONG - paper trades' if L['strong'] else 'normal - watch only')
         name = f"DAILY POOL of {len(L['picks'])} (book +{L.get('book_pct')}% or 15:15)" if h == 'hc' else (h if h == 'day' else h + ' min')
         out.append(f"\n[{name} -> exit {L['exit_at']}] {tag}, lean {L['lean']}")
-        out += [f"{i + 1}. {p['symbol']} {'▲ UP' if p['side'] == 'UP' else '▼ DOWN'} @ {p['entry']}"
+        out += [f"{i + 1}. {'PICK OF THE DAY ' + p.get('grade', '') + ' - ' if p.get('pod') else ''}{p['symbol']} {'▲ UP' if p['side'] == 'UP' else '▼ DOWN'} @ {p['entry']}"
                 + ('' if p['of_agree'] is None else (' OF+' if p['of_agree'] else ' OF-'))
                 + (f" entry {p['entry_check']['label']} {p['entry_check']['score']}/4" if (p.get('entry_check') or {}).get('score') is not None else '')
                 + (f" | {p['option']['ts']} ask {p['option']['ask']}" if (p.get('option') or {}).get('status') == 'OPEN' else '') for i, p in enumerate(L['picks'])]

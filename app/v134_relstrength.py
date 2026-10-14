@@ -28,7 +28,8 @@ from . import v133_direction as d
 log = logging.getLogger(__name__)
 FILE = 'rs_days.jsonl'
 DEFAULT_SETTINGS = {'enabled': True, 'slots': ['11:15', '12:15', '13:15'], 'exit_at': '15:15', 'z_min': 3.0, 'max_picks': 5,
-                    'min_stocks': 100, 'regime_pct': 0.5, 'persist_z': 1.5, 'persist_back_min': 60}
+                    'min_stocks': 100, 'regime_pct': 0.5, 'persist_z': 1.5, 'persist_back_min': 60,
+                    'grade_a_z': 3.5, 'min_picks_day': 1, 'reserve_z': 2.5}
 _lock = threading.Lock()
 
 
@@ -38,6 +39,7 @@ def load_settings() -> dict:
         s.update({k: v for k, v in (d._read_json('rs_settings.json', {}) or {}).items() if k in s})
         s['z_min'] = float(min(6.0, max(1.0, float(s['z_min'])))); s['max_picks'] = int(min(12, max(1, int(s['max_picks']))))
         s['min_stocks'] = int(max(20, int(s['min_stocks']))); s['regime_pct'] = float(max(0.1, float(s['regime_pct']))); s['persist_z'] = float(max(0.0, float(s['persist_z']))); s['persist_back_min'] = int(max(15, int(s['persist_back_min'])))
+        s['grade_a_z'] = float(max(1.0, float(s['grade_a_z']))); s['min_picks_day'] = int(min(3, max(0, int(s['min_picks_day'])))); s['reserve_z'] = float(min(6.0, max(1.0, float(s['reserve_z']))))
         s['slots'] = [x for x in s['slots'] if isinstance(x, str) and len(x) == 5 and x[2] == ':']
     except Exception:  # noqa: BLE001
         log.exception('v134: bad settings; using defaults'); return dict(DEFAULT_SETTINGS)
@@ -85,8 +87,10 @@ def _hm_minus(hm: str, minutes: int) -> str:
     t = _minutes(hm) - minutes; return '%02d:%02d' % (t // 60, t % 60)
 
 
-def slot_picks(polls: list, hm: str, s: dict) -> dict | None:
-    """Pure: compute one refresh from today's polls."""
+def slot_picks(polls: list, hm: str, s: dict, reserve: bool = False) -> dict | None:
+    """Pure: compute one refresh from today's polls. Grade A = |z| >= grade_a_z (research: +0.22%/pick over the market), B = the rest.
+    reserve=True (last slot of a day with no pick at all): the single strongest building stock down to reserve_z, marked 'reserve', so the desk has at least one paper trade a day."""
+    if reserve: s = {**s, 'z_min': s['reserve_z'], 'max_picks': s['min_picks_day']}
     Z = _zmap(polls, hm, s['min_stocks'])
     if not Z: return None
     pl, rows = Z['pl'], Z['rows']
@@ -107,7 +111,8 @@ def slot_picks(polls: list, hm: str, s: dict) -> dict | None:
         o = ofs.get(syms[i])
         picks.append({'symbol': syms[i], 'side': side, 'z': round(float(z[i]), 2), 'z_prev': None if prior is None else round(float(prior), 2),
                       'move_pct': round(float(r[i]), 2), 'vs_mkt_pct': round(float(e[i]), 2), 'entry': rows[syms[i]][0], 'of': o,
-                      'of_agree': None if not o else bool((o['ofs'] > 0) == (side == 'UP'))})
+                      'of_agree': None if not o else bool((o['ofs'] > 0) == (side == 'UP')),
+                      'grade': 'A' if abs(z[i]) >= s.get('grade_a_z', 3.5) and not reserve else 'B', **({'reserve': True} if reserve else {})})
     regime = 'UP' if m > s['regime_pct'] else 'DOWN' if m < -s['regime_pct'] else 'FLAT'
     return {'at': hm, 'poll': pl['t'], 'n': len(rows), 'market_pct': round(m, 3), 'regime': regime, 'picks': picks, 'skipped': skipped,
             'ups': sum(1 for p in picks if p['side'] == 'UP'), 'downs': sum(1 for p in picks if p['side'] == 'DOWN')}
@@ -154,6 +159,8 @@ def tick(now: dt.datetime | None = None) -> None:
             rec = {'date': today, 'slots': {}}; days.append(rec)
         for h in due:
             res = slot_picks(polls, h, s)
+            if res and not res['picks'] and s['min_picks_day'] > 0 and h == s['slots'][-1] and not any(x.get('picks') for x in rec['slots'].values()):
+                res = slot_picks(polls, h, s, reserve=True) or res                     # quiet day: keep at least one paper trade
             if res: rec['slots'][h] = res
         if settle_due: settle(rec, polls, s)
         rec['settings'] = {k: s[k] for k in ('z_min', 'max_picks', 'slots', 'exit_at')}

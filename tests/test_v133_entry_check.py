@@ -85,3 +85,14 @@ def test_pool_can_be_limited_to_down_picks_and_settings_validate(monkeypatch):
     s = v.load_settings(); assert s['hc_down_only'] is True and s['trail_k'] == 0.75
     monkeypatch.setattr(v, '_read_json', lambda n, d=None: {'trail_k': 99, 'hc_down_only': 0} if n == 'settings.json' else d)
     s = v.load_settings(); assert s['trail_k'] == 5.0 and s['hc_down_only'] is False
+
+
+def test_pick_of_the_day_grade_and_minimum_trades():
+    s = v.load_settings(); assert s['grade_a_conf'] == 0.14 and s['hc_min_trades'] == 1
+    mk = lambda c, sc: {'conf': c, 'entry_check': {'score': sc}, 'status': 'OPEN'}
+    picks = [mk(0.10, 4), mk(0.09, 4), mk(0.08, 2)]; v.grade_picks(picks, s)
+    assert [p['pod'] for p in picks] == [True, False, False] and [p['grade'] for p in picks] == ['B', 'B', 'B']
+    assert [p['status'] for p in picks] == ['OPEN', 'WATCH', 'WATCH']              # a quiet day still gets its one trade
+    picks = [mk(0.2, 4), mk(0.2, 3), mk(0.2, 2)]; v.grade_picks(picks, s)
+    assert [p['grade'] for p in picks] == ['A', 'A', 'B'] and [p['status'] for p in picks] == ['OPEN', 'OPEN', 'WATCH']
+    picks = [mk(0.2, 4), mk(0.2, 3), mk(0.2, 2)]; v.grade_picks(picks, {**s, 'hc_min_trades': 3}); assert all(p['status'] == 'OPEN' for p in picks)

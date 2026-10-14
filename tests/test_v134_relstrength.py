@@ -37,3 +37,13 @@ def test_settle_measures_against_market():
     assert rs.settle(rec, polls, S)
     p = rec['slots']['11:15']['picks'][0]
     assert p['win'] and 'edge_pct' in p and rec['slots']['11:15']['settled']
+
+
+def test_quiet_day_reserve_pick_and_grades():
+    prev = _moves(strong={0: 2.2}); now = _moves(strong={0: 2.8})            # below z_min 3 but building: nothing qualifies normally
+    polls = [_poll('10:15', prev), _poll('11:15', now)]
+    assert rs.slot_picks(polls, '11:15', {**S, 'z_min': 9.0})['picks'] == []
+    r = rs.slot_picks(polls, '11:15', {**S, 'z_min': 9.0, 'min_picks_day': 1, 'reserve_z': 2.0}, reserve=True)['picks']
+    assert len(r) == 1 and r[0]['reserve'] is True and r[0]['grade'] == 'B' and r[0]['symbol'] == 'S000' and r[0]['symbol'] == 'S000'
+    big = rs.slot_picks([_poll('10:15', _moves(strong={0: 2.5})), _poll('11:15', _moves(strong={0: 5.0}))], '11:15', {**S, 'grade_a_z': 3.5})['picks']
+    assert big and big[0]['grade'] == 'A'
