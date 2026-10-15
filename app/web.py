@@ -1391,7 +1391,26 @@ def admin_intraday():
         intra = v131_intraday.status()
     except Exception as exc:  # fail-soft
         intra = {"error": str(exc)[:200]}
-    return render_template("intraday_admin.html", direction=direction, intra=intra)
+    try:
+        from . import v140_acd
+        acd = v140_acd.status()
+    except Exception as exc:  # fail-soft
+        acd = {"error": str(exc)[:200]}
+    return render_template("intraday_admin.html", direction=direction, intra=intra, acd=acd)
+
+
+@app.route("/api/v140/status")
+@require_roles(OWNER)
+def api_v140_status():
+    from . import v140_acd
+    return Response(json.dumps(v140_acd.status(), default=str), mimetype="application/json")
+
+
+@app.route("/api/v140/export")
+@require_roles(OWNER)
+def api_v140_export():
+    from . import v140_acd
+    return _v12_export(str(v140_acd._path("trades.jsonl")), "v140_acd_trades.jsonl", "application/x-ndjson")
 
 
 @app.route("/admin/intraday/pool")

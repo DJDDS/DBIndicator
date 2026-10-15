@@ -137,6 +137,7 @@ section.anchor{scroll-margin-top:110px}
     <div class="gl"><span class="k">Relative strength</span><span class="v">{{ rsp|length }} <small class="s">stocks</small></span><span class="s">{% for p in rsp %}{{ p.symbol }} {{ '▲' if p.side == 'UP' else '▼' }}{{ ', ' if not loop.last }}{% else %}first refresh 11:15{% endfor %}</span></div>
   </section>
 {% endif %}
+{% include "_v140_card.html" %}
 {% if not direction or direction.get('error') %}
   <div class="card"><div class="closed small">Direction desk unavailable: {{ direction.error if direction else 'not started' }}</div></div>
 {% else %}

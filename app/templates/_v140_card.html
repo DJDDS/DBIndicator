@@ -1,0 +1,79 @@
+{# V14.0 NIFTY ACD desk card (admin only, paper). Context var: acd = v140_acd.status() #}
+{% if not acd or acd.get('error') %}
+  <div class="card"><div class="closed small">ACD desk unavailable: {{ acd.error if acd else 'not started' }}</div></div>
+{% else %}
+{% set d = acd.today %}{% set lv = d.levels if d else None %}{% set orr = d.get('or') if d else None %}
+{% set sig = d.signal if d else None %}{% set tr = d.trade if d else None %}{% set ins = d.instruments if d else {} %}
+<div class="card lane" style="border-top-color:#2b6cff" id="acd">
+  <h2>NIFTY ACD desk · <span>{{ d.date if d else 'no levels yet today (prep 08:30-09:14, needs Kite login)' }}</span>
+    {% if ins.get('monthly_expiry_today') %}<span class="chip EXPIRY">MONTHLY EXPIRY</span>{% elif ins.get('expiry_today') %}<span class="chip EXPIRY">EXPIRY</span>{% endif %}
+    <span class="chip">week {{ acd.week_used }}/{{ acd.week_cap }} trades</span></h2>
+
+  {% if lv %}
+  <div class="lv">
+    <div><div class="l">A-up (long trigger)</div><div class="v">{{ orr.a_up if orr else '—' }}</div></div>
+    <div><div class="l">Opening range 09:15-09:44</div><div class="v">{{ ('%.1f – %.1f'|format(orr.low, orr.high)) if orr else 'forming…' }}</div></div>
+    <div><div class="l">A-down (short trigger)</div><div class="v">{{ orr.a_down if orr else '—' }}</div></div>
+    <div><div class="l">Pivot range (prev day)</div><div class="v">{{ lv.pr_bot }} – {{ lv.pr_top }}</div></div>
+    <div><div class="l">A value (0.15 × ATR10 {{ lv.atr10 }})</div><div class="v">{{ lv.A }}</div></div>
+    <div><div class="l">NIFTY last ({{ d.last.bar if d.get('last') else '—' }})</div><div class="v">{{ d.last.close if d.get('last') else '—' }}</div></div>
+  </div>
+  {% endif %}
+
+  <div class="pick" style="margin-top:10px">
+  {% if tr %}
+    {% set up = sig.side == 'LONG' %}
+    <div class="top"><span class="sym {{ 'side-up' if up else 'side-dn' }}">{{ '▲ LONG' if up else '▼ SHORT' }}</span>
+      <span class="pill {{ 'strong' if sig.grade == 'CORE' else 'normal' }}">{{ sig.grade }}{{ '' if sig.grade == 'CORE' else ' - half size or skip' }}</span>
+      <span class="{{ 'open' if (tr.live_points or 0) >= 0 else 'closed' }}" style="font-weight:700">{{ '%+.1f'|format(tr.live_points) if tr.live_points is not none else '—' }} pts</span></div>
+    <div class="small">Signal {{ sig.bar }} · entry {{ tr.entry }} at {{ tr.entry_time }} · stop {{ tr.stop_level }} ({{ tr.stop_pts }} pts) · exit 15:20 ·
+      {% if tr.state == 'closed' %}<b>CLOSED {{ tr.exit_time }} ({{ tr.reason }})</b>{% else %}<b>OPEN</b> · best so far +{{ tr.mfe }}{% endif %}
+      · trade in {{ ins.fut_symbol or 'NIFTY near-month FUT' }}{{ (' (lot ' ~ ins.lot_size ~ ')') if ins.lot_size else '' }}</div>
+  {% elif sig and sig.skipped_week_cap %}
+    <div class="small warn">Signal {{ sig.side }} at {{ sig.bar }} skipped - weekly limit of {{ acd.week_cap }} already used.</div>
+  {% elif sig %}
+    <div class="small">Signal {{ sig.side }} at {{ sig.bar }} - entry fills at the next minute's open…</div>
+  {% elif d and d.get('final') %}
+    <div class="empty">No ACD signal today.</div>
+  {% else %}
+    <div class="empty">Watching 09:45-14:30: SHORT when 15 one-minute closes in a row stay below A-down and below the pivot range; LONG mirror above A-up and the pivot range.</div>
+  {% endif %}
+  {% if d and d.get('addon') %}{% set a = d.addon %}
+    <div class="small" style="margin-top:6px">Experimental expiry lane (not for trading): 12:59 move {{ '%+.1f'|format(a.move_1259) }} ·
+      {{ ('13:00 entry ' ~ a.entry ~ ' · ' ~ ((('%+.1f'|format(a.points)) ~ ' pts') if a.points is not none else 'open')) if a.active else 'inactive' }}</div>
+  {% endif %}
+  </div>
+
+  {% if d and d.participant %}{% set p = d.participant %}
+  <div class="small">Context, not a filter ({{ p.date }} NSE participant OI): FII index futures {{ '%+d'|format(p.fii_fut_net) }} contracts ({{ p.fii_fut_long_pct }}% long) ·
+    retail index options {{ p.client_opt_lean }}</div>
+  {% endif %}
+
+  {% set sa = acd.score_all %}{% set ss = acd.score_short %}{% set sl = acd.score_long %}{% set sx = acd.score_addon %}
+  <div class="kpis" style="margin-top:10px">
+    <div class="kpi"><div class="v">{{ ('%+.1f'|format(ss.avg)) if ss.avg is not none else '—' }}</div><div class="l">SHORT (core) pts/trade · {{ ss.n }} trades · win {{ ss.win if ss.win is not none else '—' }}%</div></div>
+    <div class="kpi"><div class="v">{{ ('%+.1f'|format(sl.avg)) if sl.avg is not none else '—' }}</div><div class="l">LONG (optional) · {{ sl.n }} trades · win {{ sl.win if sl.win is not none else '—' }}%</div></div>
+    <div class="kpi"><div class="v">{{ ('%+.0f'|format(sa.total)) if sa.total is not none else '—' }}</div><div class="l">total paper points · {{ sa.n }} trades</div></div>
+    <div class="kpi"><div class="v">{{ ('%+.1f'|format(sx.avg)) if sx.avg is not none else '—' }}</div><div class="l">experimental expiry lane · {{ sx.n }}</div></div>
+  </div>
+
+  {% if acd.recent %}
+  <table style="margin-top:10px"><tr><th>Date</th><th>Side</th><th>Entry</th><th>Exit</th><th>Points</th><th>Best</th><th></th></tr>
+  {% for t in acd.recent[:12] %}<tr><td>{{ t.date }}</td><td class="{{ 'side-up' if t.side == 'LONG' else 'side-dn' }}">{{ t.side }}</td>
+    <td>{{ t.entry }} @ {{ t.entry_time }}</td><td>{{ t.exit }} @ {{ t.exit_time }}</td>
+    <td class="{{ 'open' if t.points > 0 else 'closed' }}">{{ '%+.1f'|format(t.points) }}</td><td>+{{ t.mfe }}</td><td class="small">{{ 'expiry' if t.expiry else '' }}</td></tr>{% endfor %}
+  </table>
+  {% endif %}
+
+  <details style="margin-top:10px"><summary class="small" style="cursor:pointer">How to take the trade</summary>
+    <ol class="small" style="line-height:1.7">
+      <li>At 09:45 the desk shows A-up / A-down and the pivot range. Nothing to do until a signal appears (Telegram alert if configured).</li>
+      <li><b>SHORT signal = core trade.</b> Sell the NIFTY near-month future ({{ ins.fut_symbol or 'NIFTY FUT' }}) at market within the minute. <b>LONG = optional</b>: half size or skip.</li>
+      <li>Stop: 40 points from your fill (desk shows the index level; on the future use your fill ± 40). Place it as an SL order immediately.</li>
+      <li>No target. Hold to 15:20 and exit at market. Do not book early - the average winner (~+78) pays for ~50% of trades stopping at -40.</li>
+      <li>One trade a day, max {{ acd.week_cap }} a week. If you miss the entry by more than ~15 points, skip it.</li>
+      <li>Research (index points, before costs): shorts +15 to +22 per trade and positive every year 2021-26; all signals ~+12. Futures cost ~7-15 points per round trip (STT 0.05% sell side from Apr-2026).</li>
+    </ol></details>
+  <div class="small">Paper desk - no orders are placed. {% if acd.last_error %}<span class="closed">Last error: {{ acd.last_error }}</span> · {% endif %}<a href="/api/v140/export" style="color:#8fb3ff">export trades</a></div>
+</div>
+{% endif %}
