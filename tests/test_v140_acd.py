@@ -104,7 +104,7 @@ def test_end_to_end_short_day(store):
     assert day["instruments"]["fut_symbol"] == "NIFTY26OCTFUT" and day["instruments"]["expiry_today"] is True
     assert v.run_tick(k, dt.datetime.combine(DAY, dt.time(9, 40))) == "opening range forming"
     st = v.run_tick(k, dt.datetime.combine(DAY, dt.time(10, 30)))
-    assert st == "trade" and store and "SHORT" in store[0] and "CORE" in store[0]
+    assert st == "trade" and store and "SHORT" in store[0] and "NIFTY26OCTFUT" in store[0]
     t = v._read_json(f"day_{DAY}.json", None)["trade"]
     assert t["state"] == "open" and t["stop_pts"] == 40.0 and t["live_points"] > 0
     assert v.run_tick(k, dt.datetime.combine(DAY, dt.time(15, 25))) == "final"
@@ -146,7 +146,7 @@ def test_intraday_page_renders_acd_card(store):
     v.run_prep(k, DAY); v.run_tick(k, dt.datetime.combine(DAY, dt.time(10, 30)))
     acd = v.status(); acd["today"] = v._read_json(f"day_{DAY}.json", None)
     html = env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None, acd=acd)
-    for txt in ("NIFTY ACD desk", "▼ SHORT", "CORE", "NIFTY26OCTFUT", "How to take the trade", "A-down", "EXPIRY", "retail index options bullish"):
+    for txt in ("NIFTY ACD desk", "▼ SHORT", "SELL NIFTY FUT", "never gives a long call", "NIFTY26OCTFUT", "How to take the trade", "A-down", "EXPIRY", "retail index options bullish"):
         assert txt in html, txt
     assert "ACD desk unavailable" in env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None, acd={"error": "boom"})
 
@@ -163,3 +163,18 @@ def test_v140_routes_are_owner_only(monkeypatch, store):
     assert c.get("/api/v140/status", headers=own).status_code == 200
     assert c.get("/api/v140/export", headers=mem).status_code == 403
     assert c.get("/admin/intraday", headers=own).status_code == 200
+
+
+def test_long_first_signal_means_no_trade_and_uses_a_weekly_slot(store):
+    up = 50000 - _down_day()                       # mirror image of the short day -> a LONG first signal
+    k = FakeKite(_minutes(DAY, up), _daily())
+    v.run_prep(k, DAY)
+    assert v.run_tick(k, dt.datetime.combine(DAY, dt.time(15, 25))) == "final"
+    day = v._read_json(f"day_{DAY}.json", None)
+    assert day["signal"]["side"] == "LONG" and day["signal"]["ignored_long"] is True and day["trade"] is None and store == []
+    rows = v._read_jsonl("trades.jsonl")
+    assert len(rows) == 1 and rows[0]["ignored"] is True
+    v.now_ist = lambda: dt.datetime.combine(DAY, dt.time(15, 31))
+    s = v.status()
+    assert s["recent"] == [] and s["score_all"]["n"] == 0 and s["long_ignored"] == 1 and s["week_used"] == 1
+    assert v.week_count(rows, DAY + dt.timedelta(days=1)) == 1

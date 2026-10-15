@@ -6,12 +6,14 @@ Rule (Mark Fisher ACD, 30-minute opening range; research on NIFTY 50 index 1-min
            Opening range (OR) = high/low of 09:15-09:44.
   SHORT    15 consecutive completed 1-minute closes below ORL - A, and the latest close below the pivot-range bottom,
            between 09:45 and 14:29 -> sell at the next 1-minute open.
-  LONG     mirror: 15 closes above ORH + A and above the pivot-range top.
+  LONG     mirror: 15 closes above ORH + A and above the pivot-range top. SHORTS-ONLY DESK: a LONG first signal means no trade
+           that day (it still uses one of the 2 weekly slots, exactly as in the tested shorts-only rule); no long call is ever given.
   Stop     distance to the OR midpoint capped at 40 points (in practice always 40). No target. Exit at the 15:20 open.
   Limits   first signal of the day only; at most 2 per ISO week (longs and shorts count together, as in research).
 Research (gross index points, no costs): all signals 2021-24 +14.7/trade, Apr-24..Aug-25 +11.0, Sep-25..Oct-26 (holdout) +12.0,
   ~1.7/week, 44% win, avg win ~+78, avg loss ~-37. SHORT signals +20.4 / +14.8 / +21.6 and positive in every year 2021-26;
-  LONG signals +8.4 / +7.8 / -1.3 and alternate good/bad years. Desk policy: SHORT = core, LONG = optional (half size or skip).
+  LONG signals +8.4 / +7.8 / -1.3 and alternate good/bad years. Desk policy: SHORT calls only. Shorts-only rule as implemented
+  (first signal of the day decides; a LONG first signal = no trade): +20.4 / +14.8 / +21.6, ~0.9 trades/week, max drawdown -307.
 Experimental lane (logged, NOT for trading): on NIFTY expiry days, if an ACD signal fired before 13:00 and NIFTY at 12:59 is >= 50
   points from the open in the same direction, a 13:00 continuation trade (stop 30, half at +40, runner to break-even, rest out at the
   15:20 close). Without look-ahead it made +14.9 / +29.0 / -1.2 (holdout), so it is only recorded for forward evaluation.
@@ -302,16 +304,15 @@ def run_tick(kite, now: dt.datetime | None = None) -> str:
         sig = scan_signal(c, lv, orh, orl)
         if sig:
             capped = week_count(trades, today) >= WEEK_CAP
-            day['signal'] = {'bar': hhmm(sig['bar']), 'side': 'SHORT' if sig['side'] < 0 else 'LONG',
-                             'grade': 'CORE' if sig['side'] < 0 else 'OPTIONAL', 'skipped_week_cap': capped,
-                             'signal_close': round(float(c[sig['bar']]), 2), '_bar': sig['bar'], '_side': sig['side']}
-            if not capped:
-                changed_msgs.append(f"ACD {day['signal']['side']} ({day['signal']['grade']}) NIFTY signal at {hhmm(sig['bar'])}, "
+            day['signal'] = {'bar': hhmm(sig['bar']), 'side': 'SHORT' if sig['side'] < 0 else 'LONG', 'skipped_week_cap': capped,
+                             'ignored_long': sig['side'] > 0, 'signal_close': round(float(c[sig['bar']]), 2), '_bar': sig['bar'], '_side': sig['side']}
+            if not capped and sig['side'] < 0:
+                changed_msgs.append(f"ACD SHORT NIFTY signal at {hhmm(sig['bar'])}, "
                                     f"close {c[sig['bar']]:.1f}. Enter {day['instruments'].get('fut_symbol') or 'NIFTY FUT'} at market now. "
                                     f"Stop 40 pts, exit 15:20. Paper desk - no order placed.")
 
     s = day.get('signal')
-    if s and not s.get('skipped_week_cap'):
+    if s and not s.get('skipped_week_cap') and not s.get('ignored_long'):
         i, side = s['_bar'] + 1, s['_side']
         if day.get('trade') is None and len(o) > i:
             px = float(o[i]); stop = acd_stop(px, side, orh, orl)
@@ -338,8 +339,10 @@ def run_tick(kite, now: dt.datetime | None = None) -> str:
     if len(o) > EXIT_BAR + 1:
         day['final'] = True
         t = day.get('trade')
+        if s and s.get('ignored_long') and not s.get('skipped_week_cap'):     # uses a weekly slot, as in the tested rule; never shown as a trade
+            _append('trades.jsonl', {'date': str(today), 'week': day['week'], 'side': 'LONG', 'ignored': True, 'signal_time': s['bar']})
         if t and t.get('state') == 'closed':
-            _append('trades.jsonl', {'date': str(today), 'week': day['week'], 'side': s['side'], 'grade': s['grade'],
+            _append('trades.jsonl', {'date': str(today), 'week': day['week'], 'side': s['side'],
                                      'signal_time': s['bar'], 'entry_time': t['entry_time'], 'entry': t['entry'],
                                      'exit_time': t.get('exit_time'), 'exit': t.get('exit_px'), 'points': t['points'], 'reason': t.get('reason'),
                                      'mfe': t.get('mfe'), 'expiry': day['instruments'].get('expiry_today'),
@@ -391,13 +394,16 @@ def _score(rows: list, key: str = 'points') -> dict:
 
 def status() -> dict:
     today = now_ist().date()
-    trades = _read_jsonl('trades.jsonl')
+    rows = _read_jsonl('trades.jsonl')
+    trades = [t for t in rows if not t.get('ignored')]
     day = _read_json(f'day_{today}.json', None)
+    sig = (day or {}).get('signal') or {}
+    used_today = bool(day and (day.get('trade') or (sig.get('ignored_long') and not sig.get('skipped_week_cap'))))
     if day and day.get('signal'):
         day['signal'] = {k: v for k, v in day['signal'].items() if not k.startswith('_')}
     return {'started': _status.get('started'), 'steps': _status.get('steps', {}), 'last_error': _status.get('last_error'),
-            'today': day, 'week_used': week_count(trades, today) + (1 if day and day.get('trade') else 0), 'week_cap': WEEK_CAP,
+            'today': day, 'week_used': week_count(rows, today) + (1 if used_today else 0), 'week_cap': WEEK_CAP,
             'recent': list(reversed(trades))[:30],
             'score_all': _score(trades), 'score_short': _score([t for t in trades if t.get('side') == 'SHORT']),
-            'score_long': _score([t for t in trades if t.get('side') == 'LONG']),
+            'long_ignored': sum(1 for t in rows if t.get('ignored')),
             'score_addon': _score([t for t in trades if t.get('addon_points') is not None], 'addon_points')}

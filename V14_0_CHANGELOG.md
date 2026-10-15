@@ -9,7 +9,9 @@ Shown on /admin/intraday as the first card. Owner-only APIs: /api/v140/status, /
   sell at the next 1-minute open. LONG mirror above ORH + A and the pivot-range top.
 - Stop: distance to the OR midpoint capped at 40 points (always 40 in practice). No target; exit at the 15:20 open.
 - First signal of the day only; at most 2 per ISO week (longs and shorts together, as in research).
-- SHORT = CORE, LONG = OPTIONAL (half size or skip).
+- SHORT CALLS ONLY: if the day's first signal is LONG there is no trade that day (it still uses a weekly slot, exactly as in the
+  tested shorts-only rule). Shorts-only rule: +20.4 / +14.8 / +21.6 per trade, ~0.9/week, max drawdown -307, positive every year.
+  (Ignoring longs and waiting for a later short instead was weaker: +17.4 / +9.4 / +23.9, drawdown -507.)
 
 ## Research (NIFTY 50 index 1-minute bars, Oct 2021 - Oct 2026, gross index points, no costs)
 - All signals: 2021-Mar 2024 +14.7/trade (221), Apr 2024-Aug 2025 +11.0 (128), Sep 2025-Oct 2026 holdout +12.0 (95);
