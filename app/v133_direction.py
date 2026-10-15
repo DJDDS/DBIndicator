@@ -1183,6 +1183,10 @@ def _of_loop(get_kite):
                         from . import v135_hierarchy; v135_hierarchy.tick(now)
                     except Exception:  # noqa: BLE001
                         log.exception('v135 hierarchy tick failed')
+                    try:
+                        from . import v137_pool_watch; v137_pool_watch.tick(now)
+                    except Exception:  # noqa: BLE001
+                        log.exception('v137 pool watch tick failed')
         except Exception:  # noqa: BLE001
             log.exception('v133 order-flow tick failed')
         _real_sleep(1)
@@ -1234,7 +1238,7 @@ def status() -> dict:
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
             'hc_research': (m.get('ensemble') or {}).get('research', {}), 'pool_research': (m.get('ensemble') or {}).get('pool', {}),
             'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today),
-            'lab': lab_summary(), 'rs': _rs_status(), 'v47': _v47_status()}
+            'lab': lab_summary(), 'rs': _rs_status(), 'v47': _v47_status(), 'watch': _watch_status()}
 
 
 _DESK = {'at': 0.0, 'value': None}
@@ -1312,6 +1316,13 @@ def _v47_status():
         from . import v135_hierarchy; return v135_hierarchy.status()
     except Exception:  # noqa: BLE001
         log.exception('v135 status failed'); return None
+
+
+def _watch_status():
+    try:
+        from . import v137_pool_watch; return v137_pool_watch.status()
+    except Exception:  # noqa: BLE001
+        log.exception('v137 status failed'); return None
 
 
 def _rs_status():
