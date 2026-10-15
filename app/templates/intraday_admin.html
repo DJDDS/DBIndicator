@@ -45,6 +45,7 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
   <nav style="margin-left:auto"><a href="/admin/v130">Swing desk</a><a href="/admin/commodity">NG desk</a><a href="/">Dashboard</a></nav>
 </header>
 <div class="wrap">
+{% include "_v136_card.html" %}
 {% if not direction or direction.get('error') %}
   <div class="card"><div class="closed small">Direction desk unavailable: {{ direction.error if direction else 'not started' }}</div></div>
 {% else %}

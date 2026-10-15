@@ -2403,6 +2403,12 @@ def start_background_scanner():
         v133_direction.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V13.3 direction desk failed to start")
+    # V13.6 NIFTY ACD desk (opening-range A-levels + pivot range, paper only). Fail-soft.
+    try:
+        from . import v136_acd
+        v136_acd.start_once(kite_auth.get_kite_client)
+    except Exception:
+        log.exception("V13.6 ACD desk failed to start")
     # MCX NG desk data refresh (weather / COT / prices) on its own schedule, independent of page views. Fail-soft.
     try:
         from . import commodity_desk
