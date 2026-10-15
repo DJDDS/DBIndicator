@@ -193,7 +193,11 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
     <div style="margin-top:10px;padding:8px;border:1px solid #e0a030;border-radius:6px"><b>09:45 FINAL PICK: {{ s2.symbol }}</b> {% if s2.confident %}<b style="color:#e0a030">HIGH CONFIDENCE</b>{% else %}(normal confidence){% endif %}
       · entry {{ s2.entry }} · needs ±{{ s2.need_pct }}% more by 15:15 (normal {{ s2.normal_move_pct }}%) → {{ s2.up_level }} / {{ s2.down_level }} · model {{ s2.prob_pct }}% · already moved {{ s2.moved_since_open_pct }}% since open
       · lean: {% if s2.get('lean') in ('UP','DOWN') %}<b>{{ s2.lean }}</b>{% if s2.get('lean_hit') is not none %} ({{ 'right' if s2.lean_hit else 'wrong' }}, close {{ s2.close_pct }}%){% endif %}{% else %}none (first 30 min not strong){% endif %}
-      · result: {% if s2.get('hit') is not none %}<span class="{{ 'open' if s2.hit else 'closed' }}">{{ 'HIT' if s2.hit else 'miss' }} · {{ s2.max_move_pct }}% {{ s2.dir }}</span>{% else %}open{% endif %}</div>{% endif %}
+      · result: {% if s2.get('hit') is not none %}<span class="{{ 'open' if s2.hit else 'closed' }}">{{ 'HIT' if s2.hit else 'miss' }} · {{ s2.max_move_pct }}% {{ s2.dir }}</span>{% else %}open{% endif %}
+      {% set src = (mt.shortlist or []) | selectattr('symbol', 'equalto', s2.symbol) | list %}
+      <div class="small" style="margin-top:4px;color:#8a93a6">Stage 2 re-ranks the whole 09:16 top 10 (only the top 3 are listed above) using the first 30 minutes ·
+        {{ s2.symbol }} was <b>#{{ src[0].rank if src else '?' }}</b> at 09:16{% if src %} ({{ (src[0].prob * 100) | round(1) }}%){% endif %}
+        {% if s2.get('ranked') %} · 09:45 order: {% for r in s2.ranked %}{{ r.symbol }} {{ r.prob_pct }}%{{ ', ' if not loop.last }}{% endfor %}{% endif %}</div></div>{% endif %}
   {% else %}<div class="empty">Picks appear at 09:16 on trading days (prep runs 08:10-09:08).</div>{% endif %}
   {% if mt and mt.get('straddle') %}
     <div class="small" style="margin-top:8px"><b>Paper ATM straddle (buy call + put at the ask, exit 15:15 at the bid)</b> - measures whether the mover edge still pays after the premium. Not an order.</div>
