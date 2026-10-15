@@ -173,8 +173,9 @@ def test_long_first_signal_means_no_trade_and_uses_a_weekly_slot(store):
     day = v._read_json(f"day_{DAY}.json", None)
     assert day["signal"]["side"] == "LONG" and day["signal"]["ignored_long"] is True and day["trade"] is None and store == []
     rows = v._read_jsonl("trades.jsonl")
-    assert len(rows) == 1 and rows[0]["ignored"] is True
+    assert len(rows) == 1 and rows[0]["ignored"] is True and rows[0]["shadow_points"] > 0 and day["shadow"]["state"] == "closed"
     v.now_ist = lambda: dt.datetime.combine(DAY, dt.time(15, 31))
     s = v.status()
     assert s["recent"] == [] and s["score_all"]["n"] == 0 and s["long_ignored"] == 1 and s["week_used"] == 1
+    assert s["score_shadow_long"]["n"] == 1 and s["score_shadow_long"]["avg"] > 0
     assert v.week_count(rows, DAY + dt.timedelta(days=1)) == 1

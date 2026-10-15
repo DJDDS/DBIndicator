@@ -8,6 +8,8 @@ Rule (Mark Fisher ACD, 30-minute opening range; research on NIFTY 50 index 1-min
            between 09:45 and 14:29 -> sell at the next 1-minute open.
   LONG     mirror: 15 closes above ORH + A and above the pivot-range top. SHORTS-ONLY DESK: a LONG first signal means no trade
            that day (it still uses one of the 2 weekly slots, exactly as in the tested shorts-only rule); no long call is ever given.
+           The long is tracked as a SHADOW (same entry/stop/exit, no call, no alert) to collect live evidence; ACD longs made
+           +10.1 / +12.6 / -5.7 per signal (2021-24 / 2024-25 / last 13 months) and no tested filter fixed the last 13 months.
   Stop     distance to the OR midpoint capped at 40 points (in practice always 40). No target. Exit at the 15:20 open.
   Limits   first signal of the day only; at most 2 per ISO week (longs and shorts count together, as in research).
 Research (gross index points, no costs): all signals 2021-24 +14.7/trade, Apr-24..Aug-25 +11.0, Sep-25..Oct-26 (holdout) +12.0,
@@ -336,11 +338,24 @@ def run_tick(kite, now: dt.datetime | None = None) -> str:
             a['entry'] = round(float(o[ADDON_BAR]), 2)
             a.update(run_addon(o, h, l, c, side, a['entry']))
 
+    if s and s.get('ignored_long') and not s.get('skipped_week_cap'):
+        # Shadow long: the same entry/stop/exit a long call would have had, recorded for evidence only (no call, no alert).
+        i = s['_bar'] + 1
+        if day.get('shadow') is None and len(o) > i:
+            px = float(o[i]); stop = acd_stop(px, 1, orh, orl)
+            day['shadow'] = {'entry_time': hhmm(i), 'entry': round(px, 2), 'stop_pts': round(stop, 1)}
+        sh = day.get('shadow')
+        if sh and sh.get('state') != 'closed':
+            sh.update(run_acd(o, h, l, i, 1, sh['entry'], sh['stop_pts']))
+            sh['live_points'] = sh['points'] if sh['state'] == 'closed' else round(float(c[-1]) - sh['entry'], 1)
+
     if len(o) > EXIT_BAR + 1:
         day['final'] = True
         t = day.get('trade')
         if s and s.get('ignored_long') and not s.get('skipped_week_cap'):     # uses a weekly slot, as in the tested rule; never shown as a trade
-            _append('trades.jsonl', {'date': str(today), 'week': day['week'], 'side': 'LONG', 'ignored': True, 'signal_time': s['bar']})
+            sh = day.get('shadow') or {}
+            _append('trades.jsonl', {'date': str(today), 'week': day['week'], 'side': 'LONG', 'ignored': True, 'signal_time': s['bar'],
+                                     'shadow_entry': sh.get('entry'), 'shadow_points': sh.get('points'), 'shadow_mfe': sh.get('mfe')})
         if t and t.get('state') == 'closed':
             _append('trades.jsonl', {'date': str(today), 'week': day['week'], 'side': s['side'],
                                      'signal_time': s['bar'], 'entry_time': t['entry_time'], 'entry': t['entry'],
@@ -406,4 +421,5 @@ def status() -> dict:
             'recent': list(reversed(trades))[:30],
             'score_all': _score(trades), 'score_short': _score([t for t in trades if t.get('side') == 'SHORT']),
             'long_ignored': sum(1 for t in rows if t.get('ignored')),
+            'score_shadow_long': _score([t for t in rows if t.get('ignored')], 'shadow_points'),
             'score_addon': _score([t for t in trades if t.get('addon_points') is not None], 'addon_points')}

@@ -29,6 +29,8 @@
       · trade in {{ ins.fut_symbol or 'NIFTY near-month FUT' }}{{ (' (lot ' ~ ins.lot_size ~ ')') if ins.lot_size else '' }}</div>
   {% elif sig and sig.ignored_long %}
     <div class="empty">Today's first ACD signal was LONG ({{ sig.bar }}) - shorts-only desk, no trade today.</div>
+    {% set sh = d.get('shadow') %}{% if sh %}<div class="small">Shadow long (evidence only, not a call): entry {{ sh.entry }} at {{ sh.entry_time }} ·
+      {{ ('%+.1f'|format(sh.live_points) ~ ' pts') if sh.live_points is not none else '—' }} · {{ 'closed ' ~ (sh.reason or '') if sh.state == 'closed' else 'open' }}</div>{% endif %}
   {% elif sig and sig.skipped_week_cap %}
     <div class="small warn">Signal {{ sig.side }} at {{ sig.bar }} skipped - weekly limit of {{ acd.week_cap }} already used.</div>
   {% elif sig %}
@@ -52,7 +54,8 @@
   {% set sa = acd.score_all %}{% set ss = acd.score_short %}{% set sx = acd.score_addon %}
   <div class="kpis" style="margin-top:10px">
     <div class="kpi"><div class="v">{{ ('%+.1f'|format(ss.avg)) if ss.avg is not none else '—' }}</div><div class="l">SHORT pts/trade · {{ ss.n }} trades · win {{ ss.win if ss.win is not none else '—' }}%</div></div>
-    <div class="kpi"><div class="v">{{ acd.long_ignored }}</div><div class="l">days with a LONG first signal (no trade)</div></div>
+    {% set sg = acd.score_shadow_long or {} %}
+    <div class="kpi"><div class="v">{{ ('%+.1f'|format(sg.avg)) if sg.avg is not none else '—' }}</div><div class="l">shadow LONG pts/signal · {{ acd.long_ignored }} days · win {{ sg.win if sg.win is not none else '—' }}% (not called)</div></div>
     <div class="kpi"><div class="v">{{ ('%+.0f'|format(sa.total)) if sa.total is not none else '—' }}</div><div class="l">total paper points · {{ sa.n }} trades</div></div>
     <div class="kpi"><div class="v">{{ ('%+.1f'|format(sx.avg)) if sx.avg is not none else '—' }}</div><div class="l">experimental expiry lane · {{ sx.n }}</div></div>
   </div>

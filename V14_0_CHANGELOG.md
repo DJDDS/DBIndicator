@@ -12,6 +12,10 @@ Shown on /admin/intraday as the first card. Owner-only APIs: /api/v140/status, /
 - SHORT CALLS ONLY: if the day's first signal is LONG there is no trade that day (it still uses a weekly slot, exactly as in the
   tested shorts-only rule). Shorts-only rule: +20.4 / +14.8 / +21.6 per trade, ~0.9/week, max drawdown -307, positive every year.
   (Ignoring longs and waiting for a later short instead was weaker: +17.4 / +9.4 / +23.9, drawdown -507.)
+- SHADOW LONG: on LONG-first days the long is simulated with the same entry/stop/exit and recorded (shadow_points in trades.jsonl,
+  "shadow LONG" box on the card) - no call, no alert. Longs made +10.1 / +12.6 / -5.7 per signal (2021-24 / 2024-25 / last 13 months);
+  no filter tested (trend, gap, prior day, 5-day move, FII, client options) was positive in the last 13 months. Re-enable long calls
+  only if the live shadow record turns clearly positive.
 
 ## Research (NIFTY 50 index 1-minute bars, Oct 2021 - Oct 2026, gross index points, no costs)
 - All signals: 2021-Mar 2024 +14.7/trade (221), Apr 2024-Aug 2025 +11.0 (128), Sep 2025-Oct 2026 holdout +12.0 (95);
