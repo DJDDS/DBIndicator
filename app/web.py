@@ -1359,6 +1359,39 @@ def admin_intraday_pool():
     return render_template("_pool_watch.html", W=w)
 
 
+@app.route("/api/v137/settings", methods=["POST"])
+@require_roles(OWNER)
+def api_v137_settings():
+    from . import v133_direction, v137_pool_watch
+    src = request.get_json(silent=True) or request.form
+    cur = v133_direction._read_json("pool_watch_settings.json", {}) or {}
+    for k in ("max_items", "max_day_items", "late_join_min"):
+        if src.get(k) not in (None, ""):
+            try: cur[k] = int(src.get(k))
+            except (TypeError, ValueError): pass
+    for k in ("book_pct", "guard_pct"):
+        if src.get(k) not in (None, ""):
+            try: cur[k] = float(src.get(k))
+            except (TypeError, ValueError): pass
+    if src.get("up_exit_at"):
+        cur["up_exit_at"] = src.get("up_exit_at")
+    v133_direction._write_json("pool_watch_settings.json", cur)
+    if request.form or not request.is_json:
+        return redirect("/admin/intraday#poollab")
+    return jsonify(v137_pool_watch.load_settings())
+
+
+@app.route("/api/v138/refresh", methods=["POST"])
+@require_roles(OWNER)
+def api_v138_refresh():
+    from . import v138_pool_lab
+    try:
+        v138_pool_lab.refresh()
+    except Exception:  # noqa: BLE001
+        log.exception("v138 refresh failed")
+    return redirect("/admin/intraday#poollab")
+
+
 @app.route("/api/v133/status")
 @require_roles(OWNER)
 def api_v133_status():

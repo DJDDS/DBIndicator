@@ -28,7 +28,7 @@ from .v134_relstrength import _px
 log = logging.getLogger(__name__)
 FILE = 'pool_watch_days.jsonl'
 DEFAULT_SETTINGS = {'enabled': True, 'max_items': 5, 'max_day_items': 8, 'late_join_min': 60, 'add_hierarchy': True, 'add_rs': True,
-                    'exit_at': '15:15', 'book_pct': 1.0, 'guard_pct': 0.5, 'stop_k': 1.0, 'trail_k': 0.75}
+                    'exit_at': '15:15', 'up_exit_at': '15:15', 'book_pct': 1.0, 'guard_pct': 0.5, 'stop_k': 1.0, 'trail_k': 0.75}
 _lock = threading.Lock()
 _last = {'day': None, 'n': -1, 't': 0.0}
 _bd_cache = {'t': 0.0, 'v': []}
@@ -43,6 +43,7 @@ def load_settings() -> dict:
         for k, lo, hi in (('book_pct', 0.2, 5.0), ('guard_pct', 0.1, 3.0), ('stop_k', 0.0, 5.0), ('trail_k', 0.0, 5.0)):
             s[k] = float(min(hi, max(lo, float(s[k]))))
         for k in ('enabled', 'add_hierarchy', 'add_rs'): s[k] = bool(s[k])
+        if s['up_exit_at'] not in ('09:55', '10:25', '10:55', '11:25', '15:15'): s['up_exit_at'] = '15:15'
     except Exception:  # noqa: BLE001
         log.exception('v137: bad settings; using defaults'); return dict(DEFAULT_SETTINGS)
     return s
@@ -79,7 +80,8 @@ def candidates(day925: dict | None, h_rec: dict | None, rs_rec: dict | None, s: 
                         'trade': p.get('status') == 'OPEN' and ec.get('label') != 'WEAK',
                         'why': f"conf {p.get('conf')}" + (f" · entry {ec['label']} {ec['score']}/4" if ec.get('score') is not None else '')
                                + ('' if p.get('of_agree') is None else (' · order flow agrees' if p['of_agree'] else ' · order flow against')),
-                        **stops(p.get('rng20_pct') or rng.get(p['symbol']))})
+                        **stops(p.get('rng20_pct') or rng.get(p['symbol'])),
+                        **({'exit_at': s['up_exit_at']} if p['side'] == 'UP' and s['up_exit_at'] != s['exit_at'] else {})})
     if s['add_hierarchy'] and h_rec:
         for c in h_rec.get('picks') or []:
             if c.get('role') != 'PICK': continue
@@ -232,8 +234,9 @@ def tick(now: dt.datetime | None = None, force: bool = False) -> None:
         if polls:
             mk: dict = {}
             for it in rec['items']:
-                if it['added'] not in mk: mk[it['added']] = market_path(polls, it['added'], _exit_poll_t(polls, s['exit_at'], today))
-                it['track'] = track(it, polls, s['exit_at'], s['book_pct'], s['guard_pct'], mkt=mk[it['added']])
+                ex = it.get('exit_at') or s['exit_at']; key = (it['added'], ex)
+                if key not in mk: mk[key] = market_path(polls, it['added'], _exit_poll_t(polls, ex, today))
+                it['track'] = track(it, polls, ex, s['book_pct'], s['guard_pct'], mkt=mk[key])
         if hm >= s['exit_at'] and rec['items'] and all((it.get('track') or {}).get('closed') for it in rec['items']): rec['done'] = True
         rec['updated'] = str(now)[:19]
         d._rewrite_jsonl(FILE, days)

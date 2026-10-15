@@ -1015,6 +1015,10 @@ def run_labels(kite, today: dt.date | None = None) -> int:
         _write_gz(name, out)
     pack_of(today)
     lab = refresh_lab()
+    try:                                      # daily-pool lab: replay the fixed pool rules on the new out-of-sample day
+        from . import v138_pool_lab; v138_pool_lab.refresh()
+    except Exception:  # noqa: BLE001
+        log.exception('v138 pool lab refresh failed')
     return lab.get('sessions', 0)
 
 
@@ -1272,7 +1276,7 @@ def status() -> dict:
             'score': scorecard(days), 'research': {h: v.get('research', {}) for h, v in (m.get('horizons') or {}).items()},
             'hc_research': (m.get('ensemble') or {}).get('research', {}), 'pool_research': (m.get('ensemble') or {}).get('pool', {}),
             'settings': load_settings(), 'horizons': list(HORIZONS), 'lists': list(LISTS), 'exit_label': EXIT_LABEL, 'of_today': of_status(today),
-            'lab': lab_summary(), 'rs': _rs_status(), 'v47': _v47_status(), 'watch': _watch_status()}
+            'lab': lab_summary(), 'rs': _rs_status(), 'v47': _v47_status(), 'watch': _watch_status(), 'pool_lab': _pool_lab_status()}
 
 
 _DESK = {'at': 0.0, 'value': None}
@@ -1350,6 +1354,13 @@ def _v47_status():
         from . import v135_hierarchy; return v135_hierarchy.status()
     except Exception:  # noqa: BLE001
         log.exception('v135 status failed'); return None
+
+
+def _pool_lab_status():
+    try:
+        from . import v138_pool_lab; return v138_pool_lab.status()
+    except Exception:  # noqa: BLE001
+        log.exception('v138 status failed'); return None
 
 
 def _watch_status():

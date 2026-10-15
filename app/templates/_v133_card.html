@@ -6,6 +6,25 @@
     <div class="small">Scored {{ dt_.n_scored }} F&amp;O stocks at 09:25 · list ready {{ (dt_.at|string)[11:19] }}
       {% set miss = (dt_.missing or {}).items()|selectattr(1)|map(attribute=0)|list %}{% if miss %} · <span class="warn">missing inputs: {{ miss|join(', ') }}</span>{% endif %}</div>
     {% set W = direction.watch or {} %}{% include "_pool_watch.html" %}
+    {% set PL = direction.pool_lab or {} %}{% set ws = (direction.watch or {}).settings or {} %}
+    <details id="poollab" style="margin-top:8px" {{ 'open' if (PL.summary or [{}])[0].get('days') }}><summary class="small" style="cursor:pointer">Pool backtest · DOWN only vs adding UP (out-of-sample, {{ (PL.summary or [{}])[0].get('days') or 0 }} recorded days{{ (', ' ~ PL.first ~ ' → ' ~ PL.last) if PL.first }})</summary>
+      <div class="small" style="margin-top:4px">Each rule below is replayed on every day the desk recorded live (all stocks' 09:25 model scores + that day's 5-minute candles). The models were frozen on 2026-10-01, so none of these days were seen in training. Top 3 by confidence, entry at the 09:25 price, 0.06% cost. The rules are fixed in advance; judge only after 40+ days (each day = 3 picks).</div>
+      {% if PL.summary and PL.summary[0].days %}
+      <table class="small" style="margin-top:4px"><tr><th>Rule</th><th>Days</th><th>Picks (UP / DOWN)</th><th>Held · win · avg · ≥1 right</th><th>Book +1% · win · avg · ≥1 right</th><th>UP win</th><th>DOWN win</th></tr>
+      {% for r in PL.summary %}{% set h = r.hold or {} %}{% set b = r.book or {} %}<tr><td>{{ r.variant }}</td><td>{{ r.days }}</td><td>{{ r.picks }} ({{ r.up_n }} / {{ r.down_n }})</td>
+        <td>{% if h %}{{ h.win }}% · <b class="{{ 'open' if h.avg_bps > 0 else 'closed' }}">{{ h.avg_bps }} bps</b> · {{ h.ge1 }}%{% else %}—{% endif %}</td>
+        <td>{% if b %}{{ b.win }}% · <b class="{{ 'open' if b.avg_bps > 0 else 'closed' }}">{{ b.avg_bps }} bps</b> · {{ b.ge1 }}%{% else %}—{% endif %}</td>
+        <td>{{ (r.up_win ~ '%') if r.up_win is not none else '—' }}</td><td>{{ (r.down_win ~ '%') if r.down_win is not none else '—' }}</td></tr>{% endfor %}</table>
+      {% else %}<div class="empty">No recorded day yet with both the 09:25 scores and the evening candles.</div>{% endif %}
+      {% if PL.research %}<div class="small" style="margin-top:6px"><b>Walk-forward research of the same models (2018-26, top 5):</b> win % DOWN / UP —
+        {% for r in PL.research %}{{ r.horizon if r.horizon == 'day' else r.horizon ~ ' min' }}: strong days {{ r.down_strong }} / {{ r.up_strong }}, every day {{ r.down_every }} / {{ r.up_every }}{{ ' · ' if not loop.last }}{% endfor %}.
+        UP calls hold up to about 2 hours on strong days but fade by 15:15, which is why rules C, D, F and G exit UP at 11:25.</div>{% endif %}
+      <form method="post" action="/api/v137/settings" class="small" style="margin-top:6px">Watched pool: UP picks exit at <select name="up_exit_at">{% for x in ('15:15', '11:25', '10:55', '10:25', '09:55') %}<option {{ 'selected' if ws.up_exit_at == x }}>{{ x }}</option>{% endfor %}</select>
+        · live stocks <input name="max_items" size="2" value="{{ ws.max_items }}"> · per day <input name="max_day_items" size="2" value="{{ ws.max_day_items }}"> · late join within <input name="late_join_min" size="3" value="{{ ws.late_join_min }}"> min
+        · book +<input name="book_pct" size="3" value="{{ ws.book_pct }}">% · market guard <input name="guard_pct" size="3" value="{{ ws.guard_pct }}">% <button>Save</button>
+        <span>(to let UP picks into the pool, untick "pool: DOWN picks only" in the desk settings below)</span></form>
+      <form method="post" action="/api/v138/refresh" class="small" style="margin-top:4px"><button>Recompute backtest</button> <span>runs by itself after each close</span></form>
+    </details>
     <details style="margin-top:8px"><summary class="small" style="cursor:pointer">09:25 model detail: daily pool table with options, and the 30 / 60 / 90 / 120 min and whole-day lists</summary>
     {% set HC = (dt_.lists or {}).get('hc') %}{% set pr = direction.pool_research or {} %}{% set hr = direction.hc_research or {} %}
     {% if HC %}

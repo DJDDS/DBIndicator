@@ -122,3 +122,13 @@ def test_lite_polls_reads_only_new_lines(tmp_path, monkeypatch):
     with p.open('a') as fh: fh.write(row('10:05:00', 101)[20:] + row('10:10:00', 102))
     got = d.lite_polls(DAY)
     assert [x['q']['A'][0] for x in got] == [100, 101, 102] and got[1]['t'] == f'{DAY}T10:05:00'
+
+
+def test_up_pool_picks_can_exit_earlier():
+    day = _day925(); day['lists']['hc']['picks'][2]['side'] = 'UP'
+    s = dict(S, up_exit_at='11:25')
+    c = f.candidates(day, None, None, s)
+    assert 'exit_at' not in c[0] and c[2]['exit_at'] == '11:25'
+    times = ['09:28', '10:00', '11:25', '12:00', '15:15']
+    out = f.track(c[2], _polls({'P2': [100, 100.5, 100.8, 99.0, 98.0]}, times), c[2]['exit_at'], 1.0)
+    assert out['closed'] and out['exit_px'] == 100.8 and out['win']
