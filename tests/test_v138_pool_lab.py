@@ -64,3 +64,50 @@ def test_refresh_replays_recorded_days_once(tmp_path, monkeypatch):
     assert s['E. UP only, 15:15']['hold']['avg_bps'] < s['D. UP only, 11:25']['hold']['avg_bps']
     st = lab.status()
     assert 'per_day' not in st and st['first'] == DAY and st['summary'][0]['days'] == 1
+
+
+def _world():
+    """30 stocks in 3 industries; IND_A falls, IND_B rises, IND_C flat. Candles 2..5 = 09:30..09:45 prices."""
+    ind, rows, bars = {}, [], {}
+    for g, drift in (('A', -0.004), ('B', 0.004), ('C', 0.0)):
+        for k in range(10):
+            s = f'{g}{k}'; ind[s] = f'IND_{g}'
+            lead = 2.5 if k == 0 else 1.0                      # stock 0 of each industry leads it
+            path = {2: 100.0, 3: 100 * (1 + lead * drift / 3), 4: 100 * (1 + 2 * lead * drift / 3), 5: 100 * (1 + lead * drift)}
+            path[25] = path[5] * (1 + (0.01 if drift > 0 else -0.01 if drift < 0 else 0)); path[71] = path[25]
+            bars[s] = _bars(100, path)
+            p = 0.5 + (0.2 if g == 'B' else -0.2 if g == 'A' else 0.01) * (1 if k < 3 else 0.5)
+            rows.append({'symbol': s, 'p925': 100.0, **{f'p_{h}': p for h in d.HORIZONS}})
+    X = pd.DataFrame(rows); X['p'] = X[[f'p_{h}' for h in d.HORIZONS]].mean(axis=1)
+    X['conf'] = (X.p - 0.5).abs(); X['side'] = X.p.gt(0.5).map({True: 'UP', False: 'DOWN'})
+    return X, bars, ind
+
+
+def test_hierarchy_rebuilt_from_candles_and_mixes_pick_agreeing_leaders():
+    X, bars, ind = _world()
+    H = lab.hier_frame(X, bars, ind)
+    lead = H.set_index('symbol')
+    assert lead.loc['A0', 'eligible'] and lead.loc['A0', 'hside'] == 'DOWN' and lead.loc['B0', 'hside'] == 'UP'
+    assert not lead.loc['A5', 'eligible']                                   # moves with, not ahead of, its industry
+    res = lab.evaluate_mix(X, bars, ind)
+    h = res['H. hierarchy only (both sides), 09:45 → 15:15']
+    assert {r['symbol'] for r in h} <= {'A0', 'B0'} and len(h) == 2
+    m1 = res['M1. model and hierarchy agree, by confidence']
+    assert {r['symbol'] for r in m1} == {'A0', 'B0'} and all(r['hold'] > 0 for r in m1)
+    up = next(r for r in m1 if r['side'] == 'UP')
+    assert abs(up['hold'] - (100 * 0.00995 - 0.06)) < 0.02                  # UP exits 11:25 (+1% from the 09:45 entry)
+    m2 = res['M2. model top 3 confirmed at 09:45']
+    assert len(m2) == 3 and all((r['side'] == 'UP') == r['symbol'].startswith('B') for r in m2)
+
+
+def test_m2_drops_unconfirmed_model_picks():
+    X, bars, ind = _world()
+    X.loc[X.symbol == 'C0', ['p', 'conf', 'side']] = [0.95, 0.45, 'UP']     # most confident call, but C0 did not move and IND_C is flat
+    picks = lab.MIXES['M2. model top 3 confirmed at 09:45'](lab.hier_frame(X, bars, ind))
+    assert 'C0' not in {p[0] for p in picks} and len(picks) == 2
+
+
+def test_outcome_from_the_0945_entry_ignores_earlier_candles():
+    b = _bars(100, {3: 102, 5: 100, 71: 99})
+    o = lab.outcome(b, 100, 'UP', lab.K_1515, k_from=6)
+    assert o['book'] == o['hold'] and o['hold'] < 0                          # the 102 spike before entry does not count as booked

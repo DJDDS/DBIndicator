@@ -10,6 +10,10 @@ Why UP gets an earlier exit in some variants: the models' own walk-forward resea
 winning about as often as DOWN up to 2 hours (30 min 59.7% vs 57.7%, 90 min 60.0% vs 59.7%, 120 min 59.1% vs 62.3%) but fading when
 held to 15:15 (55.0% vs 63.6%). So 'UP exits 11:25' is the research-backed way to add the UP side.
 Entry = the 09:25 price (close of the 09:20 candle), as in research; cost 0.06% a trade.
+
+MIXES (09:25 model x 09:45 hierarchy desk), also fixed in advance, entry at the 09:45 price, UP exits 11:25 and DOWN 15:15:
+  H  hierarchy rule alone (both sides; H-DOWN = DOWN only)     M1 both agree, ranked by model confidence
+  M2 model top 3 kept only if by 09:45 it moved its way and its industry agrees     M3 both agree, blended rank of confidence and hierarchy score
 """
 from __future__ import annotations
 
@@ -50,10 +54,11 @@ def _scores(day: str) -> pd.DataFrame | None:
     return X
 
 
-def outcome(bars: list, p925: float, side: str, k_exit: int, book: float = BOOK, cost: float = d.COST) -> dict | None:
-    """bars: [[k, o, h, l, c, v], ...] of one stock. Hold result from the 09:25 price to the close of candle k_exit, and the +book% booking."""
+def outcome(bars: list, p925: float, side: str, k_exit: int, book: float = BOOK, cost: float = d.COST, k_from: int = 2) -> dict | None:
+    """bars: [[k, o, h, l, c, v], ...] of one stock. Hold result from the entry price (p925 = the 09:25 price by default; with k_from=6 the
+    09:45 price) to the close of candle k_exit, and the +book% booking on the candles after the entry."""
     C = {int(b[0]): b for b in bars}
-    ks = [k for k in sorted(C) if 2 <= k <= k_exit]
+    ks = [k for k in sorted(C) if k_from <= k <= k_exit]
     last = next((C[k][4] for k in sorted(C, reverse=True) if k <= k_exit), None)
     if not ks or not last or not p925: return None
     sg = 1 if side == 'UP' else -1
@@ -84,9 +89,69 @@ def evaluate_day(X: pd.DataFrame, bars: dict, strong: bool, lean: str | None) ->
     return out
 
 
-def summarize(per_day: dict) -> list:
+# ================================================================== 09:25 model x 09:45 hierarchy (mixes)
+K945 = 5                       # the 09:40-09:45 candle closes at 09:45: the hierarchy desk's entry
+
+
+def hier_frame(X: pd.DataFrame, bars: dict, ind: dict, min_group: int = 4) -> pd.DataFrame:
+    """Per stock at 09:45, rebuilt from the day's candles exactly as the hierarchy desk does from its polls (prices at 09:30/35/40/45 =
+    closes of candles 2..5): r15, path efficiency, market (median r15 of all stocks), industry median (>= min_group stocks), the hierarchy
+    side and whether the stock is eligible (industry agrees, market not against, leads its industry); plus the 09:25 model's call.
+    The volume factor is left out: the recorded window is too short for its 20-day baseline (both H and the mixes are scored without it)."""
+    rows = []
+    for r in X.itertuples():
+        b = {int(x[0]): x for x in (bars.get(r.symbol) or [])}
+        if not all(k in b for k in (2, 3, 4, 5)): continue
+        c = [float(b[k][4]) for k in (2, 3, 4, 5)]
+        if min(c) <= 0: continue
+        path = sum(abs(c[i + 1] - c[i]) for i in range(3))
+        rows.append({'symbol': r.symbol, 'p925': float(r.p925), 'conf': float(r.conf), 'mside': r.side, 'p945': c[3],
+                     'r15': (c[3] / c[0] - 1) * 100, 'since925': (c[3] / float(r.p925) - 1) * 100 if r.p925 else np.nan,
+                     'eff': min(1.0, abs(c[3] - c[0]) / path) if path > 0 else np.nan, 'industry': ind.get(r.symbol)})
+    H = pd.DataFrame(rows)
+    if H.empty: return H
+    H['mkt'] = H.r15.median()
+    g = H.dropna(subset=['industry']).groupby('industry').r15
+    H['ind_med'] = H.industry.map(g.median()); H['ind_n'] = H.industry.map(g.size())
+    H['hside'] = np.where(H.r15 >= 0, 'UP', 'DOWN'); sg = np.where(H.r15 >= 0, 1, -1)
+    H['resid'] = sg * (H.r15 - H.ind_med)
+    H['eligible'] = (H.ind_n >= min_group) & (sg * H.ind_med > 0) & (sg * H.mkt >= 0) & (H.resid > 0) & H.eff.notna()
+    H['hscore'] = np.where(H.eligible, H.resid * H.eff.clip(0, 1), np.nan)
+    H['agree'] = H.eligible & (H.hside == H.mside)
+    return H
+
+
+def _exit(side: str) -> int:
+    return K_1125 if side == 'UP' else K_1515
+
+
+MIXES = {
+    'H. hierarchy only (both sides), 09:45 → 15:15':  lambda H: [(r.symbol, r.hside, r.p945, K_1515) for r in H[H.eligible].nlargest(TOP, 'hscore').itertuples()],
+    'H-DOWN. hierarchy DOWN only, 09:45 → 15:15':     lambda H: [(r.symbol, 'DOWN', r.p945, K_1515) for r in H[H.eligible & (H.hside == 'DOWN')].nlargest(TOP, 'hscore').itertuples()],
+    'M1. model and hierarchy agree, by confidence':  lambda H: [(r.symbol, r.mside, r.p945, _exit(r.mside)) for r in H[H.agree].nlargest(TOP, 'conf').itertuples()],
+    'M2. model top 3 confirmed at 09:45':            lambda H: [(r.symbol, r.mside, r.p945, _exit(r.mside)) for r in H.nlargest(TOP, 'conf').itertuples()
+                                                            if (1 if r.mside == 'UP' else -1) * r.since925 > 0 and (1 if r.mside == 'UP' else -1) * (r.ind_med if r.ind_med == r.ind_med else 0) > 0],
+    'M3. both agree, blended rank':                  lambda H: [(r.symbol, r.mside, r.p945, _exit(r.mside)) for r in
+                                                            H[H.agree].assign(rk=lambda z: z.conf.rank(pct=True) + z.hscore.rank(pct=True)).nlargest(TOP, 'rk').itertuples()],
+}
+
+
+def evaluate_mix(X: pd.DataFrame, bars: dict, ind: dict) -> dict:
+    """mix -> list of {'symbol','side','hold','book'} for one day (entries at the 09:45 price)."""
+    H = hier_frame(X, bars, ind); out = {}
+    for name, pick in MIXES.items():
+        rows = []
+        if not H.empty:
+            for sym, side, entry, k in pick(H):
+                o = outcome(bars.get(sym) or [], entry, side, k, k_from=K945 + 1)
+                if o: rows.append({'symbol': sym, 'side': side, **o})
+        out[name] = rows
+    return out
+
+
+def summarize(per_day: dict, names=None) -> list:
     res = []
-    for name in VARIANTS:
+    for name in (names or list(VARIANTS) + list(MIXES)):
         days = [v.get(name) or [] for v in per_day.values()]
         rows = [r for x in days for r in x]; days = [x for x in days if x]
         row = {'variant': name, 'days': len(days), 'picks': len(rows)}
@@ -108,19 +173,32 @@ def refresh() -> dict:
         cache = d._read_json(CACHE, {}) or {}
         per_day = cache.get('per_day') or {}
         flags = {x['date']: (x.get('lists') or {}).get('hc') or {} for x in d._read_jsonl('days.jsonl')}
+        from . import v135_hierarchy
+        ind = v135_hierarchy.industry_map()
         for p in sorted(d.ROOT.glob('bars_*.json.gz')) if d.ROOT.exists() else []:
             day = p.name[5:15]
-            if day in per_day: continue
+            if day in per_day and all(k in per_day[day] for k in MIXES): continue
             X = _scores(day); bars = d._read_gz(p.name, None)
             if X is None or not bars: continue
             f = flags.get(day) or {}
-            try: per_day[day] = evaluate_day(X, bars, bool(f.get('strong')), f.get('lean'))
+            try: per_day[day] = {**evaluate_day(X, bars, bool(f.get('strong')), f.get('lean')), **evaluate_mix(X, bars, ind)}
             except Exception:  # noqa: BLE001
                 log.exception('v138 pool lab %s', day)
-        out = {'per_day': per_day, 'summary': summarize(per_day), 'first': min(per_day) if per_day else None,
+        out = {'per_day': per_day, 'summary': summarize(per_day, list(VARIANTS)), 'mix': summarize(per_day, list(MIXES)),
+               'overlap': overlap(per_day), 'first': min(per_day) if per_day else None,
                'last': max(per_day) if per_day else None, 'research': research_sides()}
         d._write_json(CACHE, out)
         return out
+
+
+def overlap(per_day: dict) -> dict:
+    """How often the 09:25 pool (rule A) and the hierarchy (H) pick the same stock - low overlap means the two see different things."""
+    a = 'A. DOWN only, 15:15 (current)'; h = 'H. hierarchy only (both sides), 09:45 → 15:15'
+    same = tot = 0
+    for v in per_day.values():
+        sa = {r['symbol'] for r in v.get(a) or []}; sh = {r['symbol'] for r in v.get(h) or []}
+        if sa and sh: same += len(sa & sh); tot += len(sh)
+    return {'shared_pct': round(100 * same / tot, 1) if tot else None, 'h_picks': tot}
 
 
 def research_sides() -> list:

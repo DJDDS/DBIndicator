@@ -3,7 +3,7 @@ import json
 from app import v133_direction as d
 from app import v137_pool_watch as f
 
-S = dict(f.DEFAULT_SETTINGS)
+S = dict(f.DEFAULT_SETTINGS, add_rs=True)   # most tests exercise the relative-strength add-in explicitly
 DAY = '2026-10-15'
 
 
@@ -132,3 +132,9 @@ def test_up_pool_picks_can_exit_earlier():
     times = ['09:28', '10:00', '11:25', '12:00', '15:15']
     out = f.track(c[2], _polls({'P2': [100, 100.5, 100.8, 99.0, 98.0]}, times), c[2]['exit_at'], 1.0)
     assert out['closed'] and out['exit_px'] == 100.8 and out['win']
+
+
+def test_relative_strength_does_not_join_by_default():
+    rs = _rs('11:15', [{'symbol': 'R1', 'side': 'UP', 'entry': 10.0, 'z': 4.0, 'vs_mkt_pct': 2.0, 'grade': 'A'}])
+    assert f.DEFAULT_SETTINGS['add_rs'] is False
+    assert all(c['source'] != '11:15 strength' for c in f.candidates(_day925(), None, rs, dict(f.DEFAULT_SETTINGS)))

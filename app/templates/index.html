@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="legacy-research-provenance" content="Early Radar; Shadow Early Radar; Energy Building; RESEARCH / SHADOW">
 <title>Scanner Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"></noscript>
 <style>
   :root {
     --bg: #0a0d12; --panel: #11151d; --panel2: #151b26; --border: #242b38;
@@ -13,8 +15,8 @@
     --red: #ea3943; --red-bg: rgba(234,57,67,0.12);
     --accent: #3b82f6; --accent-bg: rgba(59,130,246,0.14);
     --amber: #f0b90b;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    --sans: -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--text); font-size: 13px; }
@@ -53,6 +55,26 @@
   .rticker-empty{padding:13px 16px;font-size:12.5px;color:var(--muted)}
   @media(max-width:720px){.rticker{top:0;flex-direction:column}.rticker .rticker-label{border-right:0;border-bottom:1px solid #22354a;padding:8px 12px}.rtick{font-size:13px;padding:8px 16px}}
 
+  /* Today-at-a-glance strip, jump-to bar and back-to-top (dashboard v13.7) */
+  .glance{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:14px 0 6px}
+  .gl{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:grid;gap:3px;min-width:0;text-decoration:none;color:var(--text);transition:border-color .15s,transform .15s}
+  a.gl:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .gl .k{font:600 10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+  .gl .v{font:600 20px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gl .s{font-size:11.5px;color:var(--muted);line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .gl .pos{color:var(--green)}.gl .neg{color:var(--red)}
+  .gl .bb{display:flex;height:6px;border-radius:3px;overflow:hidden;background:#1d2430;margin-top:4px}.gl .bb span{display:block;height:100%}
+  .gl.desk{border-color:rgba(224,160,48,.35)}.gl.desk .k{color:#e0a030}
+  .gl .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}.gl .tags span{font:600 10.5px var(--mono);padding:1px 6px;border-radius:4px;background:#1a212c}
+  .gl .tags .u{color:var(--green)}.gl .tags .d{color:var(--red)}
+  .jumpbar{display:flex;gap:6px;overflow-x:auto;padding:4px 0 10px;scrollbar-width:thin}
+  .jumpbar a{flex:0 0 auto;font-size:11.5px;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:999px;padding:4px 11px;white-space:nowrap}
+  .jumpbar a:hover{color:var(--text);border-color:var(--accent);background:var(--accent-bg)}
+  .jumpbar .jl{font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);align-self:center;margin-right:2px}
+  .totop{position:fixed;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:40;width:40px;height:40px;border-radius:50%;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:18px;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .2s}
+  .totop.on{opacity:.9;pointer-events:auto}.totop:hover{border-color:var(--accent)}
+  .card,section.card{transition:border-color .15s}.card:hover{border-color:#2f3949}
+  [data-jump]{scroll-margin-top:140px}
   .cwatch-empty{font-size:11.5px;color:var(--muted);padding:14px 16px}
   .cwatch-score{font-family:var(--mono);font-weight:800;font-size:12px;padding:2px 8px;border-radius:5px;display:inline-block}
   .cwatch-score.s3{background:var(--green-bg);color:var(--green)}
@@ -775,7 +797,7 @@ button, a, summary, input, select { touch-action: manipulation; }
   <!-- Legacy UI-test compatibility marker only: V9.4 Live F&amp;O Monitor -->
   <div class="brand">
     <h1>DBIndicator · NSE F&amp;O Command Center</h1>
-    <span class="tagline">Underlying-first decision support &middot; Live Focus &middot; continuation &middot; 1D swing &middot; missed-mover forensics</span>
+    <span class="tagline">Underlying-first decision support &middot; OI structure &middot; sector strength &middot; intraday research desks &middot; 1D swing</span>
   </div>
   <div class="hdr-right">
     {% if logged_in %}
@@ -806,6 +828,27 @@ button, a, summary, input, select { touch-action: manipulation; }
   </div>
 </div>
 <div class="wrap">
+  {% set g = desk_glance %}
+  {% set bull = live_counts.bullish or 0 %}{% set bear = live_counts.bearish or 0 %}{% set tot = (bull + bear) or 1 %}
+  <section class="glance" aria-label="Today at a glance">
+    <div class="gl"><span class="k">Scanner</span><span class="v">{{ valid_scanned }}<span style="font-size:13px;color:var(--muted)"> / {{ total_scanned }}</span></span>
+      <span class="s">{{ 'Kite connected' if logged_in else 'Kite login needed' }} · last scan {{ (last_scan or '—')[-8:] if last_scan else '—' }}{{ (' · ' ~ scan_errors ~ ' errors') if scan_errors }}</span></div>
+    <div class="gl"><span class="k">Direction of F&amp;O stocks</span><span class="v"><span class="pos">{{ bull }}▲</span> <span class="neg">{{ bear }}▼</span></span>
+      <div class="bb" title="bullish vs bearish scanner reads"><span style="width:{{ (100 * bull / tot)|round(1) }}%;background:var(--green)"></span><span style="width:{{ (100 * bear / tot)|round(1) }}%;background:var(--red)"></span></div>
+      <span class="s">{{ live_counts.opportunities }} live opportunities · {{ research_ticker|length }} desk picks in the ticker</span></div>
+    {% if g %}
+    <a class="gl desk" href="/admin/intraday#watch"><span class="k">Intraday pool</span>
+      <span class="v {{ 'pos' if (g.pool_avg or 0) > 0 else ('neg' if g.pool_avg is not none and g.pool_avg < 0 else '') }}">{{ ('%+.2f'|format(g.pool_avg) ~ '%') if g.pool_avg is not none else ('—' if not g.pool else 'open') }}</span>
+      <span class="tags">{% for p in g.pool %}<span class="{{ 'u' if (p.now or 0) > 0 else ('d' if p.now is not none and p.now < 0 else '') }}" title="{{ p.side }} call; result since entry">{{ p.symbol }} {{ '▲' if p.side == 'UP' else '▼' }} {{ ('%+.1f%%'|format(p.now)) if p.now is not none else '' }}</span>{% else %}<span>list at ~09:26</span>{% endfor %}</span></a>
+    <a class="gl desk" href="/admin/intraday#glance"><span class="k">09:25 day view</span><span class="v {{ 'pos' if g.lean == 'UP' else ('neg' if g.lean == 'DOWN' else '') }}">{{ (g.lean ~ (' ★' if g.strong else '')) if g.lean else '—' }}</span>
+      <span class="s">{{ 'strong day' if g.strong else ('normal day' if g.lean else 'appears ~09:26') }}{{ (' · F&O market ' ~ ('%+.2f'|format(g.market)) ~ '%') if g.market is not none }}</span></a>
+    <a class="gl desk" href="/admin/intraday#hierarchy"><span class="k">Hierarchy 09:45</span><span class="v">{{ g.hier[0].symbol if g.hier else '—' }}</span>
+      <span class="s">{{ (('▲ UP' if g.hier[0].side == 'UP' else '▼ DOWN') ~ ' · leads ' ~ (g.hier[0].industry or 'its industry')) if g.hier else 'no pick yet today' }}</span></a>
+    <a class="gl desk" href="/admin/intraday#relstrength"><span class="k">Relative strength</span><span class="v">{{ g.rs|length }}</span>
+      <span class="tags">{% for p in g.rs[:6] %}<span class="{{ 'u' if p.side == 'UP' else 'd' }}">{{ p.symbol }}</span>{% else %}<span>first refresh 11:15</span>{% endfor %}</span></a>
+    {% endif %}
+  </section>
+  <nav class="jumpbar" id="jumpbar" aria-label="Jump to a section"><span class="jl">Jump to</span></nav>
 
   {% macro chip_stats(r) %}
     {%- set parts = [] -%}
@@ -2530,6 +2573,27 @@ button, a, summary, input, select { touch-action: manipulation; }
 
 
 
+</script>
+<button type="button" class="totop" id="totop" aria-label="Back to top">↑</button>
+<script>
+(function(){
+  // Jump-to bar: one chip per visible dashboard section, built from its heading
+  var bar=document.getElementById('jumpbar'); if(bar){
+    var seen=0;
+    document.querySelectorAll('.wrap > .card, .wrap > section.card, .wrap > section[id], .wrap > .mo, .wrap > .card.table-card').forEach(function(sec,i){
+      if(sec.hidden||sec.offsetParent===null||sec.classList.contains('glance'))return;
+      var h=sec.querySelector('h2'); if(!h)return;
+      var txt=(h.childNodes[0]&&h.childNodes[0].textContent||h.textContent).replace(/[⚡·]/g,'').trim().split(/\s{2,}/)[0];
+      if(!txt||txt.length<3)return; if(txt.length>34)txt=txt.slice(0,32)+'…';
+      if(!sec.id)sec.id='sec-'+i; sec.setAttribute('data-jump','');
+      var a=document.createElement('a'); a.href='#'+sec.id; a.textContent=txt; bar.appendChild(a); seen++;
+    });
+    if(!seen)bar.hidden=true;
+  }
+  var b=document.getElementById('totop');
+  if(b){window.addEventListener('scroll',function(){b.classList.toggle('on',window.scrollY>600)},{passive:true});
+    b.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'})});}
+})();
 </script>
 </body>
 </html>

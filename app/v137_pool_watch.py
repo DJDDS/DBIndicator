@@ -3,7 +3,9 @@
 The intraday desk keeps ONE short list instead of separate 30/60/90/120-minute lists, and follows it until 15:15:
   09:26  the 09:25 daily pool (3 stocks; status OPEN = paper-traded, WATCH = monitored only)
   09:45  + the hierarchy desk's PICK (only a side that is ACTIVE there; a SHADOW pick never joins)
-  11:15 / 12:15 / 13:15  + relative-strength grade-A stocks (|z| >= 3.5, not the quiet-day reserve), strongest first
+  11:15 / 12:15 / 13:15  + relative-strength grade-A stocks (|z| >= 3.5, not the quiet-day reserve) ONLY when add_rs is on.
+         Off by default: the 88-session Dhan replay (Jun-Oct 2026) had the desk at 49.7% overall (UP picks 47%, 13:15 refresh ~0),
+         and adding its DOWN picks lowered the pool's consistency (t 3.11 -> 2.88) because their days move with the 09:25 model's.
   at most max_items LIVE stocks (default 5). A stock that hits its trailing stop frees its slot; a strong signal that found the list
   full may then join at the CURRENT price if it is at most late_join_min old (max_day_items a day). A stock never re-enters the same day.
 Each stock is tracked from its own entry on the price polls the desk already records (incremental reader, no extra Kite calls):
@@ -27,7 +29,7 @@ from .v134_relstrength import _px
 
 log = logging.getLogger(__name__)
 FILE = 'pool_watch_days.jsonl'
-DEFAULT_SETTINGS = {'enabled': True, 'max_items': 5, 'max_day_items': 8, 'late_join_min': 60, 'add_hierarchy': True, 'add_rs': True,
+DEFAULT_SETTINGS = {'enabled': True, 'max_items': 5, 'max_day_items': 8, 'late_join_min': 60, 'add_hierarchy': True, 'add_rs': False,
                     'exit_at': '15:15', 'up_exit_at': '15:15', 'book_pct': 1.0, 'guard_pct': 0.5, 'stop_k': 1.0, 'trail_k': 0.75}
 _lock = threading.Lock()
 _last = {'day': None, 'n': -1, 't': 0.0}
@@ -191,12 +193,23 @@ def track(item: dict, polls: list, exit_hm: str, book_pct: float, guard_pct: flo
     g = next((x for x in path if x[0] in mkt and sg * mkt[x[0]] <= -guard_pct), None)
     out['guarded'] = g is not None
     if g: out['guarded_at'] = g[0][11:16]; out['guard_ret_pct'] = round(g[2] - cost_pct, 3)
+    out['path'] = _thin([[x[0][11:16], round(x[2], 3)] for x in path])   # for the live chart and sparklines (one point per 5 min)
     if tx and path[-1][0][11:16] >= _hm_shift(exit_hm, -8):
         out['closed'] = True; out['exit_px'] = path[-1][1]
         out['ret_pct'] = round(r[-1] - cost_pct, 3); out['win'] = out['ret_pct'] > 0
         out['book_ret_pct'] = round(book_pct - cost_pct, 3) if hit else out['ret_pct']
         if item.get('stop_pct') and not out.get('stopped'): out['stop_ret_pct'] = out['ret_pct']
         if not g: out['guard_ret_pct'] = out['ret_pct']
+    return out
+
+
+def _thin(pts: list, step_min: int = 5) -> list:
+    """Keep the first point of each step_min bucket plus the last point (fast 10-s polls would otherwise bloat the ledger)."""
+    out, last = [], None
+    for p in pts:
+        b = _mins(p[0]) // step_min
+        if b != last: out.append(p); last = b
+    if pts and out[-1] is not pts[-1]: out.append(pts[-1])
     return out
 
 
@@ -233,6 +246,10 @@ def tick(now: dt.datetime | None = None, force: bool = False) -> None:
             rec['notes'] += new
         if polls:
             mk: dict = {}
+            if rec['items']:                                          # the F&O market since the pool opened, for the chart
+                t0 = min(it['added'] for it in rec['items'])
+                m = market_path(polls, t0, _exit_poll_t(polls, s['exit_at'], today))
+                rec['market'] = _thin([[k[11:16], round(v, 3)] for k, v in sorted(m.items())])
             for it in rec['items']:
                 ex = it.get('exit_at') or s['exit_at']; key = (it['added'], ex)
                 if key not in mk: mk[key] = market_path(polls, it['added'], _exit_poll_t(polls, ex, today))

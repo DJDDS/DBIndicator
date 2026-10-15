@@ -386,13 +386,15 @@
   });
 
   ['f-symbol'].forEach(function (id) {
-    document.getElementById(id).addEventListener('input', function () {
+    var el = document.getElementById(id); if (!el) return;   // empty state (no scan yet): the filters are not drawn
+    el.addEventListener('input', function () {
       clearTileSelection();
       applyFilters();
     });
   });
   ['f-structure', 'f-accel', 'f-oimove', 'f-unusual'].forEach(function (id) {
-    document.getElementById(id).addEventListener('change', function () {
+    var el = document.getElementById(id); if (!el) return;
+    el.addEventListener('change', function () {
       clearTileSelection();
       applyFilters();
     });

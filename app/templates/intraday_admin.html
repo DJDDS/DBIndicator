@@ -36,15 +36,107 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 <style>.side-up{color:var(--good);font-weight:700}.side-dn{color:var(--bad);font-weight:700}.hz{display:grid;gap:12px}
 .opt{color:var(--opt)}.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;background:var(--chip)}
 .pill.strong{background:#16325c;color:#8fb3ff}.pill.normal{color:var(--muted)}nav a{color:#8fb3ff;margin-right:12px;font-size:13px}</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"></noscript>
+<style>
+/* V13.7 desk shell: sticky header with section menu and market clock, today strip, pool chart + stock cards. */
+:root{--sans2:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;--mono2:"IBM Plex Mono",ui-monospace,Consolas,monospace;--gold:#e0a030;--pos:#3fb950;--neg:#f0616d;--line2:#232a34}
+body{font-family:var(--sans2)}
+header.desk{display:block;position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:rgba(15,18,22,.92);backdrop-filter:blur(8px);padding-block:10px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+.desk-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.desk-row h1{font-size:17px}
+.clock{font:600 13px var(--mono2);font-variant-numeric:tabular-nums;color:var(--text);margin-left:auto;display:flex;gap:10px;align-items:center}
+.mkt{font:600 11px var(--mono2);padding:3px 9px;border-radius:99px;letter-spacing:.04em}
+.mkt.open{background:rgba(63,185,80,.14);color:var(--pos)}.mkt.closed{background:var(--chip);color:var(--muted)}
+.secnav{display:flex;gap:6px;overflow-x:auto;margin-top:8px;scrollbar-width:none}
+.secnav a{font-size:12.5px;color:var(--muted);text-decoration:none;padding:5px 11px;border-radius:7px;border:1px solid var(--line);white-space:nowrap}
+.secnav a:hover,.secnav a.on{color:var(--text);border-color:#5b8def;background:rgba(91,141,239,.12)}
+.secnav .sep{flex:0 0 1px;background:var(--line);margin:4px 4px}
+.glance{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.gl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;gap:4px;min-width:0}
+.gl .k{font:600 10.5px var(--mono2);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.gl .v{font:600 20px var(--mono2);font-variant-numeric:tabular-nums}
+.gl .s{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.gl.lean-up{box-shadow:inset 3px 0 0 var(--pos)}.gl.lean-dn{box-shadow:inset 3px 0 0 var(--neg)}
+.pos{color:var(--pos)}.neg{color:var(--neg)}
+.pool{background:linear-gradient(180deg,rgba(224,160,48,.06),transparent 220px),var(--panel2);border:1px solid rgba(224,160,48,.45);border-radius:12px;padding:16px;margin-top:10px;display:grid;gap:12px}
+.pool-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.pool .pool-title,.card .pool .pool-title{font:700 16px var(--sans2);color:var(--gold);margin:0 0 2px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:8px}
+.pool-sub{font-weight:500;color:var(--muted);font-size:13px}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 0 rgba(63,185,80,.6);animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.55)}70%{box-shadow:0 0 0 8px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+@media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
+.today-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line2);border-radius:9px;overflow:hidden}
+.ts{background:#141920;padding:10px 12px;display:grid;gap:2px}
+.ts-l{font:600 10.5px var(--mono2);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.ts-v{font:600 19px var(--mono2);font-variant-numeric:tabular-nums}.ts-s{font-size:11.5px;color:var(--muted)}
+.pool-chart{height:270px;width:100%;background:#12161c;border:1px solid var(--line2);border-radius:9px}
+.pcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.pcard{background:#141920;border:1px solid var(--line2);border-radius:10px;padding:12px;display:grid;gap:8px;min-width:0;transition:border-color .15s,transform .15s}
+.pcard:hover{border-color:#3a4554;transform:translateY(-1px)}
+.pcard.up{box-shadow:inset 0 3px 0 rgba(63,185,80,.7)}.pcard.dn{box-shadow:inset 0 3px 0 rgba(240,97,109,.7)}
+.pcard.watch{opacity:.82}
+.pc-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.pc-sym{font:700 16px var(--mono2);color:var(--text);text-decoration:none}.pc-sym:hover{text-decoration:underline}
+.call{font:700 11px var(--mono2);padding:2px 8px;border-radius:5px}.call.up{color:var(--pos);background:rgba(63,185,80,.12)}.call.dn{color:var(--neg);background:rgba(240,97,109,.12)}
+.pc-chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{font-size:11px;padding:1px 7px;border-radius:99px;background:var(--chip);color:var(--muted)}
+.chip.pod{background:#16325c;color:#8fb3ff}.chip.src{color:#c9d3df}
+.pc-mid{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center}
+.pc-now{font:600 24px var(--mono2);font-variant-numeric:tabular-nums}
+.spark{width:100%;height:36px}
+.pc-facts{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin:0}
+.pc-facts div{min-width:0}.pc-facts dt{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.pc-facts dd{margin:0;font:500 12.5px var(--mono2);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.pc-why{margin:0;font-size:11.5px;color:var(--muted);border-top:1px dashed var(--line2);padding-top:7px}
+.sub-h{font:600 12px var(--mono2);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:4px 0 0}
+.kbar{height:4px;background:var(--line2);border-radius:2px;overflow:hidden;margin:4px 0 2px}.kbar span{display:block;height:100%;background:linear-gradient(90deg,#5b8def,#3fb950)}
+details.more summary,details>summary{cursor:pointer;color:#9fb3c8;font-size:12.5px}
+.tscroll{overflow-x:auto}
+section.anchor{scroll-margin-top:110px}
+.card h2[id],[id].card,details[id]{scroll-margin-top:110px}
+.card h2[id]{margin:26px -14px 10px;padding:14px 14px 0;border-top:1px solid var(--line);color:#c9d3df;font-size:13.5px}
+.card table{border-radius:8px;overflow:hidden}.card table tr:hover td{background:rgba(143,179,255,.04)}
+.card table th{position:sticky;top:0;background:var(--panel)}
+.card form input:not([type=checkbox]),.card form select{padding:4px 6px;font:500 12px var(--mono2);width:auto;max-width:9em}
+.card form button,.pool form button{padding:5px 12px}
+#poollab{background:#141920;border:1px solid var(--line2);border-radius:10px;padding:10px 12px}
+#poollab>summary{font-weight:600;color:#c9d3df}
+.wrap>details,.card>details{margin-top:10px}
+.wrap>*,.card,.pool,.pcards>*{min-width:0}
+@media(max-width:900px){.card table{display:block;overflow-x:auto;white-space:nowrap}.glance{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.wrap{padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}}
+@media(max-width:700px){.pc-now{font-size:20px}.clock{margin-left:0}.pool-chart{height:220px}}
+</style>
 </head>
 <body>
-<header>
-  <h1>Intraday Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">PAPER - no orders are placed</span>
-  {% set dt_ = direction.today if direction and not direction.get('error') else None %}
-  <span class="tag">{{ dt_.date if dt_ else 'no list yet today' }}</span>
-  <nav style="margin-left:auto"><a href="/admin/v130">Swing desk</a><a href="/admin/commodity">NG desk</a><a href="/">Dashboard</a></nav>
+<header class="desk">
+  <div class="desk-row">
+    <h1>Intraday Desk</h1><span class="tag">ADMIN ONLY</span><span class="tag">PAPER · no orders are placed</span>
+    {% set dt_ = direction.today if direction and not direction.get('error') else None %}
+    <span class="tag">{{ dt_.date if dt_ else 'no list yet today' }}</span>
+    <div class="clock"><span class="mkt closed" id="mkt-state">—</span><span id="ist-clock">--:--:--</span><span class="small" id="mkt-left"></span></div>
+  </div>
+  <nav class="secnav" aria-label="Sections">
+    <a href="#glance">Today</a><a href="#watch">Pool</a><a href="#poollab">Backtest</a><a href="#direction">09:25 lists</a><a href="#relstrength">Relative strength</a><a href="#hierarchy">Hierarchy</a><a href="#oflab">Order-flow lab</a><a href="#shorts">Short detector</a>
+    <span class="sep"></span><a href="/admin/v130">Swing desk</a><a href="/admin/commodity">NG desk</a><a href="/">Dashboard</a>
+  </nav>
 </header>
 <div class="wrap">
+{% if direction and not direction.get('error') %}
+  {% set dt_ = direction.today %}{% set HCg = ((dt_ or {}).lists or {}).get('hc') if dt_ else None %}
+  {% set Wg = (direction.watch or {}).today %}{% set itg = (Wg['items'] if Wg else []) or [] %}
+  {% set nv = [] %}{% for it in itg %}{% if it.trade and (it.track or {}).now_pct is not none %}{% set _ = nv.append(it.track.now_pct) %}{% endif %}{% endfor %}
+  {% set hz = ((direction.v47 or {}).today or {}) %}{% set hp = (hz.picks or [])|selectattr('role', 'equalto', 'PICK')|list %}
+  {% set rst = ((direction.rs or {}).today or {}) %}{% set rsp = [] %}{% for hm, sl in (rst.slots or {}).items() %}{% for p in sl.picks or [] %}{% if p.symbol not in rsp|map(attribute='symbol')|list %}{% set _ = rsp.append(p) %}{% endif %}{% endfor %}{% endfor %}
+  {% set mkg = (Wg.market or []) if Wg else [] %}
+  <section class="glance anchor" id="glance" aria-label="Today at a glance">
+    <div class="gl {{ 'lean-up' if HCg and HCg.lean == 'UP' else ('lean-dn' if HCg else '') }}"><span class="k">09:25 day view</span><span class="v">{{ (HCg.lean ~ (' ★' if HCg.strong else '')) if HCg else '—' }}</span><span class="s">{{ ('strong day · view ' ~ HCg.strength ~ ' vs bar ' ~ HCg.threshold) if HCg and HCg.strong else ('normal day' if HCg else 'list at ~09:26') }}</span></div>
+    <div class="gl"><span class="k">Pool now</span><span class="v {{ 'pos' if nv and (nv|sum) > 0 else ('neg' if nv and (nv|sum) < 0 else '') }}">{{ ('%+.2f'|format(nv|sum / nv|length) ~ '%') if nv else '—' }}</span><span class="s">{{ itg|length }} stocks · {{ itg|map(attribute='symbol')|join(', ') if itg else 'not started' }}</span></div>
+    <div class="gl"><span class="k">F&amp;O market</span><span class="v {{ 'pos' if mkg and mkg[-1][1] > 0 else ('neg' if mkg and mkg[-1][1] < 0 else '') }}">{{ ('%+.2f'|format(mkg[-1][1]) ~ '%') if mkg else '—' }}</span><span class="s">median stock since 09:27</span></div>
+    <div class="gl"><span class="k">Hierarchy 09:45</span><span class="v">{{ hp[0].symbol if hp else '—' }}</span><span class="s">{{ (('▲ UP' if hp[0].side == 'UP' else '▼ DOWN') ~ ' · leads ' ~ hp[0].industry) if hp else ('no pick today' if hz else 'evaluated at 09:45') }}</span></div>
+    <div class="gl"><span class="k">Relative strength</span><span class="v">{{ rsp|length }} <small class="s">stocks</small></span><span class="s">{% for p in rsp %}{{ p.symbol }} {{ '▲' if p.side == 'UP' else '▼' }}{{ ', ' if not loop.last }}{% else %}first refresh 11:15{% endfor %}</span></div>
+  </section>
+{% endif %}
 {% if not direction or direction.get('error') %}
   <div class="card"><div class="closed small">Direction desk unavailable: {{ direction.error if direction else 'not started' }}</div></div>
 {% else %}
@@ -52,7 +144,7 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 {% endif %}
 {% if intra and not intra.get('error') %}
   {% set sb = intra.score_short_bear or {} %}{% set so = intra.score_short_other or {} %}{% set s0 = intra.score_short or {} %}
-  <div class="card lane" style="border-top-color:#f0616d">
+  <div class="card lane" id="shorts" style="border-top-color:#f0616d">
     <h2>09:25 short detector · 3 paper shorts a day, cover 15:15 (details on the swing page)</h2>
     <div class="kpis">
       <div class="kpi"><div class="v">{{ ('%+.0f'|format(s0.get('avg_bps')) ~ ' bps') if s0.get('avg_bps') is not none else '—' }}</div><div class="l">all shorts ({{ s0.get('n') or 0 }}, win {{ s0.get('win') if s0.get('win') is not none else '—' }}%)</div></div>
@@ -64,17 +156,77 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
 {% endif %}
 </div>
 <script>
-// Refresh only the watched pool, once a minute, while the market is open and the tab is visible (no full page reload).
 (function(){
-  function tick(){
+  var COLORS=['#5b8def','#e0a030','#c58cff','#2fbf9b','#ff7eb6','#9fd356','#ffb36b','#7fd1ff'];
+  // IST clock and market state (NSE cash 09:15-15:30, pool exit 15:15)
+  function ist(){var d=new Date();return new Date(d.getTime()+(d.getTimezoneOffset()+330)*60000);}
+  function clock(){
+    var n=ist(),p=function(x){return String(x).padStart(2,'0')},hm=n.getHours()*60+n.getMinutes(),wd=n.getDay();
+    var c=document.getElementById('ist-clock'); if(c)c.textContent=p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds())+' IST';
+    var open=wd>0&&wd<6&&hm>=555&&hm<930, s=document.getElementById('mkt-state'), l=document.getElementById('mkt-left');
+    if(s){s.textContent=open?'MARKET OPEN':'MARKET CLOSED';s.className='mkt '+(open?'open':'closed');}
+    if(l){var left=915-hm;l.textContent=open&&left>0?(Math.floor(left/60)+'h '+p(left%60)+'m to the 15:15 exit'):'';}
+  }
+  clock(); setInterval(clock,1000);
+  // sparklines: one polyline per stock card, zero line dashed
+  function sparks(root){
+    (root||document).querySelectorAll('svg.spark[data-path]').forEach(function(svg){
+      var pts=[];try{pts=JSON.parse(svg.getAttribute('data-path')||'[]')}catch(e){}
+      if(pts.length<2){svg.innerHTML='';return;}
+      var ys=pts.map(function(p){return p[1]}),lo=Math.min(0,Math.min.apply(null,ys)),hi=Math.max(0,Math.max.apply(null,ys)),r=(hi-lo)||1;
+      var X=function(i){return 2+i*(116/(pts.length-1))},Y=function(v){return 33-(v-lo)/r*30};
+      var d=pts.map(function(p,i){return X(i).toFixed(1)+','+Y(p[1]).toFixed(1)}).join(' ');
+      var last=ys[ys.length-1],col=last>=0?'#3fb950':'#f0616d';
+      svg.innerHTML='<line x1="0" x2="120" y1="'+Y(0).toFixed(1)+'" y2="'+Y(0).toFixed(1)+'" stroke="#3a4554" stroke-dasharray="3 3" stroke-width="1"/>'+
+        '<polyline fill="none" stroke="'+col+'" stroke-width="1.8" points="'+d+'"/>'+
+        '<circle cx="'+X(pts.length-1).toFixed(1)+'" cy="'+Y(last).toFixed(1)+'" r="2.6" fill="'+col+'"/>';
+    });
+  }
+  // pool chart: every stock's result since its own entry, plus the F&O market (dashed)
+  var chart=null;
+  function poolChart(){
+    var el=document.getElementById('pool-chart'),src=document.getElementById('watch-data');
+    if(!el||!src||!window.echarts){return;}
+    var D={};try{D=JSON.parse(src.textContent)}catch(e){return;}
+    var times={};(D.paths||[]).forEach(function(p){(p||[]).forEach(function(q){times[q[0]]=1})});(D.market||[]).forEach(function(q){times[q[0]]=1});
+    var xs=Object.keys(times).sort();
+    var series=(D.items||[]).map(function(sym,i){var m={};(D.paths[i]||[]).forEach(function(q){m[q[0]]=q[1]});
+      return {name:sym+(D.sides[i]==='UP'?' ▲':' ▼'),type:'line',showSymbol:false,smooth:0.25,connectNulls:true,lineStyle:{width:2},color:COLORS[i%COLORS.length],
+        data:xs.map(function(x){return m[x]===undefined?null:m[x]}),endLabel:{show:true,formatter:function(p){return p.value==null?'':(p.value>0?'+':'')+p.value.toFixed(2)+'%'},color:'#c9d3df',fontFamily:'IBM Plex Mono'}};});
+    if((D.market||[]).length){var mm={};D.market.forEach(function(q){mm[q[0]]=q[1]});
+      series.push({name:'F&O market',type:'line',showSymbol:false,lineStyle:{width:1.5,type:'dashed'},color:'#8b95a3',connectNulls:true,data:xs.map(function(x){return mm[x]===undefined?null:mm[x]})});}
+    if(!chart||chart.getDom()!==el){if(chart)chart.dispose();chart=echarts.init(el,null,{renderer:'canvas'});}
+    chart.setOption({animation:false,backgroundColor:'transparent',grid:{left:46,right:78,top:34,bottom:28},
+      legend:{top:6,left:10,textStyle:{color:'#c9d3df',fontSize:11},itemWidth:14,itemHeight:6},
+      tooltip:{trigger:'axis',backgroundColor:'#1d222a',borderColor:'#2a313b',textStyle:{color:'#e6e9ee',fontSize:12},valueFormatter:function(v){return v==null?'—':(v>0?'+':'')+v.toFixed(2)+'%'}},
+      xAxis:{type:'category',data:xs,boundaryGap:false,axisLine:{lineStyle:{color:'#2a313b'}},axisLabel:{color:'#8b95a3',fontSize:10.5}},
+      yAxis:{type:'value',axisLabel:{color:'#8b95a3',fontSize:10.5,formatter:function(v){return v+'%'}},splitLine:{lineStyle:{color:'#1f252e'}}},
+      series:series.concat([{type:'line',data:[],markLine:{silent:true,symbol:'none',lineStyle:{color:'#3a4554'},data:[{yAxis:0}],label:{show:false}}}])},true);
+  }
+  var ech=null;   // the 1 MB chart library is fetched after the page is visible, once, then cached by the browser
+  function needCharts(){if(window.echarts)return Promise.resolve();if(!ech)ech=new Promise(function(res,rej){var s=document.createElement('script');s.src='/static/vendor/echarts-5.6.0.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)});return ech;}
+  function draw(){sparks();if(document.getElementById('pool-chart'))needCharts().then(poolChart).catch(function(){});}
+  sparks();
+  if(document.readyState==='complete')draw();else window.addEventListener('load',draw);
+  window.addEventListener('resize',function(){if(chart)chart.resize()});
+  // refresh only the watched pool once a minute while it is live and the tab is visible
+  setInterval(function(){
     var el=document.getElementById('watch');
     if(!el||el.dataset.live!=='1'||document.hidden)return;
     fetch('/admin/intraday/pool',{credentials:'same-origin'}).then(function(r){return r.ok?r.text():null}).then(function(h){
       if(!h)return; var tmp=document.createElement('div'); tmp.innerHTML=h.trim();
-      var fresh=tmp.querySelector('#watch'); if(fresh){var open=el.querySelector('details[open]'); el.replaceWith(fresh); if(open){var d=fresh.querySelector('details'); if(d)d.open=true;}}
+      var fresh=tmp.querySelector('#watch'); if(!fresh)return;
+      var open=[].map.call(el.querySelectorAll('details'),function(d){return d.open});
+      if(chart){chart.dispose();chart=null;}
+      el.replaceWith(fresh); [].forEach.call(fresh.querySelectorAll('details'),function(d,i){if(open[i])d.open=true});
+      draw();
     }).catch(function(){});
-  }
-  setInterval(tick,60000);
+  },60000);
+  // highlight the section in view
+  var links=[].slice.call(document.querySelectorAll('.secnav a[href^="#"]'));
+  function spy(){var cur=null;links.forEach(function(a){var s=document.getElementById(a.getAttribute('href').slice(1));if(s&&s.getBoundingClientRect().top<140)cur=a;});
+    links.forEach(function(a){a.classList.toggle('on',a===(cur||links[0]))});}
+  window.addEventListener('scroll',spy,{passive:true}); spy();
 })();
 </script>
 </body>

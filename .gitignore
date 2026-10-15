@@ -15,3 +15,8 @@ venv/
 option_shadow.jsonl
 option_shadow_state.json
 .worktrees/
+
+# Dhan downloader: real credentials and downloaded candles stay local
+scripts/dhan/dhan.env
+scripts/dhan/dhan_data/
+scripts/dhan/dhan_data.zip

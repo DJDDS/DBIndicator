@@ -1,34 +1,80 @@
 {# V13.7 daily pool watched all day; rendered in the direction card and by /admin/intraday/pool (auto-refresh). Needs W = direction.watch. #}
 {% set wt = W.today %}{% set ws = W.settings or {} %}
-    <div class="pick" id="watch" data-live="{{ 1 if wt and not wt.done else 0 }}" style="margin-top:8px;border:1px solid #e0a030">
-      <div class="top"><div><b style="color:#e0a030">★ TODAY'S POOL · watched all day</b> <span class="small">3 stocks at 09:25, strong 09:45 / 11:15+ picks join · up to {{ ws.max_items or 5 }} live, a stopped stock frees its slot (max {{ ws.max_day_items or 8 }} a day) · closes {{ ws.exit_at or '15:15' }}</span></div>
-        {% if wt %}<div class="small">updated {{ (wt.updated or '')[11:16] }}{% if not wt.done %} · refreshes every minute{% endif %}</div>{% endif %}</div>
-      {% if wt and wt['items'] %}
-      <table style="margin-top:6px"><tr><th>#</th><th>Stock</th><th>Call</th><th>Joined</th><th>Why</th><th>Entry</th><th>Now</th><th>Best / worst</th><th>+{{ ws.book_pct }}% booked</th><th>Trailing stop</th><th title="F&amp;O market (median stock) since this stock's entry; the guard marks when it moved {{ ws.guard_pct }}% against the call">Market · guard</th><th>15:15 result</th></tr>
-      {% for it in wt['items'] %}{% set k = it.track or {} %}<tr>
-        <td>{{ loop.index }}</td><td><a href="/chart/{{ it.symbol }}?timeframe=5minute" style="color:inherit"><b>{{ it.symbol }}</b></a>{% if it.pod %} <span class="pill strong">PICK OF THE DAY{{ ' · ' ~ it.grade if it.grade }}</span>{% endif %}
-          {% if not it.trade %} <span class="pill normal" title="monitored, not paper-traded">watch</span>{% endif %}</td>
-        <td class="{{ 'side-up' if it.side == 'UP' else 'side-dn' }}">{{ '▲ UP' if it.side == 'UP' else '▼ DOWN' }}</td>
-        <td class="small">{{ it.added[11:16] }} · {{ it.source }}{% if it.late %} <span class="pill normal" title="joined at the current price when a slot freed">late</span>{% endif %}</td><td class="small">{{ it.why }}</td><td>{{ it.entry }}</td>
-        <td class="{{ 'open' if (k.now_pct or 0) > 0 else ('closed' if k.now_pct is not none and k.now_pct < 0 else '') }}">{{ ('%+.2f'|format(k.now_pct) ~ '%') if k.now_pct is not none else '—' }} <span class="small">{{ k.at or '' }}</span></td>
-        <td class="small">{{ k.best_pct if k.best_pct is not none else '—' }} / {{ k.worst_pct if k.worst_pct is not none else '—' }}%</td>
-        <td class="small">{% if k.booked %}<span class="open">booked {{ k.booked_at }}</span>{% elif k.n_obs %}not yet{% else %}—{% endif %}</td>
-        <td class="small">{% if it.stop_pct %}{% if k.stopped %}<span class="closed">stopped {{ k.stopped_at }} ({{ '%+.2f'|format(k.stop_ret_pct) }}%)</span>{% else %}{{ k.stop_px or '—' }}{% endif %}{% else %}—{% endif %}</td>
-        <td class="small">{{ ('%+.2f'|format(k.mkt_pct) ~ '%') if k.mkt_pct is not none else '—' }}{% if k.guarded %} · <span class="warn" title="shadow exit, measured only">against since {{ k.guarded_at }} ({{ '%+.2f'|format(k.guard_ret_pct) }}%)</span>{% endif %}</td>
-        <td>{% if k.closed %}<b class="{{ 'open' if k.win else 'closed' }}">{{ 'RIGHT' if k.win else 'wrong' }} · {{ '%+.2f'|format(k.ret_pct) }}%</b>{% else %}open{% endif %}</td></tr>{% endfor %}</table>
-      {% if wt.notes %}<div class="small" style="margin-top:4px">Not added: {% for n in wt.notes[-6:] %}{{ n.symbol }} ({{ n.note }}){{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
-      {% else %}<div class="empty">The pool appears about 09:27 and is refreshed every minute.</div>{% endif %}
-      {% set sc = W.score or {} %}{% set h = sc.hold or {} %}{% set b = sc.book or {} %}{% set st = sc.stop or {} %}{% set gd = sc.guard or {} %}
-      <div class="kpis" style="margin-top:8px">
-        <div class="kpi"><div class="v">{{ (h.win ~ '%') if h.n else '—' }}</div><div class="l">held to 15:15 · {{ h.n or 0 }} traded picks{{ (' · ' ~ h.avg_bps ~ ' bps') if h.n }}</div></div>
-        <div class="kpi"><div class="v">{{ (b.win ~ '%') if b.n else '—' }}</div><div class="l">booked at +{{ ws.book_pct }}% else 15:15{{ (' · ' ~ b.avg_bps ~ ' bps') if b.n }}</div></div>
-        <div class="kpi"><div class="v">{{ (st.win ~ '%') if st.n else '—' }}</div><div class="l">hold + trailing stop{{ (' · ' ~ st.avg_bps ~ ' bps') if st.n }}</div></div>
-        <div class="kpi"><div class="v">{{ (gd.win ~ '%') if gd.n else '—' }}</div><div class="l">with market guard (measured only){{ (' · ' ~ gd.avg_bps ~ ' bps') if gd.n }}</div></div>
-        <div class="kpi"><div class="v">{{ (sc.ge1_day ~ '%') if sc.ge1_day is not none else '—' }}</div><div class="l">days with at least 1 right ({{ sc.days or 0 }} days)</div></div></div>
-      <div class="small" style="margin-top:4px">Win rate vs profit: booking at +1% wins most often but the losers are held to 15:15, so it averages ~0 per pick (research 2024-26). The trailing stop (stop 1x 20-day range, trail 0.75x) earned the most per pick in research (+35 bps vs +8). Traded = the desk's OPEN picks without a WEAK entry check; WATCH stocks are tracked but not counted. The market guard (leave when the F&amp;O market moves {{ ws.guard_pct }}% against the call) is recorded, not enforced - adopt it only if its live win rate and bps beat holding.</div>
-      {% set bd = W.breakdown or [] %}{% if bd and bd[0].n %}
-      <details style="margin-top:6px"><summary class="small" style="cursor:pointer">What lifts the win rate - your live daily-pool results split by filter ({{ bd[0].n }} settled picks)</summary>
-        <table class="small" style="margin-top:4px"><tr><th>Group</th><th>Picks</th><th>Held to 15:15</th><th>Booked +1%</th><th>Hold + stop</th></tr>
-        {% for r in bd %}{% if r.n %}<tr><td>{{ r.group }}</td><td>{{ r.n }}</td>{% for k in ('hold', 'book', 'stop') %}{% set x = r.get(k) %}<td>{% if x %}{{ x.win }}% · {{ x.avg_bps }} bps{% else %}—{% endif %}</td>{% endfor %}</tr>{% endif %}{% endfor %}</table>
-        <div class="small">Judge a filter only once both its rows have 30+ picks; small groups swing a lot by luck.</div></details>{% endif %}
+{% set items = (wt['items'] if wt else []) or [] %}
+{% set live = items|selectattr('track')|map(attribute='track')|list %}
+{% set traded = items|selectattr('trade')|list %}
+{% set nowv = [] %}{% for it in traded %}{% if (it.track or {}).now_pct is not none %}{% set _ = nowv.append((it.track or {}).now_pct) %}{% endif %}{% endfor %}
+{% set avg_now = (nowv|sum / nowv|length) if nowv else none %}
+{% set mk = (wt.market or []) if wt else [] %}
+<div class="pool" id="watch" data-live="{{ 1 if wt and not wt.done else 0 }}">
+  <div class="pool-head">
+    <div>
+      <h2 class="pool-title">{% if wt and not wt.done %}<span class="live-dot" aria-hidden="true"></span>{% endif %}Today's pool <span class="pool-sub">watched all day</span></h2>
+      <div class="small">3 stocks at 09:25 · the 09:45 hierarchy pick joins{{ ' · 11:15+ relative-strength grade A joins' if ws.add_rs }} · up to {{ ws.max_items or 5 }} live · a stopped stock frees its slot (max {{ ws.max_day_items or 8 }} a day) · all close {{ ws.exit_at or '15:15' }}</div>
     </div>
+    {% if wt %}<div class="small pool-upd">{{ 'Closed' if wt.done else 'Updated' }} {{ (wt.updated or '')[11:16] }}{% if not wt.done %} · refreshes every minute{% endif %}</div>{% endif %}
+  </div>
+
+  {% if items %}
+  <div class="today-strip">
+    <div class="ts"><span class="ts-l">Traded picks now</span><span class="ts-v {{ 'pos' if (avg_now or 0) > 0 else ('neg' if avg_now is not none and avg_now < 0 else '') }}">{{ ('%+.2f'|format(avg_now) ~ '%') if avg_now is not none else '—' }}</span><span class="ts-s">average of {{ nowv|length }}</span></div>
+    <div class="ts"><span class="ts-l">In profit</span><span class="ts-v">{{ live|selectattr('now_pct', 'gt', 0)|list|length }} / {{ live|length }}</span><span class="ts-s">stocks on the list</span></div>
+    <div class="ts"><span class="ts-l">F&amp;O market</span><span class="ts-v {{ 'pos' if mk and mk[-1][1] > 0 else ('neg' if mk and mk[-1][1] < 0 else '') }}">{{ ('%+.2f'|format(mk[-1][1]) ~ '%') if mk else '—' }}</span><span class="ts-s">median stock since 09:27</span></div>
+    <div class="ts"><span class="ts-l">Booked +{{ ws.book_pct }}%</span><span class="ts-v">{{ live|selectattr('booked')|list|length }}</span><span class="ts-s">first touch</span></div>
+    <div class="ts"><span class="ts-l">Stopped</span><span class="ts-v {{ 'neg' if live|selectattr('stopped')|list|length }}">{{ live|selectattr('stopped')|list|length }}</span><span class="ts-s">trailing stop hit</span></div>
+  </div>
+
+  <div class="pool-chart" id="pool-chart" role="img" aria-label="Each pool stock's result since its entry, with the F&amp;O market"></div>
+  <script type="application/json" id="watch-data">{{ {'items': items|map(attribute='symbol')|list, 'sides': items|map(attribute='side')|list,
+      'paths': items|map(attribute='track')|map('default', {}, true)|map(attribute='path')|map('default', [], true)|list, 'market': mk}|tojson }}</script>
+
+  <div class="pcards">
+  {% for it in items %}{% set k = it.track or {} %}{% set st = 'closed' if k.closed else ('stopped' if k.stopped else 'open') %}
+    <article class="pcard {{ 'up' if it.side == 'UP' else 'dn' }}{{ ' watch' if not it.trade }}">
+      <div class="pc-top">
+        <a class="pc-sym" href="/chart/{{ it.symbol }}?timeframe=5minute">{{ it.symbol }}</a>
+        <span class="call {{ 'up' if it.side == 'UP' else 'dn' }}">{{ '▲ UP' if it.side == 'UP' else '▼ DOWN' }}</span>
+      </div>
+      <div class="pc-chips">
+        <span class="chip src">{{ it.source }}</span>
+        {% if it.pod %}<span class="chip pod">Pick of the day{{ ' · ' ~ it.grade if it.grade }}</span>{% endif %}
+        {% if not it.trade %}<span class="chip" title="monitored, not paper-traded">watch</span>{% endif %}
+        {% if it.late %}<span class="chip" title="joined at the current price when a slot freed">late join</span>{% endif %}
+        {% if it.exit_at and it.exit_at != ws.exit_at %}<span class="chip">exit {{ it.exit_at }}</span>{% endif %}
+      </div>
+      <div class="pc-mid">
+        <div><div class="pc-now {{ 'pos' if (k.now_pct or 0) > 0 else ('neg' if k.now_pct is not none and k.now_pct < 0 else '') }}">{{ ('%+.2f'|format(k.ret_pct if k.closed else k.now_pct) ~ '%') if k.now_pct is not none else '—' }}</div>
+          <div class="small">{{ ('15:15 result' if k.closed else 'since entry · ' ~ (k.at or '')) }}</div></div>
+        <svg class="spark" data-path="{{ (k.path or [])|tojson|forceescape }}" viewBox="0 0 120 36" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </div>
+      <dl class="pc-facts">
+        <div><dt>Entry</dt><dd>{{ it.entry }} · {{ it.added[11:16] }}</dd></div>
+        <div><dt>Best / worst</dt><dd><span class="pos">{{ '%+.2f'|format(k.best_pct) if k.best_pct is not none else '—' }}</span> / <span class="neg">{{ '%+.2f'|format(k.worst_pct) if k.worst_pct is not none else '—' }}</span></dd></div>
+        <div><dt>+{{ ws.book_pct }}% target</dt><dd>{% if k.booked %}<span class="pos">hit {{ k.booked_at }}</span>{% elif k.n_obs %}not yet{% else %}—{% endif %}</dd></div>
+        <div><dt>Trailing stop</dt><dd>{% if it.stop_pct %}{% if k.stopped %}<span class="neg">hit {{ k.stopped_at }} ({{ '%+.2f'|format(k.stop_ret_pct) }}%)</span>{% else %}{{ k.stop_px or '—' }}{% endif %}{% else %}—{% endif %}</dd></div>
+        <div><dt>Market since entry</dt><dd>{{ ('%+.2f'|format(k.mkt_pct) ~ '%') if k.mkt_pct is not none else '—' }}{% if k.guarded %} · <span class="warn" title="market-guard shadow exit, measured only">against {{ k.guarded_at }}</span>{% endif %}</dd></div>
+        <div><dt>Status</dt><dd>{% if k.closed %}<b class="{{ 'pos' if k.win else 'neg' }}">{{ 'RIGHT' if k.win else 'wrong' }}</b>{% else %}{{ st }}{% endif %}</dd></div>
+      </dl>
+      <p class="pc-why">{{ it.why }}</p>
+    </article>
+  {% endfor %}
+  </div>
+  {% if wt.notes %}<div class="small" style="margin-top:8px">Not added: {% for n in wt.notes[-6:] %}{{ n.symbol }} ({{ n.note }}){{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
+  {% else %}<div class="empty">The pool appears about 09:27 and is refreshed every minute.</div>{% endif %}
+
+  {% set sc = W.score or {} %}{% set h = sc.hold or {} %}{% set b = sc.book or {} %}{% set st = sc.stop or {} %}{% set gd = sc.guard or {} %}
+  <h3 class="sub-h">Pool record so far · traded picks</h3>
+  <div class="kpis">
+    {% for lbl, x, note in (('Held to 15:15', h, (h.n or 0) ~ ' picks'), ('Booked at +' ~ ws.book_pct ~ '%', b, 'else held to 15:15'), ('Hold + trailing stop', st, 'stop 1× range, trail 0.75×'), ('With market guard', gd, 'measured, not enforced')) %}
+    <div class="kpi"><div class="v">{{ (x.win ~ '%') if x.n else '—' }}</div><div class="l">{{ lbl }}{{ (' · ' ~ ('%+.1f'|format(x.avg_bps)) ~ ' bps') if x.n }}</div><div class="kbar"><span style="width:{{ x.win if x.n else 0 }}%"></span></div><div class="small">{{ note }}</div></div>
+    {% endfor %}
+    <div class="kpi"><div class="v">{{ (sc.ge1_day ~ '%') if sc.ge1_day is not none else '—' }}</div><div class="l">Days with at least 1 right</div><div class="kbar"><span style="width:{{ sc.ge1_day or 0 }}%"></span></div><div class="small">{{ sc.days or 0 }} days</div></div>
+  </div>
+  <details class="more"><summary>How to read this</summary>
+    <p class="small">Booking at +1% wins most often, but the losers are held to 15:15, so it averages about zero per pick (research 2024-26). The trailing stop (1× the 20-day range, trailing 0.75×) earned the most per pick in research (+35 bps vs +8). Traded = the desk's OPEN picks without a WEAK entry check; WATCH stocks are tracked but not counted. The market guard (leave when the F&amp;O market moves {{ ws.guard_pct }}% against the call) is recorded, not enforced.</p></details>
+  {% set bd = W.breakdown or [] %}{% if bd and bd[0].n %}
+  <details class="more"><summary>What lifts the win rate · your live daily-pool results split by filter ({{ bd[0].n }} settled picks)</summary>
+    <div class="tscroll"><table class="small"><tr><th>Group</th><th>Picks</th><th>Held to 15:15</th><th>Booked +1%</th><th>Hold + stop</th></tr>
+    {% for r in bd %}{% if r.n %}<tr><td>{{ r.group }}</td><td>{{ r.n }}</td>{% for k in ('hold', 'book', 'stop') %}{% set x = r.get(k) %}<td>{% if x %}{{ x.win }}% · {{ x.avg_bps }} bps{% else %}—{% endif %}</td>{% endfor %}</tr>{% endif %}{% endfor %}</table></div>
+    <div class="small">Judge a filter only once both its rows have 30+ picks; small groups swing a lot by luck.</div></details>{% endif %}
+</div>

@@ -63,6 +63,15 @@ install_security_headers(app)
 
 
 @app.after_request
+def _cache_vendor(response):
+    """/static/vendor/* files carry their version in the name (echarts-5.6.0.min.js), so browsers may keep them a week
+    instead of re-checking on every page view (the chart library alone is 1 MB)."""
+    if request.path.startswith("/static/vendor/") and response.status_code == 200:
+        response.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    return response
+
+
+@app.after_request
 def _gzip_response(response):
     """Compress JSON/HTML/CSS/JS replies (sector and admin pages send 100 KB-1 MB). Never touches
     streams (SSE), file passthroughs, small or already-encoded replies."""
@@ -126,6 +135,44 @@ def _v121_surfaces(now=None):
         backup = {**backup, "status": "WAITING_FIRST_BACKUP"}
     development = v121_development.development_status(config.V121_RV_LAB_STATE_FILE)
     return health, backup, development
+
+
+_GLANCE = {"at": 0.0, "value": None}
+
+
+def _desk_glance():
+    """Owner-only 'today at a glance' read of the intraday desks for the dashboard: watched pool (live), 09:25 day view,
+    hierarchy pick, relative-strength picks. Cached 30 s; fail-soft (None) so the dashboard never breaks on it."""
+    import time as _t
+    if _t.time() - _GLANCE["at"] < 30:
+        return _GLANCE["value"]
+    v = None
+    try:
+        from . import v133_direction, v134_relstrength, v135_hierarchy, v137_pool_watch
+        today = str(scanner.now_ist().date())
+        w = (v137_pool_watch.status() or {}).get("today") or {}
+        items = w.get("items") or []
+        nows = [(i.get("track") or {}).get("now_pct") for i in items if i.get("trade")]
+        nows = [x for x in nows if isinstance(x, (int, float))]
+        d925 = next((x for x in reversed(v133_direction._read_jsonl("days.jsonl")[-5:]) if x.get("date") == today), None)
+        hc = ((d925 or {}).get("lists") or {}).get("hc") or {}
+        h = (v135_hierarchy.status() or {}).get("today") or {}
+        rs = (v134_relstrength.status() or {}).get("today") or {}
+        rsp, seen = [], set()
+        for hm in sorted(rs.get("slots") or {}):
+            for p in rs["slots"][hm].get("picks") or []:
+                if p["symbol"] not in seen:
+                    seen.add(p["symbol"]); rsp.append({"symbol": p["symbol"], "side": p["side"], "at": hm})
+        mk = w.get("market") or []
+        v = {"pool": [{"symbol": i["symbol"], "side": i["side"], "now": (i.get("track") or {}).get("now_pct"), "trade": bool(i.get("trade"))} for i in items],
+             "pool_avg": round(sum(nows) / len(nows), 3) if nows else None, "pool_done": bool(w.get("done")),
+             "market": mk[-1][1] if mk else None, "lean": hc.get("lean"), "strong": bool(hc.get("strong")),
+             "hier": [{"symbol": c["symbol"], "side": c["side"], "industry": c.get("industry")} for c in (h.get("picks") or []) if c.get("role") == "PICK"],
+             "rs": rsp}
+    except Exception:  # noqa: BLE001
+        log.exception("dashboard desk glance failed")
+    _GLANCE.update(at=_t.time(), value=v)
+    return v
 
 
 def _dashboard_counts(results, *, index_direction=None, index_chg_pct=None, market_breadth=None):
@@ -199,6 +246,7 @@ def dashboard():
         "index.html",
         research_ticker=research_ticker,
         confluence_watch=confluence_watch,
+        desk_glance=_desk_glance() if current_role() == OWNER else None,
         # Panels whose live/forward evidence failed (1 Oct 2026 recorder review)
         # are hidden by default; their recorders keep running. ?show_retired=1
         # brings them back for audit.

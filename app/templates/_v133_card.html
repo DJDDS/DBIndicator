@@ -16,6 +16,15 @@
         <td>{% if b %}{{ b.win }}% · <b class="{{ 'open' if b.avg_bps > 0 else 'closed' }}">{{ b.avg_bps }} bps</b> · {{ b.ge1 }}%{% else %}—{% endif %}</td>
         <td>{{ (r.up_win ~ '%') if r.up_win is not none else '—' }}</td><td>{{ (r.down_win ~ '%') if r.down_win is not none else '—' }}</td></tr>{% endfor %}</table>
       {% else %}<div class="empty">No recorded day yet with both the 09:25 scores and the evening candles.</div>{% endif %}
+      <h3 class="small" style="margin:10px 0 4px;color:var(--text)">09:25 model × 09:45 hierarchy desk · mixed rules (entry at the 09:45 price; UP exits 11:25, DOWN 15:15)</h3>
+      <div class="small">H = the hierarchy rule alone, rebuilt from the day's candles. M1 = both agree, ranked by model confidence. M2 = the model's top 3 kept only if by 09:45 the stock moved its way and its industry agrees. M3 = both agree, blended rank. Volume factor left out (its 20-day baseline is longer than the recorded window).{% if PL.overlap and PL.overlap.shared_pct is not none %} The 09:25 pool and the hierarchy shared {{ PL.overlap.shared_pct }}% of their picks: {{ 'they mostly see different stocks, so agreement is real extra information' if PL.overlap.shared_pct < 40 else 'they often pick the same stocks' }}.{% endif %}</div>
+      {% if PL.mix and PL.mix[0].days is defined %}
+      <table class="small" style="margin-top:4px"><tr><th>Rule</th><th>Days</th><th>Picks (UP / DOWN)</th><th>Held · win · avg · ≥1 right</th><th>Book +1% · win · avg · ≥1 right</th><th>UP win</th><th>DOWN win</th></tr>
+      {% for r in PL.mix %}{% set h = r.hold or {} %}{% set b = r.book or {} %}<tr><td>{{ r.variant }}</td><td>{{ r.days }}</td><td>{{ r.picks }} ({{ r.up_n }} / {{ r.down_n }})</td>
+        <td>{% if h %}{{ h.win }}% · <b class="{{ 'open' if h.avg_bps > 0 else 'closed' }}">{{ h.avg_bps }} bps</b> · {{ h.ge1 }}%{% else %}—{% endif %}</td>
+        <td>{% if b %}{{ b.win }}% · <b class="{{ 'open' if b.avg_bps > 0 else 'closed' }}">{{ b.avg_bps }} bps</b> · {{ b.ge1 }}%{% else %}—{% endif %}</td>
+        <td>{{ (r.up_win ~ '%') if r.up_win is not none else '—' }}</td><td>{{ (r.down_win ~ '%') if r.down_win is not none else '—' }}</td></tr>{% endfor %}</table>
+      <div class="small">A mixed rule is worth switching to only if, after 40+ days, it beats rule A on BOTH win % and average bps; picking the best of 12 rows on a few days will flatter whichever got lucky.</div>{% endif %}
       {% if PL.research %}<div class="small" style="margin-top:6px"><b>Walk-forward research of the same models (2018-26, top 5):</b> win % DOWN / UP —
         {% for r in PL.research %}{{ r.horizon if r.horizon == 'day' else r.horizon ~ ' min' }}: strong days {{ r.down_strong }} / {{ r.up_strong }}, every day {{ r.down_every }} / {{ r.up_every }}{{ ' · ' if not loop.last }}{% endfor %}.
         UP calls hold up to about 2 hours on strong days but fade by 15:15, which is why rules C, D, F and G exit UP at 11:25.</div>{% endif %}

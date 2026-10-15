@@ -55,7 +55,7 @@ HORIZON_BARS = {'30': 7, '60': 13, '90': 19, '120': 25, 'day': K_EXIT}
 COST = 0.0006
 DEFAULT_SETTINGS = {'top_n': 3, 'strong_quantile': 0.7, 'window': 250, 'trade_normal_days': False, 'telegram': True,
                     'book_target_pct': 0.75, 'options': True, 'opt_max_spread_pct': 3.0,
-                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3, 'stop_k': 1.0, 'trail_k': 0.75, 'hc_down_only': True, 'grade_a_conf': 0.14, 'hc_min_trades': 1}
+                    'hc_quantile': 0.8, 'hc_top_n': 3, 'hc_book_pct': 1.0, 'entry_check': True, 'ec_rsi': [46.6, 71.3], 'ec_stoch': [0.385, 0.943], 'ec_bbz': [-0.475, 2.167], 'ec_ema50': [-0.77, 4.4], 'ec_min_score': 3, 'stop_k': 1.0, 'trail_k': 0.75, 'hc_down_only': False, 'grade_a_conf': 0.14, 'hc_min_trades': 1}
 
 _lock = threading.Lock()
 _model = None

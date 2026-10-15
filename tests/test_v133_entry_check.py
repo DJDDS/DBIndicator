@@ -82,9 +82,9 @@ def test_pool_can_be_limited_to_down_picks_and_settings_validate(monkeypatch):
     down = v.select(X, p, [0.5] * 300, {'strong_quantile': 0.7, 'window': 250, 'top_n': 3, 'only_side': 'DOWN'})
     assert set(both['list'].side) == {'UP', 'DOWN'} and list(down['list'].symbol) == ['C', 'D', 'E'] and set(down['list'].side) == {'DOWN'}
     assert down['view'] == both['view']                                           # the day view still uses every stock
-    s = v.load_settings(); assert s['hc_down_only'] is True and s['trail_k'] == 0.75
-    monkeypatch.setattr(v, '_read_json', lambda n, d=None: {'trail_k': 99, 'hc_down_only': 0} if n == 'settings.json' else d)
-    s = v.load_settings(); assert s['trail_k'] == 5.0 and s['hc_down_only'] is False
+    s = v.load_settings(); assert s['hc_down_only'] is False and s['trail_k'] == 0.75   # pool takes both sides (88-session replay, Oct 2026)
+    monkeypatch.setattr(v, '_read_json', lambda n, d=None: {'trail_k': 99, 'hc_down_only': 1} if n == 'settings.json' else d)
+    s = v.load_settings(); assert s['trail_k'] == 5.0 and s['hc_down_only'] is True                 # a saved DOWN-only choice still wins
 
 
 def test_pick_of_the_day_grade_and_minimum_trades():
