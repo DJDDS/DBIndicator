@@ -38,9 +38,9 @@ def test_pick_is_the_strongest_residual_down_leader_and_rejections_are_audited()
     top = res['picks'][0]
     assert top['symbol'] == 'S0_3' and top['role'] == 'PICK' and top['side'] == 'DOWN'
     assert top['resid'] > 0 and 0 < top['eff'] <= 1 and top['volrel'] > 1
-    assert all(c['side'] == 'DOWN' for c in res['picks'])
-    assert res['rejected'].get('UP_SIDE_OFF', 0) > 0
-    assert len(res['picks']) <= 1 + S['observe_n']
+    assert sum(c['role'] == 'PICK' for c in res['picks']) == 1                # no lab yet: DOWN active, UP shadow
+    assert all(c['role'] != 'PICK' for c in res['picks'] if c['side'] == 'UP')
+    assert sum(c['side'] == 'DOWN' for c in res['picks']) <= 1 + S['observe_n']
 
 
 def test_market_against_blocks_the_down_side():
@@ -81,7 +81,51 @@ def test_settle_records_horizons_mae_mfe_and_exit():
 
 
 def test_settings_defaults_and_registry_has_the_desk(tmp_path):
-    assert h.load_settings()['down_only'] is True
+    assert h.load_settings()['side_mode'] == 'auto'
     from app import recorder_monitor
     names = [r['name'] for r in recorder_monitor.registry(str(tmp_path))]
     assert any('hierarchy' in n for n in names)
+
+
+def _up_world():
+    ind, moves, hist = _world(other=0.001)                              # market up, industry 1..5 up
+    moves['S1_3'] = [100, 100.4, 100.8, 101.4, 101.4, 102.0, 104.0]     # leads its strong industry
+    return ind, moves, hist
+
+
+def test_up_side_is_recorded_as_shadow_when_not_active_and_picked_when_active():
+    ind, moves, hist = _up_world()
+    res = h.compute(_polls(moves, {'S1_3': 4000}), hist, ind, S)
+    top = res['picks'][0]
+    assert top['symbol'] == 'S1_3' and top['side'] == 'UP' and top['role'] == 'SHADOW'
+    s = dict(S, side_mode='both')
+    res = h.compute(_polls(moves, {'S1_3': 4000}), hist, ind, s, h.side_plan(s))
+    assert res['picks'][0]['symbol'] == 'S1_3' and res['picks'][0]['role'] == 'PICK'
+
+
+def test_auto_mode_follows_the_lab_verdict_and_its_gates():
+    lab = {'UP': {'status': 'ACTIVE', 'cfg': {'min_eff': 0.5, 'min_volrel': 1.5, 'min_mkt': 0.0, 'exit': '60', 'top': 1}},
+           'DOWN': {'status': 'SHADOW', 'cfg': None}}
+    plan = h.side_plan(S, lab)
+    assert plan['UP']['active'] and not plan['DOWN']['active'] and plan['UP']['exit'] == '60' and plan['UP']['min_volrel'] == 1.5
+    ind, moves, hist = _up_world()
+    res = h.compute(_polls(moves, {'S1_3': 4000}), hist, ind, S, plan)
+    assert res['picks'][0]['role'] == 'PICK' and res['picks'][0]['exit_rule'] == '60'
+    res = h.compute(_polls(moves, {'S1_3': 1000}), hist, ind, S, plan)  # vol x 1 < 1.5: the lab's gate blocks it
+    assert all(c['symbol'] != 'S1_3' for c in res['picks'])
+
+
+def test_warmup_reports_how_many_baseline_days_exist():
+    ind, moves, hist = _world()
+    hist = {k: v[:9] for k, v in hist.items()}
+    res = h.compute(_polls(moves), hist, ind, S)
+    assert res['baseline_days_have'] == 9 and not res['picks'] and res['rejected']['NO_VOLUME_BASELINE'] > 0
+
+
+def test_settle_books_at_one_percent():
+    ind, moves, hist = _world()
+    moves['S0_3'] = [100, 99.6, 99.2, 98.6, 98.6, 97.0, 95.0]
+    polls = _polls(moves, {'S0_3': 4000})
+    rec = {'picks': h.compute(polls, hist, ind, S)['picks']}
+    h.settle(rec, polls, S)
+    assert rec['picks'][0]['out']['book1'] == 1.0

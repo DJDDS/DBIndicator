@@ -1391,14 +1391,43 @@ def api_v135_settings():
         if src.get(k) not in (None, ""):
             try: cur[k] = float(src.get(k))
             except (TypeError, ValueError): pass
-    for k in ("enabled", "down_only"):
+    for k in ("enabled",):
         if k in src: cur[k] = str(src.get(k)).lower() in ("1", "true", "on", "yes")
         elif src.get("_cb"): cur[k] = False
+    if src.get("side_mode") in ("auto", "both", "down", "up"):
+        cur["side_mode"] = src.get("side_mode")
     v133_direction._write_json("v47_settings.json", cur)
     from . import v135_hierarchy
     if request.form or not request.is_json:
         return redirect("/admin/intraday#hierarchy")
     return jsonify(v135_hierarchy.load_settings())
+
+
+@app.route("/api/v136/lab/start", methods=["POST"])
+@require_roles(OWNER)
+def api_v136_lab_start():
+    """Hierarchy lab: walk-forward UP vs DOWN replay of the 09:45 rule on Kite 5-minute history (background, outside market hours)."""
+    import datetime as dt
+    from . import v136_hierarchy_lab
+    kite = kite_auth.get_kite_client()
+    if kite is None:
+        res = {"started": False, "reason": "Kite login needed"}
+    else:
+        try:
+            start = dt.date.fromisoformat((request.get_json(silent=True) or request.form).get("start") or str(v136_hierarchy_lab.DEFAULT_START))
+        except ValueError:
+            start = v136_hierarchy_lab.DEFAULT_START
+        res = v136_hierarchy_lab.start(kite, start)
+    if request.form or not request.is_json:
+        return redirect("/admin/intraday#hierarchy")
+    return jsonify(res)
+
+
+@app.route("/api/v136/lab/status")
+@require_roles(OWNER)
+def api_v136_lab_status():
+    from . import v136_hierarchy_lab
+    return Response(json.dumps(v136_hierarchy_lab.status(), default=str), mimetype="application/json")
 
 
 @app.route("/api/v133/export")

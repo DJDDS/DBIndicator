@@ -8,7 +8,10 @@ Rule (exactly as in the V4.7 review, from the order-flow polls the direction des
   score    = side*(r15 - industry) * clip(eff,0,1) * clip(volrel,0,4); the highest score is the pick, the next ones are OBSERVE only.
 Our own replication on 2019-26 (1,900 days, point-in-time F&O membership): the exact rule wins 46.9% over +30 min (UP 42.9%, DOWN 50.7%), the review's 57.8% was a 64-day result.
 The only variant that held in a walk-forward split (rules fixed on 2019-23, tested 2024-26) is DOWN-only held to 15:15: about 55% / +24 bps gross in-sample, 52% / +16 bps out-of-sample,
-borderline against a 12 bps cost. So the desk defaults to DOWN-only with a 15:15 exit and records +3/+5/+15/+30/+60 min and 15:15 results with MAE/MFE for every candidate.
+borderline against a 12 bps cost. It records +3/+5/+15/+30/+60 min and 15:15 results with MAE/MFE for every candidate.
+V13.6: both sides are always evaluated. side_mode 'auto' (default) lets the hierarchy lab (v136_hierarchy_lab, walk-forward UP vs DOWN replay)
+decide which side is ACTIVE and with which gates/exit; a side that is not active still records its best stock as SHADOW (never a pick),
+so UP builds a live record instead of being discarded. Before the lab has run, auto = DOWN active, UP shadow (the earlier research).
 """
 from __future__ import annotations
 
@@ -27,9 +30,11 @@ from .v134_relstrength import _poll_at, _px
 log = logging.getLogger(__name__)
 FILE = 'v47_days.jsonl'
 VOL_FILE = 'v47_volhist.json'
-DEFAULT_SETTINGS = {'enabled': True, 'down_only': True, 'min_group': 4, 'observe_n': 3, 'min_stocks': 100, 'min_vol_days': 10,
+SIDE_MODES = ('auto', 'both', 'down', 'up')
+DEFAULT_SETTINGS = {'enabled': True, 'side_mode': 'auto', 'down_only': False, 'min_group': 4, 'observe_n': 3, 'min_stocks': 100, 'min_vol_days': 10,
                     'exit_at': '15:15', 'cost_bps': 12.0, 'min_eff': 0.0, 'min_volrel': 0.0}
 HORIZONS = (3, 5, 15, 30, 60)
+BOOK_PCT = 1.0
 _lock = threading.Lock()
 _ind_cache: dict = {}
 
@@ -39,12 +44,37 @@ def load_settings() -> dict:
     try:
         s.update({k: v for k, v in (d._read_json('v47_settings.json', {}) or {}).items() if k in s})
         s['enabled'] = bool(s['enabled']); s['down_only'] = bool(s['down_only'])
+        if s['side_mode'] not in SIDE_MODES: s['side_mode'] = 'auto'
         s['min_group'] = int(min(15, max(2, int(s['min_group'])))); s['observe_n'] = int(min(10, max(0, int(s['observe_n']))))
         s['min_stocks'] = int(max(20, int(s['min_stocks']))); s['min_vol_days'] = int(min(20, max(3, int(s['min_vol_days']))))
         s['cost_bps'] = float(min(100.0, max(0.0, float(s['cost_bps'])))); s['min_eff'] = float(min(1.0, max(0.0, float(s['min_eff'])))); s['min_volrel'] = float(min(4.0, max(0.0, float(s['min_volrel']))))
     except Exception:  # noqa: BLE001
         log.exception('v135: bad settings; using defaults'); return dict(DEFAULT_SETTINGS)
     return s
+
+
+def side_plan(s: dict, lab: dict | None = None) -> dict:
+    """side -> {'active', 'min_eff', 'min_volrel', 'min_mkt', 'exit', 'source'}: which sides may pick today and with which gates."""
+    base = {'min_eff': s['min_eff'], 'min_volrel': s['min_volrel'], 'min_mkt': 0.0, 'exit': 'exit'}
+    mode = s['side_mode']; plan = {}
+    for side in ('UP', 'DOWN'):
+        p = dict(base, active=mode == 'both' or mode == side.lower(), source='settings')
+        if mode == 'auto':
+            v = (lab or {}).get(side)
+            if v and v.get('status'):
+                p['active'] = v['status'] == 'ACTIVE'; p['source'] = f"lab {v['status'].lower()}"
+                if p['active'] and v.get('cfg'): p.update({k: v['cfg'][k] for k in ('min_eff', 'min_volrel', 'min_mkt', 'exit') if k in v['cfg']})
+            else:
+                p['active'] = side == 'DOWN'; p['source'] = 'no lab yet (earlier research: DOWN)'
+        plan[side] = p
+    return plan
+
+
+def _lab_verdicts() -> dict:
+    try:
+        from . import v136_hierarchy_lab; return v136_hierarchy_lab.verdicts()
+    except Exception:  # noqa: BLE001
+        log.exception('v135: lab verdicts unreadable'); return {}
 
 
 def industry_map() -> dict:
@@ -97,8 +127,10 @@ def bootstrap_vol_hist(today: str, max_back: int = 45) -> dict:
     return hist
 
 
-def compute(polls: list, hist: dict, ind: dict, s: dict) -> dict | None:
-    """Pure: the 09:45 hierarchy evaluation. Returns candidates (ranked), the rejected-candidate audit and the day's context."""
+def compute(polls: list, hist: dict, ind: dict, s: dict, plan: dict | None = None) -> dict | None:
+    """Pure: the 09:45 hierarchy evaluation for both sides. Returns candidates (ranked per side), the rejected-candidate audit and the day's context.
+    plan: side_plan(); per side the gates, the exit rule and whether its top stock is a PICK (active) or a SHADOW record."""
+    plan = plan or side_plan(s)
     p0, p5, p10, p15 = (_poll_at(polls, h, 3) for h in ('09:30', '09:35', '09:40', '09:45'))
     if not (p0 and p15): return None
     v15 = _v15_from_polls(polls)
@@ -115,15 +147,15 @@ def compute(polls: list, hist: dict, ind: dict, s: dict) -> dict | None:
         if g: groups.setdefault(g, []).append(r[2])
     gmed = {g: (float(np.median(v)), len(v)) for g, v in groups.items()}
     cands, rej, audit = [], {}, []
+    base_have = 0
 
     def reject(sym, side, code, extra=None):
         rej[code] = rej.get(code, 0) + 1
         if len(audit) < 400: audit.append({'symbol': sym, 'side': side, 'why': code, **(extra or {})})
 
     for sym, (a, b, r15) in rows.items():
-        side = 1 if r15 >= 0 else -1; nm = 'UP' if side > 0 else 'DOWN'
+        side = 1 if r15 >= 0 else -1; nm = 'UP' if side > 0 else 'DOWN'; sp = plan[nm]
         g = ind.get(sym)
-        if s['down_only'] and side > 0: rej['UP_SIDE_OFF'] = rej.get('UP_SIDE_OFF', 0) + 1; continue
         if not g: reject(sym, nm, 'NO_INDUSTRY'); continue
         im, cnt = gmed[g]
         if cnt < s['min_group']: reject(sym, nm, 'GROUP_TOO_SMALL'); continue
@@ -132,7 +164,7 @@ def compute(polls: list, hist: dict, ind: dict, s: dict) -> dict | None:
         path = sum(abs(qs[i + 1] - qs[i]) for i in range(3))
         if not path > 0: reject(sym, nm, 'NO_PATH'); continue
         eff = min(1.0, abs(qs[3] - qs[0]) / path)
-        base = [x[1] for x in (hist.get(sym) or [])][-20:]
+        base = [x[1] for x in (hist.get(sym) or [])][-20:]; base_have = max(base_have, len(base))
         vr = None
         if len(base) >= s['min_vol_days'] and sym in v15 and np.median(base) > 0: vr = float(v15[sym] / np.median(base))
         if vr is None: reject(sym, nm, 'NO_VOLUME_BASELINE'); continue
@@ -140,17 +172,24 @@ def compute(polls: list, hist: dict, ind: dict, s: dict) -> dict | None:
         if not side * mkt >= 0: reject(sym, nm, 'MARKET_AGAINST', {'r15': round(r15, 2), 'market': round(mkt, 2)}); continue
         resid = side * (r15 - im)
         if not resid > 0: reject(sym, nm, 'NO_RESIDUAL_LEADERSHIP', {'r15': round(r15, 2), 'industry': round(im, 2)}); continue
-        if eff < s['min_eff']: reject(sym, nm, 'LOW_EFFICIENCY', {'eff': round(eff, 2)}); continue
-        if vr < s['min_volrel']: reject(sym, nm, 'LOW_VOLUME', {'volrel': round(vr, 2)}); continue
+        if side * mkt < sp['min_mkt']: reject(sym, nm, 'MARKET_TOO_WEAK', {'market': round(mkt, 2)}); continue
+        if eff < sp['min_eff']: reject(sym, nm, 'LOW_EFFICIENCY', {'eff': round(eff, 2)}); continue
+        if vr < sp['min_volrel']: reject(sym, nm, 'LOW_VOLUME', {'volrel': round(vr, 2)}); continue
         score = resid * eff * min(4.0, max(0.0, vr))
         cands.append({'symbol': sym, 'side': nm, 'industry': g, 'r15': round(r15, 3), 'industry_pct': round(im, 3), 'market_pct': round(mkt, 3),
                       'resid': round(resid, 3), 'eff': round(eff, 3), 'volrel': round(vr, 2), 'score': round(score, 4), 'entry': b,
-                      'entry_poll': p15['t'], 'fresh_s': None, 'reasons': ['INDUSTRY_ALIGNED', 'MARKET_NOT_AGAINST', 'RESIDUAL_LEADER']})
-    cands.sort(key=lambda c: -c['score'])
-    for i, c in enumerate(cands[:1 + s['observe_n']]): c['role'] = 'PICK' if i == 0 else 'OBSERVE'
-    keep = cands[:1 + s['observe_n']]
+                      'entry_poll': p15['t'], 'fresh_s': None, 'exit_rule': sp['exit'], 'reasons': ['INDUSTRY_ALIGNED', 'MARKET_NOT_AGAINST', 'RESIDUAL_LEADER']})
+    keep = []
+    for nm in ('DOWN', 'UP'):
+        sc = sorted((c for c in cands if c['side'] == nm), key=lambda c: -c['score'])[:1 + s['observe_n']]
+        for i, c in enumerate(sc): c['role'] = ('PICK' if plan[nm]['active'] else 'SHADOW') if i == 0 else 'OBSERVE'
+        keep += sc
+    order = {'PICK': 0, 'SHADOW': 1, 'OBSERVE': 2}
+    keep.sort(key=lambda c: (order[c['role']], -c['score']))
     return {'at': '09:45', 'poll': p15['t'], 'n': len(rows), 'market_pct': round(mkt, 3), 'eligible': len(cands), 'picks': keep,
-            'rejected': rej, 'rejected_sample': audit[:40], 'baseline_days_min': s['min_vol_days']}
+            'eligible_by_side': {nm: sum(c['side'] == nm for c in cands) for nm in ('UP', 'DOWN')},
+            'rejected': rej, 'rejected_sample': audit[:40], 'baseline_days_min': s['min_vol_days'], 'baseline_days_have': base_have,
+            'plan': plan}
 
 
 def settle(rec: dict, polls: list, s: dict) -> bool:
@@ -182,6 +221,7 @@ def settle(rec: dict, polls: list, s: dict) -> bool:
                 out['exit'] = round(sg * (px / c['entry'] - 1) * 100, 3); changed = True
                 rr = [r for t, r in path if t <= dt.datetime.fromisoformat(ex['t'])] or [out['exit']]
                 c['mae_pct'] = round(min(0.0, min(rr)), 3); c['mfe_pct'] = round(max(0.0, max(rr)), 3); c['settled'] = True
+                out['book1'] = BOOK_PCT if c['mfe_pct'] >= BOOK_PCT else out['exit']   # book at +1% (first touch), else held to the exit
     return changed
 
 
@@ -200,9 +240,9 @@ def tick(now: dt.datetime | None = None) -> None:
         if rec is None:
             hist = _vol_hist()
             if not hist: hist = bootstrap_vol_hist(today)
-            res = compute(polls, hist, industry_map(), s)
+            res = compute(polls, hist, industry_map(), s, side_plan(s, _lab_verdicts()))
             if res is None: return
-            rec = {'date': today, 'status': 'RESEARCH / NOT VALIDATED', 'settings': {k: s[k] for k in ('down_only', 'min_group', 'exit_at', 'min_eff', 'min_volrel')}, **res}
+            rec = {'date': today, 'status': 'RESEARCH / NOT VALIDATED', 'settings': {k: s[k] for k in ('side_mode', 'min_group', 'exit_at', 'min_eff', 'min_volrel', 'min_vol_days')}, **res}
             days.append(rec)
             v = _v15_from_polls(polls)                                    # today's 09:30-09:45 volumes extend the baseline, once per day
             for sym, x in v.items():
@@ -213,8 +253,10 @@ def tick(now: dt.datetime | None = None) -> None:
         d._rewrite_jsonl(FILE, days)
 
 
-def _score(rows: list, key: str, cost: float) -> dict:
-    r = [c['out'][key] for c in rows if key in (c.get('out') or {})]
+def _score(rows: list, key: str | None, cost: float) -> dict:
+    """key None = each candidate's own exit rule (exit_rule, default the 15:15 exit)."""
+    r = [(c.get('out') or {}).get(key or c.get('exit_rule') or 'exit') for c in rows]
+    r = [x for x in r if x is not None]
     if not r: return {'n': 0}
     n = len(r); k = sum(1 for x in r if x > 0); z = 1.96; p = k / n; den = 1 + z * z / n
     lo = ((p + z * z / 2 / n) - z * math.sqrt(p * (1 - p) / n + z * z / 4 / n / n)) / den
@@ -223,11 +265,22 @@ def _score(rows: list, key: str, cost: float) -> dict:
 
 def status() -> dict:
     s = load_settings(); days = d._read_jsonl(FILE); today = str(d.now_ist().date())
-    picks = [c for x in days for c in x.get('picks', []) if c.get('role') == 'PICK']
-    obs = [c for x in days for c in x.get('picks', []) if c.get('role') == 'OBSERVE']
+    allc = [c for x in days for c in x.get('picks', [])]
+    picks = [c for c in allc if c.get('role') == 'PICK']
+    top = [c for c in allc if c.get('role') in ('PICK', 'SHADOW')]          # each side's best stock of the day, picked or not
+    obs = [c for c in allc if c.get('role') == 'OBSERVE']
     cost = s['cost_bps']
+    lab = None
+    try:
+        from . import v136_hierarchy_lab; lab = v136_hierarchy_lab.status()
+    except Exception:  # noqa: BLE001
+        log.exception('v135: lab status failed')
     return {'settings': s, 'today': next((x for x in days if x.get('date') == today), None), 'recent': list(reversed(days))[:10], 'days': len(days),
+            'plan': side_plan(s, _lab_verdicts()), 'lab': lab,
             'score': {'pick': {k: _score(picks, k, cost) for k in ('exit', '30', '60', '15')},
-                      'pick_down': _score([c for c in picks if c['side'] == 'DOWN'], 'exit', cost),
-                      'pick_up': _score([c for c in picks if c['side'] == 'UP'], 'exit', cost),
+                      'pick_rule': _score(picks, None, cost),
+                      'pick_down': _score([c for c in picks if c['side'] == 'DOWN'], None, cost),
+                      'pick_up': _score([c for c in picks if c['side'] == 'UP'], None, cost),
+                      'top_down': _score([c for c in top if c['side'] == 'DOWN'], 'exit', cost),
+                      'top_up': _score([c for c in top if c['side'] == 'UP'], 'exit', cost),
                       'observe': _score(obs, 'exit', cost)}}
