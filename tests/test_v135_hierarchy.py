@@ -59,6 +59,18 @@ def test_missing_volume_baseline_is_not_eligible_and_not_zero_filled():
     assert res['rejected'].get('NO_VOLUME_BASELINE') == 1
 
 
+def test_short_volume_history_blocks_everyone_and_reports_baseline_depth():
+    # 15 Oct 2026: the order-flow recorder had 9 sessions, the rule needs 10 -> every stock stopped at the volume check.
+    ind, moves, hist = _world()
+    moves['S0_3'] = [100, 99.6, 99.2, 98.6, 98.6, 97.0, 95.0]
+    hist = {sym: v[:9] for sym, v in hist.items()}
+    res = h.compute(_polls(moves, {'S0_3': 4000}), hist, ind, S)
+    assert not res['picks']
+    assert res['baseline_days'] == 9 and res['baseline_days_min'] == 10
+    lowered = h.compute(_polls(moves, {'S0_3': 4000}), hist, ind, dict(S, min_vol_days=9))
+    assert lowered['picks'] and lowered['picks'][0]['symbol'] == 'S0_3'
+
+
 def test_small_industry_group_is_excluded():
     ind, moves, hist = _world()
     ind['S0_3'] = 'TINY'; ind['S0_4'] = 'TINY'

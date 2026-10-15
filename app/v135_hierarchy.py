@@ -150,7 +150,8 @@ def compute(polls: list, hist: dict, ind: dict, s: dict) -> dict | None:
     for i, c in enumerate(cands[:1 + s['observe_n']]): c['role'] = 'PICK' if i == 0 else 'OBSERVE'
     keep = cands[:1 + s['observe_n']]
     return {'at': '09:45', 'poll': p15['t'], 'n': len(rows), 'market_pct': round(mkt, 3), 'eligible': len(cands), 'picks': keep,
-            'rejected': rej, 'rejected_sample': audit[:40], 'baseline_days_min': s['min_vol_days']}
+            'rejected': rej, 'rejected_sample': audit[:40], 'baseline_days_min': s['min_vol_days'],
+            'baseline_days': max((len(v) for v in hist.values()), default=0)}   # deepest stock's volume history at 09:45 (before today is added)
 
 
 def settle(rec: dict, polls: list, s: dict) -> bool:
