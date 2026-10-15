@@ -101,6 +101,10 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='daily', due=dt.time(11, 20), grace=60, files=['v133/rs_days.jsonl'], thread='v133-orderflow')
     add(name='V13.5 hierarchy desk (V4.7, research)', group='V13.5 Hierarchy desk', what='09:45 market > industry > stock pick, candidates, rejected-candidate audit, +3/+5/+15/+30/+60 min and 15:15 outcomes',
         kind='daily', due=dt.time(9, 50), grace=30, files=['v133/v47_days.jsonl', 'v133/v47_volhist.json'], thread='v133-orderflow')
+    add(name='V13.7 daily pool watched all day', group='V13.3 Direction desk', what='The 3-5 stock pool: who joined when and why, live tracking, +1% booking, trailing stop, market-guard shadow exit and 15:15 results',
+        kind='daily', due=dt.time(9, 35), grace=25, files=['v133/pool_watch_days.jsonl'], thread='v133-orderflow')
+    add(name='V13.6 hierarchy lab (research)', group='V13.5 Hierarchy desk', what='Walk-forward UP vs DOWN replay of the 09:45 rule: verdict, chosen variant, train/test results',
+        kind='event', files=['v133/v47lab_result.json', 'v133/v47lab_state.json'], thread=None)
     add(name='Order-flow lab (polls, bars, futures, scores)', group='V13.3 Direction desk', what='Every day\'s order-flow polls, 5-minute bars, futures and 09:25 model scores - the data for the research formula fit',
         kind='event', files=['v133/of_*.jsonl.gz', 'v133/of_*.jsonl', 'v133/of_*.json', 'v133/bars_*.json.gz', 'v133/futs_*.json', 'v133/of_lab.json'], thread=None)
     add(name='NG desk ledger', group='MCX commodity desk', what='Natural gas playbook days, paper results and MCX ledger',

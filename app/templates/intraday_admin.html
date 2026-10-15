@@ -63,5 +63,19 @@ button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px
   </div>
 {% endif %}
 </div>
+<script>
+// Refresh only the watched pool, once a minute, while the market is open and the tab is visible (no full page reload).
+(function(){
+  function tick(){
+    var el=document.getElementById('watch');
+    if(!el||el.dataset.live!=='1'||document.hidden)return;
+    fetch('/admin/intraday/pool',{credentials:'same-origin'}).then(function(r){return r.ok?r.text():null}).then(function(h){
+      if(!h)return; var tmp=document.createElement('div'); tmp.innerHTML=h.trim();
+      var fresh=tmp.querySelector('#watch'); if(fresh){var open=el.querySelector('details[open]'); el.replaceWith(fresh); if(open){var d=fresh.querySelector('details'); if(d)d.open=true;}}
+    }).catch(function(){});
+  }
+  setInterval(tick,60000);
+})();
+</script>
 </body>
 </html>

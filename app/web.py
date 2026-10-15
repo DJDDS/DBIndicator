@@ -1347,6 +1347,18 @@ def admin_intraday():
     return render_template("intraday_admin.html", direction=direction, intra=intra)
 
 
+@app.route("/admin/intraday/pool")
+@require_roles(OWNER)
+def admin_intraday_pool():
+    """The watched daily pool alone (HTML fragment) - the intraday page re-fetches it every minute instead of reloading everything."""
+    from . import v137_pool_watch
+    try:
+        w = v137_pool_watch.status()
+    except Exception as exc:  # fail-soft
+        w = {"error": str(exc)[:200]}
+    return render_template("_pool_watch.html", W=w)
+
+
 @app.route("/api/v133/status")
 @require_roles(OWNER)
 def api_v133_status():

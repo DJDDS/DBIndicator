@@ -235,7 +235,7 @@ def tick(now: dt.datetime | None = None) -> None:
         days = d._read_jsonl(FILE); rec = next((x for x in days if x.get('date') == today), None)
         if rec is None and hm > '10:10': return
         if rec is not None and all(c.get('settled') for c in rec.get('picks', [])) and rec.get('picks') is not None and rec.get('done'): return
-        polls = d._read_of(today)
+        polls = d.lite_polls(today)                                       # price + volume only, read incrementally
         if not polls: return
         if rec is None:
             hist = _vol_hist()

@@ -140,6 +140,40 @@ EXIT_LABEL = {'30': '09:55', '60': '10:25', '90': '10:55', '120': '11:25', 'day'
 EXIT_BAR = {**HORIZON_BARS, 'hc': K_EXIT}
 
 
+_lite: dict = {}                # date -> {'off': bytes read, 'polls': [...], 'part': unfinished line}
+_lite_lock = threading.Lock()
+
+
+def lite_polls(day) -> list:
+    """One day's polls reduced to {'t', 'ph', 'q': {symbol: [last price, day volume]}}, read INCREMENTALLY: each call parses only the
+    lines appended since the previous call (a full re-parse of the day's file was ~225 polls x 420 full quotes, every minute).
+    Used by the desks that need only price/volume (hierarchy, pool watch). Falls back to the packed file after the close."""
+    day = str(day)
+    with _lite_lock:
+        for k in [k for k in _lite if k != day]: _lite.pop(k, None)          # keep only one day in memory
+        c = _lite.setdefault(day, {'off': 0, 'polls': [], 'part': b'', 'packed': False})
+        p = _path(f'of_{day}.jsonl')
+        if not p.exists():
+            if not c['packed']:
+                c['polls'] = [_lite_row(x) for x in _read_of(day)]; c['packed'] = True
+            return c['polls']
+        size = p.stat().st_size
+        if size < c['off']: c.update(off=0, polls=[], part=b'')                # file replaced: start over
+        if size > c['off']:
+            with p.open('rb') as fh:
+                fh.seek(c['off']); chunk = fh.read(); c['off'] += len(chunk)
+            lines = (c['part'] + chunk).split(b'\n'); c['part'] = lines.pop()  # last piece may be an unfinished line
+            for line in lines:
+                if not line.strip(): continue
+                try: c['polls'].append(_lite_row(json.loads(line)))
+                except Exception: pass  # noqa: BLE001
+        return c['polls']
+
+
+def _lite_row(pl: dict) -> dict:
+    return {'t': pl.get('t'), 'ph': pl.get('ph'), 'q': {s: [r[0], r[1]] for s, r in (pl.get('q') or {}).items() if r}}
+
+
 def meta() -> dict:
     return json.loads((ASSETS / 'dir925_meta.json').read_text())
 

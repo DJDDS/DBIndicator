@@ -81,7 +81,7 @@ def test_route_and_page(tmp_path, monkeypatch):
         d = json.loads(c.get('/api/recorders', headers=h).data)
         if not d.get('loading'): break
         time.sleep(0.05)
-    assert d['summary']['total'] == 19 and d['loading'] is False
+    assert d['summary']['total'] == 21 and d['loading'] is False
     page = c.get('/backtest', headers=h)
     assert page.status_code == 200 and b'recorder-monitor' in page.data and b'/api/recorders' in page.data
     assert c.get('/api/recorders').status_code in (401, 403)
