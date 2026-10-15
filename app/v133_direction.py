@@ -145,7 +145,7 @@ _lite_lock = threading.Lock()
 
 
 def lite_polls(day) -> list:
-    """One day's polls reduced to {'t', 'ph', 'q': {symbol: [last price, day volume]}}, read INCREMENTALLY: each call parses only the
+    """One day's polls reduced to {'t', 'ph', 'q': {symbol: [last price, day volume, day open]}}, read INCREMENTALLY: each call parses only the
     lines appended since the previous call (a full re-parse of the day's file was ~225 polls x 420 full quotes, every minute).
     Used by the desks that need only price/volume (hierarchy, pool watch). Falls back to the packed file after the close."""
     day = str(day)
@@ -171,7 +171,8 @@ def lite_polls(day) -> list:
 
 
 def _lite_row(pl: dict) -> dict:
-    return {'t': pl.get('t'), 'ph': pl.get('ph'), 'q': {s: [r[0], r[1]] for s, r in (pl.get('q') or {}).items() if r}}
+    return {'t': pl.get('t'), 'ph': pl.get('ph'),
+            'q': {s: [r[0], r[1], r[13] if len(r) > 13 else None] for s, r in (pl.get('q') or {}).items() if r}}   # last price, day volume, day open
 
 
 def meta() -> dict:

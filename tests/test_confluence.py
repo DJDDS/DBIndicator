@@ -217,22 +217,10 @@ def _auth():
     return {'Authorization': 'Basic ' + base64.b64encode(b'owner:test-owner-confluence-password').decode()}
 
 
-def test_dashboard_state_api_exposes_confluence_watch(client, monkeypatch):
-    monkeypatch.setattr(web, '_confluence_watch_safe',
-                         lambda results: [{'symbol': 'TCS', 'direction': 'UP', 'price_chg_today_pct': 0.52,
-                                            'oi_structure': 'Long Buildup', 'industry': 'IT Services',
-                                            'sector_trend': 'GAINER', 'industry_edge_pct': 0.19, 'agree': True,
-                                            'pattern': {'name': 'Bull Flag', 'status': 'BREAKOUT', 'tier': 'A'},
-                                            'score': 3}])
-    r = client.get('/api/dashboard-state', headers=_auth())
-    assert r.status_code == 200
-    body = r.get_json()
-    assert body.get('confluence_watch')[0]['symbol'] == 'TCS'
-
-
-def test_dashboard_page_renders_confluence_watch_markup(client):
+def test_dashboard_shows_market_pulse_instead_of_confluence_watch(client):
+    """Confluence Watch was replaced on the dashboard by Market Pulse (15-Oct-2026); the confluence module stays for reuse."""
     r = client.get('/', headers=_auth())
     assert r.status_code == 200
-    assert b'cwatch-tbody' in r.data
-    assert b'oi-structure-badge' in r.data
-    assert b'sector-trend-badge' in r.data
+    assert b'id="market-pulse"' in r.data and b'cwatch-table' not in r.data
+    r = client.get('/api/market-pulse', headers=_auth())
+    assert r.status_code == 200 and r.is_json

@@ -67,6 +67,29 @@
   .gl.desk{border-color:rgba(224,160,48,.35)}.gl.desk .k{color:#e0a030}
   .gl .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}.gl .tags span{font:600 10.5px var(--mono);padding:1px 6px;border-radius:4px;background:#1a212c}
   .gl .tags .u{color:var(--green)}.gl .tags .d{color:var(--red)}
+  .pulse{padding:14px 16px;display:grid;gap:12px}
+  .pulse-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .pulse-head h2{margin:0;font-size:13px;text-transform:none;letter-spacing:0}
+  .pulse-asof{font:500 11px var(--mono);color:var(--muted)}
+  .pulse-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--border);border-radius:8px;overflow:hidden}
+  .pulse-kpis>div{background:var(--panel2);padding:9px 12px;display:grid;gap:2px;min-width:0}
+  .pk-l{font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .pk-v{font:600 19px var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pk-v.small-v{font-size:14px}
+  .pk-s{font-size:11px;color:var(--muted)}
+  .pulse .up{color:var(--green)}.pulse .dn{color:var(--red)}
+  .pulse-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,.8fr);gap:14px}
+  @media(max-width:1100px){.pulse-grid{grid-template-columns:1fr}}
+  .pulse-l{font:600 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .pulse-chart{height:240px;width:100%;background:var(--panel);border:1px solid var(--border);border-radius:8px}
+  #pulse-sector-list{display:grid;gap:3px;max-height:250px;overflow-y:auto;padding-right:4px}
+  .ps-row{display:grid;grid-template-columns:minmax(0,1.3fr) 1fr 56px 52px;gap:8px;align-items:center;font-size:11.5px}
+  .ps-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .ps-bar{position:relative;height:8px;background:#161c26;border-radius:2px}.ps-bar::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--dim)}
+  .ps-bar span{position:absolute;top:0;bottom:0;border-radius:2px}.ps-bar span.up{background:var(--green)}.ps-bar span.dn{background:var(--red)}
+  .ps-v{font:600 11.5px var(--mono);text-align:right;font-variant-numeric:tabular-nums}.ps-b{font:500 10.5px var(--mono);color:var(--muted);text-align:right}
+  .pr-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) 52px 56px;gap:6px;align-items:center;font-size:11.5px;padding:4px 6px;border-radius:5px;text-decoration:none;color:var(--text)}
+  .pr-row:hover{background:var(--panel2)}.pr-row b{font-family:var(--mono)}.pr-sec{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pr-row .up,.pr-row .dn{font:600 11.5px var(--mono);text-align:right}.pr-m{font:500 11px var(--mono);color:var(--dim);text-align:right}
   .jumpbar{display:flex;gap:6px;overflow-x:auto;padding:4px 0 10px;scrollbar-width:thin}
   .jumpbar a{flex:0 0 auto;font-size:11.5px;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:999px;padding:4px 11px;white-space:nowrap}
   .jumpbar a:hover{color:var(--text);border-color:var(--accent);background:var(--accent-bg)}
@@ -883,30 +906,35 @@ button, a, summary, input, select { touch-action: manipulation; }
 
   {% include "_market_overview.html" %}
 
-  <div class="card table-card" aria-label="Confluence Watch">
-    <div class="table-card-head">
-      <h2 style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;">Confluence Watch <span class="sub" style="text-transform:none;">today's strongest &amp; weakest F&amp;O sectors, with every OI-biased stock inside them &middot; research, not trade calls</span></h2>
-      <span class="footer-note">Live with the scan · pattern column uses /patterns' last run (15:45 IST, once/day)</span>
+  {% set mp = market_pulse %}
+  <section class="card pulse" id="market-pulse" aria-label="Market Pulse" data-live="{{ 1 if mp and mp.live else 0 }}">
+    <div class="pulse-head">
+      <h2>Market Pulse <span class="sub">how the F&amp;O market is behaving through the day · from the recorded price polls</span></h2>
+      <span class="pulse-asof" id="pulse-asof">{% if mp %}{{ ('live · ' if mp.live else 'session of ' ~ mp.date ~ ' · ') ~ 'as of ' ~ mp.at }}{% else %}waiting for the first price poll (09:15){% endif %}</span>
     </div>
-    <div class="table-scroll">
-    <table id="cwatch-table">
-      <thead><tr>
-        <th>Symbol</th><th>OI structure</th><th>Sector</th><th>Agrees?</th><th>Chg%</th><th>Pattern (bonus)</th><th>Score</th>
-      </tr></thead>
-      <tbody id="cwatch-tbody">
-        {% if confluence_watch %}{% for c in confluence_watch %}<tr class="data-row">
-          <td><a class="chart-link" href="/chart/{{ c.symbol }}">{{ c.symbol }}</a></td>
-          <td><span class="oi-structure-badge {{ c.oi_structure|lower|replace(' ', '-') }}">{{ c.oi_structure }}</span></td>
-          <td><span class="sector-trend-badge {{ 'gainer' if c.sector_trend == 'GAINER' else 'loser' }}">{{ '▲ Gainer' if c.sector_trend == 'GAINER' else '▼ Loser' }}</span>{{ c.industry }} <span style="color:var(--muted)">{{ '%+.2f'|format(c.industry_edge_pct) }}pp</span></td>
-          <td><span class="cwatch-agree-tag {{ 'yes' if c.agree else 'no' }}">{{ 'Agrees' if c.agree else 'Contra' }}</span></td>
-          <td>{{ '%+.2f'|format(c.price_chg_today_pct) + '%' if c.price_chg_today_pct is not none else '—' }}</td>
-          <td>{% if c.pattern %}<span class="cwatch-pattern-name">{{ c.pattern.name }} &middot; {{ c.pattern.status.replace('_', ' ').title() }}</span>{% else %}<span class="cwatch-pattern-none">—</span>{% endif %}</td>
-          <td><span class="cwatch-score s{{ c.score }}">{{ c.score }}/3</span></td>
-        </tr>{% endfor %}{% else %}<tr><td colspan="7"><div class="cwatch-empty">No stock in today's leading/lagging sectors currently carries a directional OI read — fills in as the live scan updates.</div></td></tr>{% endif %}
-      </tbody>
-    </table>
+    <div class="pulse-kpis" id="pulse-kpis">
+      <div><span class="pk-l">Breadth</span><span class="pk-v" id="pk-breadth">{{ (mp.breadth ~ '%') if mp else '—' }}</span><span class="pk-s">of F&amp;O stocks above their open</span></div>
+      <div><span class="pk-l">Up / down</span><span class="pk-v" id="pk-updown">{% if mp %}<span class="up">{{ mp.up }}</span> / <span class="dn">{{ mp.down }}</span>{% else %}—{% endif %}</span><span class="pk-s">{{ mp.n if mp else 0 }} stocks</span></div>
+      <div><span class="pk-l">Median stock</span><span class="pk-v {{ 'up' if mp and mp.median > 0 else ('dn' if mp and mp.median < 0 else '') }}" id="pk-median">{{ ('%+.2f'|format(mp.median) ~ '%') if mp else '—' }}</span><span class="pk-s">move since the open</span></div>
+      <div><span class="pk-l">Leading sector</span><span class="pk-v small-v" id="pk-lead">{{ mp.sectors[0].sector if mp and mp.sectors else '—' }}</span><span class="pk-s">{{ ('%+.2f'|format(mp.sectors[0].pct) ~ '% · lagging: ' ~ mp.sectors[-1].sector ~ ' ' ~ ('%+.2f'|format(mp.sectors[-1].pct)) ~ '%') if mp and mp.sectors else '' }}</span></div>
     </div>
-  </div>
+    <div class="pulse-grid">
+      <div class="pulse-chart-wrap"><div class="pulse-l">Breadth and median move through the day</div><div id="pulse-chart" class="pulse-chart" role="img" aria-label="Breadth and median move through the day"></div></div>
+      <div class="pulse-sectors"><div class="pulse-l">Sector rotation now · median move since the open</div><div id="pulse-sector-list">
+        {% if mp %}{% set mx = [1.0] %}{% for s in mp.sectors %}{% if s.pct|abs > mx[0] %}{% set _ = mx.append(mx.pop() * 0 + s.pct|abs) %}{% endif %}{% endfor %}
+        {% for s in mp.sectors %}<div class="ps-row" title="{{ s.up }} up · {{ s.down }} down of {{ s.n }} · best {{ s.best[0] }} {{ '%+.2f'|format(s.best[1]) }}% · worst {{ s.worst[0] }} {{ '%+.2f'|format(s.worst[1]) }}%">
+          <span class="ps-name">{{ s.sector }}</span>
+          <span class="ps-bar"><span class="{{ 'up' if s.pct >= 0 else 'dn' }}" style="width:{{ (50 * (s.pct|abs) / mx[0])|round(1) }}%;{{ 'left:50%' if s.pct >= 0 else 'right:50%' }}"></span></span>
+          <span class="ps-v {{ 'up' if s.pct > 0 else ('dn' if s.pct < 0 else '') }}">{{ '%+.2f'|format(s.pct) }}%</span><span class="ps-b">{{ s.up }}▲ {{ s.down }}▼</span></div>{% endfor %}
+        {% else %}<div class="cwatch-empty">Sectors appear with the first price poll of the day.</div>{% endif %}</div></div>
+      <div class="pulse-rel">
+        <div class="pulse-l">Strongest vs their own sector</div><div id="pulse-leaders">{% for x in (mp.leaders if mp else []) %}<a class="pr-row" href="/chart/{{ x.symbol }}"><b>{{ x.symbol }}</b><span class="pr-sec">{{ x.sector }}</span><span class="up">{{ '%+.2f'|format(x.vs_sector) }}</span><span class="pr-m">{{ '%+.2f'|format(x.pct) }}%</span></a>{% endfor %}</div>
+        <div class="pulse-l" style="margin-top:10px">Weakest vs their own sector</div><div id="pulse-laggards">{% for x in (mp.laggards if mp else []) %}<a class="pr-row" href="/chart/{{ x.symbol }}"><b>{{ x.symbol }}</b><span class="pr-sec">{{ x.sector }}</span><span class="dn">{{ '%+.2f'|format(x.vs_sector) }}</span><span class="pr-m">{{ '%+.2f'|format(x.pct) }}%</span></a>{% endfor %}</div>
+        <div class="pk-s" style="margin-top:6px">Number = the stock's move minus its sector's median (points); grey = its own move since the open.</div>
+      </div>
+    </div>
+    <script type="application/json" id="pulse-data">{{ (mp or {})|tojson }}</script>
+  </section>
 
 
   {% if not logged_in %}
@@ -2325,7 +2353,6 @@ button, a, summary, input, select { touch-action: manipulation; }
       renderTrial25Shadow(state.trial25_shadow);
       renderV121IndexVol(state.v121_index_vol, state.v121_backup, state.v121_development);
       renderResearchTicker(state.research_ticker);
-      renderConfluenceWatch(state.confluence_watch);
 
       if (state.last_scan && state.last_scan !== lastRenderedScan) {
         lastRenderedScan = state.last_scan;
@@ -2575,6 +2602,51 @@ button, a, summary, input, select { touch-action: manipulation; }
 
 </script>
 <button type="button" class="totop" id="totop" aria-label="Back to top">↑</button>
+<script>
+(function(){
+  // Market Pulse: breadth / median chart (chart library fetched lazily), refreshed once a minute while the market is open
+  var chart=null, ech=null;
+  function lib(){if(window.echarts)return Promise.resolve();if(!ech)ech=new Promise(function(res,rej){var s=document.createElement('script');s.src='/static/vendor/echarts-5.6.0.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)});return ech;}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+  function f2(v){return (v>0?'+':'')+Number(v).toFixed(2)}
+  function draw(P){
+    var el=document.getElementById('pulse-chart'); if(!el||!P||!P.curve||!P.curve.length)return;
+    lib().then(function(){
+      if(!chart||chart.isDisposed())chart=echarts.init(el,null,{renderer:'canvas'});
+      var x=P.curve.map(function(p){return p[0]});
+      chart.setOption({animation:false,grid:{left:42,right:46,top:30,bottom:26},legend:{top:4,left:8,textStyle:{color:'#aab3c2',fontSize:11},itemWidth:14,itemHeight:6},
+        tooltip:{trigger:'axis',backgroundColor:'#151b26',borderColor:'#242b38',textStyle:{color:'#dfe4ee',fontSize:12}},
+        xAxis:{type:'category',data:x,boundaryGap:false,axisLine:{lineStyle:{color:'#242b38'}},axisLabel:{color:'#7c8698',fontSize:10}},
+        yAxis:[{type:'value',min:0,max:100,axisLabel:{color:'#7c8698',fontSize:10,formatter:'{value}%'},splitLine:{lineStyle:{color:'#1a202b'}}},
+               {type:'value',axisLabel:{color:'#7c8698',fontSize:10,formatter:function(v){return v+'%'}},splitLine:{show:false}}],
+        series:[{name:'Breadth (% up)',type:'line',showSymbol:false,smooth:.3,color:'#3b82f6',areaStyle:{opacity:.12},data:P.curve.map(function(p){return p[1]}),
+                 markLine:{silent:true,symbol:'none',lineStyle:{color:'#576076',type:'dashed'},data:[{yAxis:50}],label:{show:false}}},
+                {name:'Median move',type:'line',yAxisIndex:1,showSymbol:false,smooth:.3,color:'#f0b90b',data:P.curve.map(function(p){return p[2]})}]},true);
+    }).catch(function(){});
+  }
+  function rel(id,rows,cls){var el=document.getElementById(id);if(!el)return;el.innerHTML=(rows||[]).map(function(x){return '<a class="pr-row" href="/chart/'+encodeURIComponent(x.symbol)+'"><b>'+esc(x.symbol)+'</b><span class="pr-sec">'+esc(x.sector)+'</span><span class="'+cls+'">'+f2(x.vs_sector)+'</span><span class="pr-m">'+f2(x.pct)+'%</span></a>'}).join('');}
+  function render(P){
+    if(!P||!P.curve)return; draw(P);
+    var s=function(id,h){var e=document.getElementById(id);if(e)e.innerHTML=h};
+    s('pulse-asof',(P.live?'live · ':'session of '+esc(P.date)+' · ')+'as of '+esc(P.at));
+    s('pk-breadth',P.breadth+'%'); s('pk-updown','<span class="up">'+P.up+'</span> / <span class="dn">'+P.down+'</span>');
+    var m=document.getElementById('pk-median'); if(m){m.textContent=f2(P.median)+'%';m.className='pk-v '+(P.median>0?'up':(P.median<0?'dn':''));}
+    if(P.sectors&&P.sectors.length){s('pk-lead',esc(P.sectors[0].sector));
+      var mx=Math.max.apply(null,P.sectors.map(function(x){return Math.abs(x.pct)}).concat([1]));
+      s('pulse-sector-list',P.sectors.map(function(x){var w=(50*Math.abs(x.pct)/mx).toFixed(1);return '<div class="ps-row" title="'+x.up+' up · '+x.down+' down of '+x.n+' · best '+esc(x.best[0])+' '+f2(x.best[1])+'% · worst '+esc(x.worst[0])+' '+f2(x.worst[1])+'%"><span class="ps-name">'+esc(x.sector)+'</span><span class="ps-bar"><span class="'+(x.pct>=0?'up':'dn')+'" style="width:'+w+'%;'+(x.pct>=0?'left:50%':'right:50%')+'"></span></span><span class="ps-v '+(x.pct>0?'up':(x.pct<0?'dn':''))+'">'+f2(x.pct)+'%</span><span class="ps-b">'+x.up+'▲ '+x.down+'▼</span></div>'}).join(''));}
+    rel('pulse-leaders',P.leaders,'up'); rel('pulse-laggards',P.laggards,'dn');
+  }
+  var src=document.getElementById('pulse-data'), P0={}; try{P0=JSON.parse(src?src.textContent:'{}')}catch(e){}
+  if(document.readyState==='complete')draw(P0);else window.addEventListener('load',function(){draw(P0)});
+  window.addEventListener('resize',function(){if(chart)chart.resize()});
+  setInterval(function(){
+    var sec=document.getElementById('market-pulse'); if(!sec||document.hidden)return;
+    var d=new Date(),ist=new Date(d.getTime()+(d.getTimezoneOffset()+330)*60000),hm=ist.getHours()*60+ist.getMinutes(),wd=ist.getDay();
+    if(wd<1||wd>5||hm<555||hm>935)return;
+    fetch('/api/market-pulse',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null}).then(render).catch(function(){});
+  },60000);
+})();
+</script>
 <script>
 (function(){
   // Jump-to bar: one chip per visible dashboard section, built from its heading

@@ -237,15 +237,15 @@ def dashboard():
     except Exception:  # noqa: BLE001
         research_ticker = []
     try:
-        from . import confluence
-        confluence_watch = confluence.watch(all_results)
-    except Exception:  # noqa: BLE001
-        confluence_watch = []
+        from . import v139_market_pulse
+        market_pulse = v139_market_pulse.status()
+    except Exception:  # noqa: BLE001 - fail-soft
+        market_pulse = None
 
     return render_template(
         "index.html",
         research_ticker=research_ticker,
-        confluence_watch=confluence_watch,
+        market_pulse=market_pulse,
         desk_glance=_desk_glance() if current_role() == OWNER else None,
         # Panels whose live/forward evidence failed (1 Oct 2026 recorder review)
         # are hidden by default; their recorders keep running. ?show_retired=1
@@ -341,14 +341,6 @@ def _research_ticker_safe():
         log.exception("research ticker failed"); return []
 
 
-def _confluence_watch_safe(results):
-    try:
-        from . import confluence
-        return confluence.watch(results)
-    except Exception:  # noqa: BLE001
-        log.exception("confluence watch failed"); return []
-
-
 @app.route("/api/dashboard-state")
 @require_roles(OWNER, MEMBER)
 @_response_cache("dashboard-state")
@@ -425,7 +417,6 @@ def api_dashboard_state():
         "scan_interval_seconds": settings.SCAN_INTERVAL_SECONDS,
         "market_open": scanner.is_market_open(),
         "research_ticker": _research_ticker_safe(),
-        "confluence_watch": _confluence_watch_safe(rows),
     })
 
 
@@ -938,6 +929,14 @@ def _candles(df):
             item["volume"] = int(float(row["volume"]))
         out.append(item)
     return out
+
+
+@app.route("/api/market-pulse")
+@require_roles(OWNER, MEMBER)
+def api_market_pulse():
+    """Dashboard Market Pulse (breadth curve, sector rotation, leaders/laggards vs sector), from the recorded price polls."""
+    from . import v139_market_pulse
+    return Response(json.dumps(v139_market_pulse.status() or {}, default=str), mimetype="application/json")
 
 
 @app.route("/api/insights")

@@ -118,7 +118,7 @@ def test_lite_polls_reads_only_new_lines(tmp_path, monkeypatch):
     p = tmp_path / f'of_{DAY}.jsonl'
     row = lambda t, px: json.dumps({'t': f'{DAY}T{t}', 'ph': 'slow', 'q': {'A': [px, 5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 99]}}) + '\n'  # noqa: E731
     p.write_text(row('10:00:00', 100) + row('10:05:00', 101)[:20])                 # second line still being written
-    assert [x['q']['A'] for x in d.lite_polls(DAY)] == [[100, 5]]
+    assert [x['q']['A'] for x in d.lite_polls(DAY)] == [[100, 5, 99]]
     with p.open('a') as fh: fh.write(row('10:05:00', 101)[20:] + row('10:10:00', 102))
     got = d.lite_polls(DAY)
     assert [x['q']['A'][0] for x in got] == [100, 101, 102] and got[1]['t'] == f'{DAY}T10:05:00'
