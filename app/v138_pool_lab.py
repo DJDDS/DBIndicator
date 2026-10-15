@@ -40,6 +40,11 @@ VARIANTS = {
     'E. UP only, 15:15':                        {'side': 'UP', 'up_exit': K_1515},
     'F. DOWN 15:15; on ★ UP-lean days UP 11:25': {'side': 'DOWN', 'down_exit': K_1515, 'up_exit': K_1125, 'when': 'strong_up'},
     'G. both sides, UP 11:25, conf >= 0.14':    {'side': 'both', 'down_exit': K_1515, 'up_exit': K_1125, 'min_conf': 0.14},
+    # model choice for the 15:15 hold: the whole-day model alone vs the 5-model average (the desk's "Whole day" list vs its daily pool)
+    'W1. whole-day model only, both sides, 15:15': {'side': 'both', 'down_exit': K_1515, 'up_exit': K_1515, 'model': 'day'},
+    'W2. whole-day model only, DOWN only, 15:15':  {'side': 'DOWN', 'down_exit': K_1515, 'model': 'day'},
+    'W3. average and whole-day agree, both, 15:15': {'side': 'both', 'down_exit': K_1515, 'up_exit': K_1515, 'model': 'agree'},
+    'W4. 50/50 average + whole-day, both, 15:15':   {'side': 'both', 'down_exit': K_1515, 'up_exit': K_1515, 'model': 'blend'},
 }
 _lock = threading.Lock()
 
@@ -68,7 +73,16 @@ def outcome(bars: list, p925: float, side: str, k_exit: int, book: float = BOOK,
 
 
 def day_picks(X: pd.DataFrame, rule: dict, strong: bool, lean: str | None, top: int = TOP) -> list:
-    """The day's pool under one rule: list of (symbol, side, p925, exit candle)."""
+    """The day's pool under one rule: list of (symbol, side, p925, exit candle).
+    rule['model']: None = the 5-model average (the live pool), 'day' = the whole-day model alone, 'agree' = both point the same way
+    (ranked by the average's confidence), 'blend' = half average, half whole-day model."""
+    m = rule.get('model')
+    if m and 'p_day' in X:
+        X = X.copy()
+        if m == 'day': X['p'] = X['p_day']
+        elif m == 'blend': X['p'] = (X['p'] + X['p_day']) / 2
+        X['conf'] = (X.p - 0.5).abs(); X['side'] = np.where(X.p > 0.5, 'UP', 'DOWN')
+        if m == 'agree': X = X[(X.p > 0.5) == (X.p_day > 0.5)]
     Y = X[X.conf >= rule.get('min_conf', 0.0)]
     side = rule['side']
     if rule.get('when') == 'strong_up' and strong and lean == 'UP': side = 'UP'

@@ -111,3 +111,12 @@ def test_outcome_from_the_0945_entry_ignores_earlier_candles():
     b = _bars(100, {3: 102, 5: 100, 71: 99})
     o = lab.outcome(b, 100, 'UP', lab.K_1515, k_from=6)
     assert o['book'] == o['hold'] and o['hold'] < 0                          # the 102 spike before entry does not count as booked
+
+
+def test_whole_day_model_rules():
+    X = _X()
+    X['p_day'] = [0.45, 0.20, 0.48, 0.55, 0.90, 0.30, 0.51]                  # the whole-day model ranks differently
+    w1 = lab.day_picks(X, lab.VARIANTS['W1. whole-day model only, both sides, 15:15'], False, None)
+    assert [p[0] for p in w1] == ['U2', 'D2', 'U3'] and [p[1] for p in w1] == ['UP', 'DOWN', 'DOWN']
+    w3 = lab.day_picks(X, lab.VARIANTS['W3. average and whole-day agree, both, 15:15'], False, None)
+    assert 'U3' not in [p[0] for p in w3] and [p[0] for p in w3][0] == 'U1'   # U3 disagrees (average UP, whole-day DOWN)

@@ -33,3 +33,11 @@
   - Intraday desk ready time 1.3 s -> 0.12 s, dashboard 0.8 s -> 0.13 s (local, warm).
 - OI screener: no JS error when the page has no scan yet.
 - scripts/dhan: PowerShell downloader for Dhan candles. dhan.env is git-ignored; copy dhan.env.example to dhan.env.
+
+## Daily pool vs "Whole day" list (probe of 15-Oct-2026)
+On 15 Oct the whole-day model's own list (ICICIGI, LICI, JIOFIN) went 3/3 while the daily pool went 1/3.
+Over the 88 sessions, the whole-day model alone (W1) won as often as the 5-model average (62.9%) but earned half as much:
++21.9 vs +47.6 bps per pick, t 1.80 vs 2.84. So the pool keeps the average. W1-W4 stay in the pool lab for live tracking.
+
+- Results that are right from 09:25 but lost from the actual entry are now shown as RIGHT* (amber, with an explanation).
+  Example: JIOFIN, RIGHT but -0.08%.
