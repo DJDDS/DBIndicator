@@ -2409,6 +2409,12 @@ def start_background_scanner():
         v140_acd.start_once(kite_auth.get_kite_client)
     except Exception:
         log.exception("V14.0 ACD desk failed to start")
+    # V14.1 hierarchy volume baseline keeper (fills a short 09:30-09:45 volume history from Kite before the open). Fail-soft.
+    try:
+        from . import v136_hierarchy_lab
+        v136_hierarchy_lab.start_baseline_keeper(kite_auth.get_kite_client)
+    except Exception:
+        log.exception("V14.1 hierarchy baseline keeper failed to start")
     # MCX NG desk data refresh (weather / COT / prices) on its own schedule, independent of page views. Fail-soft.
     try:
         from . import commodity_desk

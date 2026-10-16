@@ -207,6 +207,61 @@ def seed_volume_baseline(frames: dict, keep: int = 25) -> int:
     return n
 
 
+def baseline_short(today: str | None = None) -> tuple[int, int]:
+    """(days the hierarchy's volume baseline has for its best-covered stock, days it needs)."""
+    from . import v135_hierarchy as h
+    need = h.load_settings()['min_vol_days']; hist = h._vol_hist()
+    have = max((len([e for e in v if e[0] != today]) for v in hist.values()), default=0)
+    return have, need
+
+
+def seed_recent_baseline(kite, days: int = 40, today: dt.date | None = None) -> int:
+    """Fill the 20-day 09:30-09:45 volume baseline straight from Kite 5-minute history (last `days` calendar days, one request per stock),
+    so the hierarchy desk does not wait 10 sessions after a fresh start. Keeps every day already recorded live. Returns stocks seeded."""
+    from . import v132_movers as v2
+    today = today or d.now_ist().date()
+    a, b = today - dt.timedelta(days=days), today - dt.timedelta(days=1)
+    frames = {}
+    for sym, tok in sorted(v2._fo_universe(kite).items()):
+        try:
+            frames[sym] = reduce_bars(d._kite_5min(kite, tok, dt.datetime.combine(a, dt.time(9, 15)), dt.datetime.combine(b, dt.time(15, 30))))
+        except Exception as exc:  # noqa: BLE001
+            if v2._auth_error(exc): raise RuntimeError('Kite login needed (access token expired)') from exc
+            log.warning('v136 baseline %s: %s', sym, exc)
+        time.sleep(0.4)
+    return seed_volume_baseline(frames)
+
+
+_keeper: dict = {'started': False, 'last': None, 'result': None}
+
+
+def _keeper_loop(get_kite):
+    """Weekdays 08:00-09:40 IST: if the volume baseline is shorter than the hierarchy needs, fill it from Kite once that morning."""
+    while True:
+        try:
+            now = d.now_ist(); hm = now.hour * 60 + now.minute; today = str(now.date())
+            if now.weekday() < 5 and 480 <= hm <= 580 and _keeper.get('last') != today:
+                have, need = baseline_short(today)
+                if have >= need:
+                    _keeper['last'] = today
+                else:
+                    kite = get_kite()
+                    if kite is not None:
+                        n = seed_recent_baseline(kite, today=now.date())
+                        _keeper.update(last=today, result={'at': str(now)[:19], 'stocks': n, 'had_days': have, 'now_days': baseline_short(today)[0]})
+                        log.info('v136 baseline seeded: %s', _keeper['result'])
+        except Exception as exc:  # noqa: BLE001
+            log.warning('v136 baseline keeper: %s', exc); _keeper['result'] = {'error': str(exc)[:200], 'at': str(d.now_ist())[:19]}
+        time.sleep(300)
+
+
+def start_baseline_keeper(get_kite) -> None:
+    with _lock:
+        if _keeper['started']: return
+        _keeper['started'] = True
+    threading.Thread(target=_keeper_loop, args=(get_kite,), daemon=True, name='v136-baseline').start()
+
+
 def run(kite, start: dt.date = DEFAULT_START, end: dt.date | None = None) -> dict:
     from . import v132_movers as v2
     from . import v135_hierarchy as h

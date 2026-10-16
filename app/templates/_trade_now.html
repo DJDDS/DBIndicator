@@ -1,0 +1,29 @@
+{# V14.1 "Trade now": what to trade, at what level, with what stop/target - or why nothing. Needs TN = v141_trade_now.build(...). #}
+<section class="card tradenow anchor" id="tradenow" aria-label="Trade now">
+  <div class="tn-head"><h2>Trade now</h2><span class="small">paper · no orders are placed · TAKE = rules with a tested edge</span></div>
+  {% if TN.take %}
+  <div class="tn-list">
+  {% for r in TN.take %}
+    <article class="tn-item {{ 'up' if r.side == 'UP' else ('dn' if r.side == 'DOWN' else 'both') }}">
+      <div class="tn-top"><span class="tn-act">{{ r.action or 'BRACKET' }}</span><a class="tn-sym" href="/chart/{{ r.symbol }}?timeframe=5minute">{{ r.symbol }}</a>
+        <span class="chip src">{{ r.desk }}</span>{% if r.grade %}<span class="chip {{ 'pod' if r.grade == 'A' }}">grade {{ r.grade }}</span>{% endif %}
+        <span class="tn-state">{{ r.state }}{% if r.now_pct is not none and r.now_pct is defined and r.state == 'open' %} · <b class="{{ 'pos' if r.now_pct > 0 else 'neg' }}">{{ '%+.2f'|format(r.now_pct) }}%</b>{% endif %}</span></div>
+      {% if r.bracket and not r.entry %}
+      <div class="tn-lv"><div><span>BUY above</span><b>{{ r.buy_above }}</b><small>target {{ r.long_target }} · stop {{ r.long_stop }}</small></div>
+        <div><span>SELL below</span><b>{{ r.sell_below }}</b><small>target {{ r.short_target }} · stop {{ r.short_stop }}</small></div><div><span>Exit</span><b>{{ r.exit }}</b><small>if neither hit</small></div></div>
+      {% else %}
+      <div class="tn-lv"><div><span>Entry</span><b>{{ r.entry }}</b><small>{{ r.entry_at }}</small></div><div><span>Stop</span><b>{{ r.stop or '—' }}</b><small>{{ 'trailing' if r.desk == 'Daily pool' else '' }}</small></div>
+        <div><span>Target</span><b>{{ r.target or '—' }}</b><small>{{ r.target_note or '' }}</small></div><div><span>Exit</span><b>{{ r.exit }}</b><small>latest</small></div></div>
+      {% endif %}
+    </article>
+  {% endfor %}
+  </div>
+  {% else %}
+  <div class="tn-none"><b>No trade right now.</b> Nothing has passed the tested rules{{ ' yet' if not TN.skip }} - staying out is the decision.</div>
+  {% endif %}
+  {% if TN.paper %}<div class="small tn-sub">Paper only (research desk, not validated): {% for r in TN.paper %}<b>{{ r.action }} {{ r.symbol }}</b> at {{ r.entry }} ({{ r.why }}, exit {{ r.exit }}){{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
+  {% if TN.skip %}<details class="tn-skip" {{ 'open' if not TN.take }}><summary>Considered but not traded today ({{ TN.skip|length }})</summary>
+    <ul>{% for r in TN.skip %}<li><b>{{ r.symbol }}</b> {{ '▲' if r.side == 'UP' else '▼' }} {{ r.desk }}{% if r.grade %} · grade {{ r.grade }}{% endif %}: {{ r.why }}.</li>{% endfor %}</ul></details>{% endif %}
+  {% if TN.grade_rule %}<div class="small tn-sub">{{ TN.grade_rule }} Only the #1 pick is traded unless more reach A; a WEAK entry check removes it.</div>{% endif %}
+  {% for n in TN.notes %}<div class="small tn-sub">{{ n }}</div>{% endfor %}
+</section>

@@ -32,6 +32,16 @@ form.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1f
 label{font-size:12px;color:var(--muted);display:grid;gap:3px}input,select{background:#0f1318;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px}
 button{background:#2b6cff;border:0;color:#fff;padding:8px 14px;border-radius:7px;font-weight:600;cursor:pointer}
 .reasons{color:var(--muted);font-size:12px}
+.tradenow{margin-top:12px;border-color:var(--gold)}.tn-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.tn-head h2{margin:0}
+.tn-list{display:grid;gap:10px;margin-top:10px}.tn-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.tn-item.up{box-shadow:inset 3px 0 0 var(--pos)}.tn-item.dn{box-shadow:inset 3px 0 0 var(--neg)}.tn-item.both{box-shadow:inset 3px 0 0 var(--gold)}
+.tn-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tn-act{font:700 12px var(--mono2);padding:2px 8px;border-radius:5px;background:var(--panel2)}
+.tn-item.up .tn-act{color:var(--pos)}.tn-item.dn .tn-act{color:var(--neg)}.tn-item.both .tn-act{color:var(--gold)}
+.tn-sym{font:700 16px var(--sans2);color:var(--text);text-decoration:none}.tn-state{margin-left:auto;color:var(--muted);font-size:13px}
+.tn-lv{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:8px}.tn-lv div{display:grid;gap:2px}
+.tn-lv span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}.tn-lv b{font:600 15px var(--mono2)}.tn-lv small{color:var(--muted)}
+.tn-none{margin-top:8px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px}.tn-sub{margin-top:6px}.tn-skip{margin-top:8px}.tn-skip ul{margin:6px 0 0 18px;padding:0}.tn-skip li{margin:3px 0;font-size:13px}
+@media print{header.desk{position:static}}
 </style>
 <style>.side-up{color:var(--good);font-weight:700}.side-dn{color:var(--bad);font-weight:700}.hz{display:grid;gap:12px}
 .opt{color:var(--opt)}.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;background:var(--chip)}
@@ -117,7 +127,7 @@ section.anchor{scroll-margin-top:110px}
     <div class="clock"><span class="mkt closed" id="mkt-state">—</span><span id="ist-clock">--:--:--</span><span class="small" id="mkt-left"></span></div>
   </div>
   <nav class="secnav" aria-label="Sections">
-    <a href="#glance">Today</a><a href="#watch">Pool</a><a href="#poollab">Backtest</a><a href="#direction">09:25 lists</a><a href="#relstrength">Relative strength</a><a href="#hierarchy">Hierarchy</a><a href="#oflab">Order-flow lab</a><a href="#shorts">Short detector</a>
+    <a href="#glance">Today</a><a href="#tradenow">Trade now</a><a href="#watch">Pool</a><a href="#poollab">Backtest</a><a href="#direction">09:25 lists</a><a href="#relstrength">Relative strength</a><a href="#hierarchy">Hierarchy</a><a href="#oflab">Order-flow lab</a><a href="#shorts">Short detector</a>
     <span class="sep"></span><a href="/admin/v130">Swing desk</a><a href="/admin/commodity">NG desk</a><a href="/">Dashboard</a>
   </nav>
 </header>
@@ -137,6 +147,7 @@ section.anchor{scroll-margin-top:110px}
     <div class="gl"><span class="k">Relative strength</span><span class="v">{{ rsp|length }} <small class="s">stocks</small></span><span class="s">{% for p in rsp %}{{ p.symbol }} {{ '▲' if p.side == 'UP' else '▼' }}{{ ', ' if not loop.last }}{% else %}first refresh 11:15{% endfor %}</span></div>
   </section>
 {% endif %}
+{% if TN %}{% include "_trade_now.html" %}{% endif %}
 {% include "_v140_card.html" %}
 {% if not direction or direction.get('error') %}
   <div class="card"><div class="closed small">Direction desk unavailable: {{ direction.error if direction else 'not started' }}</div></div>

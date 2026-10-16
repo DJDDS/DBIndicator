@@ -1396,7 +1396,12 @@ def admin_intraday():
         acd = v140_acd.status()
     except Exception as exc:  # fail-soft
         acd = {"error": str(exc)[:200]}
-    return render_template("intraday_admin.html", direction=direction, intra=intra, acd=acd)
+    try:
+        from . import v132_movers, v141_trade_now
+        tn = v141_trade_now.build(direction if not direction.get("error") else {}, v132_movers.status(), acd)
+    except Exception:  # fail-soft
+        log.exception("trade-now panel failed"); tn = None
+    return render_template("intraday_admin.html", direction=direction, intra=intra, acd=acd, TN=tn)
 
 
 @app.route("/api/v140/status")
