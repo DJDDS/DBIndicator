@@ -27,6 +27,7 @@
     <div class="small">Signal {{ sig.bar }} · entry {{ tr.entry }} at {{ tr.entry_time }} · stop {{ tr.stop_level }} ({{ tr.stop_pts }} pts) · exit 15:20 ·
       {% if tr.state == 'closed' %}<b>CLOSED {{ tr.exit_time }} ({{ tr.reason }})</b>{% else %}<b>OPEN</b> · best so far +{{ tr.mfe }}{% endif %}
       · trade in {{ ins.fut_symbol or 'NIFTY near-month FUT' }}{{ (' (lot ' ~ ins.lot_size ~ ')') if ins.lot_size else '' }}</div>
+    {% if tr.get('fut_entry') is not none %}<div class="small">Future at entry minute {{ tr.fut_entry }} · stop {{ tr.fut_stop }}{% if tr.get('fut_points') is not none %} · future result {{ '%+.1f'|format(tr.fut_points) }} pts (exit {{ tr.fut_exit }}){% endif %}</div>{% endif %}
   {% elif sig and sig.ignored_long %}
     <div class="empty">Today's first ACD signal was LONG ({{ sig.bar }}) - shorts-only desk, no trade today.</div>
     {% set sh = d.get('shadow') %}{% if sh %}<div class="small">Shadow long (evidence only, not a call): entry {{ sh.entry }} at {{ sh.entry_time }} ·
@@ -49,6 +50,16 @@
   {% if d and d.participant %}{% set p = d.participant %}
   <div class="small">Context, not a filter ({{ p.date }} NSE participant OI): FII index futures {{ '%+d'|format(p.fii_fut_net) }} contracts ({{ p.fii_fut_long_pct }}% long) ·
     retail index options {{ p.client_opt_lean }}</div>
+  {% if p.rows %}{% set ch = p.chg or {} %}
+  <table style="margin-top:6px"><tr><th>{{ p.date }} index positions (contracts)</th><th>Futures net</th><th>% long</th><th>Calls net</th><th>Puts net</th></tr>
+  {% for who in ('Retail', 'FII', 'Pro', 'DII') %}{% if p.rows[who] %}{% set r = p.rows[who] %}{% set c = ch.get(who) or {} %}
+    <tr><td><b>{{ who }}</b></td>
+    {% for k in ('fut_net',) %}<td class="{{ 'open' if r[k] > 0 else 'closed' }}">{{ '{:+,}'.format(r[k]) }}{% if c.get(k) is not none %} <span class="small">({{ '{:+,}'.format(c[k]) }})</span>{% endif %}</td>{% endfor %}
+    <td>{{ r.fut_long_pct if r.fut_long_pct is not none else '—' }}%</td>
+    {% for k in ('call_net', 'put_net') %}<td>{{ '{:+,}'.format(r[k]) }}{% if c.get(k) is not none %} <span class="small">({{ '{:+,}'.format(c[k]) }})</span>{% endif %}</td>{% endfor %}</tr>
+  {% endif %}{% endfor %}</table>
+  <div class="small">Net = long minus short. Brackets = change from the day before. Calls net &gt; 0 / puts net &lt; 0 lean bullish. Information only - the desk does not use it.</div>
+  {% endif %}
   {% endif %}
 
   {% set sa = acd.score_all %}{% set ss = acd.score_short %}{% set sx = acd.score_addon %}
@@ -56,15 +67,16 @@
     <div class="kpi"><div class="v">{{ ('%+.1f'|format(ss.avg)) if ss.avg is not none else '—' }}</div><div class="l">SHORT pts/trade · {{ ss.n }} trades · win {{ ss.win if ss.win is not none else '—' }}%</div></div>
     {% set sg = acd.score_shadow_long or {} %}
     <div class="kpi"><div class="v">{{ ('%+.1f'|format(sg.avg)) if sg.avg is not none else '—' }}</div><div class="l">shadow LONG pts/signal · {{ acd.long_ignored }} days · win {{ sg.win if sg.win is not none else '—' }}% (not called)</div></div>
-    <div class="kpi"><div class="v">{{ ('%+.0f'|format(sa.total)) if sa.total is not none else '—' }}</div><div class="l">total paper points · {{ sa.n }} trades</div></div>
+    {% set sf = acd.score_fut or {} %}
+    <div class="kpi"><div class="v">{{ ('%+.0f'|format(sa.total)) if sa.total is not none else '—' }}</div><div class="l">total paper points · {{ sa.n }} trades{% if sf.n %} · on the future {{ '%+.0f'|format(sf.total) }}{% endif %}</div></div>
     <div class="kpi"><div class="v">{{ ('%+.1f'|format(sx.avg)) if sx.avg is not none else '—' }}</div><div class="l">experimental expiry lane · {{ sx.n }}</div></div>
   </div>
 
   {% if acd.recent %}
-  <table style="margin-top:10px"><tr><th>Date</th><th>Side</th><th>Entry</th><th>Exit</th><th>Points</th><th>Best</th><th></th></tr>
+  <table style="margin-top:10px"><tr><th>Date</th><th>Side</th><th>Entry</th><th>Exit</th><th>Points</th><th>Future pts</th><th>Best</th><th></th></tr>
   {% for t in acd.recent[:12] %}<tr><td>{{ t.date }}</td><td class="{{ 'side-up' if t.side == 'LONG' else 'side-dn' }}">{{ t.side }}</td>
     <td>{{ t.entry }} @ {{ t.entry_time }}</td><td>{{ t.exit }} @ {{ t.exit_time }}</td>
-    <td class="{{ 'open' if t.points > 0 else 'closed' }}">{{ '%+.1f'|format(t.points) }}</td><td>+{{ t.mfe }}</td><td class="small">{{ 'expiry' if t.expiry else '' }}</td></tr>{% endfor %}
+    <td class="{{ 'open' if t.points > 0 else 'closed' }}">{{ '%+.1f'|format(t.points) }}</td><td>{{ ('%+.1f'|format(t.fut_points)) if t.get('fut_points') is not none else '—' }}</td><td>+{{ t.mfe }}</td><td class="small">{{ 'expiry' if t.expiry else '' }}</td></tr>{% endfor %}
   </table>
   {% endif %}
 

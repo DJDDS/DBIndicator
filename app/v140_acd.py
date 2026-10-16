@@ -199,21 +199,48 @@ def parse_participant(raw: bytes) -> dict | None:
         f, c = row('FII'), row('CLIENT')
         fl, fs = num(f, 'Future Index Long'), num(f, 'Future Index Short')
         cb = (num(c, 'Option Index Call Long') - num(c, 'Option Index Call Short')) - (num(c, 'Option Index Put Long') - num(c, 'Option Index Put Short'))
+        rows = {}
+        for who, label in (('CLIENT', 'Retail'), ('FII', 'FII'), ('PRO', 'Pro'), ('DII', 'DII')):
+            try:
+                r = row(who)
+            except IndexError:
+                continue
+            L, S = num(r, 'Future Index Long'), num(r, 'Future Index Short')
+            rows[label] = {'fut_net': int(L - S), 'fut_long_pct': round(100 * L / (L + S), 1) if L + S else None,
+                           'call_net': int(num(r, 'Option Index Call Long') - num(r, 'Option Index Call Short')),
+                           'put_net': int(num(r, 'Option Index Put Long') - num(r, 'Option Index Put Short'))}
         return {'fii_fut_net': int(fl - fs), 'fii_fut_long_pct': round(100 * fl / (fl + fs), 1), 'client_opt_bias': int(cb),
-                'client_opt_lean': 'bullish' if cb > 0 else 'bearish'}
+                'client_opt_lean': 'bullish' if cb > 0 else 'bearish', 'rows': rows}
     except Exception:  # noqa: BLE001
         return None
 
 
-def _participant(prev_day: dt.date) -> dict | None:
+def participant_changes(cur: dict, before: dict | None) -> dict:
+    """Day-on-day change of each participant's net index futures / calls / puts."""
+    out = {}
+    for who, r in (cur.get('rows') or {}).items():
+        b = ((before or {}).get('rows') or {}).get(who)
+        if b: out[who] = {k: r[k] - b[k] for k in ('fut_net', 'call_net', 'put_net')}
+    return out
+
+
+def _participant_one(nse, day: dt.date) -> dict | None:
+    for host in ('https://nsearchives.nseindia.com/content/nsccl/', 'https://archives.nseindia.com/content/nsccl/'):
+        raw = nse.get(f'{host}fao_participant_oi_{day:%d%m%Y}.csv')
+        if raw:
+            r = parse_participant(raw)
+            if r: return r | {'date': str(day)}
+    return None
+
+
+def _participant(prev_day: dt.date, prev2: dt.date | None = None) -> dict | None:
     try:
         from .v132_movers import _nse
         nse = _nse()
-        for host in ('https://nsearchives.nseindia.com/content/nsccl/', 'https://archives.nseindia.com/content/nsccl/'):
-            raw = nse.get(f'{host}fao_participant_oi_{prev_day:%d%m%Y}.csv')
-            if raw:
-                r = parse_participant(raw)
-                if r: return r | {'date': str(prev_day)}
+        cur = _participant_one(nse, prev_day)
+        if cur and prev2:
+            cur['chg'] = participant_changes(cur, _participant_one(nse, prev2))
+        return cur
     except Exception as exc:  # noqa: BLE001
         log.warning('v140 participant OI: %s', exc)
     return None
@@ -251,8 +278,22 @@ def _instruments(kite, today: dt.date) -> dict:
     opt_exp = sorted({i['expiry'] for i in nfo if i.get('instrument_type') in ('CE', 'PE') and i['expiry'] >= today})
     fut = futs[0] if futs else None
     return {'index_token': token, 'fut_symbol': fut['tradingsymbol'] if fut else None, 'fut_expiry': str(fut['expiry']) if fut else None,
+            'fut_token': fut.get('instrument_token') if fut else None,
             'lot_size': fut.get('lot_size') if fut else None,
             'expiry_today': bool(opt_exp and opt_exp[0] == today), 'monthly_expiry_today': bool(fut and fut['expiry'] == today)}
+
+
+def _fut_open(kite, ins: dict, day: dt.date, bar: int) -> float | None:
+    """Open of the NIFTY future's 1-minute bar at `bar` (same minute as the index entry/exit). Fail-soft."""
+    tok = ins.get('fut_token')
+    if not tok: return None
+    try:
+        t0 = dt.datetime.combine(day, dt.time(9, 15)) + dt.timedelta(minutes=bar)
+        b = _bars(kite, tok, t0, t0 + dt.timedelta(minutes=1), 'minute')
+        b = b[b['date'] == t0] if not b.empty else b
+        return round(float(b['open'].iloc[0]), 2) if not b.empty else None
+    except Exception as exc:  # noqa: BLE001
+        log.warning('v140 futures price: %s', exc); return None
 
 
 def _alert(text: str) -> None:
@@ -277,8 +318,9 @@ def run_prep(kite, today: dt.date | None = None) -> int:
     lv = compute_levels(d)
     if lv is None: raise RuntimeError('not enough NIFTY daily history for ACD levels')
     prev_day = d['date'].dt.date.iloc[-1]
+    prev2 = d['date'].dt.date.iloc[-2] if len(d) > 1 else None
     _write_json(name, {'date': str(today), 'week': iso_week(today), 'prepared_at': now_ist(), 'levels': lv, 'instruments': ins,
-                       'prev_session': str(prev_day), 'participant': _participant(prev_day), 'signal': None, 'trade': None, 'addon': None})
+                       'prev_session': str(prev_day), 'participant': _participant(prev_day, prev2), 'signal': None, 'trade': None, 'addon': None})
     return 1
 
 
@@ -319,6 +361,9 @@ def run_tick(kite, now: dt.datetime | None = None) -> str:
         if day.get('trade') is None and len(o) > i:
             px = float(o[i]); stop = acd_stop(px, side, orh, orl)
             day['trade'] = {'entry_time': hhmm(i), 'entry': round(px, 2), 'stop_pts': round(stop, 1), 'stop_level': round(px - side * stop, 2)}
+            fe = _fut_open(kite, day['instruments'], today, i)
+            if fe is not None:
+                day['trade'].update({'fut_entry': fe, 'fut_stop': round(fe - side * stop, 2)})
         t = day.get('trade')
         if t and t.get('state') != 'closed':
             r = run_acd(o, h, l, i, side, t['entry'], t['stop_pts'])
@@ -326,6 +371,9 @@ def run_tick(kite, now: dt.datetime | None = None) -> str:
             t['live_points'] = r['points'] if r['state'] == 'closed' else round((float(c[-1]) - t['entry']) * side, 1)
             if r['state'] == 'closed':
                 t['exit_time'] = hhmm(r['exit_bar'])
+                fx = _fut_open(kite, day['instruments'], today, r['exit_bar'])
+                if fx is not None and t.get('fut_entry') is not None:
+                    t['fut_exit'] = fx; t['fut_points'] = round((fx - t['fut_entry']) * side, 1)
                 changed_msgs.append(f"ACD {s['side']} closed at {t['exit_time']} ({r['reason']}): {r['points']:+.1f} pts (paper).")
 
         ins = day['instruments']
@@ -361,6 +409,8 @@ def run_tick(kite, now: dt.datetime | None = None) -> str:
                                      'signal_time': s['bar'], 'entry_time': t['entry_time'], 'entry': t['entry'],
                                      'exit_time': t.get('exit_time'), 'exit': t.get('exit_px'), 'points': t['points'], 'reason': t.get('reason'),
                                      'mfe': t.get('mfe'), 'expiry': day['instruments'].get('expiry_today'),
+                                     'fut_symbol': day['instruments'].get('fut_symbol'), 'fut_entry': t.get('fut_entry'),
+                                     'fut_exit': t.get('fut_exit'), 'fut_points': t.get('fut_points'),
                                      'addon_points': (day.get('addon') or {}).get('points')})
     _write_json(name, day)
     for m in changed_msgs: _alert('🟦 ' + m)
@@ -420,6 +470,7 @@ def status() -> dict:
             'today': day, 'week_used': week_count(rows, today) + (1 if used_today else 0), 'week_cap': WEEK_CAP,
             'recent': list(reversed(trades))[:30],
             'score_all': _score(trades), 'score_short': _score([t for t in trades if t.get('side') == 'SHORT']),
+            'score_fut': _score([t for t in trades if t.get('fut_points') is not None], 'fut_points'),
             'long_ignored': sum(1 for t in rows if t.get('ignored')),
             'score_shadow_long': _score([t for t in rows if t.get('ignored')], 'shadow_points'),
             'score_addon': _score([t for t in trades if t.get('addon_points') is not None], 'addon_points')}

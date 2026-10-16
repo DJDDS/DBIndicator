@@ -16,7 +16,7 @@ DAY = dt.date(2026, 10, 13)   # a Tuesday
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(v, "ROOT", tmp_path)
     monkeypatch.setattr(v.time, "sleep", lambda s: None)
-    monkeypatch.setattr(v, "_participant", lambda d: {"date": str(d), "fii_fut_net": -1000, "fii_fut_long_pct": 40.0, "client_opt_bias": 5, "client_opt_lean": "bullish"})
+    monkeypatch.setattr(v, "_participant", lambda d, d2=None: {"date": str(d), "fii_fut_net": -1000, "fii_fut_long_pct": 40.0, "client_opt_bias": 5, "client_opt_lean": "bullish"})
     sent = []
     monkeypatch.setattr(v, "_alert", lambda t: sent.append(t))
     monkeypatch.setattr(v, "now_ist", v.now_ist)
@@ -88,11 +88,13 @@ class FakeKite:
     def instruments(self, ex):
         if ex == "NSE":
             return [{"tradingsymbol": "NIFTY 50", "instrument_token": 256265}]
-        return [{"name": "NIFTY", "instrument_type": "FUT", "expiry": dt.date(2026, 10, 27), "tradingsymbol": "NIFTY26OCTFUT", "lot_size": 65},
+        return [{"name": "NIFTY", "instrument_type": "FUT", "expiry": dt.date(2026, 10, 27), "tradingsymbol": "NIFTY26OCTFUT", "lot_size": 65, "instrument_token": 99},
                 {"name": "NIFTY", "instrument_type": "CE", "expiry": DAY}]
     def historical_data(self, token, a, b, interval):
         self.calls += 1
         df = self.daily if interval == "day" else self.minutes
+        if token == 99:                                   # NIFTY future = index + 60 premium
+            df = df.assign(open=df.open + 60, high=df.high + 60, low=df.low + 60, close=df.close + 60)
         df = df[(df.date >= a) & (df.date <= b)]
         return df.to_dict("records")
 
@@ -110,6 +112,7 @@ def test_end_to_end_short_day(store):
     assert v.run_tick(k, dt.datetime.combine(DAY, dt.time(15, 25))) == "final"
     rows = v._read_jsonl("trades.jsonl")
     assert len(rows) == 1 and rows[0]["side"] == "SHORT" and rows[0]["reason"] == "15:20 exit" and rows[0]["points"] > 0
+    assert rows[0]["fut_entry"] == pytest.approx(rows[0]["entry"] + 60) and rows[0]["fut_points"] == pytest.approx(rows[0]["points"])
     assert v.run_tick(k, dt.datetime.combine(DAY, dt.time(15, 30))) == "final" and len(v._read_jsonl("trades.jsonl")) == 1
     v.now_ist = lambda: dt.datetime.combine(DAY, dt.time(15, 31))
     s = v.status()
@@ -135,6 +138,9 @@ def test_participant_parser():
            b"Client Type,Future Index Long,Future Index Short,Option Index Call Long,Option Index Put Long,Option Index Call Short,Option Index Put Short\n"
            b"Client,100,50,1000,500,800,900\nFII,30000,120000,1,1,1,1\n")
     p = v.parse_participant(raw)
+    assert p["rows"]["Retail"] == {"fut_net": 50, "fut_long_pct": 66.7, "call_net": 200, "put_net": -400} and "Pro" not in p["rows"]
+    before = {"rows": {"Retail": {"fut_net": 10, "call_net": 0, "put_net": 0}}}
+    assert v.participant_changes(p, before) == {"Retail": {"fut_net": 40, "call_net": 200, "put_net": -400}}
     assert p["fii_fut_net"] == -90000 and p["fii_fut_long_pct"] == 20.0 and p["client_opt_bias"] == 600 and p["client_opt_lean"] == "bullish"
     assert v.parse_participant(b"garbage") is None
 
@@ -146,6 +152,13 @@ def test_intraday_page_renders_acd_card(store):
     v.run_prep(k, DAY); v.run_tick(k, dt.datetime.combine(DAY, dt.time(10, 30)))
     acd = v.status(); acd["today"] = v._read_json(f"day_{DAY}.json", None)
     html = env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None, acd=acd)
+    acd["today"]["participant"] = {"date": "2026-10-12", "fii_fut_net": -1000, "fii_fut_long_pct": 40.0, "client_opt_lean": "bullish",
+                                   "rows": {"Retail": {"fut_net": 1500, "fut_long_pct": 60.0, "call_net": 2000, "put_net": -300},
+                                            "FII": {"fut_net": -1000, "fut_long_pct": 40.0, "call_net": -50, "put_net": 80}},
+                                   "chg": {"Retail": {"fut_net": 100, "call_net": -20, "put_net": 5}}}
+    html = env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None, acd=acd)
+    for txt in ("+1,500", "(+100)", "Futures net", "Future at entry minute"):
+        assert txt in html, txt
     for txt in ("NIFTY ACD desk", "▼ SHORT", "SELL NIFTY FUT", "never gives a long call", "NIFTY26OCTFUT", "How to take the trade", "A-down", "EXPIRY", "retail index options bullish"):
         assert txt in html, txt
     assert "ACD desk unavailable" in env.get_template("intraday_admin.html").render(direction={"error": "x"}, intra=None, acd={"error": "boom"})
