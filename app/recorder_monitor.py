@@ -93,7 +93,7 @@ def registry(storage_root: str, index_vol_root: str | None = None) -> list[dict]
         kind='daily', due=dt.time(9, 20), grace=25, files=['v131/gaps.jsonl'], thread='v131-intraday')
     add(name='09:25 short detector', group='V13.1 Intraday lanes', what='Three shorts at 09:25 and the 15:15 cover',
         kind='daily', due=dt.time(9, 30), grace=25, files=['v131/shorts.jsonl'], thread='v131-intraday')
-    add(name='09:16 movement predictor', group='V13.2 Movement predictor', what='Top-3 stocks likely to move unusually, 09:45 final pick, result, paper ATM straddle entries and exits',
+    add(name='09:16 movement predictor', group='V13.2 Movement predictor', what='Top-3 stocks likely to move unusually, 09:45 final pick, result, high-confidence trade plan (two-sided bracket, paper)',
         kind='daily', due=dt.time(9, 25), grace=25, files=['v132/picks.jsonl'], thread='v132-movers')
     add(name='09:25 direction desk', group='V13.3 Direction desk', what='UP/DOWN lists for 30/60/90/120 min and the day',
         kind='daily', due=dt.time(9, 35), grace=25, files=['v133/days.jsonl', 'v133/scores_*.json.gz'], thread='v133-direction')

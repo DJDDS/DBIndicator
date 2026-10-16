@@ -14,6 +14,7 @@ Daily cycle (IST, weekdays, fail-soft, idempotent per day):
                NSE board meetings around today
   09:16-09:29  pick: opening prices + NSE overnight announcements -> score -> top 3 -> dashboard + Telegram
   09:45-09:54  stage 2: re-rank the 09:16 top 10 with the first 30 minutes -> FINAL pick (move still left after 09:45)
+  09:21-15:20  trade plan (high-confidence days): two-sided bracket on the top pick, paper, from completed 5-minute candles
   15:31-16:30  outcome: day high/low from Kite quote -> did each pick make the unusual move?
 Stage 2 research (walk-forward 2019-26): the re-ranked pick still travels >= max(1.5%, 0.7x normal) after 09:45 on 73% of
 days, 84% on its high-confidence days, against 62% for the 09:16 pick.
@@ -161,7 +162,7 @@ def peer_groups(R: pd.DataFrame) -> dict:
     R = R.loc[:, R.notna().mean() > 0.6]
     n = R.shape[1]
     if n < 30: return {}
-    C = R.corr(min_periods=60).fillna(0).to_numpy(); np.fill_diagonal(C, 1.0)
+    C = R.corr(min_periods=60).fillna(0).to_numpy().copy(); np.fill_diagonal(C, 1.0)
     Dm = 1.0 - C; k = max(8, n // 8)
     size = np.ones(n); alive = np.ones(n, bool); members = {i: [i] for i in range(n)}
     Dw = Dm.copy(); np.fill_diagonal(Dw, np.inf)
@@ -554,62 +555,108 @@ def run_stage2(kite, today: dt.date | None = None) -> int:
     return len(X)
 
 
-STRADDLE_MAX_SPREAD_PCT = 6.0      # each leg's two-sided spread must be within this to be recorded as tradable
+# ------------------------------------------------------------------------------------------ V13.8 trade plan (paper)
+# High-confidence days only: a two-sided bracket on the 09:16 top pick. Research (Dhan 5-min, Apr-Oct 2026, futures, 10 bps cost,
+# 2 bps slippage): 44 trades, 89% won, +50 bps average (Apr-Jul 91% / Aug-Oct 86%); settings chosen on Apr-Jul, checked on Aug-Oct.
+PLAN_TRIGGER, PLAN_TARGET, PLAN_LAST_K, PLAN_EXIT_K, PLAN_COST_BPS, PLAN_SLIP = 0.5, 0.3, 33, 71, 10.0, 0.0002
+PLAN_RESEARCH = {'n': 44, 'win': 89, 'avg_bps': 50, 'win_first_half': 91, 'win_second_half': 86}
+PLAN_TERMINAL = ('TARGET', 'STOP', 'CLOSED', 'NO_TRIGGER', 'SKIPPED')
 
 
-def straddle_entry(chain: dict, spot: float, quotes: dict, max_spread_pct: float = STRADDLE_MAX_SPREAD_PCT) -> dict:
-    """ATM straddle (same-strike call + put) from live quotes; entry = buying both at the ask. Paper evidence only: whether the
-    stock-mover edge still pays after paying the premium. {'status': 'NO_OPTION', 'reason': ...} when no tradable pair exists."""
-    ce = {r[0]: r for r in (chain or {}).get('CE') or []}; pe = {r[0]: r for r in (chain or {}).get('PE') or []}
-    common = sorted(set(ce) & set(pe))
-    if not common or not spot: return {'status': 'NO_OPTION', 'reason': 'no CE/PE pair'}
-    k = min(common, key=lambda x: abs(x - spot)); legs = {}
-    for typ, row in (('CE', ce[k]), ('PE', pe[k])):
-        q = quotes.get(row[1]) or {}; dp = q.get('depth') or {}
-        bid = ((dp.get('buy') or [{}])[0] or {}).get('price'); ask = ((dp.get('sell') or [{}])[0] or {}).get('price')
-        if not (bid and ask and ask >= bid > 0): return {'status': 'NO_OPTION', 'reason': f'{typ} {k:g} has no two-sided quote'}
-        spr = (ask - bid) / ((ask + bid) / 2) * 100
-        if spr > max_spread_pct: return {'status': 'NO_OPTION', 'reason': f'{typ} {k:g} spread {spr:.1f}%'}
-        legs[typ] = {'ts': row[1], 'token': row[2], 'bid': bid, 'ask': ask, 'spread_pct': round(spr, 2)}
-    entry = legs['CE']['ask'] + legs['PE']['ask']
-    return {'status': 'OPEN', 'strike': k, 'spot': spot, 'ce': legs['CE'], 'pe': legs['PE'], 'entry': round(entry, 2),
-            'entry_pct_of_spot': round(entry / spot * 100, 2), 'lot': chain.get('lot'), 'expiry': chain.get('expiry')}
+def _hm(k: int) -> str:
+    m = 555 + 5 * (k + 1)
+    return f'{m // 60:02d}:{m % 60:02d}'
 
 
-def straddle_outcome(ce_bars, pe_bars, st: dict, k_exit: int = 71) -> dict | None:
-    """Paper straddle exit at the close of candle k_exit, each leg less half its entry spread (proxy for selling at the bid)."""
-    def leg(b, spread):
-        if b is None or b.empty: return None
-        m = b.date.dt.hour * 60 + b.date.dt.minute; k = ((m - 555) // 5).astype(int); c = b.close[k <= k_exit]
-        return None if c.empty else float(c.iloc[-1]) * (1 - (spread or 0) / 200.0)
-    a, b = leg(ce_bars, st['ce']['spread_pct']), leg(pe_bars, st['pe']['spread_pct'])
-    if a is None or b is None or not st.get('entry'): return None
-    ex = a + b
-    return {'exit': round(ex, 2), 'ret_pct': round((ex / st['entry'] - 1) * 100, 2), 'win': bool(ex > st['entry']), 'status': 'CLOSED'}
+def plan_levels(ref: float, exc: float, a: float = PLAN_TRIGGER, b: float = PLAN_TARGET) -> dict:
+    """Buy-above / sell-below levels around the 09:20 price; each side's target and stop (the other trigger)."""
+    up, dn = ref * math.exp(a * exc), ref * math.exp(-a * exc)
+    return {'ref': round(ref, 2), 'buy_above': round(up, 2), 'sell_below': round(dn, 2),
+            'long_target': round(up * math.exp(b * exc), 2), 'short_target': round(dn * math.exp(-b * exc), 2),
+            'long_stop': round(dn, 2), 'short_stop': round(up, 2)}
 
 
-def run_straddle(kite, today: dt.date | None = None, stage: str = 's1') -> int:
-    """Record the ATM straddle for the 09:16 top-3 (stage 's1') or the 09:45 final pick (stage 's2') at live asks. Paper only."""
+def plan_walk(bars, exc: float, a: float = PLAN_TRIGGER, b: float = PLAN_TARGET, last_k: int = PLAN_LAST_K,
+              exit_k: int = PLAN_EXIT_K, final: bool = False) -> dict:
+    """Replay the bracket over completed 5-minute candles (rows k, open, high, low, close; k = 0 is 09:15-09:20).
+    Same rules as the research: reference = 09:20 close; first level touched wins; both in one candle = skipped; entry at the level
+    (or the open if it gapped through) plus slippage; stop checked before target; otherwise out at the 15:15 close."""
+    rows = sorted(([int(r[0])] + [float(x) for x in r[1:5]] for r in bars), key=lambda r: r[0])
+    first = next((r for r in rows if r[0] == 0), None)
+    if first is None or not exc: return {'status': 'WAITING', 'note': 'waiting for the 09:15-09:20 candle'}
+    lv = plan_levels(first[4], exc, a, b); up, dn = lv['buy_above'], lv['sell_below']
+    rest = [r for r in rows if 0 < r[0] <= exit_k]
+    out = dict(lv, status='WAITING')
+    for i, (k, o, h, l, c) in enumerate(rest):
+        if k > last_k: return dict(out, status='NO_TRIGGER', note=f'no level touched by {_hm(last_k)}')
+        hu, hd = h >= up, l <= dn
+        if hu and hd: return dict(out, status='SKIPPED', note=f'both levels touched in the {_hm(k)} candle')
+        if not (hu or hd): continue
+        side = 1 if hu else -1; px = (max(o, up) if hu else min(o, dn)) * (1 + PLAN_SLIP * side)
+        st = dn if hu else up; tgt = px * math.exp(side * b * exc)
+        tr = dict(out, side='LONG' if hu else 'SHORT', entry=round(px, 2), entry_at=_hm(k), stop=round(st, 2), target=round(tgt, 2), status='OPEN')
+        def done(x, why, kk):
+            g = side * (x / px - 1) * 1e4
+            return dict(tr, status=why, exit=round(x, 2), exit_at=_hm(kk), ret_bps=round(g - PLAN_COST_BPS, 1), win=bool(g - PLAN_COST_BPS > 0))
+        if (c - st) * side <= 0: return done(st, 'STOP', k)
+        last = c
+        for k2, o2, h2, l2, c2 in rest[i + 1:]:
+            if (( l2 if side == 1 else h2) - st) * side <= 0: return done(min(o2, st) if side == 1 else max(o2, st), 'STOP', k2)
+            if ((h2 if side == 1 else l2) - tgt) * side >= 0: return done(max(o2, tgt) if side == 1 else min(o2, tgt), 'TARGET', k2)
+            last = c2
+        tr['now_bps'] = round(side * (last / px - 1) * 1e4, 1)
+        return done(rest[-1][4], 'CLOSED', rest[-1][0]) if final and rest[-1][0] >= exit_k else tr
+    if final: return dict(out, status='NO_TRIGGER', note='no level touched')
+    return out
+
+
+def plan_text(sym: str, p: dict, today) -> str:
+    if p['status'] == 'WAITING':
+        return (f"🎯 MOVER TRADE PLAN · {today} · {sym} (high confidence)\nBUY above {p['buy_above']} → target {p['long_target']}, stop {p['long_stop']}\n"
+                f"SELL below {p['sell_below']} → target {p['short_target']}, stop {p['short_stop']}\nFirst level touched wins, cancel the other · no new entry after {_hm(PLAN_LAST_K)} · "
+                f"else exit 15:15. Paper only - not an order.")
+    if p['status'] == 'OPEN':
+        return f"🎯 {sym} {p['side']} triggered {p['entry_at']} at {p['entry']} · target {p['target']} · stop {p['stop']} · exit 15:15 if neither. Paper only."
+    if p['status'] in ('TARGET', 'STOP', 'CLOSED'):
+        return f"🎯 {sym} {p['side']} {p['status'].lower()} {p['exit_at']} at {p['exit']} · {p['ret_bps']:+.0f} bps after costs. Paper only."
+    return f"🎯 {sym} plan: {p.get('note', p['status'].lower())}. Paper only."
+
+
+def run_plan(kite, today: dt.date | None = None) -> bool:
+    """Create / advance today's bracket plan from completed 5-minute candles. Returns True when the plan is finished for the day."""
     from . import v133_direction as d3
-    today = today or now_ist().date()
+    now = now_ist(); today = today or now.date()
     rows = _read_jsonl('picks.jsonl'); day = next((x for x in rows if x.get('date') == str(today)), None)
-    if not day: raise RuntimeError('no picks today')
-    syms = [p['symbol'] for p in day.get('picks', [])] if stage == 's1' else ([day['stage2']['symbol']] if day.get('stage2') else [])
-    if not syms: raise RuntimeError(f'no {stage} symbols yet')
-    book = day.setdefault('straddle', {}).setdefault(stage, {})
-    todo = [x for x in syms if x not in book]
-    if not todo: return 0
-    chains = d3.option_chain_map(kite.instruments('NFO'), set(todo), today)
-    spots = _quotes(kite, todo)
-    for sym in todo:
-        spot = (spots.get(sym) or {}).get('last_price')
-        ch = chains.get(sym)
-        if not ch: book[sym] = {'status': 'NO_OPTION', 'reason': 'no option chain'}; continue
-        keys = [f'NFO:{r[1]}' for r in ch['CE'] + ch['PE'] if abs(r[0] - (spot or 0)) <= (spot or 0) * 0.06]
-        raw = kite.quote(keys) or {}
-        book[sym] = {**straddle_entry(ch, spot, {k[4:]: v for k, v in raw.items()}), 'at': now_ist()}
+    if not day or not day.get('picks'): raise RuntimeError('no 09:16 picks today')
+    old = day.get('plan') or {}
+    if old.get('status') in PLAN_TERMINAL or old.get('status') == 'NO_PLAN': return True
+    top = day['picks'][0]
+    if not day.get('confident'):
+        day['plan'] = {'symbol': top['symbol'], 'status': 'NO_PLAN', 'note': 'normal-confidence day: watch only (the bracket only paid on high-confidence days)'}
+        _rewrite_jsonl('picks.jsonl', rows); return True
+    tok = ((_read_json(f'prep_{today}.json', None) or {}).get('pre') or {}).get(top['symbol'], {}).get('token')
+    if not tok: raise RuntimeError(f"no instrument token for {top['symbol']}")
+    b = d3._kite_5min(kite, tok, dt.datetime.combine(today, dt.time(9, 15)), dt.datetime.combine(today, dt.time(15, 30)))
+    if b is None or b.empty: raise RuntimeError('no 5-minute candles yet')
+    m = b.date.dt.hour * 60 + b.date.dt.minute; k = ((m - 555) // 5).astype(int)
+    end = b.date + pd.Timedelta(minutes=5)
+    keep = (k >= 0) & (end <= pd.Timestamp(now))
+    bars = np.column_stack([k[keep], b.open[keep], b.high[keep], b.low[keep], b.close[keep]])
+    exc = (top.get('normal_move_pct') or 0) / 100.0
+    final = now.hour * 60 + now.minute >= 555 + 5 * (PLAN_EXIT_K + 1)
+    p = dict(plan_walk(bars, exc, final=final), symbol=top['symbol'], normal_move_pct=top.get('normal_move_pct'), updated=now.isoformat(timespec='seconds'))
+    for kk in ('levels_sent', 'entry_sent'):
+        if old.get(kk): p[kk] = old[kk]
+    if p['status'] != 'WAITING' or 'ref' in p:
+        if not p.get('levels_sent') and 'ref' in p and p['status'] in ('WAITING', 'OPEN'):
+            _telegram(plan_text(top['symbol'], dict(p, status='WAITING'), today)); p['levels_sent'] = True
+        if p['status'] == 'OPEN' and not p.get('entry_sent'):
+            _telegram(plan_text(top['symbol'], p, today)); p['entry_sent'] = True
+        if p['status'] in PLAN_TERMINAL and old.get('status') != p['status']:
+            _telegram(plan_text(top['symbol'], p, today))
+    day['plan'] = p
     _rewrite_jsonl('picks.jsonl', rows)
-    return len(todo)
+    return p['status'] in PLAN_TERMINAL
 
 
 def _after945(kite, token: int, today: dt.date) -> tuple[float | None, float | None, float | None]:
@@ -648,20 +695,6 @@ def run_outcomes(kite, today: dt.date | None = None) -> int:
                 s2.update(max_move_pct=round(max(up, dn) * 100, 2), dir='UP' if up >= dn else 'DOWN', hit=bool(max(up, dn) * 100 >= s2['need_pct']), status='CLOSED')
                 if cl and s2.get('lean') in ('UP', 'DOWN'):
                     s2['close_pct'] = round(math.log(cl / s2['entry']) * 100, 2); s2['lean_hit'] = bool((cl > s2['entry']) == (s2['lean'] == 'UP'))
-    try:
-        from . import v133_direction as d3
-        for day in rows:
-            if day.get('date') != str(today): continue
-            for stage, book in (day.get('straddle') or {}).items():
-                for sym, st in book.items():
-                    if st.get('status') != 'OPEN': continue
-                    a = dt.datetime.combine(today, dt.time(9, 15)); b = dt.datetime.combine(today, dt.time(15, 30))
-                    cb = d3._kite_5min(kite, st['ce']['token'], a, b); time.sleep(0.34)
-                    pb = d3._kite_5min(kite, st['pe']['token'], a, b); time.sleep(0.34)
-                    res = straddle_outcome(cb, pb, st)
-                    if res: st.update(res)
-    except Exception as exc:  # noqa: BLE001
-        log.warning('v132 straddle outcome: %s', exc)
     _rewrite_jsonl('picks.jsonl', rows)
     if n == 0: raise RuntimeError('no outcomes recorded yet')
     return n
@@ -690,8 +723,12 @@ def _loop(get_kite):
                     if due('prep', 490, 548, 3): done[key('prep')] = _step('prep', run_prep, kite)
                     if due('pick', 556, 569): done[key('pick')] = _step('pick', run_pick, kite)
                     if due('stage2', 585, 594): done[key('stage2')] = _step('stage2', run_stage2, kite)
-                    if due('straddle1', 559, 585): done[key('straddle1')] = _step('straddle1', run_straddle, kite, None, 's1')
-                    if due('straddle2', 587, 615): done[key('straddle2')] = _step('straddle2', run_straddle, kite, None, 's2')
+                    if 561 <= hm <= 925 and not done.get(key('plan')) and done.get(key('plan_m')) != hm:
+                        done[key('plan_m')] = hm
+                        try:
+                            done[key('plan')] = run_plan(kite); _status['steps']['plan'] = {'ok': True, 'at': now_ist(), 'result': done[key('plan')]}
+                        except Exception as exc:  # noqa: BLE001
+                            if hm >= 563: _status['steps']['plan'] = {'ok': False, 'at': now_ist(), 'error': str(exc)[:300]}
                     if due('outcome', 931, 990, 5): done[key('outcome')] = _step('outcome', run_outcomes, kite)
         except Exception:  # noqa: BLE001
             log.exception('v132 scheduler tick failed')
@@ -713,17 +750,13 @@ def scorecard(rows: list) -> dict:
     conf = [d['picks'][0] for d in rows if d.get('picks') and d.get('confident')]
     allp = [p for d in rows for p in d.get('picks', [])]
     s2 = [d['stage2'] for d in rows if d.get('stage2')]
-    def stv(stage):
-        rs = []
-        for d in rows:
-            for sym, st in ((d.get('straddle') or {}).get(stage) or {}).items():
-                if isinstance(st.get('ret_pct'), (int, float)):
-                    pk = next((p for p in d.get('picks', []) if p['symbol'] == sym), None) if stage == 's1' else d.get('stage2')
-                    rs.append((st['ret_pct'], (pk or {}).get('hit')))
-        r = [x for x, _ in rs]; hit = [x for x, h in rs if h is True]; miss = [x for x, h in rs if h is False]
-        avg = lambda v: round(sum(v) / len(v), 1) if v else None
-        return {'n': len(r), 'win': round(100 * sum(1 for x in r if x > 0) / len(r)) if r else None, 'avg_pct': avg(r), 'avg_hit': avg(hit), 'avg_miss': avg(miss)}
-    return {'straddle_s1': stv('s1'), 'straddle_s2': stv('s2'), 'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')]),
+    pl = [d['plan'] for d in rows if isinstance((d.get('plan') or {}).get('ret_bps'), (int, float))]
+    r = [x['ret_bps'] for x in pl]
+    plan = {'n': len(r), 'win': round(100 * sum(1 for x in r if x > 0) / len(r)) if r else None, 'avg_bps': round(sum(r) / len(r), 1) if r else None,
+            'targets': sum(1 for x in pl if x['status'] == 'TARGET'), 'stops': sum(1 for x in pl if x['status'] == 'STOP'),
+            'no_trigger': sum(1 for d in rows if (d.get('plan') or {}).get('status') in ('NO_TRIGGER', 'SKIPPED')), 'research': PLAN_RESEARCH}
+    plan['drift'] = bool(plan['n'] >= 15 and plan['win'] is not None and plan['win'] < PLAN_RESEARCH['win'] - 15)
+    return {'plan': plan, 'top1': sc(top), 'top1_confident': sc(conf), 'top3': sc(allp), 'stage2': sc(s2), 'stage2_confident': sc([x for x in s2 if x.get('confident')]),
             'lean': (lambda h: {'n': len(h), 'hit': round(100 * sum(h) / len(h)) if h else None})([x['lean_hit'] for x in s2 if isinstance(x.get('lean_hit'), bool)])}
 
 
