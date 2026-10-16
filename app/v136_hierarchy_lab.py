@@ -236,23 +236,29 @@ _keeper: dict = {'started': False, 'last': None, 'result': None}
 
 
 def _keeper_loop(get_kite):
-    """Weekdays 08:00-09:40 IST: if the volume baseline is shorter than the hierarchy needs, fill it from Kite once that morning."""
+    """Weekdays 08:00-09:40 and 15:40-18:00 IST: if the volume baseline is shorter than the hierarchy needs, fill it from Kite (once per window)."""
     while True:
         try:
             now = d.now_ist(); hm = now.hour * 60 + now.minute; today = str(now.date())
-            if now.weekday() < 5 and 480 <= hm <= 580 and _keeper.get('last') != today:
+            win = 'am' if 480 <= hm <= 580 else ('pm' if 940 <= hm <= 1080 else None)
+            if now.weekday() < 5 and win and _keeper.get('last') != f'{today}:{win}':
                 have, need = baseline_short(today)
                 if have >= need:
-                    _keeper['last'] = today
+                    _keeper['last'] = f'{today}:{win}'; _keeper['ok'] = {'days': have, 'need': need, 'at': str(now)[:16]}
                 else:
                     kite = get_kite()
                     if kite is not None:
                         n = seed_recent_baseline(kite, today=now.date())
-                        _keeper.update(last=today, result={'at': str(now)[:19], 'stocks': n, 'had_days': have, 'now_days': baseline_short(today)[0]})
+                        _keeper.update(last=f'{today}:{win}', result={'at': str(now)[:19], 'stocks': n, 'had_days': have, 'now_days': baseline_short(today)[0]})
                         log.info('v136 baseline seeded: %s', _keeper['result'])
         except Exception as exc:  # noqa: BLE001
             log.warning('v136 baseline keeper: %s', exc); _keeper['result'] = {'error': str(exc)[:200], 'at': str(d.now_ist())[:19]}
         time.sleep(300)
+
+
+def keeper_status() -> dict:
+    have, need = baseline_short()
+    return {'days': have, 'need': need, 'last_fill': _keeper.get('result'), 'running': _keeper.get('started')}
 
 
 def start_baseline_keeper(get_kite) -> None:

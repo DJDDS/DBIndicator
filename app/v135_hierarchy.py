@@ -275,7 +275,13 @@ def status() -> dict:
         from . import v136_hierarchy_lab; lab = v136_hierarchy_lab.status()
     except Exception:  # noqa: BLE001
         log.exception('v135: lab status failed')
+    keeper = None
+    try:
+        from . import v136_hierarchy_lab; keeper = v136_hierarchy_lab.keeper_status()
+    except Exception:  # noqa: BLE001
+        log.exception('v135: baseline keeper status failed')
     return {'settings': s, 'today': next((x for x in days if x.get('date') == today), None), 'recent': list(reversed(days))[:10], 'days': len(days),
+            'baseline': keeper,
             'plan': side_plan(s, _lab_verdicts()), 'lab': lab,
             'score': {'pick': {k: _score(picks, k, cost) for k in ('exit', '30', '60', '15')},
                       'pick_rule': _score(picks, None, cost),

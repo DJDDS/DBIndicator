@@ -70,8 +70,13 @@ def _hierarchy(direction: dict, out: dict) -> None:
         top = sorted(rej.items(), key=lambda x: -x[1])[:3]
         msg = 'Hierarchy desk: no stock passed today'
         if top: msg += ' (' + ', '.join(f"{n} {REJECT_WORDS.get(k, k.lower())}" for k, n in top) + ')'
-        if have is not None and need and have < need:
-            msg += f". Volume history has {have} of {need} days - it now fills itself from Kite before the open, so picks can start next session."
+        kb = hz.get('baseline') or {}
+        if kb.get('days') is not None and kb.get('need') and kb['days'] >= kb['need']:
+            msg += f". Volume history is now complete ({kb['days']} days" + (f", filled {kb['last_fill']['at'][11:16]}" if (kb.get('last_fill') or {}).get('at') else '') + ") - picks can start next session"
+        elif have is not None and need and have < need:
+            msg += (f". Volume history has {have} of {need} days - it fills itself from Kite after today's close (15:40) and before the open "
+                    f"(08:00-09:40); a Kite login is needed")
+            if (kb.get('last_fill') or {}).get('error'): msg += f" (last attempt failed: {kb['last_fill']['error'][:80]})"
         out['notes'].append(msg if msg.endswith('.') else msg + '.')
 
 
@@ -125,11 +130,13 @@ def _acd(acd: dict, out: dict) -> None:
 
 
 def build(direction: dict | None, movers: dict | None, acd: dict | None = None) -> dict:
-    out = {'take': [], 'paper': [], 'skip': [], 'notes': [], 'grade_rule': None}
+    out = {'take': [], 'done': [], 'paper': [], 'skip': [], 'notes': [], 'grade_rule': None}
     for fn, src in ((_pool, direction), (_acd, acd), (_hierarchy, direction), (_movers, movers)):
         try:
             fn(src or {}, out)
         except Exception as exc:  # noqa: BLE001 - one broken desk must not hide the others
             out['notes'].append(f'{fn.__name__.strip("_")}: unavailable ({str(exc)[:80]})')
-    out['live'] = sum(1 for r in out['take'] if str(r.get('state', '')).startswith(('open', 'waiting', 'target hit')))
+    done = [r for r in out['take'] if str(r.get('state', '')).startswith(('closed', 'stopped', 'target hit ')) and not str(r.get('state', '')).endswith('rest held')]
+    out['take'] = [r for r in out['take'] if r not in done]; out['done'] = done
+    out['live'] = len(out['take'])
     return out

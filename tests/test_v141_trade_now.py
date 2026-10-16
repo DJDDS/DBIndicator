@@ -85,3 +85,12 @@ def test_baseline_keeper_seeds_from_kite(tmp_path, monkeypatch):
     assert lab.seed_recent_baseline(_Kite(), today=dt.date(2026, 10, 16)) == 1
     have, need = lab.baseline_short('2026-10-16')
     assert have >= need
+
+
+def test_finished_trade_moves_to_done_and_baseline_status():
+    mv = {'today': {'confident': True, 'picks': [{'symbol': 'TECHM'}], 'plan': {'symbol': 'TECHM', 'status': 'STOP', 'side': 'SHORT', 'entry': 1700.38, 'entry_at': '09:25',
+          'stop': 1737.68, 'target': 1689.45, 'ret_bps': -229.0, 'buy_above': 1737.68, 'sell_below': 1700.72, 'long_target': 1, 'short_target': 1, 'long_stop': 1, 'short_stop': 1}}}
+    d = _direction(); d['v47']['baseline'] = {'days': 20, 'need': 10, 'last_fill': {'at': '2026-10-16 15:44:10'}}
+    out = tn.build(d, mv, {})
+    assert out['take'] == [] and out['done'][0]['symbol'] == 'TECHM' and 'stopped -229 bps' in out['done'][0]['state']
+    assert any('now complete (20 days, filled 15:44)' in n for n in out['notes'])

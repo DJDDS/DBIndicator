@@ -19,8 +19,10 @@
   {% endfor %}
   </div>
   {% else %}
-  <div class="tn-none"><b>No trade right now.</b> Nothing has passed the tested rules{{ ' yet' if not TN.skip }} - staying out is the decision.</div>
+  <div class="tn-none"><b>No trade right now.</b> {% if TN.done %}Today's trades are finished (below).{% else %}Nothing has passed the tested rules{{ ' yet' if not TN.skip }} - staying out is the decision.{% endif %}</div>
   {% endif %}
+  {% if TN.done %}<div class="tn-done"><span class="small">Done today:</span>{% for r in TN.done %}
+    <span class="tn-d {{ 'neg' if 'stopped' in r.state or '-' in r.state.split(' ')[-2:]|join(' ') else 'pos' }}"><b>{{ r.action }} {{ r.symbol }}</b> <span class="small">{{ r.desk }}</span> · {{ r.entry }}{% if r.entry_at %} ({{ r.entry_at }}){% endif %} → {{ r.state }}</span>{% endfor %}</div>{% endif %}
   {% if TN.paper %}<div class="small tn-sub">Paper only (research desk, not validated): {% for r in TN.paper %}<b>{{ r.action }} {{ r.symbol }}</b> at {{ r.entry }} ({{ r.why }}, exit {{ r.exit }}){{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
   {% if TN.skip %}<details class="tn-skip" {{ 'open' if not TN.take }}><summary>Considered but not traded today ({{ TN.skip|length }})</summary>
     <ul>{% for r in TN.skip %}<li><b>{{ r.symbol }}</b> {{ '▲' if r.side == 'UP' else '▼' }} {{ r.desk }}{% if r.grade %} · grade {{ r.grade }}{% endif %}: {{ r.why }}.</li>{% endfor %}</ul></details>{% endif %}
